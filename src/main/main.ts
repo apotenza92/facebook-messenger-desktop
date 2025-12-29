@@ -6,7 +6,7 @@ import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
 
 const devReset = process.env.MESSENGER_DEV_STATE_RESET === '1' || process.argv.includes('--messenger-dev-state-reset');
-const isDev = devReset || !app.isPackaged || process.env.NODE_ENV === 'development';
+const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
 // Use separate userData for dev so persisted state doesn't leak between prod/dev
 if (isDev) {
@@ -29,8 +29,8 @@ type WindowState = {
 };
 
 const defaultWindowState: WindowState = {
-  width: 1200,
-  height: 960,
+  width: 1000,
+  height: 750,
 };
 
 function loadWindowState(): WindowState {

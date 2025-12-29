@@ -72,14 +72,12 @@ if (needsRebuild) {
 
 if (appPath) {
   console.log('Launching Messenger app from:', appPath);
-  const resetFlag = needsRebuild ? '--messenger-dev-state-reset' : '';
   try {
-    execSync(`open "${appPath}" --args ${resetFlag}`.trim(), {
+    execSync(`open "${appPath}"`, {
       cwd: path.join(__dirname, '..'),
       stdio: 'inherit',
       env: {
         ...process.env,
-        MESSENGER_DEV_STATE_RESET: needsRebuild ? '1' : '0',
         NODE_ENV: 'development',
       },
     });
