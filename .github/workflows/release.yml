@@ -90,39 +90,33 @@ jobs:
 
       - name: Prepare release notes
         run: |
+          set -euo pipefail
+          VERSION="${{ steps.tag_version.outputs.VERSION }}"
+          NOTES=release_notes.txt
+          DEFAULT_NOTES_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}"
+
+          use_default=true
           if [ -f CHANGELOG.md ]; then
-            VERSION="${{ steps.tag_version.outputs.VERSION }}"
             # Extract section for this version (between ## [v$VERSION] and next ##)
-            awk "/^## \[v?$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d' | sed '1d' > release_notes.txt || true
-            if [ ! -s release_notes.txt ]; then
-              # No custom notes found, create default
-              cat > release_notes.txt << EOF
-            ## What's Changed
-            
-            Full changelog: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}
-            
-            ## Downloads
-            
-            - **macOS**: \`.dmg\` and \`.zip\` files
-            - **Windows**: \`.exe\` installer (NSIS) and portable \`.exe\`
-            - **Linux**: \`.AppImage\` (portable, works on all distributions)
-            EOF
+            awk "/^## \[v?$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d' | sed '1d' > "$NOTES" || true
+            if [ -s "$NOTES" ]; then
+              use_default=false
             fi
-          else
-            # No CHANGELOG.md, create default notes
-            cat > release_notes.txt << EOF
-            ## What's Changed
-            
-            Full changelog: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}
-            
-            ## Downloads
-            
-            - **macOS**: \`.dmg\` and \`.zip\` files
-            - **Windows**: \`.exe\` installer (NSIS) and portable \`.exe\`
-            - **Linux**: \`.AppImage\` (portable, works on all distributions)
-            EOF
           fi
-        continue-on-error: true
+
+          if [ "$use_default" = true ]; then
+            cat <<EOF > "$NOTES"
+## What's Changed
+
+Full changelog: ${DEFAULT_NOTES_URL}
+
+## Downloads
+
+- **macOS**: \`.dmg\` and \`.zip\` files
+- **Windows**: \`.exe\` installer (NSIS) and portable \`.exe\`
+- **Linux**: \`.AppImage\` (portable, works on all distributions)
+EOF
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
