@@ -12,9 +12,9 @@ npm run generate-icons
 
 This will create:
 - `icon.icns` - macOS icon (multi-size iconset)
-- `icon.ico` - Windows icon (256x256 PNG, can be converted to proper ICO)
+- `icon.ico` - Windows icon (multi-size ICO generated from PNG frames)
 - `icon.png` - Linux icon (512x512 PNG)
-- Various size PNGs for different use cases
+- Various size PNGs (16–512) for different use cases
 
 ## Icon Source
 

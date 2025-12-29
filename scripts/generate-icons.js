@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const pngToIco = require('png-to-ico');
 
 // Check if sharp is available
 let sharp;
@@ -72,26 +73,24 @@ async function generateIcons() {
     // Generate macOS icon (ICNS requires multiple sizes, but we'll create PNG first)
     // For ICNS, you'll need to use iconutil or an online converter
     console.log('Generating PNG icons...');
-    
-    // Main app icons
-    await generateIconWithWhiteBackground(svgBuffer, 512, path.join(iconsDir, 'icon-512.png'));
-    
-    await generateIconWithWhiteBackground(svgBuffer, 256, path.join(iconsDir, 'icon-256.png'));
-    
-    await generateIconWithWhiteBackground(svgBuffer, 128, path.join(iconsDir, 'icon-128.png'));
-    
-    await generateIconWithWhiteBackground(svgBuffer, 64, path.join(iconsDir, 'icon-64.png'));
-    
-    await generateIconWithWhiteBackground(svgBuffer, 32, path.join(iconsDir, 'icon-32.png'));
-    
-    await generateIconWithWhiteBackground(svgBuffer, 16, path.join(iconsDir, 'icon-16.png'));
-    
+
+    // Sizes for general use and ICO frames
+    const generalPngSizes = [512, 256, 128, 64, 48, 32, 24, 16];
+    const icoFrameSizes = [256, 128, 64, 48, 32, 24, 16];
+
+    // Generate base PNGs
+    for (const size of generalPngSizes) {
+      await generateIconWithWhiteBackground(svgBuffer, size, path.join(iconsDir, `icon-${size}.png`));
+    }
+
     // Use 512px as the main icon.png for Linux
-    await generateIconWithWhiteBackground(svgBuffer, 512, path.join(iconsDir, 'icon.png'));
-    
-    // Generate Windows ICO (multi-size)
+    await fs.promises.copyFile(path.join(iconsDir, 'icon-512.png'), path.join(iconsDir, 'icon.png'));
+
+    // Generate Windows ICO (multi-size, real .ico)
     console.log('Generating Windows ICO...');
-    await generateIconWithWhiteBackground(svgBuffer, 256, path.join(iconsDir, 'icon.ico'));
+    const icoPngPaths = icoFrameSizes.map(size => path.join(iconsDir, `icon-${size}.png`));
+    const icoBuffer = await pngToIco(icoPngPaths);
+    await fs.promises.writeFile(path.join(iconsDir, 'icon.ico'), icoBuffer);
     
     // Tray icons (smaller sizes)
     console.log('Generating tray icons...');
