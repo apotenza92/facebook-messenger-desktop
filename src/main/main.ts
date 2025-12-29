@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, Notification, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, Menu, nativeImage, screen } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import { NotificationHandler } from './notification-handler';
 import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
@@ -9,6 +10,66 @@ let notificationHandler: NotificationHandler;
 let badgeManager: BadgeManager;
 let backgroundService: BackgroundService;
 let isQuitting = false;
+const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
+
+type WindowState = {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+};
+
+const defaultWindowState: WindowState = {
+  width: 1200,
+  height: 800,
+};
+
+function loadWindowState(): WindowState {
+  try {
+    if (fs.existsSync(windowStateFile)) {
+      const raw = fs.readFileSync(windowStateFile, 'utf8');
+      const parsed = JSON.parse(raw) as WindowState;
+      // Basic validation
+      if (parsed.width && parsed.height) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('[Window State] Failed to load state, using defaults:', e);
+  }
+  return { ...defaultWindowState };
+}
+
+function saveWindowState(bounds: Electron.Rectangle): void {
+  try {
+    fs.writeFileSync(windowStateFile, JSON.stringify({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    }));
+  } catch (e) {
+    console.warn('[Window State] Failed to save state:', e);
+  }
+}
+
+function ensureWindowInBounds(state: WindowState): WindowState {
+  const display = screen.getDisplayMatching({
+    x: state.x ?? 0,
+    y: state.y ?? 0,
+    width: state.width,
+    height: state.height,
+  });
+  const { x, y, width, height } = display.workArea;
+
+  const safeWidth = Math.min(state.width, width);
+  const safeHeight = Math.min(state.height, height);
+
+  const safeX = Math.max(x, Math.min((state.x ?? x), x + width - safeWidth));
+  const safeY = Math.max(y, Math.min((state.y ?? y), y + height - safeHeight));
+
+  return { x: safeX, y: safeY, width: safeWidth, height: safeHeight };
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -16,9 +77,13 @@ const isDev = process.env.NODE_ENV === 'development';
 app.setName('Messenger');
 
 function createWindow(): void {
+  const restoredState = ensureWindowInBounds(loadWindowState());
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: restoredState.width,
+    height: restoredState.height,
+    x: restoredState.x,
+    y: restoredState.y,
     minWidth: 800,
     minHeight: 600,
     title: 'Messenger',
@@ -128,7 +193,10 @@ function createWindow(): void {
 
   // Handle window close
   mainWindow.on('close', (event: Electron.Event) => {
-    // Allow normal close behavior
+    const bounds = mainWindow?.getBounds();
+    if (bounds) {
+      saveWindowState(bounds);
+    }
   });
 
   // Restore window when dock icon is clicked (macOS)
