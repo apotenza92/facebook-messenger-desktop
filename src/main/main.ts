@@ -5,7 +5,7 @@ import { NotificationHandler } from './notification-handler';
 import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
 
-const devReset = process.env.MESSENGER_DEV_STATE_RESET === '1' || process.argv.includes('--messenger-dev-state-reset');
+const resetFlag = process.argv.includes('--reset') || process.env.MESSENGER_RESET_STATE === '1';
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
 let mainWindow: BrowserWindow | null = null;
@@ -28,13 +28,13 @@ const defaultWindowState: WindowState = {
 };
 
 function loadWindowState(): WindowState {
-  // If explicitly requested, clear saved state to force defaults
-  if (devReset && fs.existsSync(windowStateFile)) {
+  // If explicitly requested, clear saved state to force defaults (window size/position only)
+  if (resetFlag && fs.existsSync(windowStateFile)) {
     try {
       fs.rmSync(windowStateFile);
-      console.log('[Window State] Cleared stored state for dev reset flag');
+      console.log('[Window State] Cleared stored state for reset flag');
     } catch (e) {
-      console.warn('[Window State] Failed to clear state for dev reset:', e);
+      console.warn('[Window State] Failed to clear state for reset flag:', e);
     }
   }
 
