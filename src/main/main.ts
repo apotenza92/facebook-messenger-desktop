@@ -97,12 +97,14 @@ app.setName('Messenger');
 
 function createWindow(): void {
   const restoredState = ensureWindowInBounds(loadWindowState());
+  const hasPosition = restoredState.x !== undefined && restoredState.y !== undefined;
 
   mainWindow = new BrowserWindow({
     width: restoredState.width,
     height: restoredState.height,
-    x: restoredState.x,
-    y: restoredState.y,
+    x: hasPosition ? restoredState.x : undefined,
+    y: hasPosition ? restoredState.y : undefined,
+    center: !hasPosition,
     minWidth: 800,
     minHeight: 600,
     title: 'Messenger',
