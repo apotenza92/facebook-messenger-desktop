@@ -2,6 +2,12 @@
 
 # Changelog
 
+## [0.1.3] - 2025-12-30
+
+### Fixed
+- Window position/size now persists reliably; added one-time `--reset-window` flag for dev resets.
+- Dev launches pass CLI args through; start script forwards args.
+
 ## [0.1.2] - 2025-12-30
 
 ### Fixed
