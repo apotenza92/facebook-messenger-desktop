@@ -36,9 +36,9 @@ const defaultWindowState: WindowState = {
 if (isDev) {
   try {
     fs.rmSync(windowStateFile, { force: true });
-    console.log('[Window State] Dev mode: removed stored window state');
+    console.log('[Window State] Dev mode: removed stored window state at', windowStateFile);
   } catch (e) {
-    console.warn('[Window State] Dev mode: failed to remove stored window state', e);
+    console.warn('[Window State] Dev mode: failed to remove stored window state', windowStateFile, e);
   }
 }
 
@@ -57,6 +57,7 @@ function loadWindowState(): WindowState {
     if (fs.existsSync(windowStateFile)) {
       const raw = fs.readFileSync(windowStateFile, 'utf8');
       const parsed = JSON.parse(raw) as WindowState;
+      console.log('[Window State] Loaded state', parsed);
       // Basic validation
       if (parsed.width && parsed.height) {
         return parsed;
@@ -65,6 +66,7 @@ function loadWindowState(): WindowState {
   } catch (e) {
     console.warn('[Window State] Failed to load state, using defaults:', e);
   }
+  console.log('[Window State] Using default state', defaultWindowState);
   return { ...defaultWindowState };
 }
 
@@ -226,6 +228,7 @@ function createWindow(): void {
   mainWindow.on('close', (event: Electron.Event) => {
     const bounds = mainWindow?.getBounds();
     if (bounds) {
+      console.log('[Window State] Saving state', bounds);
       saveWindowState(bounds);
     }
   });
