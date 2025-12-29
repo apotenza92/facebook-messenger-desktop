@@ -5,7 +5,11 @@ import { NotificationHandler } from './notification-handler';
 import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
 
-const resetFlag = process.argv.includes('--reset') || process.env.MESSENGER_RESET_STATE === '1';
+const resetFlag =
+  process.argv.includes('--reset-window') ||
+  process.env.MESSENGER_RESET_WINDOW === '1' ||
+  process.argv.includes('--reset') || // legacy
+  process.env.MESSENGER_RESET_STATE === '1'; // legacy
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
 let mainWindow: BrowserWindow | null = null;
