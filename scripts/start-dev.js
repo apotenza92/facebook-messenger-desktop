@@ -9,6 +9,9 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// Extra args passed after -- (e.g., npm start -- --reset-window)
+const extraArgs = process.argv.slice(2);
+
 // Check if dist folder exists and has required files
 const distMain = path.join(__dirname, '../dist/main/main.js');
 if (!fs.existsSync(distMain)) {
@@ -73,7 +76,8 @@ if (needsRebuild) {
 if (appPath) {
   console.log('Launching Messenger app from:', appPath);
   try {
-    execSync(`open "${appPath}"`, {
+    const argsPart = extraArgs.length ? ` --args ${extraArgs.join(' ')}` : '';
+    execSync(`open "${appPath}"${argsPart}`, {
       cwd: path.join(__dirname, '..'),
       stdio: 'inherit',
       env: {
