@@ -105,16 +105,12 @@ jobs:
           fi
 
           if [ "$use_default" = true ]; then
-            printf '%s\n' \
-"## What's Changed" \
-"" \
-"Full changelog: ${DEFAULT_NOTES_URL}" \
-"" \
-"## Downloads" \
-"" \
-"- macOS: .dmg and .zip files" \
-"- Windows: .exe installer (NSIS) and portable .exe" \
-"- Linux: .AppImage (portable, works on all distributions)" \
+            printf '%s\n' "## What's Changed" "" \
+              "Full changelog: ${DEFAULT_NOTES_URL}" "" \
+              "## Downloads" "" \
+              "- macOS: .dmg and .zip files" \
+              "- Windows: .exe installer (NSIS) and portable .exe" \
+              "- Linux: .AppImage (portable, works on all distributions)" \
               > "$NOTES"
           fi
 
