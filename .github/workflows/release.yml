@@ -35,15 +35,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        timeout-minutes: 10
 
       - name: Generate icons
         run: npm run generate-icons
 
       - name: Build application
         run: npm run build
+        timeout-minutes: 5
 
       - name: Build distributables
         run: npm run dist:${{ matrix.platform }}
+        timeout-minutes: 30
         # Optional code signing: Add env vars for CSC_LINK, CSC_KEY_PASSWORD, etc.
         # See README for details on setting up GitHub secrets
 
@@ -56,8 +59,6 @@ jobs:
             release/**/*.zip
             release/**/*.exe
             release/**/*.AppImage
-            release/**/*.deb
-            release/**/*.rpm
             release/**/*.blockmap
           retention-days: 30
           if-no-files-found: error
@@ -82,6 +83,42 @@ jobs:
         id: tag_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Prepare release notes
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            VERSION="${{ steps.tag_version.outputs.VERSION }}"
+            # Extract section for this version (between ## [v$VERSION] and next ##)
+            awk "/^## \[v?$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d' | sed '1d' > release_notes.txt || true
+            if [ ! -s release_notes.txt ]; then
+              # No custom notes found, create default
+              cat > release_notes.txt << EOF
+            ## What's Changed
+            
+            Full changelog: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}
+            
+            ## Downloads
+            
+            - **macOS**: \`.dmg\` and \`.zip\` files
+            - **Windows**: \`.exe\` installer (NSIS) and portable \`.exe\`
+            - **Linux**: \`.AppImage\` (portable, works on all distributions)
+            EOF
+            fi
+          else
+            # No CHANGELOG.md, create default notes
+            cat > release_notes.txt << EOF
+            ## What's Changed
+            
+            Full changelog: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}
+            
+            ## Downloads
+            
+            - **macOS**: \`.dmg\` and \`.zip\` files
+            - **Windows**: \`.exe\` installer (NSIS) and portable \`.exe\`
+            - **Linux**: \`.AppImage\` (portable, works on all distributions)
+            EOF
+          fi
+        continue-on-error: true
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -89,17 +126,8 @@ jobs:
           name: Release v${{ steps.tag_version.outputs.VERSION }}
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-          generate_release_notes: true
-          body: |
-            ## What's Changed
-            
-            Full changelog: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}
-            
-            ## Downloads
-            
-            - **macOS**: `.dmg` and `.zip` files
-            - **Windows**: `.exe` installer (NSIS) and portable `.exe`
-            - **Linux**: `.AppImage`, `.deb`, and `.rpm` packages
+          generate_release_notes: false
+          body_path: release_notes.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

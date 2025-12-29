@@ -21,7 +21,10 @@
     "desktop",
     "electron"
   ],
-  "author": "",
+  "author": {
+    "name": "Alex Potenza",
+    "email": "apotenza92@gmail.com"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.10.0",
@@ -57,9 +60,7 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb",
-        "rpm"
+        "AppImage"
       ],
       "category": "Network",
       "icon": "assets/icons/icon.png"

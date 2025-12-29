@@ -7,7 +7,7 @@ A self-contained desktop application for Facebook Messenger, built with Electron
 Download the latest release from the [Releases](https://github.com/apotenza92/FacebookMessengerDesktop/releases) page:
 - **macOS**: `.dmg` file
 - **Windows**: `.exe` installer
-- **Linux**: `.AppImage`, `.deb`, or `.rpm`
+- **Linux**: `.AppImage` (portable, works on all distributions)
 
 ## Development
 
