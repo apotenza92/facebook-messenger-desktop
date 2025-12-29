@@ -47,17 +47,22 @@
     "mac": {
       "category": "public.app-category.social-networking",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
-      "icon": "assets/icons/icon.icns"
+      "icon": "assets/icons/icon.icns",
+      "dmg": {
+        "artifactName": "Messenger-${version}.${ext}"
+      }
     },
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ],
-      "icon": "assets/icons/icon.ico"
+      "icon": "assets/icons/icon.ico",
+      "artifactName": "Messenger-${version}-setup.${ext}"
+    },
+    "nsis": {
+      "differentialPackage": false
     },
     "linux": {
       "target": [

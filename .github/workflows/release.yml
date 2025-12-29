@@ -61,10 +61,8 @@ jobs:
           name: ${{ matrix.artifact_name }}-build
           path: |
             release/**/*.dmg
-            release/**/*.zip
             release/**/*.exe
             release/**/*.AppImage
-            release/**/*.blockmap
           retention-days: 30
           if-no-files-found: error
 
