@@ -60,9 +60,9 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}-build
           path: |
-            release/**/*.dmg
-            release/**/*.exe
-            release/**/*.AppImage
+            release/*.dmg
+            release/*.exe
+            release/*.AppImage
           retention-days: 30
           if-no-files-found: error
 
