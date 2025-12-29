@@ -1,19 +1,24 @@
 # Facebook Messenger Desktop
 
-A self-contained desktop application for Facebook Messenger, built with Electron. This cross platform app wraps messenger.com and enables native platform notifications and badge counts.
-
-## Prerequisites
-
-- Node.js 18+ and npm
+A self-contained desktop application for Facebook Messenger, built with Electron. Wraps messenger.com with native platform notifications and badge counts.
 
 ## Installation
+
+Download the latest release from the [Releases](https://github.com/apotenza92/FacebookMessengerDesktop/releases) page:
+- **macOS**: `.dmg` file
+- **Windows**: `.exe` installer
+- **Linux**: `.AppImage`, `.deb`, or `.rpm`
+
+## Development
+
+**Prerequisites:** Node.js 18+ and npm
 
 1. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Generate app icons from SVG (first time setup):
+2. Generate icons (first time only):
 ```bash
 npm run generate-icons
 ```
@@ -22,4 +27,3 @@ npm run generate-icons
 ```bash
 npm start
 ```
-
