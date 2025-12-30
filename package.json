@@ -52,7 +52,7 @@
       ],
       "icon": "assets/icons/icon.icns",
       "notarize": {
-        "teamId": "${env.APPLE_TEAM_ID}"
+        "teamId": "27JL2VERNC"
       },
       "artifactName": "Messenger-${version}-macos-${arch}.${ext}"
     },
