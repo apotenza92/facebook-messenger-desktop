@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { NotificationHandler } from './notification-handler';
 import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
+import { autoUpdater } from 'electron-updater';
 
 const resetFlag =
   process.argv.includes('--reset-window') ||
@@ -378,15 +379,27 @@ function createApplicationMenu(): void {
     },
   };
 
+  const checkUpdatesMenuItem: Electron.MenuItemConstructorOptions = {
+    label: 'Check for Updates…',
+    click: () => {
+      autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
+        console.warn('[AutoUpdater] manual check failed', err);
+        dialog.showMessageBox({
+          type: 'warning',
+          title: 'Update check failed',
+          message: 'Could not check for updates. Please try again later.',
+          buttons: ['OK'],
+        }).catch(() => {});
+      });
+    },
+  };
+
   if (process.platform === 'darwin') {
     const template: Electron.MenuItemConstructorOptions[] = [
       {
         label: app.name,
         submenu: [
           { role: 'about' as const },
-          { type: 'separator' },
-          uninstallMenuItem,
-          { type: 'separator' },
           { role: 'services' as const },
           { type: 'separator' },
           { role: 'hide' as const },
@@ -394,6 +407,15 @@ function createApplicationMenu(): void {
           { role: 'unhide' as const },
           { type: 'separator' },
           { role: 'quit' as const },
+        ],
+      },
+      {
+        label: 'File',
+        submenu: [
+          checkUpdatesMenuItem,
+          uninstallMenuItem,
+          { type: 'separator' },
+          { role: 'close' as const },
         ],
       },
       { role: 'editMenu' as const },
@@ -408,7 +430,12 @@ function createApplicationMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: 'File',
-      submenu: [uninstallMenuItem, { type: 'separator' }, { role: 'quit' as const }],
+      submenu: [
+        checkUpdatesMenuItem,
+        uninstallMenuItem,
+        { type: 'separator' },
+        { role: 'quit' as const },
+      ],
     },
     {
       label: 'Edit',
@@ -528,6 +555,42 @@ function getDockIconPath(): string | undefined {
 
 // App lifecycle
 app.whenReady().then(() => {
+  // Auto-updater setup
+  try {
+    autoUpdater.autoDownload = true;
+    autoUpdater.logger = console;
+    autoUpdater.on('update-available', () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Update available',
+        message: 'A new version is available. It will download in the background.',
+        buttons: ['OK'],
+      }).catch(() => {});
+    });
+    autoUpdater.on('update-downloaded', () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Update ready',
+        message: 'Update downloaded. Restart to install now?',
+        buttons: ['Restart Now', 'Later'],
+        cancelId: 1,
+        defaultId: 0,
+      }).then(({ response }) => {
+        if (response === 0) {
+          autoUpdater.quitAndInstall();
+        }
+      }).catch(() => {});
+    });
+    autoUpdater.on('error', (err: unknown) => {
+      console.warn('[AutoUpdater] error', err);
+    });
+    autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
+      console.warn('[AutoUpdater] check failed', err);
+    });
+  } catch (e) {
+    console.warn('[AutoUpdater] init failed', e);
+  }
+
   // Set dock icon for macOS (must be done after app is ready)
   if (process.platform === 'darwin' && app.dock) {
     const dockIconPath = getDockIconPath();

@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -30,6 +30,7 @@
     "@types/node": "^20.10.0",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "electron-updater": "^6.1.8",
     "png-to-ico": "^2.1.8",
     "sharp": "0.33.5",
     "typescript": "^5.3.3"
@@ -37,6 +38,13 @@
   "build": {
     "appId": "com.facebook.messenger.desktop",
     "productName": "Messenger",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "apotenza92",
+        "repo": "FacebookMessengerDesktop"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -67,6 +75,7 @@
       "differentialPackage": false
     },
     "dmg": {
+    "icon": "assets/icons/icon.icns"
     },
     "linux": {
       "target": [
