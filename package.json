@@ -9,9 +9,9 @@
     "start": "npm run build && node scripts/dev.js",
     "generate-icons": "node scripts/generate-icons.js",
     "dist": "npm run build && electron-builder --publish=never",
-    "dist:mac": "npm run build && electron-builder --mac --arm64 --x64 --publish=never && node scripts/build-dmg.js --all",
-    "dist:mac:arm": "npm run build && electron-builder --mac --arm64 --publish=never && node scripts/build-dmg.js --arm64",
-    "dist:mac:x64": "npm run build && electron-builder --mac --x64 --publish=never && node scripts/build-dmg.js --x64",
+    "dist:mac": "npm run build && electron-builder --mac --arm64 --x64 --publish=never",
+    "dist:mac:arm": "npm run build && electron-builder --mac --arm64 --publish=never",
+    "dist:mac:x64": "npm run build && electron-builder --mac --x64 --publish=never",
     "dist:win": "npm run build && electron-builder --win --publish=never",
     "dist:linux": "npm run build && electron-builder --linux --publish=never",
     "dist:all": "npm run build && electron-builder --mac --win --linux --publish=never"
@@ -38,9 +38,6 @@
     "sharp": "0.33.5",
     "typescript": "^5.3.3"
   },
-  "optionalDependencies": {
-    "appdmg": "0.6.6"
-  },
   "build": {
     "appId": "com.facebook.messenger.desktop",
     "productName": "Messenger",
@@ -60,7 +57,7 @@
     ],
     "mac": {
       "category": "public.app-category.social-networking",
-      "target": "dir",
+      "target": "dmg",
       "icon": "assets/icons/icon.icns",
       "notarize": {
         "teamId": "27JL2VERNC"
@@ -78,6 +75,7 @@
       "differentialPackage": false
     },
     "dmg": {
+      "background": "assets/dmg/dmg-background.png",
       "icon": "assets/icons/dmg-icon.icns",
       "iconSize": 128,
       "iconTextSize": 14,
@@ -87,12 +85,12 @@
       },
       "contents": [
         {
-          "x": 150,
+          "x": 180,
           "y": 220,
           "type": "file"
         },
         {
-          "x": 520,
+          "x": 500,
           "y": 220,
           "type": "link",
           "path": "/Applications"
