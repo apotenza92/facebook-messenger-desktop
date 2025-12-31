@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 
 /**
- * Post-build script to create DMG files
+ * Post-build script to create DMG files (macOS only)
  * Usage: node scripts/build-dmg.js [--arm64 | --x64 | --all]
  */
 
-const appdmg = require('appdmg');
 const fs = require('fs');
 const path = require('path');
+
+// appdmg is macOS-only, gracefully skip on other platforms
+let appdmg;
+try {
+  appdmg = require('appdmg');
+} catch (e) {
+  if (process.platform !== 'darwin') {
+    console.log('Skipping DMG creation (appdmg only available on macOS)');
+    process.exit(0);
+  }
+  throw e;
+}
 
 const releaseDir = path.join(__dirname, '../release');
 const assetsDir = path.join(__dirname, '../assets');

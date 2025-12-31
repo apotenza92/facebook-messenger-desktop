@@ -32,12 +32,14 @@
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "appdmg": "0.6.6",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
     "png-to-ico": "^2.1.8",
     "sharp": "0.33.5",
     "typescript": "^5.3.3"
+  },
+  "optionalDependencies": {
+    "appdmg": "0.6.6"
   },
   "build": {
     "appId": "com.facebook.messenger.desktop",
