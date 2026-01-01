@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -60,6 +60,8 @@
       "category": "public.app-category.social-networking",
       "target": "zip",
       "icon": "assets/icons/icon.icns",
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
       "notarize": {
         "teamId": "27JL2VERNC"
       },
