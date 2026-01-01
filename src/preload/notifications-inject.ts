@@ -336,11 +336,41 @@
   // DETECTION METHOD 1: MutationObserver on sidebar
   // ============================================================================
 
+  // Track whether we're in the initial settling period (no notifications during this time)
+  let isSettling = true;
+  // Track the current sidebar element to detect navigation changes
+  let currentSidebarElement: Element | null = null;
+
+  // Scan and record all currently visible unread conversations (to avoid notifying on initial load)
+  const recordExistingConversations = (sidebar: Element) => {
+    const rows = sidebar.querySelectorAll(selectors.conversationRow);
+    let recordedCount = 0;
+    
+    rows.forEach((row) => {
+      if (isConversationUnread(row)) {
+        const info = extractConversationInfo(row);
+        if (info) {
+          // Mark as already notified so we don't send notifications for these
+          recordNotification(info.href, info.body);
+          recordedCount++;
+        }
+      }
+    });
+    
+    log(`Recorded ${recordedCount} existing unread conversations (will not notify for these)`);
+  };
+
   const setupMutationObserver = () => {
     log('Setting up MutationObserver detection...');
 
     const processMutations = (mutationsList: MutationRecord[]) => {
       if (mutationsList.length === 0) return;
+
+      // Don't send notifications during the settling period
+      if (isSettling) {
+        log('Skipping notifications - still in settling period');
+        return;
+      }
 
       // Global rate limit
       if (!canSendNotification()) {
@@ -399,12 +429,55 @@
       }
     };
 
+    // Handle navigation changes - when sidebar changes, we need to re-settle
+    const handleNavigationChange = () => {
+      const sidebar = findSidebarElement();
+      
+      // Check if sidebar has changed (navigation to different section)
+      if (sidebar && sidebar !== currentSidebarElement) {
+        log('Navigation detected - sidebar changed, entering settling period');
+        isSettling = true;
+        currentSidebarElement = sidebar;
+        
+        // Record all existing conversations in the new view
+        recordExistingConversations(sidebar);
+        
+        // End settling period after the page stabilizes
+        setTimeout(() => {
+          // Re-scan to catch any conversations that loaded after initial scan
+          if (currentSidebarElement) {
+            recordExistingConversations(currentSidebarElement);
+          }
+          isSettling = false;
+          log('Settling period ended - now accepting notifications');
+        }, 3000);
+      }
+    };
+
+    // Watch for URL changes (SPA navigation)
+    let lastUrl = window.location.href;
+    const urlObserver = new MutationObserver(() => {
+      if (window.location.href !== lastUrl) {
+        log('URL changed', { from: lastUrl, to: window.location.href });
+        lastUrl = window.location.href;
+        // Give the page time to render, then handle navigation
+        setTimeout(handleNavigationChange, 1000);
+      }
+    });
+    
+    urlObserver.observe(document.body, { childList: true, subtree: true });
+
     // Wait for sidebar to be available, then observe
     const startObserving = () => {
       const sidebar = findSidebarElement();
 
       if (sidebar) {
         log('MutationObserver: Found sidebar, starting observation', { tagName: sidebar.tagName });
+        currentSidebarElement = sidebar;
+
+        // CRITICAL: Record all existing conversations BEFORE enabling notifications
+        // This prevents notifications for messages that were already there on load
+        recordExistingConversations(sidebar);
 
         const observer = new MutationObserver(processMutations);
         observer.observe(sidebar, {
@@ -415,7 +488,16 @@
           attributeFilter: ['src', 'alt', 'aria-label', 'class'],
         });
 
-        log('MutationObserver: Active');
+        // End the settling period after giving the page time to fully load
+        // This accounts for lazy-loaded conversations and dynamic content
+        setTimeout(() => {
+          // Do one more scan to catch any late-loading conversations
+          recordExistingConversations(sidebar);
+          isSettling = false;
+          log('MutationObserver: Settling period ended, now accepting notifications');
+        }, 5000);
+
+        log('MutationObserver: Active (in settling period)');
       } else {
         log('MutationObserver: Sidebar not found, will retry...');
         // Retry in a few seconds
