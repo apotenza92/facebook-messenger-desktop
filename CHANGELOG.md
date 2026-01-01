@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-01-01
+
+### Fixed
+- Release workflow now requires CHANGELOG.md entry (no more broken changelog links)
+- Added missing changelog entries for versions 0.1.8 through 0.3.0
+
 ## [0.3.0] - 2026-01-01
 
 ### Changed
