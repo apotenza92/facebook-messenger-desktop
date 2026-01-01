@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1] - 2026-01-01
+
+### Fixed
+- **No more notification spam on app launch!** Existing unread messages are now recorded before notifications are enabled
+- Fixed notifications appearing for every message when opening "Message Requests" or other sections
+- Added settling period after navigation to prevent false notifications when switching between views
+
+### Technical
+- MutationObserver now scans and records all existing unread conversations before accepting new notifications
+- URL change detection triggers re-settling to handle SPA navigation
+- Multiple scan passes ensure late-loading conversations are also recorded
+
 ## [0.4.0] - 2026-01-01
 
 ### Added
