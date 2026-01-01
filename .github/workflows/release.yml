@@ -102,25 +102,19 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.tag_version.outputs.VERSION }}"
           NOTES=release_notes.txt
-          DEFAULT_NOTES_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref }}"
 
-          use_default=true
-          if [ -f CHANGELOG.md ]; then
-            # Extract section for this version (between ## [v$VERSION] and next ##)
-            awk "/^## \[v?$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d' | sed '1d' > "$NOTES" || true
-            if [ -s "$NOTES" ]; then
-              use_default=false
-            fi
+          if [ ! -f CHANGELOG.md ]; then
+            echo "ERROR: CHANGELOG.md not found"
+            exit 1
           fi
 
-          if [ "$use_default" = true ]; then
-            printf '%s\n' "## What's Changed" "" \
-              "Full changelog: ${DEFAULT_NOTES_URL}" "" \
-              "## Downloads" "" \
-              "- macOS: .dmg" \
-              "- Windows: .exe installer" \
-              "- Linux: .AppImage" \
-              > "$NOTES"
+          # Extract section for this version (between ## [VERSION] and next ##)
+          awk "/^## \[v?$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d' | sed '1d' > "$NOTES" || true
+          
+          if [ ! -s "$NOTES" ]; then
+            echo "ERROR: No changelog entry found for version $VERSION"
+            echo "Please add an entry to CHANGELOG.md before releasing"
+            exit 1
           fi
 
       - name: Create Release

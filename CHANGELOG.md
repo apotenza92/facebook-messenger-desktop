@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.3.0] - 2026-01-01
+
+### Changed
+- Version bump for stable release
+
+## [0.2.3] - 2026-01-01
+
+### Added
+- Initial Winget support for Windows users (pending approval)
+
+## [0.2.2] - 2026-01-01
+
+### Changed
+- Simplified artifact names by removing version numbers for cleaner direct download links
+
+## [0.2.1] - 2026-01-01
+
+### Added
+- Automatic Homebrew cask update in release workflow
+
+## [0.2.0] - 2026-01-01
+
+### Added
+- Homebrew installation support for macOS (`brew install apotenza92/tap/facebook-messenger-desktop`)
+- Rounded app icon for README
+
+## [0.1.9] - 2026-01-01
+
+### Fixed
+- Auto-updater now works on macOS (switched to zip format, added yml manifests to releases)
+- Async/await handling in app initialization
+
+## [0.1.8] - 2026-01-01
+
+### Fixed
+- Notifications now show correct thread when sidebar is scrolled
+
 ## [0.1.7] - 2026-01-01
 
 ### Added
