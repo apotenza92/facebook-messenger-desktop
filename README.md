@@ -11,8 +11,7 @@ This project exists because the original Facebook Desktop Messenger app was depr
 ### macOS (Homebrew)
 
 ```bash
-brew tap apotenza92/tap
-brew install --cask facebook-messenger-desktop
+brew install --cask apotenza92/tap/facebook-messenger-desktop
 ```
 
 ### Manual Download
