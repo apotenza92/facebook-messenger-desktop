@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0] - 2026-01-01
+
+### Added
+- **Audio & video calls now work!** Added camera and microphone permission support
+- macOS entitlements for camera and microphone access (required for notarized builds)
+- Permission handler for media access requests from messenger.com
+- Notification permission prompt on first launch (macOS)
+
+### Technical
+- Added `entitlements.mac.plist` with camera, microphone, and JIT entitlements
+- Added `setPermissionRequestHandler` and `setPermissionCheckHandler` for media permissions
+
 ## [0.3.1] - 2026-01-01
 
 ### Fixed

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Allow JIT for V8 JavaScript engine (required for Electron) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    
+    <!-- Allow unsigned executable memory (required for Electron's V8 engine) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    
+    <!-- Camera access for video calls -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    
+    <!-- Microphone access for audio/video calls -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>
+

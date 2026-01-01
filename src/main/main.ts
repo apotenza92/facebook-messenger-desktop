@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, Menu, nativeImage, screen, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, Menu, nativeImage, screen, dialog, systemPreferences } from 'electron';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -40,6 +40,7 @@ app.setPath('logs', path.join(userDataPath, 'logs'));
 
 const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
 const movePromptFile = path.join(app.getPath('userData'), 'move-to-applications-prompted.json');
+const notificationPermissionFile = path.join(app.getPath('userData'), 'notification-permission-requested.json');
 
 const uninstallTargets = () => {
   // Only remove app-owned temp directory to avoid touching system temp roots
@@ -161,6 +162,46 @@ function createWindow(): void {
       spellcheck: true,
       enableWebSQL: false,
     },
+  });
+
+  // Set up permission handler for media (camera/microphone) and notifications
+  // This allows messenger.com to request these permissions and prompts the user via macOS
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const url = webContents.getURL();
+    
+    // Only allow permissions for messenger.com
+    if (!url.startsWith('https://www.messenger.com')) {
+      console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
+      callback(false);
+      return;
+    }
+
+    // List of permissions we allow for messenger.com
+    const allowedPermissions = [
+      'media',           // Camera and microphone for calls
+      'mediaKeySystem',  // DRM for media playback
+      'notifications',   // Web notifications (we override these anyway)
+      'fullscreen',      // Fullscreen for video calls
+      'pointerLock',     // Pointer lock for UI interactions
+    ];
+
+    if (allowedPermissions.includes(permission)) {
+      console.log(`[Permissions] Allowing ${permission} for messenger.com`);
+      callback(true);
+    } else {
+      console.log(`[Permissions] Denied ${permission} - not in allowlist`);
+      callback(false);
+    }
+  });
+
+  // Handle permission check requests (for checking current permission status)
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    // Allow permission checks for messenger.com
+    if (requestingOrigin.startsWith('https://www.messenger.com')) {
+      const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+      return allowedPermissions.includes(permission);
+    }
+    return false;
   });
 
   // Load messenger.com
@@ -653,6 +694,80 @@ async function promptMoveToApplications(): Promise<void> {
   }
 }
 
+// Check if we've already requested notification permission
+function hasRequestedNotificationPermission(): boolean {
+  try {
+    if (fs.existsSync(notificationPermissionFile)) {
+      const data = JSON.parse(fs.readFileSync(notificationPermissionFile, 'utf8'));
+      return data.requested === true;
+    }
+  } catch (e) {
+    // Ignore errors, will request again
+  }
+  return false;
+}
+
+// Mark that we've requested notification permission
+function setRequestedNotificationPermission(): void {
+  try {
+    fs.writeFileSync(notificationPermissionFile, JSON.stringify({ requested: true, date: new Date().toISOString() }));
+  } catch (e) {
+    console.warn('[Notification Permission] Failed to save request state:', e);
+  }
+}
+
+// Request notification permission on macOS (first launch only)
+async function requestNotificationPermission(): Promise<void> {
+  // Only needed on macOS
+  if (process.platform !== 'darwin') return;
+  
+  // Skip if we've already requested
+  if (hasRequestedNotificationPermission()) {
+    console.log('[Notification Permission] Already requested, skipping');
+    return;
+  }
+
+  console.log('[Notification Permission] Requesting permission on first launch');
+  
+  // Mark as requested before showing the notification (to avoid re-prompting on crash)
+  setRequestedNotificationPermission();
+
+  // On macOS, showing a notification triggers the system permission prompt
+  // We'll show a welcome notification to trigger the permission request
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: 'Welcome to Messenger',
+      body: 'You\'ll receive notifications here when you get new messages.',
+      silent: true,
+    });
+    notification.show();
+    console.log('[Notification Permission] Welcome notification shown to trigger permission prompt');
+  }
+}
+
+// Request media permissions on macOS (camera/microphone)
+// This will prompt the user when they first try to use these features
+async function checkMediaPermissions(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+
+  try {
+    // Check current permission status (doesn't prompt, just checks)
+    const cameraStatus = systemPreferences.getMediaAccessStatus('camera');
+    const micStatus = systemPreferences.getMediaAccessStatus('microphone');
+    
+    console.log('[Media Permissions] Camera status:', cameraStatus);
+    console.log('[Media Permissions] Microphone status:', micStatus);
+    
+    // If permissions are 'not-determined', they'll be prompted when first accessed
+    // If permissions are 'denied', user needs to enable in System Preferences
+    if (cameraStatus === 'denied' || micStatus === 'denied') {
+      console.log('[Media Permissions] Some permissions denied - user may need to enable in System Preferences for calls');
+    }
+  } catch (e) {
+    console.warn('[Media Permissions] Failed to check status:', e);
+  }
+}
+
 // App lifecycle
 app.whenReady().then(async () => {
   // Auto-updater setup (skip in dev mode - app-update.yml only exists in published builds)
@@ -719,10 +834,11 @@ app.whenReady().then(async () => {
   badgeManager = new BadgeManager();
   backgroundService = new BackgroundService();
 
-  // Request notification permission
-  if (Notification.isSupported()) {
-    // Electron doesn't require explicit permission, but we'll check anyway
-  }
+  // Request notification permission on first launch (triggers macOS permission prompt)
+  await requestNotificationPermission();
+  
+  // Check media permission status (informational - actual prompts happen when messenger.com requests access)
+  await checkMediaPermissions();
 
   // Create application menu
   createApplicationMenu();
