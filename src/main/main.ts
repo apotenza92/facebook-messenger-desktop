@@ -654,7 +654,7 @@ async function promptMoveToApplications(): Promise<void> {
 }
 
 // App lifecycle
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Auto-updater setup (skip in dev mode - app-update.yml only exists in published builds)
   if (!isDev) {
     try {
