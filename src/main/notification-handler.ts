@@ -7,6 +7,7 @@ export interface NotificationData {
   tag?: string;
   silent?: boolean;
   requireInteraction?: boolean;
+  href?: string; // Conversation URL for click-to-navigate
 }
 
 export class NotificationHandler {
@@ -23,7 +24,7 @@ export class NotificationHandler {
       return;
     }
 
-    console.log('[NotificationHandler] Showing notification:', { title: data.title, body: data.body });
+    console.log('[NotificationHandler] Showing notification:', { title: data.title, body: data.body, href: data.href });
 
     const notificationOptions: Electron.NotificationConstructorOptions = {
       title: data.title,
@@ -46,19 +47,63 @@ export class NotificationHandler {
 
     const notification = new Notification(notificationOptions);
 
-    // Handle notification click
+    // Handle notification click - navigate to the conversation
     notification.on('click', () => {
       const mainWindow = this.getMainWindow();
-      if (mainWindow) {
-        mainWindow.show();
-        mainWindow.focus();
-      } else {
-        // If no window exists, create one
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-          const win = windows[0];
-          win.show();
-          win.focus();
+      const targetWindow = mainWindow || BrowserWindow.getAllWindows()[0];
+      
+      if (targetWindow) {
+        targetWindow.show();
+        targetWindow.focus();
+        
+        // Navigate to the conversation if href is provided
+        if (data.href) {
+          // Build full URL from the path
+          const conversationUrl = `https://www.messenger.com${data.href}`;
+          console.log('[NotificationHandler] Navigating to conversation:', conversationUrl);
+          const escapedUrl = conversationUrl.replace(/'/g, "\\'");
+          const targetPath = new URL(conversationUrl).pathname.replace(/\/+$/, '') || '/';
+
+          // Prefer in-app navigation by simulating a click on the matching link.
+          // Fallback to location change if we cannot find the link.
+          targetWindow.webContents
+            .executeJavaScript(
+              `
+                (function() {
+                  const targetPath = '${targetPath}';
+                  const normalized = (p) => {
+                    const withoutHashOrQuery = p.split(/[?#]/)[0];
+                    const trimmed = withoutHashOrQuery.replace(/\\/+\$/, '');
+                    return trimmed === '' ? '/' : trimmed;
+                  };
+
+                  if (normalized(window.location.pathname) === normalized(targetPath)) {
+                    return 'already-there';
+                  }
+
+                  const links = Array.from(document.querySelectorAll('a[href]'));
+                  const match = links.find((a) => {
+                    try {
+                      return normalized(new URL(a.href, window.location.origin).pathname) === normalized(targetPath);
+                    } catch (_) {
+                      return false;
+                    }
+                  });
+
+                  if (match) {
+                    match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
+                    return 'clicked-link';
+                  }
+
+                  window.location.href = '${escapedUrl}';
+                  return 'navigated-location';
+                })();
+              `,
+              true,
+            )
+            .catch((err) => {
+              console.warn('[NotificationHandler] Failed to navigate to conversation', err);
+            });
         }
       }
     });

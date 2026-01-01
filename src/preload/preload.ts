@@ -59,7 +59,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   window.addEventListener('message', (event: MessageEvent) => {
     // Only process messages from the same origin (our injected script)
     if (event.data && typeof event.data === 'object') {
-      if (event.data.type === 'electron-notification') {
+      // Handle both 'electron-notification' (from bridge) and 'notification' (from fallback)
+      if (event.data.type === 'electron-notification' || event.data.type === 'notification') {
         const data = event.data.data;
         try {
           console.log('[Preload Bridge] Received electron-notification', {
@@ -91,9 +92,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
                 tag: data.tag,
                 silent: data.silent,
                 id: data.id,
+                href: data.href, // Pass conversation URL for click navigation
               });
               try {
-                console.log('[Preload Bridge] Sent notification with icon to main', { id: data.id, title: data.title });
+                console.log('[Preload Bridge] Sent notification with icon to main', { id: data.id, title: data.title, href: data.href });
               } catch (_) {}
             }
           });
@@ -106,9 +108,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
               tag: data.tag,
               silent: data.silent,
               id: data.id,
+              href: data.href, // Pass conversation URL for click navigation
             });
             try {
-              console.warn('[Preload Bridge] Icon load failed, sent without icon', { id: data.id, title: data.title });
+              console.warn('[Preload Bridge] Icon load failed, sent without icon', { id: data.id, title: data.title, href: data.href });
             } catch (_) {}
           });
           
@@ -121,9 +124,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
             tag: data.tag,
             silent: data.silent,
             id: data.id,
+            href: data.href, // Pass conversation URL for click navigation
           });
           try {
-            console.log('[Preload Bridge] Sent notification without icon to main', { id: data.id, title: data.title });
+            console.log('[Preload Bridge] Sent notification without icon to main', { id: data.id, title: data.title, href: data.href });
           } catch (_) {}
         }
       } else if (event.data.type === 'electron-fallback-log') {

@@ -148,7 +148,7 @@ function createWindow(): void {
     x: hasPosition ? restoredState.x : undefined,
     y: hasPosition ? restoredState.y : undefined,
     center: !hasPosition,
-    minWidth: 400,
+    minWidth: 708,
     minHeight: 400,
     title: 'Messenger',
     icon: getIconPath(),
@@ -746,10 +746,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  // On macOS, keep app running even when all windows are closed
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Quit on all platforms (including macOS) when the last window closes
+  app.quit();
 });
 
 app.on('before-quit', () => {

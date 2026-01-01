@@ -1,69 +1,259 @@
 // Notification injection script - injected into page context after load
+// Uses DUAL detection: MutationObserver + Title-based (inspired by Caprine)
+// Both run in parallel for maximum reliability regardless of window size
 
 ((window, notification) => {
-  const DEBUG_FALLBACK = true;
+  const DEBUG = true;
   const notifications = new Map<number, any>();
-  let fallbackEnabled = false;
-  let lastUnreadNotified = 0;
 
-  const emitFallbackLog = (eventName: string, payload?: any) => {
+  // Selectors for Messenger's DOM structure (these may need updates as Messenger changes)
+  const selectors = {
+    // The navigation area containing the chat list
+    sidebar: '[role="navigation"]:has([role="grid"])',
+    // Alternative: the grid directly
+    chatsGrid: '[role="grid"][aria-label="Chats"]',
+    // Individual conversation row container
+    conversationRow: '[role="row"]',
+    // Link element within a conversation (contains href for deduplication)
+    conversationLink: '[role="link"]',
+    // Text content elements in conversation preview
+    conversationText: '[dir="auto"]',
+    // The unread indicator (blue dot next to unread conversations)
+    unreadIndicator: '[aria-label="Mark as Read"]',
+  };
+
+  const log = (message: string, payload?: any) => {
+    if (!DEBUG) return;
     try {
+      console.log(`[Notif Dual] ${message}`, payload || '');
       window.postMessage(
         {
           type: 'electron-fallback-log',
-          data: {
-            event: eventName,
-            payload,
-          },
+          data: { event: message, payload },
         },
         '*',
       );
     } catch (_) {}
   };
 
-  // Helper to get text content including emoji from img alt attributes
-  // Messenger renders emojis as <img alt="😀"> elements
-  const getTextWithEmoji = (el: Element): string => {
-    let result = '';
-    const walk = (node: Node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        result += node.textContent || '';
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const elem = node as Element;
-        // Check if it's an emoji img
-        if (elem.tagName === 'IMG') {
-          const alt = elem.getAttribute('alt') || '';
-          // Only include if it looks like an emoji (short, usually 1-2 chars)
-          if (alt && alt.length <= 4) {
-            result += alt;
-          }
-        } else {
-          // Recurse into child nodes
-          for (const child of Array.from(node.childNodes)) {
-            walk(child);
-          }
-        }
+  // ============================================================================
+  // SHARED STATE - used by both MutationObserver and Title-based detection
+  // ============================================================================
+
+  // Track notified conversations by href - stores the last message body we notified for
+  const notifiedConversations = new Map<string, { body: string; time: number }>();
+  const NOTIFICATION_EXPIRY_MS = 600000; // Forget after 10 minutes
+
+  const cleanupNotifiedConversations = () => {
+    const now = Date.now();
+    for (const [key, data] of notifiedConversations.entries()) {
+      if (now - data.time > NOTIFICATION_EXPIRY_MS) {
+        notifiedConversations.delete(key);
       }
-    };
-    walk(el);
-    return result.trim();
+    }
   };
 
+  // Check if we've already notified for this exact message
+  const hasAlreadyNotified = (href: string, body: string): boolean => {
+    const existing = notifiedConversations.get(href);
+    if (!existing) return false;
+    // Already notified for this exact message content
+    return existing.body === body;
+  };
+
+  const canSendNotification = (): boolean => {
+    // No global rate limit
+    return true;
+  };
+
+  const recordNotification = (href: string, body: string) => {
+    const now = Date.now();
+    notifiedConversations.set(href, { body, time: now });
+  };
+
+  // ============================================================================
+  // UTILITY FUNCTIONS
+  // ============================================================================
+
+  // Generate text from a node, handling emojis
+  const generateStringFromNode = (element: Element | null): string | undefined => {
+    if (!element) return undefined;
+    const cloneElement = element.cloneNode(true) as Element;
+    const images = Array.from(cloneElement.querySelectorAll('img'));
+    for (const image of images) {
+      let emojiString = image.alt;
+      if (emojiString === '(Y)' || emojiString === '(y)') {
+        emojiString = '👍';
+      }
+      image.parentElement?.replaceWith(document.createTextNode(emojiString || ''));
+    }
+    return cloneElement.textContent?.trim() || undefined;
+  };
+
+  // Send notification via bridge or postMessage
+  const sendNotification = (title: string, body: string, source: string, icon?: string, href?: string) => {
+    log(`=== SENDING NOTIFICATION [${source}] ===`, { title, body: body.slice(0, 50), href });
+
+    const notificationData = {
+      title: String(title),
+      body: String(body),
+      id: Date.now() + Math.random(),
+      icon,
+      silent: false,
+      href, // Include conversation URL for click-to-navigate
+    };
+
+    if ((window as any).__electronNotificationBridge) {
+      try {
+        (window as any).__electronNotificationBridge(notificationData);
+        log('Notification sent via bridge');
+      } catch (err) {
+        log('Bridge call failed', { error: String(err) });
+      }
+    } else {
+      log('Bridge not available, using postMessage');
+      window.postMessage({ type: 'notification', data: notificationData }, '*');
+    }
+  };
+
+  // Check if window is focused (notifications should be skipped if focused)
+  const isWindowFocused = (): boolean => {
+    return document.hasFocus() && document.visibilityState === 'visible';
+  };
+
+  const normalizePath = (path: string): string => {
+    const withoutHashOrQuery = path.split(/[?#]/)[0];
+    const trimmed = withoutHashOrQuery.replace(/\/+$/, '');
+    return trimmed === '' ? '/' : trimmed;
+  };
+
+  const isCurrentConversation = (href: string): boolean => {
+    const currentPath = normalizePath(window.location.pathname);
+    const targetPath = normalizePath(href);
+    return currentPath === targetPath;
+  };
+
+  // ============================================================================
+  // CONVERSATION EXTRACTION
+  // ============================================================================
+
+  // Check if a conversation element has an unread indicator
+  const isConversationUnread = (conversationEl: Element): boolean => {
+    // PRIMARY CHECK: Look for "Unread message:" text in the conversation
+    // This is how Messenger marks unread conversations in the DOM
+    const textContent = conversationEl.textContent || '';
+    if (textContent.includes('Unread message:')) {
+      return true;
+    }
+
+    // Check aria-label patterns (the row element often has full text including "Unread message:")
+    const ariaLabel = conversationEl.getAttribute('aria-label') || '';
+    if (ariaLabel.includes('Unread message') || ariaLabel.toLowerCase().includes('unread')) {
+      return true;
+    }
+
+    // Look for the "Mark as Read" button which indicates unread
+    const markAsRead = conversationEl.querySelector(selectors.unreadIndicator);
+    if (markAsRead) {
+      return true;
+    }
+
+    // Check aria-label on child elements
+    const childWithUnread = conversationEl.querySelector('[aria-label*="unread"], [aria-label*="Unread"]');
+    if (childWithUnread) {
+      return true;
+    }
+
+    return false;
+  };
+
+  // Extract conversation info from a conversation element
+  const extractConversationInfo = (
+    conversationEl: Element,
+    verbose = false,
+  ): { title: string; body: string; href: string; icon?: string } | null => {
+    // Find the link element to get the href (used for deduplication)
+    const linkEl =
+      conversationEl.querySelector(selectors.conversationLink) ||
+      conversationEl.closest(selectors.conversationLink);
+    const href = linkEl?.getAttribute('href');
+    
+    if (!href) {
+      return null;
+    }
+
+    // Find all text elements
+    const textElements = conversationEl.querySelectorAll(selectors.conversationText);
+    
+    if (textElements.length < 1) {
+      return null;
+    }
+
+    const texts: string[] = [];
+    textElements.forEach((el) => {
+      const text = generateStringFromNode(el);
+      if (text && text.length > 0) {
+        // Filter out timestamps and metadata
+        if (!/^\d+[mhdw]$/.test(text) && text !== '·' && text !== 'Unread message:') {
+          texts.push(text);
+        }
+      }
+    });
+
+    const title = texts[0] || '';
+    const body = texts[1] || 'New message';
+
+    if (!title) {
+      return null;
+    }
+
+    // Try to get the avatar icon
+    const imgEl = conversationEl.querySelector('img');
+    const icon = imgEl?.src;
+
+    if (verbose) {
+      log('extractConversationInfo', { title, body: body.slice(0, 30), href });
+    }
+
+    return { title, body, href, icon };
+  };
+
+  // Find sidebar or chat grid element
+  const findSidebarElement = (): Element | null => {
+    // Try primary selector
+    let sidebar = document.querySelector(selectors.sidebar);
+    if (sidebar) return sidebar;
+
+    // Try finding grid and getting its navigation parent
+    const grid = document.querySelector(selectors.chatsGrid);
+    if (grid) {
+      const navParent = grid.closest('[role="navigation"]');
+      if (navParent) return navParent;
+      return grid; // Use grid directly if no nav parent
+    }
+
+    return null;
+  };
+
+  // ============================================================================
+  // NATIVE NOTIFICATION INTERCEPTION
+  // ============================================================================
+
   // Handle events sent from the browser process (via preload)
-  window.addEventListener('message', ({data}: MessageEvent) => {
+  window.addEventListener('message', ({ data }: MessageEvent) => {
     if (!data || typeof data !== 'object') return;
-    
-    const {type, data: eventData} = data as {type: string; data: any};
-    
+
+    const { type, data: eventData } = data as { type: string; data: any };
+
     if (type === 'notification-callback') {
-      const {callbackName, id} = eventData;
+      const { callbackName, id } = eventData;
       const notification = notifications.get(id);
       if (!notification) return;
-      
+
       if (notification[callbackName]) {
         notification[callbackName]();
       }
-      
+
       if (callbackName === 'onclose') {
         notifications.delete(id);
       }
@@ -72,65 +262,40 @@
 
   let counter = 1;
 
+  // Augmented Notification class that forwards to Electron
   const augmentedNotification = Object.assign(
     class {
       private readonly _id: number;
 
       constructor(title: string, options?: NotificationOptions) {
         // Handle React props in title and body
-        let {body} = options || {};
+        let { body } = options || {};
         const bodyProperties = (body as any)?.props;
-        body = bodyProperties ? bodyProperties.content?.[0] : (options?.body || '');
+        body = bodyProperties ? bodyProperties.content?.[0] : options?.body || '';
 
         const titleProperties = (title as any)?.props;
-        title = titleProperties ? titleProperties.content?.[0] : (title || '');
+        title = titleProperties ? titleProperties.content?.[0] : title || '';
 
         this._id = counter++;
         notifications.set(this._id, this as any);
 
-        // Send notification via a bridge function exposed by preload
-        // The preload script will inject a bridge function into the page context
-        if ((window as any).__electronNotificationBridge) {
-          try {
-            console.log('[Notif Inject] Forwarding via bridge', { id: this._id, title, body });
-          } catch (_) {}
-          (window as any).__electronNotificationBridge({
-            title: String(title),
-            body: String(body),
-            id: this._id,
-            icon: options?.icon,
-            tag: options?.tag,
-            silent: options?.silent,
-          });
+        log('=== NATIVE NOTIFICATION INTERCEPTED ===', { id: this._id, title, body });
+
+        // Use title as key for deduplication (title is usually the sender name)
+        const key = `native:${title}`;
+        const bodyStr = String(body).slice(0, 100);
+
+        if (!hasAlreadyNotified(key, bodyStr) && canSendNotification()) {
+          recordNotification(key, bodyStr);
+          sendNotification(String(title), String(body), 'NATIVE', options?.icon as string);
         } else {
-          try {
-            console.warn('[Notif Inject] Bridge missing, falling back to postMessage', { id: this._id, title, body });
-          } catch (_) {}
-          // Fallback: try postMessage (may not work with context isolation)
-          window.postMessage(
-            {
-              type: 'notification',
-              data: {
-                title: String(title),
-                body: String(body),
-                id: this._id,
-                icon: options?.icon,
-                tag: options?.tag,
-                silent: options?.silent,
-              },
-            },
-            '*',
-          );
+          log('Native notification deduplicated', { key });
         }
       }
 
-      // No-op, but Messenger expects this method to be present
-      close(): void {
-        // Notifications are handled by the main process
-      }
+      close(): void {}
 
       addEventListener(event: string, listener: EventListener | null): void {
-        // Store listeners for callback handling
         if (!listener) return;
         if (!(this as any).listeners) {
           (this as any).listeners = new Map();
@@ -160,7 +325,6 @@
         return 'granted';
       }
 
-      // Messenger sometimes tries to set Notification.permission; provide a harmless setter to avoid errors
       static set permission(_value: NotificationPermission) {
         // no-op
       }
@@ -168,342 +332,108 @@
     notification,
   );
 
-  // Best-effort fallback: if Messenger's service worker never registers (common when blocked),
-  // watch unread count bumps and raise our own notification so the user still gets a banner.
-  const setupFallbackIfNoServiceWorker = () => {
-    const parseUnreadCount = (title: string): number => {
-      const match = title.match(/^\((\d+)\)/);
-      return match ? parseInt(match[1], 10) : 0;
-    };
+  // ============================================================================
+  // DETECTION METHOD 1: MutationObserver on sidebar
+  // ============================================================================
 
-  // Find the scrollable container for the chat list
-  const findScrollContainer = (): HTMLElement | null => {
-    // The chat list grid
-    const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
-    if (!chatsGrid) return null;
-    
-    // Walk up to find the scrollable parent
-    let el: HTMLElement | null = chatsGrid as HTMLElement;
-    while (el) {
-      const style = window.getComputedStyle(el);
-      const overflowY = style.overflowY;
-      if (overflowY === 'auto' || overflowY === 'scroll') {
-        return el;
-      }
-      el = el.parentElement;
-    }
-    
-    // Fallback: look for common scrollable container patterns
-    const possibleContainers = document.querySelectorAll('[style*="overflow"]');
-    for (const container of Array.from(possibleContainers)) {
-      if (container.contains(chatsGrid)) {
-        return container as HTMLElement;
-      }
-    }
-    
-    return null;
-  };
+  const setupMutationObserver = () => {
+    log('Setting up MutationObserver detection...');
 
-  // Extract thread info from a row element
-  const extractThreadInfo = (row: Element): { name: string; snippet: string } | null => {
-    const firstCell = row.querySelector('[role="gridcell"]');
-    if (!firstCell) return null;
-    
-    const cellAria = (firstCell.getAttribute('aria-label') || '').trim();
-    if (cellAria.startsWith('More options')) return null;
+    const processMutations = (mutationsList: MutationRecord[]) => {
+      if (mutationsList.length === 0) return;
 
-    // Extract name from nested elements
-    const nameEl = firstCell.querySelector('[dir="auto"]');
-    const name = nameEl ? getTextWithEmoji(nameEl) : '';
-    if (!name) return null;
-    
-    // Find the message preview
-    const allDirAuto = firstCell.querySelectorAll('[dir="auto"]');
-    let snippet = '';
-    allDirAuto.forEach((el, idx) => {
-      const t = getTextWithEmoji(el);
-      if (idx > 0 && t && !/^\d+[mhdw]$/.test(t) && t !== '·' && t !== 'Unread message:') {
-        if (!snippet) snippet = t;
-      }
-    });
-    
-    return { name, snippet: snippet || 'New message' };
-  };
-
-  // Get the newest thread by scrolling to top and back
-  // New messages bump their thread to the top of the list
-  // This only runs when the app isn't focused, so the user won't see the scroll
-  const getNewestThreadAsync = (): Promise<{ name: string; snippet: string } | null> => {
-    return new Promise((resolve) => {
-      const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
-      if (!chatsGrid) {
-        resolve(null);
+      // Global rate limit
+      if (!canSendNotification()) {
         return;
       }
 
-      const scrollContainer = findScrollContainer();
-      
-      // If we can't find a scroll container, try to get from current view
-      if (!scrollContainer) {
-        if (DEBUG_FALLBACK) {
-          try {
-            emitFallbackLog('no-scroll-container', {});
-          } catch (_) {}
-        }
-        // Fall back to first visible row
-        const rows = Array.from(chatsGrid.querySelectorAll('[role="row"]'));
-        for (const row of rows) {
-          const info = extractThreadInfo(row);
-          if (info) {
-            resolve(info);
-            return;
-          }
-        }
-        resolve(null);
-        return;
-      }
+      cleanupNotifiedConversations();
 
-      // Save current scroll position
-      const savedScrollTop = scrollContainer.scrollTop;
-      const wasScrolled = savedScrollTop > 50; // Only scroll if user is meaningfully scrolled down
-      
-      if (wasScrolled) {
-        // Disable smooth scrolling
-        scrollContainer.style.scrollBehavior = 'auto';
-        
-        // Scroll to top
-        scrollContainer.scrollTop = 0;
-        
-        if (DEBUG_FALLBACK) {
-          try {
-            emitFallbackLog('scrolled-to-top', { savedScrollTop });
-          } catch (_) {}
-        }
-        
-        // Wait for virtual scroll DOM to update, then grab thread info and restore
-        setTimeout(() => {
-          const rows = Array.from(chatsGrid.querySelectorAll('[role="row"]'));
-          let result: { name: string; snippet: string } | null = null;
-          
-          for (const row of rows) {
-            const info = extractThreadInfo(row);
-            if (info) {
-              result = info;
-              break;
-            }
-          }
-          
-          // Restore scroll position - user isn't watching so no rush
-          setTimeout(() => {
-            scrollContainer.scrollTop = savedScrollTop;
-            scrollContainer.style.scrollBehavior = '';
-            
-            if (DEBUG_FALLBACK) {
-              try {
-                emitFallbackLog('restored-scroll', { savedScrollTop, found: !!result });
-              } catch (_) {}
-            }
-          }, 50);
-          
-          resolve(result);
-        }, 100); // Give virtual scroll time to render the top rows
-      } else {
-        // Not scrolled far, just get the first visible row
-        const rows = Array.from(chatsGrid.querySelectorAll('[role="row"]'));
-        for (const row of rows) {
-          const info = extractThreadInfo(row);
-          if (info) {
-            resolve(info);
-            return;
-          }
-        }
-        resolve(null);
-      }
-    });
-  };
-  
-  // Sync wrapper for backward compatibility - but we'll use async version in sendFallbackNotification
-  const getNewestThread = (): { name: string; snippet: string } | null => {
-    // For sync calls, just try to get from current view without scrolling
-    const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
-    if (!chatsGrid) return null;
-    
-    const rows = Array.from(chatsGrid.querySelectorAll('[role="row"]'));
-    for (const row of rows) {
-      const info = extractThreadInfo(row);
-      if (info) return info;
-    }
-    return null;
-  };
+      const alreadyProcessed = new Set<string>();
 
-    // Track notified thread+message combos to avoid duplicates
-    const notifiedThreads = new Map<string, number>(); // key: "name|snippet", value: timestamp
-    const NOTIFIED_EXPIRY_MS = 300000; // Forget notified threads after 5 minutes (prevents re-notifying same message)
+      // Process mutations in reverse order (newest first)
+      for (const mutation of [...mutationsList].reverse()) {
+        let target = mutation.target as Element;
+        if (target.nodeType === Node.TEXT_NODE) {
+          target = target.parentElement as Element;
+        }
+        if (!target) continue;
 
-    const sendSingleNotification = (title: string, body: string) => {
-      if ((window as any).__electronNotificationBridge) {
-        (window as any).__electronNotificationBridge({
-          title: String(title),
-          body: String(body),
-          id: Date.now() + Math.random(),
-          silent: false,
+        // Walk up to find the conversation row
+        const conversationRow = target.closest(selectors.conversationRow);
+        if (!conversationRow) continue;
+
+        // Extract info to get href for deduplication
+        const info = extractConversationInfo(conversationRow);
+        if (!info) continue;
+
+        // Skip if already processed in this batch
+        if (alreadyProcessed.has(info.href)) continue;
+        alreadyProcessed.add(info.href);
+
+        // Skip if this is the currently open conversation while window is focused
+        if (isCurrentConversation(info.href) && isWindowFocused()) {
+          continue;
+        }
+
+        // Check if this conversation is unread
+        if (!isConversationUnread(conversationRow)) {
+          continue;
+        }
+
+        // Check if we've already notified for this exact message
+        if (hasAlreadyNotified(info.href, info.body)) {
+          continue;
+        }
+
+        recordNotification(info.href, info.body);
+        log('Sending notification from MutationObserver', {
+          title: info.title,
+          body: info.body.slice(0, 50),
+          href: info.href,
         });
-      } else {
-        window.postMessage(
-          {
-            type: 'notification',
-            data: {
-              title: String(title),
-              body: String(body),
-              id: Date.now() + Math.random(),
-              silent: false,
-            },
-          },
-          '*',
-        );
+
+        sendNotification(info.title, info.body, 'MUTATION', info.icon, info.href);
+        // Only send one notification per mutation batch
+        break;
       }
     };
 
-    const sendFallbackNotification = async (unreadCount: number) => {
-      const now = Date.now();
+    // Wait for sidebar to be available, then observe
+    const startObserving = () => {
+      const sidebar = findSidebarElement();
 
-      // Clean up old notified entries
-      for (const [key, ts] of notifiedThreads.entries()) {
-        if (now - ts > NOTIFIED_EXPIRY_MS) {
-          notifiedThreads.delete(key);
-        }
-      }
+      if (sidebar) {
+        log('MutationObserver: Found sidebar, starting observation', { tagName: sidebar.tagName });
 
-      // Get the newest thread using async scroll method (scrolls to top and back)
-      // This only runs when app isn't focused, so user won't see it
-      const thread = await getNewestThreadAsync();
-      
-      if (thread) {
-        const key = `${thread.name}|${thread.snippet}`;
-        const lastNotified = notifiedThreads.get(key);
-        if (lastNotified && now - lastNotified < NOTIFIED_EXPIRY_MS) {
-          if (DEBUG_FALLBACK) {
-            try {
-              emitFallbackLog('thread-already-notified', { name: thread.name });
-            } catch (_) {}
-          }
-          return;
-        }
-
-        // Send notification
-        notifiedThreads.set(key, now);
-        
-        if (DEBUG_FALLBACK) {
-          try {
-            emitFallbackLog('send-notification', { name: thread.name, snippet: thread.snippet.slice(0, 100) });
-          } catch (_) {}
-        }
-
-        sendSingleNotification(thread.name, thread.snippet);
-        return;
-      }
-
-      // Fallback: couldn't find thread info even with scroll
-      // Send a generic notification so the user still knows they have a message
-      const genericKey = `__generic__|${unreadCount}`;
-      const lastGeneric = notifiedThreads.get(genericKey);
-      if (lastGeneric && now - lastGeneric < NOTIFIED_EXPIRY_MS) {
-        if (DEBUG_FALLBACK) {
-          try {
-            emitFallbackLog('generic-already-notified');
-          } catch (_) {}
-        }
-        return;
-      }
-
-      notifiedThreads.set(genericKey, now);
-      
-      if (DEBUG_FALLBACK) {
-        try {
-          emitFallbackLog('send-generic-notification', { unreadCount });
-        } catch (_) {}
-      }
-
-      const plural = unreadCount === 1 ? 'message' : 'messages';
-      sendSingleNotification('Messenger', `You have ${unreadCount} unread ${plural}`);
-    };
-
-    const watchTitleChanges = () => {
-      let lastTitle = document.title;
-      lastUnreadNotified = parseUnreadCount(lastTitle);
-      let pendingNotification: ReturnType<typeof setTimeout> | null = null;
-
-      const observer = new MutationObserver(() => {
-        if (document.title === lastTitle) return;
-        lastTitle = document.title;
-        const unread = parseUnreadCount(lastTitle);
-        
-        // Only notify when count increases and window not focused
-        if (
-          unread > lastUnreadNotified &&
-          (document.visibilityState === 'hidden' || !document.hasFocus())
-        ) {
-          if (DEBUG_FALLBACK) {
-            try {
-              emitFallbackLog('title-trigger', { prev: lastUnreadNotified, next: unread });
-            } catch (_) {}
-          }
-          lastUnreadNotified = unread;
-          
-          // Clear any pending notification to avoid duplicates
-          if (pendingNotification) {
-            clearTimeout(pendingNotification);
-          }
-          
-          // Wait a moment for DOM to update, then send notification
-          pendingNotification = setTimeout(() => {
-            pendingNotification = null;
-            sendFallbackNotification(unread);
-          }, 300);
-        } else if (unread < lastUnreadNotified) {
-          // Reset when unread decreases (user read messages) - no log needed
-          lastUnreadNotified = unread;
-        }
-      });
-
-      observer.observe(document.querySelector('title') || document.head, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-    };
-
-    // Delay slightly to let the page settle, then check for a service worker
-    setTimeout(() => {
-      navigator.serviceWorker
-        ?.getRegistration()
-        .then((reg) => {
-          if (reg) {
-            try {
-              console.log('[Notif Fallback] Service worker present, fallback not needed');
-              emitFallbackLog('sw-present');
-            } catch (_) {}
-            return;
-          }
-          fallbackEnabled = true;
-          try {
-            console.warn('[Notif Fallback] No service worker found, enabling title-based notifications');
-            emitFallbackLog('fallback-enabled');
-          } catch (_) {}
-          watchTitleChanges();
-        })
-        .catch(() => {
-          // If the check fails, enable fallback to be safe
-          fallbackEnabled = true;
-          watchTitleChanges();
+        const observer = new MutationObserver(processMutations);
+        observer.observe(sidebar, {
+          characterData: true,
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ['src', 'alt', 'aria-label', 'class'],
         });
-    }, 1500);
+
+        log('MutationObserver: Active');
+      } else {
+        log('MutationObserver: Sidebar not found, will retry...');
+        // Retry in a few seconds
+        setTimeout(startObserving, 3000);
+      }
+    };
+
+    // Start after page settles
+    setTimeout(startObserving, 2000);
   };
+
+  // ============================================================================
+  // INITIALIZATION
+  // ============================================================================
 
   // Override window.Notification
-  Object.assign(window, {Notification: augmentedNotification});
-  
-  // Also try to make it non-configurable (may fail in some contexts)
+  Object.assign(window, { Notification: augmentedNotification });
+
   try {
     Object.defineProperty(window, 'Notification', {
       value: augmentedNotification,
@@ -511,11 +441,13 @@
       configurable: false,
       enumerable: true,
     });
+    log('Notification API overridden successfully');
   } catch (e) {
-    // Fallback - already set via Object.assign above
-    console.log('[Notification Inject] Using fallback override method');
+    log('Using fallback Notification override method');
   }
 
-  setupFallbackIfNoServiceWorker();
+  // Start MutationObserver detection
+  log('Starting MutationObserver notification detection...');
+  setupMutationObserver();
+  log('Initialization complete');
 })(window, Notification);
-
