@@ -23,17 +23,3 @@ brew install --cask apotenza92/tap/facebook-messenger-desktop
 ```bash
 winget install apotenza92.FacebookMessengerDesktop
 ```
-
-## Development
-
-**Prerequisites:** Node.js 18+ and npm
-
-1. Install dependencies:
-```bash
-npm install
-```
-
-2. Run the app:
-```bash
-npm start
-```
