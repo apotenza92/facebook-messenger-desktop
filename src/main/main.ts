@@ -172,7 +172,7 @@ function createWindow(): void {
     x: hasPosition ? restoredState.x : undefined,
     y: hasPosition ? restoredState.y : undefined,
     center: !hasPosition,
-    minWidth: 708,
+    minWidth: 715,
     minHeight: 400,
     title: 'Messenger',
     // Only set custom icon in production - dev mode uses default Electron icon
