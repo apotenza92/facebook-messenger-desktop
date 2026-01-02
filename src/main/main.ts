@@ -1320,6 +1320,29 @@ function openGitHubPage(): void {
 }
 
 async function showUpdateAvailableDialog(version: string): Promise<void> {
+  // On Windows, redirect to download page for manual download
+  // This is a temporary workaround until code signing is set up
+  // Without signing, auto-updates get blocked by Windows Application Control
+  if (process.platform === 'win32') {
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Available',
+      message: `A new version of Messenger is available`,
+      detail: `Version ${version} is available. Click "Download" to open the download page.\n\nNote: After downloading, you may need to right-click the installer → Properties → Unblock before running it.`,
+      buttons: ['Download', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+
+    if (result.response === 0) {
+      console.log('[AutoUpdater] Windows user redirected to download page');
+      shell.openExternal('https://apotenza92.github.io/facebook-messenger-desktop/').catch((err) => {
+        console.error('[AutoUpdater] Failed to open download page:', err);
+      });
+    }
+    return;
+  }
+
   const result = await dialog.showMessageBox({
     type: 'info',
     title: 'Update Available',
