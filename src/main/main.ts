@@ -897,51 +897,103 @@ function writeInstallSourceCache(source: InstallSource): void {
   }
 }
 
-// Detect install source once on first run and cache permanently
+// Detect install source on startup and cache it
+// Re-detects if cached as 'direct' in case user reinstalled via package manager
 async function detectAndCacheInstallSource(): Promise<void> {
   // Skip in dev mode
   if (isDev) return;
   
-  // Already detected? Don't re-check - install method never changes
   const cached = readInstallSourceCache();
-  if (cached) {
+  
+  // If already detected as a package manager, don't re-check
+  // (package manager installs are reliable and unlikely to change)
+  if (cached && cached !== 'direct') {
     console.log('[InstallSource] Already detected:', cached);
     return;
   }
   
-  console.log('[InstallSource] First run - detecting install source...');
+  // Re-detect if no cache or cached as 'direct' (user might have reinstalled via package manager)
+  console.log('[InstallSource] Detecting install source...', cached ? '(re-checking direct install)' : '(first run)');
   
   try {
     if (process.platform === 'darwin') {
       const homebrew = await detectHomebrewInstall();
-      writeInstallSourceCache(homebrew.detected ? 'homebrew' : 'direct');
+      const newSource = homebrew.detected ? 'homebrew' : 'direct';
+      if (newSource !== cached) {
+        writeInstallSourceCache(newSource);
+        if (homebrew.detected) {
+          console.log('[InstallSource] Updated: detected Homebrew installation');
+        }
+      } else {
+        console.log('[InstallSource] Install source unchanged:', newSource);
+      }
     } else if (process.platform === 'win32') {
       const winget = await detectWingetInstall();
-      writeInstallSourceCache(winget.detected ? 'winget' : 'direct');
+      const newSource = winget.detected ? 'winget' : 'direct';
+      if (newSource !== cached) {
+        writeInstallSourceCache(newSource);
+        if (winget.detected) {
+          console.log('[InstallSource] Updated: detected winget installation');
+        }
+      } else {
+        console.log('[InstallSource] Install source unchanged:', newSource);
+      }
     } else {
-      writeInstallSourceCache('direct');
+      if (!cached) {
+        writeInstallSourceCache('direct');
+      }
     }
   } catch (error) {
     console.log('[InstallSource] Detection failed:', error instanceof Error ? error.message : 'unknown');
-    // Assume direct install on failure - will use NSIS uninstaller which is safe
-    writeInstallSourceCache('direct');
+    // Only write 'direct' if no cache exists - don't overwrite good data on failure
+    if (!cached) {
+      writeInstallSourceCache('direct');
+    }
   }
 }
 
+// Find brew executable - Electron apps launched from GUI don't have PATH from shell config
+function findBrewExecutable(): string | null {
+  const brewPaths = [
+    '/opt/homebrew/bin/brew',  // Apple Silicon
+    '/usr/local/bin/brew',      // Intel Mac
+    '/home/linuxbrew/.linuxbrew/bin/brew', // Linux (unlikely but supported)
+  ];
+  
+  for (const brewPath of brewPaths) {
+    if (fs.existsSync(brewPath)) {
+      console.log('[Homebrew] Found brew at:', brewPath);
+      return brewPath;
+    }
+  }
+  
+  console.log('[Homebrew] brew not found in common locations');
+  return null;
+}
+
 async function detectHomebrewInstall(): Promise<PackageManagerInfo> {
+  const brewPath = findBrewExecutable();
+  
   const result: PackageManagerInfo = {
     name: 'Homebrew',
     detected: false,
-    uninstallCommand: ['brew', 'uninstall', '--cask', HOMEBREW_CASK],
+    uninstallCommand: brewPath 
+      ? [brewPath, 'uninstall', '--cask', HOMEBREW_CASK]
+      : ['brew', 'uninstall', '--cask', HOMEBREW_CASK],
   };
   
   if (process.platform !== 'darwin') {
     return result;
   }
   
+  if (!brewPath) {
+    console.log('[Uninstall] Homebrew not installed on this system');
+    return result;
+  }
+  
   try {
-    // Check if this cask is installed via Homebrew
-    await execAsync(`brew list --cask ${HOMEBREW_CASK}`);
+    // Check if this cask is installed via Homebrew (use full path)
+    await execAsync(`"${brewPath}" list --cask ${HOMEBREW_CASK}`);
     result.detected = true;
     console.log('[Uninstall] Detected Homebrew cask installation');
   } catch {
@@ -989,11 +1041,16 @@ function detectPackageManagerFromCache(): PackageManagerInfo | null {
   }
   
   if (source === 'homebrew' && process.platform === 'darwin') {
+    const brewPath = findBrewExecutable();
+    if (!brewPath) {
+      console.log('[Uninstall] Homebrew cached but brew not found - falling back to direct uninstall');
+      return null;
+    }
     console.log('[Uninstall] Using cached Homebrew detection');
     return {
       name: 'Homebrew',
       detected: true,
-      uninstallCommand: ['brew', 'uninstall', '--cask', HOMEBREW_CASK],
+      uninstallCommand: [brewPath, 'uninstall', '--cask', HOMEBREW_CASK],
     };
   }
   
