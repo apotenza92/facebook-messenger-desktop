@@ -1,8 +1,35 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
 release/
+
+# Logs
 *.log
-.DS_Store
+npm-debug.log*
+
+# Environment
 .env
 *.local
 
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Electron
+.electron/
+
+# Package manager
+.npm/
+.pnpm-store/
