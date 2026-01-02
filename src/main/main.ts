@@ -890,31 +890,6 @@ function testNotification(): void {
   console.log('Test notification sent and badge count set to 5');
 }
 
-// Helper function to get dock icon path for macOS
-// Use icon-rounded.png which has the macOS squircle shape pre-applied
-function getDockIconPath(): string | undefined {
-  const possiblePaths = [
-    // When running from dist/main/main.js
-    path.resolve(__dirname, '../../assets/icons/icon-rounded.png'),
-    // When running from project root
-    path.resolve(process.cwd(), 'assets/icons/icon-rounded.png'),
-    // When packaged
-    path.join(app.getAppPath(), 'assets/icons/icon-rounded.png'),
-  ];
-  
-  for (const iconPath of possiblePaths) {
-    try {
-      if (fs.existsSync(iconPath)) {
-        return iconPath;
-      }
-    } catch (e) {
-      // Continue to next path
-    }
-  }
-  
-  return undefined;
-}
-
 // Check if app is running from /Applications (macOS only)
 function isInApplicationsFolder(): boolean {
   if (process.platform !== 'darwin') return true;
@@ -1167,22 +1142,10 @@ app.whenReady().then(async () => {
     console.log('[AutoUpdater] Skipped in development mode');
   }
 
-  // Set dock icon for macOS (only in production - dev mode uses default Electron icon)
-  // In production, the icon comes from the app bundle's .icns file which macOS renders correctly
-  if (process.platform === 'darwin' && app.dock && !isDev) {
-    const dockIconPath = getDockIconPath();
-    if (dockIconPath) {
-      try {
-        const dockIcon = nativeImage.createFromPath(dockIconPath);
-        if (!dockIcon.isEmpty()) {
-          app.dock.setIcon(dockIcon);
-          console.log('[Dock] Set dock icon from:', dockIconPath);
-        }
-      } catch (e) {
-        console.warn('[Dock] Could not set dock icon:', e);
-      }
-    }
-  }
+  // Note: On macOS, the dock icon comes from the app bundle's .icns file
+  // We don't call app.dock.setIcon() because that would override the properly-sized
+  // .icns icon with a PNG that lacks proper canvas padding, causing the icon to
+  // appear larger than other dock icons. Let macOS handle the dock icon natively.
 
   // Prompt to move to Applications folder on macOS (first run only)
   await promptMoveToApplications();
@@ -1216,7 +1179,13 @@ app.whenReady().then(async () => {
   } else {
     app.on('second-instance', () => {
       if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
+        // Window may be hidden (close to tray) or minimized
+        if (!mainWindow.isVisible()) {
+          mainWindow.show();
+        }
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
         mainWindow.focus();
       }
     });

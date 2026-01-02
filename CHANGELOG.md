@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.2] - 2026-01-02
+
+### Fixed
+- macOS dock icon now displays at correct size when app is running (removed custom dock icon override that caused oversized icon)
+- Windows: Clicking taskbar icon now properly restores window when app is running in system tray
+
 ## [0.5.1] - 2026-01-02
 
 ### Fixed
