@@ -2,16 +2,28 @@
 
 ## [0.6.8] - 2026-01-03
 
+### Added
+- Native download progress UI for updates:
+  - Taskbar/dock progress bar shows download percentage
+  - Title bar shows detailed progress (e.g., "Downloading update: 45% (34.2 MB / 67.5 MB) @ 2.3 MB/s")
+  - System tray tooltip shows progress and speed
+  - Windows: Taskbar flashes when download completes
+- Develop menu (dev mode only) with testing tools:
+  - Test Update Workflow: Simulates the full update download experience
+  - Test Notification: Sends a test notification
+  - Quick access to DevTools and Force Reload
+- Dev mode now automatically kills existing production Messenger instances to avoid conflicts
+
 ### Fixed
-- macOS: Download progress now shows in the title bar (custom title overlay was not being updated)
+- macOS: Download progress now shows in the custom title bar overlay (was only updating dock)
 
 ### Improved
-- Enhanced download progress display to show more details in title bar: percentage, downloaded/total size, and speed (e.g., "Downloading update: 45% (34.2 MB / 67.5 MB) @ 2.3 MB/s")
+- Uninstall dialog now appears immediately instead of waiting for package manager detection
+- macOS: Uninstall now automatically moves app bundle to Trash after quit
+- Windows: Uninstall now automatically runs the NSIS uninstaller after quit
 
-## [0.6.7] - 2026-01-03
-
-### Improved
-- Uninstall dialog now appears immediately instead of waiting several seconds for package manager detection (winget/Homebrew)
+### Changed
+- Windows: Tray icon now uses rounded style to match the app icon
 
 ## [0.6.6] - 2026-01-02
 
