@@ -117,27 +117,43 @@ Check `createWindow()` and the window event handlers (`close`, `focus`, etc.) in
 
 `notifications-inject.ts` intercepts messenger.com's notifications. `notification-handler.ts` handles displaying native notifications.
 
-## Version Bumping
+## Development Workflow
 
-Use `npm version` to bump versions - this automatically updates both `package.json` and `package-lock.json`:
+### Regular Development
 
-```bash
-npm version patch   # 0.6.4 → 0.6.5 (bug fixes)
-npm version minor   # 0.6.4 → 0.7.0 (new features)
-npm version major   # 0.6.4 → 1.0.0 (breaking changes)
-```
-
-**Important:** Add `--no-git-tag-version` if you don't want npm to auto-commit and tag:
+For day-to-day development, use normal git commits and pushes:
 
 ```bash
-npm version patch --no-git-tag-version
+git add -A
+git commit -m "Description of changes"
+git push
 ```
 
-After bumping:
+This does NOT trigger a release - it just updates the main branch.
+
+### Creating a Release
+
+When ready to publish a new version:
+
 1. Add entry to `CHANGELOG.md` (newest at top)
-2. Format: `## [X.Y.Z] - YYYY-MM-DD`
-3. Never use bold (`**text**`) in changelog entries - keep it plain text
-4. Commit both `package.json`, `package-lock.json`, and `CHANGELOG.md` together
+   - Format: `## [X.Y.Z] - YYYY-MM-DD`
+   - Never use bold (`**text**`) in changelog entries - keep it plain text
 
-**Never** manually edit the version in `package.json` - always use `npm version` to keep files in sync.
+2. Run `npm version` to bump version AND create a git tag:
+   ```bash
+   npm version patch   # 0.6.4 → 0.6.5 (bug fixes)
+   npm version minor   # 0.6.4 → 0.7.0 (new features)
+   npm version major   # 0.6.4 → 1.0.0 (breaking changes)
+   ```
+   This automatically updates `package.json`, `package-lock.json`, commits, and creates a `vX.Y.Z` tag.
+
+3. Push with tags to trigger the release workflow:
+   ```bash
+   git push --follow-tags
+   ```
+
+**Important:**
+- Do NOT use `npm version patch --no-git-tag-version` - this skips the tag which is needed to trigger releases
+- Never manually edit the version in `package.json` - always use `npm version` to keep files in sync
+- The GitHub Actions "Build and Release" workflow is triggered by version tags (e.g., `v0.6.7`)
 
