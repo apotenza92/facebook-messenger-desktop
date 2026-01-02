@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.1] - 2026-01-02
+
+### Fixed
+- Windows taskbar icon now displays correctly at all sizes (uses ICO file with multiple resolutions)
+
 ## [0.5.0] - 2026-01-02
 
 ### Added
