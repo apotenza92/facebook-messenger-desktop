@@ -90,6 +90,65 @@ function scheduleExternalCleanup(paths: string[]): void {
   child.unref();
 }
 
+function removeFromDockAndTaskbar(): void {
+  if (process.platform === 'darwin') {
+    // Remove from macOS dock by editing the dock plist directly
+    // Find and remove only the Messenger entry from persistent-apps
+    const homeDir = process.env.HOME || '';
+    const dockPlist = path.join(homeDir, 'Library', 'Preferences', 'com.apple.dock.plist');
+    
+    // Use a shell script that finds and removes Messenger from the dock
+    const script = `
+      PLIST="${dockPlist}"
+      if [ -f "$PLIST" ]; then
+        # Count persistent-apps entries
+        COUNT=$(/usr/libexec/PlistBuddy -c "Print persistent-apps" "$PLIST" 2>/dev/null | grep -c "Dict" || echo "0")
+        
+        # Search backwards to safely remove entries (indices shift when removing)
+        for ((i=COUNT-1; i>=0; i--)); do
+          LABEL=$(/usr/libexec/PlistBuddy -c "Print persistent-apps:$i:tile-data:file-label" "$PLIST" 2>/dev/null || echo "")
+          if [ "$LABEL" = "Messenger" ]; then
+            /usr/libexec/PlistBuddy -c "Delete persistent-apps:$i" "$PLIST" 2>/dev/null
+          fi
+        done
+        
+        # Restart Dock to apply changes
+        killall Dock 2>/dev/null || true
+      fi
+    `;
+    
+    const child = spawn('/bin/sh', ['-c', script], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } else if (process.platform === 'win32') {
+    // Remove from Windows taskbar by deleting the pinned shortcut
+    const taskbarPath = path.join(
+      process.env.APPDATA || '',
+      'Microsoft',
+      'Internet Explorer',
+      'Quick Launch',
+      'User Pinned',
+      'TaskBar'
+    );
+    
+    // Delete any Messenger shortcuts from the taskbar
+    const cmd = `
+      $taskbarPath = "${taskbarPath.replace(/\\/g, '\\\\')}"
+      if (Test-Path $taskbarPath) {
+        Get-ChildItem -Path $taskbarPath -Filter "*Messenger*" | Remove-Item -Force -ErrorAction SilentlyContinue
+      }
+    `;
+    
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  }
+}
+
 function loadWindowState(): WindowState {
   // If explicitly requested, clear saved state to force defaults (window size/position only)
   if (resetFlag && !resetApplied && fs.existsSync(windowStateFile)) {
@@ -663,7 +722,7 @@ function createTray(): void {
 async function handleUninstallRequest(): Promise<void> {
   const detailByPlatform: Record<NodeJS.Platform, string> = {
     darwin:
-      'This removes Messenger app data (settings, cache, logs) from this Mac.\nTo fully remove the application bundle, move Messenger.app to the Trash after this finishes.',
+      'This removes Messenger app data (settings, cache, logs) from this Mac.\n\nTo fully remove the application bundle, move Messenger.app to the Trash after this finishes.',
     win32:
       'This removes Messenger app data (settings, cache, logs) from this PC.\nTo fully uninstall the app, remove it from Apps & Features after this finishes.',
     linux:
@@ -705,6 +764,9 @@ async function handleUninstallRequest(): Promise<void> {
         ? 'If you want to remove the application itself, uninstall Messenger from Apps & Features.'
         : 'If you want to remove the application itself, uninstall it using your package manager or delete the AppImage/binary.',
   });
+
+  // Remove from dock (macOS) or taskbar (Windows)
+  removeFromDockAndTaskbar();
 
   // Perform deletion after the app exits to avoid Electron recreating files (Crashpad, logs, etc.)
   const targets = uninstallTargets().map((t) => t.path);

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.7] - 2026-01-02
+
+### Fixed
+- **Windows about dialog**: Version now displays correctly (e.g. "0.5.7" instead of "0.5.7.0")
+
+### Improved
+- **Uninstaller**: Now removes app from macOS dock and Windows taskbar when uninstalling
+- **Uninstaller dialog**: Better formatting with spacing between lines on macOS
+
 ## [0.5.6] - 2026-01-02
 
 ### Fixed
