@@ -869,14 +869,8 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
 }
 
 async function handleUninstallRequest(): Promise<void> {
-  // Check if installed via a package manager
-  const packageManager = await detectPackageManager();
-  
+  // Show confirmation dialog immediately (don't wait for slow package manager detection)
   const getDetailText = (): string => {
-    if (packageManager) {
-      return `Messenger was installed via ${packageManager.name}. This will run the ${packageManager.name} uninstall command to properly remove the app and update the package manager.`;
-    }
-    
     switch (process.platform) {
       case 'darwin':
         return 'This removes Messenger app data (settings, cache, logs) from this Mac.\n\nTo fully remove the application bundle, move Messenger.app to the Trash after this finishes.';
@@ -902,6 +896,9 @@ async function handleUninstallRequest(): Promise<void> {
   if (response !== 0) {
     return;
   }
+
+  // Only detect package manager after user confirms (winget detection is slow on Windows)
+  const packageManager = await detectPackageManager();
 
   // Show completion dialog with appropriate message
   const getCompletionDetail = (): string => {

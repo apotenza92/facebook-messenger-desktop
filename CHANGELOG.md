@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.7] - 2026-01-03
+
+### Improved
+- Uninstall dialog now appears immediately instead of waiting several seconds for package manager detection (winget/Homebrew)
+
 ## [0.6.6] - 2026-01-02
 
 ### Fixed
