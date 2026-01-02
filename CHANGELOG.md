@@ -1,9 +1,10 @@
 # Changelog
 
-## [0.6.1] - 2026-01-02
+## [0.6.2] - 2026-01-02
 
 ### Changed
-- **macOS About dialog**: Now uses custom dialog (same as Windows/Linux) so GitHub link is actually clickable
+- **About dialog**: Reverted to native OS About dialog (cleaner look)
+- **GitHub link**: Added "View on GitHub" menu item (File menu on Windows/Linux, Messenger menu on macOS)
 
 ## [0.6.0] - 2026-01-02
 
