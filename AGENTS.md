@@ -119,8 +119,25 @@ Check `createWindow()` and the window event handlers (`close`, `focus`, etc.) in
 
 ## Version Bumping
 
-1. Update `version` in `package.json`
-2. Add entry to `CHANGELOG.md` (newest at top)
-3. Format: `## [X.Y.Z] - YYYY-MM-DD`
-4. Never use bold (`**text**`) in changelog entries - keep it plain text
+Use `npm version` to bump versions - this automatically updates both `package.json` and `package-lock.json`:
+
+```bash
+npm version patch   # 0.6.4 → 0.6.5 (bug fixes)
+npm version minor   # 0.6.4 → 0.7.0 (new features)
+npm version major   # 0.6.4 → 1.0.0 (breaking changes)
+```
+
+**Important:** Add `--no-git-tag-version` if you don't want npm to auto-commit and tag:
+
+```bash
+npm version patch --no-git-tag-version
+```
+
+After bumping:
+1. Add entry to `CHANGELOG.md` (newest at top)
+2. Format: `## [X.Y.Z] - YYYY-MM-DD`
+3. Never use bold (`**text**`) in changelog entries - keep it plain text
+4. Commit both `package.json`, `package-lock.json`, and `CHANGELOG.md` together
+
+**Never** manually edit the version in `package.json` - always use `npm version` to keep files in sync.
 
