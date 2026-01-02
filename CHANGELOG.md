@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.5] - 2026-01-02
+
+### Changed
+- Windows: Auto-updates now redirect to download page instead of failing silently (temporary workaround until code signing is set up)
+
+### Improved
+- Download page now shows version number and release date (fetched from GitHub releases)
+
 ## [0.6.4] - 2026-01-02
 
 ### Fixed
