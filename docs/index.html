@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download Messenger Desktop</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0f0f23 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+    
+    .container {
+      text-align: center;
+      padding: 2rem;
+      max-width: 500px;
+    }
+    
+    .icon {
+      width: 96px;
+      height: 96px;
+      margin-bottom: 1.5rem;
+      border-radius: 20px;
+    }
+    
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    
+    .subtitle {
+      color: #888;
+      margin-bottom: 2rem;
+      font-size: 0.95rem;
+    }
+    
+    .download-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: #0084ff;
+      color: white;
+      padding: 1rem 2rem;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1.1rem;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 20px rgba(0, 132, 255, 0.3);
+    }
+    
+    .download-btn:hover {
+      background: #0073e6;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 25px rgba(0, 132, 255, 0.4);
+    }
+    
+    .download-btn svg {
+      width: 20px;
+      height: 20px;
+    }
+    
+    .platform {
+      margin-top: 0.75rem;
+      color: #666;
+      font-size: 0.85rem;
+    }
+    
+    .other-platforms {
+      margin-top: 2.5rem;
+      padding-top: 2rem;
+      border-top: 1px solid #333;
+    }
+    
+    .other-platforms h2 {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #888;
+      margin-bottom: 1rem;
+    }
+    
+    .platform-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: center;
+    }
+    
+    .platform-link {
+      color: #0084ff;
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.5rem 1rem;
+      border: 1px solid #333;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+    
+    .platform-link:hover {
+      background: rgba(0, 132, 255, 0.1);
+      border-color: #0084ff;
+    }
+    
+    .github-link {
+      margin-top: 2rem;
+      color: #666;
+      font-size: 0.8rem;
+    }
+    
+    .github-link a {
+      color: #888;
+      text-decoration: none;
+    }
+    
+    .github-link a:hover {
+      color: #fff;
+    }
+    
+    .spinner {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    .downloading .spinner { display: block; }
+    .downloading .download-icon { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main/assets/icons/icon-rounded.png" alt="Messenger" class="icon">
+    <h1>Messenger Desktop</h1>
+    <p class="subtitle">Download for your platform</p>
+    
+    <a href="#" class="download-btn" id="download-btn">
+      <svg class="download-icon" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+      </svg>
+      <div class="spinner"></div>
+      <span id="btn-text">Download</span>
+    </a>
+    <p class="platform" id="platform-text">Detecting your platform...</p>
+    
+    <div class="other-platforms">
+      <h2>Other platforms</h2>
+      <div class="platform-links">
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link">macOS (Apple Silicon)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link">macOS (Intel)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link">Windows (x64)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link">Windows (ARM)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-linux.AppImage" class="platform-link">Linux</a>
+      </div>
+    </div>
+    
+    <p class="github-link">
+      <a href="https://github.com/apotenza92/facebook-messenger-desktop">View on GitHub</a>
+    </p>
+  </div>
+
+  <script>
+    const downloads = {
+      'mac-arm': {
+        url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip',
+        name: 'macOS (Apple Silicon)',
+        file: 'Messenger-macos-arm64.zip'
+      },
+      'mac-intel': {
+        url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip',
+        name: 'macOS (Intel)',
+        file: 'Messenger-macos-x64.zip'
+      },
+      'windows': {
+        url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe',
+        name: 'Windows',
+        file: 'Messenger-windows-x64-setup.exe'
+      },
+      'windows-arm': {
+        url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe',
+        name: 'Windows (ARM)',
+        file: 'Messenger-windows-arm64-setup.exe'
+      },
+      'linux': {
+        url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-linux.AppImage',
+        name: 'Linux',
+        file: 'Messenger-linux.AppImage'
+      }
+    };
+
+    function detectPlatform() {
+      const ua = navigator.userAgent.toLowerCase();
+      const platform = navigator.platform?.toLowerCase() || '';
+      
+      // Check for Windows
+      if (ua.includes('win')) {
+        // Check for ARM Windows
+        if (ua.includes('arm') || ua.includes('aarch64')) {
+          return 'windows-arm';
+        }
+        return 'windows';
+      }
+      
+      // Check for macOS
+      if (ua.includes('mac')) {
+        // Check for Apple Silicon using various detection methods
+        // GPU detection for M1/M2/M3
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl');
+        if (gl) {
+          const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+          if (debugInfo) {
+            const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            if (renderer && renderer.toLowerCase().includes('apple')) {
+              return 'mac-arm';
+            }
+          }
+        }
+        // Fallback: assume Intel for older detection
+        // Modern Safari on Apple Silicon reports differently
+        if (platform.includes('arm') || ua.includes('arm64')) {
+          return 'mac-arm';
+        }
+        // Default to Apple Silicon for newer macOS (most users now)
+        return 'mac-arm';
+      }
+      
+      // Check for Linux
+      if (ua.includes('linux') && !ua.includes('android')) {
+        return 'linux';
+      }
+      
+      // Default fallback
+      return 'windows';
+    }
+
+    function init() {
+      const platform = detectPlatform();
+      const download = downloads[platform];
+      const btn = document.getElementById('download-btn');
+      const btnText = document.getElementById('btn-text');
+      const platformText = document.getElementById('platform-text');
+      
+      btn.href = download.url;
+      btnText.textContent = `Download for ${download.name}`;
+      platformText.textContent = `${download.file}`;
+      
+      btn.addEventListener('click', () => {
+        btn.classList.add('downloading');
+        btnText.textContent = 'Starting download...';
+        setTimeout(() => {
+          btn.classList.remove('downloading');
+          btnText.textContent = `Download for ${download.name}`;
+        }, 2000);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>
+
