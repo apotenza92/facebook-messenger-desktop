@@ -520,15 +520,24 @@ function getIconPath(): string | undefined {
 }
 
 function getWindowIcon(): Electron.NativeImage | undefined {
-  // nativeImage.createFromPath() works best with PNG files
-  // .icns and .ico may not load correctly, so we always use PNG for nativeImage
+  // For Windows taskbar, ICO files work better as they contain multiple sizes
+  // For Linux, PNG is the standard format
   const appPath = app.getAppPath();
   
-  const possiblePaths: string[] = [
-    path.join(appPath, 'assets/icons/icon.png'),
-    path.join(__dirname, '../../assets/icons/icon.png'),
-    path.join(process.cwd(), 'assets/icons/icon.png'),
-  ];
+  // On Windows, try ICO first (contains multiple sizes for taskbar), then PNG
+  // On Linux, use PNG
+  const iconFiles = process.platform === 'win32' 
+    ? ['icon.ico', 'icon.png'] 
+    : ['icon.png'];
+  
+  const possiblePaths: string[] = [];
+  for (const iconFile of iconFiles) {
+    possiblePaths.push(
+      path.join(appPath, 'assets/icons', iconFile),
+      path.join(__dirname, '../../assets/icons', iconFile),
+      path.join(process.cwd(), 'assets/icons', iconFile),
+    );
+  }
   
   for (const iconPath of possiblePaths) {
     if (fs.existsSync(iconPath)) {
@@ -545,7 +554,7 @@ function getWindowIcon(): Electron.NativeImage | undefined {
     }
   }
   
-  console.warn('[Icon] No valid PNG icon found for nativeImage');
+  console.warn('[Icon] No valid icon found for nativeImage');
   return undefined;
 }
 
