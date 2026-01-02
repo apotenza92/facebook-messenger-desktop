@@ -12,6 +12,8 @@ const resetFlag =
   process.argv.includes('--reset'); // legacy
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
+console.log(`Messenger starting on ${process.platform} ${process.arch}`);
+
 let mainWindow: BrowserWindow | null = null;
 let contentView: BrowserView | null = null;
 let notificationHandler: NotificationHandler;
