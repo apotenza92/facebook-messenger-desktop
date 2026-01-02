@@ -1179,380 +1179,57 @@ async function checkMediaPermissions(): Promise<void> {
   }
 }
 
-// Auto-updater with single unified window (cross-platform)
-let updateWindow: BrowserWindow | null = null;
+// Auto-updater state
+let pendingUpdateVersion: string | null = null;
 
-function getUpdateWindowHTML(version: string, iconDataUrl: string): string {
-  const isDark = nativeTheme.shouldUseDarkColors;
-  const bg = isDark ? '#1a1a1a' : '#ffffff';
-  const text = isDark ? '#e8e8e8' : '#1a1a1a';
-  const textMuted = isDark ? '#888' : '#666';
-  const border = isDark ? '#333' : '#e0e0e0';
-  const progressBg = isDark ? '#2a2a2a' : '#f0f0f0';
-  const btnPrimary = '#0084ff';
-  const btnSecondary = isDark ? '#333' : '#e8e8e8';
-  const btnSecondaryText = isDark ? '#e8e8e8' : '#333';
-
-  // Use the app icon if available, otherwise show a fallback SVG
-  const iconHtml = iconDataUrl 
-    ? `<img src="${iconDataUrl}" alt="Messenger">`
-    : `<svg viewBox="0 0 24 24" style="width:100%;height:100%;"><circle cx="12" cy="12" r="10" fill="#0084ff"/><path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.438 5.503 3.686 7.2V22l3.372-1.852c.9.25 1.855.385 2.942.385 5.523 0 10-4.145 10-9.243S17.523 2 12 2zm.994 12.442l-2.546-2.716-4.97 2.716 5.467-5.804 2.609 2.716 4.907-2.716-5.467 5.804z" fill="white"/></svg>`;
-
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          background: ${bg};
-          color: ${text};
-          user-select: none;
-          overflow: hidden;
-        }
-        .container {
-          padding: 24px;
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-        }
-        .header {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-          margin-bottom: 24px;
-        }
-        .icon {
-          width: 64px;
-          height: 64px;
-          flex-shrink: 0;
-        }
-        .icon img {
-          width: 100%;
-          height: 100%;
-          object-fit: contain;
-        }
-        .title-group h1 {
-          font-size: 18px;
-          font-weight: 600;
-          margin-bottom: 4px;
-        }
-        .version {
-          font-size: 13px;
-          color: ${textMuted};
-        }
-        .content {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          text-align: center;
-        }
-        .message {
-          font-size: 14px;
-          line-height: 1.5;
-          color: ${textMuted};
-        }
-        .progress-section {
-          display: none;
-          width: 100%;
-          margin-top: 16px;
-        }
-        .progress-container {
-          background: ${progressBg};
-          border-radius: 6px;
-          height: 6px;
-          overflow: hidden;
-          margin-bottom: 12px;
-        }
-        .progress-bar {
-          background: linear-gradient(90deg, #0084ff, #00c6ff);
-          height: 100%;
-          width: 0%;
-          transition: width 0.2s ease-out;
-          border-radius: 6px;
-        }
-        .progress-info {
-          display: flex;
-          justify-content: space-between;
-          font-size: 12px;
-          color: ${textMuted};
-        }
-        .error-message {
-          display: none;
-          background: ${isDark ? '#2a1a1a' : '#fef2f2'};
-          border: 1px solid ${isDark ? '#5c2828' : '#fecaca'};
-          border-radius: 8px;
-          padding: 12px 16px;
-          font-size: 13px;
-          color: ${isDark ? '#fca5a5' : '#dc2626'};
-          margin-top: 16px;
-          width: 100%;
-          text-align: left;
-        }
-        .success-icon {
-          display: none;
-          width: 56px;
-          height: 56px;
-          margin-bottom: 16px;
-          border-radius: 50%;
-          background: ${isDark ? '#1a2e1a' : '#dcfce7'};
-          align-items: center;
-          justify-content: center;
-        }
-        .success-icon svg {
-          width: 28px;
-          height: 28px;
-          fill: #22c55e;
-        }
-        .buttons {
-          display: flex;
-          gap: 12px;
-          justify-content: flex-end;
-          padding-top: 24px;
-          border-top: 1px solid ${border};
-        }
-        button {
-          padding: 10px 20px;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          border: none;
-          transition: all 0.15s ease;
-          min-width: 100px;
-          display: none;
-        }
-        button:active {
-          transform: scale(0.97);
-        }
-        .btn-primary {
-          background: ${btnPrimary};
-          color: white;
-        }
-        .btn-primary:hover {
-          background: #0073e6;
-        }
-        .btn-secondary {
-          background: ${btnSecondary};
-          color: ${btnSecondaryText};
-        }
-        .btn-secondary:hover {
-          background: ${isDark ? '#404040' : '#d8d8d8'};
-        }
-        
-        /* State: available (initial) */
-        [data-state="available"] #btn-later { display: inline-block; }
-        [data-state="available"] #btn-download { display: inline-block; }
-        
-        /* State: downloading */
-        [data-state="downloading"] .progress-section { display: block; }
-        [data-state="downloading"] #btn-cancel { display: inline-block; }
-        
-        /* State: ready */
-        [data-state="ready"] .success-icon { display: flex; }
-        [data-state="ready"] #btn-later { display: inline-block; }
-        [data-state="ready"] #btn-restart { display: inline-block; }
-        
-        /* State: error */
-        [data-state="error"] .error-message { display: block; }
-        [data-state="error"] #btn-close { display: inline-block; }
-      </style>
-    </head>
-    <body data-state="available">
-      <div class="container">
-        <div class="header">
-          <div class="icon">
-            ${iconHtml}
-          </div>
-          <div class="title-group">
-            <h1 id="title">Update Available</h1>
-            <div class="version">Version ${version}</div>
-          </div>
-        </div>
-        
-        <div class="content">
-          <div class="success-icon">
-            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-          </div>
-          
-          <p class="message" id="message">A new version of Messenger is available. Would you like to download it now?</p>
-          
-          <div class="error-message" id="error"></div>
-          
-          <div class="progress-section">
-            <div class="progress-container">
-              <div class="progress-bar" id="progress-bar"></div>
-            </div>
-            <div class="progress-info">
-              <span id="progress-percent">Starting download...</span>
-              <span id="progress-speed"></span>
-            </div>
-          </div>
-        </div>
-        
-        <div class="buttons">
-          <button class="btn-secondary" id="btn-later" onclick="window.electronAPI.later()">Later</button>
-          <button class="btn-secondary" id="btn-cancel" onclick="window.electronAPI.cancel()">Cancel</button>
-          <button class="btn-secondary" id="btn-close" onclick="window.electronAPI.close()">Close</button>
-          <button class="btn-primary" id="btn-download" onclick="window.electronAPI.download()">Download Now</button>
-          <button class="btn-primary" id="btn-restart" onclick="window.electronAPI.restart()">Restart Now</button>
-        </div>
-      </div>
-      
-      <script>
-        window.setState = (state, data = {}) => {
-          document.body.dataset.state = state;
-          const title = document.getElementById('title');
-          const message = document.getElementById('message');
-          
-          switch (state) {
-            case 'downloading':
-              title.textContent = 'Downloading Update';
-              message.textContent = 'Please wait while the update downloads...';
-              break;
-            case 'ready':
-              title.textContent = 'Update Ready';
-              message.textContent = 'The update has been downloaded. Restart to apply the changes.';
-              break;
-            case 'error':
-              title.textContent = 'Update Failed';
-              message.textContent = 'There was a problem downloading the update.';
-              document.getElementById('error').textContent = data.error || 'Unknown error';
-              break;
-          }
-        };
-        
-        window.setProgress = (percent, speed) => {
-          document.getElementById('progress-bar').style.width = percent + '%';
-          document.getElementById('progress-percent').textContent = percent + '%';
-          document.getElementById('progress-speed').textContent = speed || '';
-        };
-      </script>
-    </body>
-    </html>
-  `;
-}
-
-function createUpdateWindow(version: string): void {
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    updateWindow.focus();
-    return;
-  }
-
-  // Get the app icon as base64 for embedding in the HTML
-  let iconPath: string;
-  if (isDev) {
-    iconPath = path.join(__dirname, '../../assets/icons/icon-128.png');
-  } else {
-    // In production, the assets folder is at the app root (inside asar)
-    iconPath = path.join(__dirname, '../assets/icons/icon-128.png');
-  }
-  
-  let iconDataUrl = '';
-  try {
-    const iconBuffer = fs.readFileSync(iconPath);
-    iconDataUrl = `data:image/png;base64,${iconBuffer.toString('base64')}`;
-  } catch {
-    // Fallback to a simple colored square if icon can't be loaded
-    iconDataUrl = '';
-  }
-
-  updateWindow = new BrowserWindow({
-    width: 480,
-    height: 340,
-    resizable: false,
-    minimizable: true,
-    maximizable: false,
-    fullscreenable: false,
-    title: 'Messenger Update',
-    show: false,
-    frame: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: undefined,
-    },
+async function showUpdateAvailableDialog(version: string): Promise<void> {
+  const result = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Update Available',
+    message: `A new version of Messenger is available`,
+    detail: `Version ${version} is ready to download. Would you like to download it now?`,
+    buttons: ['Download Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
   });
 
-  // Inject the electronAPI before loading HTML
-  updateWindow.webContents.on('did-finish-load', () => {
-    updateWindow?.webContents.executeJavaScript(`
-      window.electronAPI = {
-        download: () => window.postMessage({ type: 'updater-action', action: 'download' }, '*'),
-        later: () => window.postMessage({ type: 'updater-action', action: 'later' }, '*'),
-        cancel: () => window.postMessage({ type: 'updater-action', action: 'cancel' }, '*'),
-        close: () => window.postMessage({ type: 'updater-action', action: 'close' }, '*'),
-        restart: () => window.postMessage({ type: 'updater-action', action: 'restart' }, '*'),
-      };
-    `).catch(() => {});
-  });
-
-  // Listen for messages from the window
-  updateWindow.webContents.on('console-message', () => {});
-  
-  // Use devtools protocol to listen for window.postMessage
-  updateWindow.webContents.executeJavaScript(`
-    window.addEventListener('message', (e) => {
-      if (e.data?.type === 'updater-action') {
-        console.log('__UPDATER_ACTION__:' + e.data.action);
-      }
+  if (result.response === 0) {
+    console.log('[AutoUpdater] User chose to download');
+    pendingUpdateVersion = version;
+    autoUpdater.downloadUpdate().catch((err) => {
+      console.error('[AutoUpdater] Download failed:', err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'Download Failed',
+        message: 'Could not download the update',
+        detail: errorMsg,
+        buttons: ['OK'],
+      }).catch(() => {});
     });
-  `).catch(() => {});
-
-  updateWindow.webContents.on('console-message', (_event, _level, message) => {
-    if (message.startsWith('__UPDATER_ACTION__:')) {
-      const action = message.replace('__UPDATER_ACTION__:', '');
-      handleUpdateAction(action);
-    }
-  });
-
-  updateWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getUpdateWindowHTML(version, iconDataUrl))}`);
-  
-  updateWindow.once('ready-to-show', () => {
-    updateWindow?.show();
-  });
-
-  updateWindow.on('closed', () => {
-    updateWindow = null;
-  });
-}
-
-function handleUpdateAction(action: string): void {
-  switch (action) {
-    case 'download':
-      console.log('[AutoUpdater] User chose to download');
-      updateWindow?.webContents.executeJavaScript(`window.setState('downloading')`).catch(() => {});
-      autoUpdater.downloadUpdate().catch((err) => {
-        console.error('[AutoUpdater] Download failed:', err);
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        updateWindow?.webContents.executeJavaScript(
-          `window.setState('error', { error: ${JSON.stringify(errorMsg)} })`
-        ).catch(() => {});
-      });
-      break;
-    case 'later':
-    case 'cancel':
-    case 'close':
-      console.log('[AutoUpdater] User dismissed update window');
-      closeUpdateWindow();
-      break;
-    case 'restart':
-      console.log('[AutoUpdater] User chose to restart');
-      isQuitting = true;
-      autoUpdater.quitAndInstall();
-      break;
+  } else {
+    console.log('[AutoUpdater] User chose to update later');
   }
 }
 
-function closeUpdateWindow(): void {
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    updateWindow.close();
+async function showUpdateReadyDialog(version: string): Promise<void> {
+  const result = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Update Ready',
+    message: 'Update downloaded successfully',
+    detail: `Version ${version} has been downloaded. Restart now to apply the update.`,
+    buttons: ['Restart Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  if (result.response === 0) {
+    console.log('[AutoUpdater] User chose to restart');
+    isQuitting = true;
+    autoUpdater.quitAndInstall();
+  } else {
+    console.log('[AutoUpdater] User chose to restart later');
   }
-  updateWindow = null;
 }
 
 function setupAutoUpdater(): void {
@@ -1564,7 +1241,7 @@ function setupAutoUpdater(): void {
     autoUpdater.on('update-available', (info) => {
       const version = info?.version || 'unknown';
       console.log('[AutoUpdater] Update available:', version);
-      createUpdateWindow(version);
+      showUpdateAvailableDialog(version);
     });
 
     autoUpdater.on('download-progress', (progress) => {
@@ -1575,12 +1252,6 @@ function setupAutoUpdater(): void {
         : `${speedKB} KB/s`;
       
       console.log(`[AutoUpdater] Download progress: ${percent}% (${speedDisplay})`);
-
-      if (updateWindow && !updateWindow.isDestroyed()) {
-        updateWindow.webContents.executeJavaScript(
-          `window.setProgress(${percent}, '${speedDisplay}')`
-        ).catch(() => {});
-      }
     });
 
     autoUpdater.on('update-not-available', () => {
@@ -1598,24 +1269,14 @@ function setupAutoUpdater(): void {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
-      const version = info?.version || '';
+      const version = info?.version || pendingUpdateVersion || '';
       console.log('[AutoUpdater] Update downloaded:', version);
       updateDownloadedAndReady = true;
-      
-      if (updateWindow && !updateWindow.isDestroyed()) {
-        updateWindow.webContents.executeJavaScript(`window.setState('ready')`).catch(() => {});
-      }
+      showUpdateReadyDialog(version);
     });
 
     autoUpdater.on('error', (err: unknown) => {
       console.error('[AutoUpdater] error', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      
-      if (updateWindow && !updateWindow.isDestroyed()) {
-        updateWindow.webContents.executeJavaScript(
-          `window.setState('error', { error: ${JSON.stringify(errorMessage)} })`
-        ).catch(() => {});
-      }
     });
 
     autoUpdater.checkForUpdates().catch((err: unknown) => {

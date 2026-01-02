@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.8] - 2026-01-02
+
+### Changed
+- **Update dialogs**: Replaced custom update window with native OS dialogs for a cleaner, more consistent experience
+
 ## [0.5.7] - 2026-01-02
 
 ### Fixed
