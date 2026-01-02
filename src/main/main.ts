@@ -23,7 +23,6 @@ let manualUpdateCheckInProgress = false;
 let tray: Tray | null = null;
 let titleOverlay: BrowserView | null = null;
 const overlayHeight = 32;
-const windowsOverlayHeight = 40; // Taller title bar for Windows
 
 type WindowState = {
   x?: number;
@@ -40,6 +39,12 @@ const defaultWindowState: WindowState = {
 // Set app name early and explicitly pin userData/log paths so they don't default to the package name
 const APP_DIR_NAME = 'Messenger';
 app.setName(APP_DIR_NAME);
+
+// Set AppUserModelId for Windows taskbar icon and grouping (must be set before app is ready)
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.facebook.messenger.desktop');
+}
+
 const userDataPath = path.join(app.getPath('appData'), APP_DIR_NAME);
 app.setPath('userData', userDataPath);
 app.setPath('logs', path.join(userDataPath, 'logs'));
@@ -157,7 +162,6 @@ function createWindow(): void {
   const restoredState = ensureWindowInBounds(loadWindowState());
   const hasPosition = restoredState.x !== undefined && restoredState.y !== undefined;
   const isMac = process.platform === 'darwin';
-  const isWindows = process.platform === 'win32';
   const colors = getOverlayColors();
 
   mainWindow = new BrowserWindow({
@@ -169,24 +173,26 @@ function createWindow(): void {
     minWidth: 708,
     minHeight: 400,
     title: 'Messenger',
-    icon: getIconPath(),
+    // Only set custom icon in production - dev mode uses default Electron icon
+    icon: isDev ? undefined : getIconPath(),
     // Use native hidden inset style on macOS to remove the separator while keeping drag area/buttons
-    // Use hidden style on Windows to enable custom title bar overlay
-    titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : undefined,
-    titleBarOverlay: isMac
+    // Use default frame on Windows/Linux for standard title bar and menu
+    ...(isMac
       ? {
-          color: colors.background,
-          symbolColor: colors.symbols,
-          height: overlayHeight,
+          titleBarStyle: 'hiddenInset' as const,
+          titleBarOverlay: {
+            color: colors.background,
+            symbolColor: colors.symbols,
+            height: overlayHeight,
+          },
+          trafficLightPosition: { x: 12, y: 10 },
+          backgroundColor: colors.background,
         }
-      : isWindows
-      ? {
-          color: colors.background,
-          symbolColor: colors.symbols,
-          height: windowsOverlayHeight,
-        }
-      : undefined,
-    trafficLightPosition: isMac ? { x: 12, y: 10 } : undefined,
+      : {
+          // Windows/Linux: use standard frame with visible menu bar
+          frame: true,
+          autoHideMenuBar: false,
+        }),
     webPreferences: {
       // On macOS, main window doesn't load web content (we use BrowserView)
       // On other platforms, load directly with preload
@@ -198,8 +204,17 @@ function createWindow(): void {
       spellcheck: !isMac ? true : undefined,
       enableWebSQL: false,
     },
-    backgroundColor: (isMac || isWindows) ? colors.background : undefined,
   });
+
+  // Explicitly set window icon for Windows/Linux taskbar (production only)
+  // Dev mode uses default Electron icon for consistency across platforms
+  if (!isMac && !isDev) {
+    const windowIcon = getWindowIcon();
+    if (windowIcon) {
+      mainWindow.setIcon(windowIcon);
+      console.log('[Icon] Window icon set successfully');
+    }
+  }
 
   // On macOS, use BrowserView for content with title bar overlay on top
   // Hybrid approach: content pushed down partially, overlay covers rest + some of Messenger's top UI
@@ -268,6 +283,16 @@ function createWindow(): void {
 
     // Load messenger.com in content view
     contentView.webContents.loadURL('https://www.messenger.com');
+
+    // Handle new window requests (target="_blank" links, window.open, etc.)
+    // Open external URLs in system browser instead of new Electron windows
+    contentView.webContents.setWindowOpenHandler(({ url }) => {
+      // Open all URLs in system browser - this is the standard behavior for wrapped web apps
+      shell.openExternal(url).catch((err) => {
+        console.error('[External Link] Failed to open URL:', url, err);
+      });
+      return { action: 'deny' };
+    });
 
     // Inject notification override script after page loads
     contentView.webContents.on('did-finish-load', async () => {
@@ -356,6 +381,15 @@ function createWindow(): void {
 
     mainWindow.loadURL('https://www.messenger.com');
 
+    // Handle new window requests (target="_blank" links, window.open, etc.)
+    // Open external URLs in system browser instead of new Electron windows
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url).catch((err) => {
+        console.error('[External Link] Failed to open URL:', url, err);
+      });
+      return { action: 'deny' };
+    });
+
     mainWindow.webContents.on('did-finish-load', async () => {
       try {
         await mainWindow?.webContents.executeJavaScript(`
@@ -443,61 +477,73 @@ function createWindow(): void {
     });
   }
 
-  // Handle Windows theme changes
-  if (isWindows && mainWindow) {
-    nativeTheme.on('updated', () => {
-      if (!mainWindow) return;
-      const colors = getOverlayColors();
-      mainWindow.setTitleBarOverlay?.({
-        color: colors.background,
-        symbolColor: colors.symbols,
-        height: windowsOverlayHeight,
-      });
-      mainWindow.setBackgroundColor(colors.background);
-    });
-  }
 }
 
 function getIconPath(): string | undefined {
-  // Try multiple path resolution strategies
-  const possiblePaths: string[] = [];
+  // Determine platform-specific icon file for BrowserWindow constructor
+  // Windows: .ico works in BrowserWindow, macOS: uses app bundle icon, Linux: .png
+  // Note: For BrowserWindow on Windows, .ico is preferred
+  const platformIcon = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
   
-  // Strategy 1: Relative to app path (for packaged apps)
   const appPath = app.getAppPath();
-  possiblePaths.push(path.join(appPath, 'assets/icons/icon.icns'));
-  possiblePaths.push(path.join(appPath, 'assets/icons/icon.ico'));
-  possiblePaths.push(path.join(appPath, 'assets/icons/icon.png'));
   
-  // Strategy 2: Relative to __dirname (for development)
-  possiblePaths.push(path.join(__dirname, '../../assets/icons/icon.icns'));
-  possiblePaths.push(path.join(__dirname, '../../assets/icons/icon.ico'));
-  possiblePaths.push(path.join(__dirname, '../../assets/icons/icon.png'));
-  
-  // Strategy 3: Relative to process.cwd() (for development)
-  possiblePaths.push(path.join(process.cwd(), 'assets/icons/icon.icns'));
-  possiblePaths.push(path.join(process.cwd(), 'assets/icons/icon.ico'));
-  possiblePaths.push(path.join(process.cwd(), 'assets/icons/icon.png'));
-  
-  // Strategy 4: Platform-specific
-  const platformIcon = process.platform === 'win32' ? 'icon.ico' : 
-                       process.platform === 'darwin' ? 'icon.icns' : 'icon.png';
-  possiblePaths.push(path.join(appPath, 'assets/icons', platformIcon));
-  possiblePaths.push(path.join(__dirname, '../../assets/icons', platformIcon));
-  possiblePaths.push(path.join(process.cwd(), 'assets/icons', platformIcon));
+  // Try platform-specific icon first, then fall back to .png
+  const possiblePaths: string[] = [
+    // Packaged app paths
+    path.join(appPath, 'assets/icons', platformIcon),
+    // Development paths (relative to dist/main/)
+    path.join(__dirname, '../../assets/icons', platformIcon),
+    // Development paths (relative to project root)
+    path.join(process.cwd(), 'assets/icons', platformIcon),
+    // Fallback to PNG
+    path.join(appPath, 'assets/icons/icon.png'),
+    path.join(__dirname, '../../assets/icons/icon.png'),
+    path.join(process.cwd(), 'assets/icons/icon.png'),
+  ];
   
   // Find the first existing icon file
   try {
     for (const iconPath of possiblePaths) {
       if (fs.existsSync(iconPath)) {
-        console.log('Found icon at:', iconPath);
+        console.log(`[Icon] Found icon for BrowserWindow: ${iconPath}`);
         return iconPath;
       }
     }
-    console.warn('No icon found. Tried paths:', possiblePaths.slice(0, 3));
+    console.warn('[Icon] No icon found for BrowserWindow');
   } catch (e) {
-    console.error('Error checking icon paths:', e);
+    console.error('[Icon] Error checking icon paths:', e);
   }
   
+  return undefined;
+}
+
+function getWindowIcon(): Electron.NativeImage | undefined {
+  // nativeImage.createFromPath() works best with PNG files
+  // .icns and .ico may not load correctly, so we always use PNG for nativeImage
+  const appPath = app.getAppPath();
+  
+  const possiblePaths: string[] = [
+    path.join(appPath, 'assets/icons/icon.png'),
+    path.join(__dirname, '../../assets/icons/icon.png'),
+    path.join(process.cwd(), 'assets/icons/icon.png'),
+  ];
+  
+  for (const iconPath of possiblePaths) {
+    if (fs.existsSync(iconPath)) {
+      try {
+        const icon = nativeImage.createFromPath(iconPath);
+        if (!icon.isEmpty()) {
+          console.log('[Icon] Created nativeImage from:', iconPath);
+          return icon;
+        }
+        console.warn('[Icon] Icon image is empty:', iconPath);
+      } catch (e) {
+        console.error('[Icon] Failed to create nativeImage:', e);
+      }
+    }
+  }
+  
+  console.warn('[Icon] No valid PNG icon found for nativeImage');
   return undefined;
 }
 
@@ -800,9 +846,16 @@ function setupIpcHandlers(): void {
     try {
       const { event: name, payload } = data || {};
       const safeName = name || 'fallback';
-      console.log('[FallbackLog]', safeName, payload || {});
-    } catch (e) {
-      console.warn('[FallbackLog] Failed to log fallback message', e);
+      // Only log in dev mode to reduce noise, and wrap to handle EPIPE
+      if (isDev) {
+        try {
+          console.log('[FallbackLog]', safeName, payload || {});
+        } catch {
+          // Ignore write errors (e.g., EPIPE when pipe is closed)
+        }
+      }
+    } catch {
+      // Silently ignore logging failures
     }
   });
 }
@@ -827,14 +880,15 @@ function testNotification(): void {
 }
 
 // Helper function to get dock icon path for macOS
+// Use icon-rounded.png which has the macOS squircle shape pre-applied
 function getDockIconPath(): string | undefined {
   const possiblePaths = [
     // When running from dist/main/main.js
-    path.resolve(__dirname, '../../assets/icons/icon.icns'),
+    path.resolve(__dirname, '../../assets/icons/icon-rounded.png'),
     // When running from project root
-    path.resolve(process.cwd(), 'assets/icons/icon.icns'),
+    path.resolve(process.cwd(), 'assets/icons/icon-rounded.png'),
     // When packaged
-    path.join(app.getAppPath(), 'assets/icons/icon.icns'),
+    path.join(app.getAppPath(), 'assets/icons/icon-rounded.png'),
   ];
   
   for (const iconPath of possiblePaths) {
@@ -1102,18 +1156,19 @@ app.whenReady().then(async () => {
     console.log('[AutoUpdater] Skipped in development mode');
   }
 
-  // Set dock icon for macOS (must be done after app is ready)
-  if (process.platform === 'darwin' && app.dock) {
+  // Set dock icon for macOS (only in production - dev mode uses default Electron icon)
+  // In production, the icon comes from the app bundle's .icns file which macOS renders correctly
+  if (process.platform === 'darwin' && app.dock && !isDev) {
     const dockIconPath = getDockIconPath();
     if (dockIconPath) {
       try {
         const dockIcon = nativeImage.createFromPath(dockIconPath);
         if (!dockIcon.isEmpty()) {
           app.dock.setIcon(dockIcon);
-          console.log('✓ Set dock icon from:', dockIconPath);
+          console.log('[Dock] Set dock icon from:', dockIconPath);
         }
       } catch (e) {
-        console.warn('⚠ Could not set dock icon:', e);
+        console.warn('[Dock] Could not set dock icon:', e);
       }
     }
   }
