@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.3] - 2026-01-02
+
+### Added
+- **Visual update progress window** - New unified window shows download progress with speed indicator (works on all platforms)
+- User now chooses when to download updates instead of automatic background downloads
+- Single window transitions through all states: available → downloading → ready to install
+- Cancel button during download, clear error messages if something fails
+
+### Changed
+- **macOS menu reorganization** - "Check for Updates" and "Uninstall" now under the Messenger app menu (more standard macOS behavior)
+- Added standard Window menu on macOS for window management
+- File menu now only contains standard items (Close Window)
+
+### Fixed
+- Updates no longer appear to "download forever" - errors are now shown to the user instead of silently failing
+
 ## [0.5.2] - 2026-01-02
 
 ### Fixed

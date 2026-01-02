@@ -740,11 +740,16 @@ function createApplicationMenu(): void {
         label: app.name,
         submenu: [
           { role: 'about' as const },
+          { type: 'separator' },
+          checkUpdatesMenuItem,
+          { type: 'separator' },
           { role: 'services' as const },
           { type: 'separator' },
           { role: 'hide' as const },
           { role: 'hideOthers' as const },
           { role: 'unhide' as const },
+          { type: 'separator' },
+          uninstallMenuItem,
           { type: 'separator' },
           { role: 'quit' as const },
         ],
@@ -752,14 +757,12 @@ function createApplicationMenu(): void {
       {
         label: 'File',
         submenu: [
-          checkUpdatesMenuItem,
-          uninstallMenuItem,
-          { type: 'separator' },
           { role: 'close' as const },
         ],
       },
       { role: 'editMenu' as const },
       { role: 'viewMenu' as const },
+      { role: 'windowMenu' as const },
     ];
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
@@ -1088,59 +1091,437 @@ async function checkMediaPermissions(): Promise<void> {
   }
 }
 
+// Auto-updater with single unified window (cross-platform)
+let updateWindow: BrowserWindow | null = null;
+
+function getUpdateWindowHTML(version: string): string {
+  const isDark = nativeTheme.shouldUseDarkColors;
+  const bg = isDark ? '#1a1a1a' : '#ffffff';
+  const text = isDark ? '#e8e8e8' : '#1a1a1a';
+  const textMuted = isDark ? '#888' : '#666';
+  const border = isDark ? '#333' : '#e0e0e0';
+  const progressBg = isDark ? '#2a2a2a' : '#f0f0f0';
+  const btnPrimary = '#0084ff';
+  const btnSecondary = isDark ? '#333' : '#e8e8e8';
+  const btnSecondaryText = isDark ? '#e8e8e8' : '#333';
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          background: ${bg};
+          color: ${text};
+          user-select: none;
+          overflow: hidden;
+        }
+        .container {
+          padding: 28px 32px;
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+        }
+        .header {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          margin-bottom: 20px;
+        }
+        .icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 12px;
+          background: linear-gradient(135deg, #0084ff 0%, #00c6ff 100%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .icon svg { width: 28px; height: 28px; fill: white; }
+        .title-group h1 {
+          font-size: 18px;
+          font-weight: 600;
+          margin-bottom: 4px;
+        }
+        .version {
+          font-size: 13px;
+          color: ${textMuted};
+        }
+        .content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .message {
+          font-size: 14px;
+          line-height: 1.5;
+          color: ${textMuted};
+          margin-bottom: 20px;
+        }
+        .progress-section {
+          display: none;
+        }
+        .progress-section.active {
+          display: block;
+        }
+        .progress-container {
+          background: ${progressBg};
+          border-radius: 6px;
+          height: 6px;
+          overflow: hidden;
+          margin-bottom: 12px;
+        }
+        .progress-bar {
+          background: linear-gradient(90deg, #0084ff, #00c6ff);
+          height: 100%;
+          width: 0%;
+          transition: width 0.2s ease-out;
+          border-radius: 6px;
+        }
+        .progress-info {
+          display: flex;
+          justify-content: space-between;
+          font-size: 12px;
+          color: ${textMuted};
+        }
+        .error-message {
+          display: none;
+          background: ${isDark ? '#2a1a1a' : '#fef2f2'};
+          border: 1px solid ${isDark ? '#5c2828' : '#fecaca'};
+          border-radius: 8px;
+          padding: 12px 16px;
+          font-size: 13px;
+          color: ${isDark ? '#fca5a5' : '#dc2626'};
+          margin-bottom: 20px;
+        }
+        .error-message.active {
+          display: block;
+        }
+        .success-icon {
+          display: none;
+          width: 48px;
+          height: 48px;
+          margin: 0 auto 16px;
+          border-radius: 50%;
+          background: ${isDark ? '#1a2e1a' : '#f0fdf4'};
+          align-items: center;
+          justify-content: center;
+        }
+        .success-icon.active {
+          display: flex;
+        }
+        .success-icon svg {
+          width: 24px;
+          height: 24px;
+          fill: #22c55e;
+        }
+        .buttons {
+          display: flex;
+          gap: 12px;
+          justify-content: flex-end;
+          margin-top: auto;
+          padding-top: 20px;
+          border-top: 1px solid ${border};
+        }
+        button {
+          padding: 10px 20px;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          border: none;
+          transition: all 0.15s ease;
+          min-width: 100px;
+        }
+        button:active {
+          transform: scale(0.97);
+        }
+        .btn-primary {
+          background: ${btnPrimary};
+          color: white;
+        }
+        .btn-primary:hover {
+          background: #0073e6;
+        }
+        .btn-secondary {
+          background: ${btnSecondary};
+          color: ${btnSecondaryText};
+        }
+        .btn-secondary:hover {
+          background: ${isDark ? '#404040' : '#d8d8d8'};
+        }
+        .hidden { display: none !important; }
+        
+        /* State-specific styles */
+        [data-state="available"] .progress-section { display: none; }
+        [data-state="downloading"] .progress-section { display: block; }
+        [data-state="downloading"] #btn-download { display: none; }
+        [data-state="downloading"] #btn-later { display: none; }
+        [data-state="downloading"] #btn-cancel { display: inline-block; }
+        [data-state="ready"] .success-icon { display: flex; }
+        [data-state="ready"] #btn-download { display: none; }
+        [data-state="ready"] #btn-later { display: inline-block; }
+        [data-state="ready"] #btn-restart { display: inline-block; }
+        [data-state="error"] .error-message { display: block; }
+        [data-state="error"] #btn-download { display: none; }
+        [data-state="error"] #btn-later { display: none; }
+        [data-state="error"] #btn-close { display: inline-block; }
+      </style>
+    </head>
+    <body data-state="available">
+      <div class="container">
+        <div class="header">
+          <div class="icon">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.438 5.503 3.686 7.2V22l3.372-1.852c.9.25 1.855.385 2.942.385 5.523 0 10-4.145 10-9.243S17.523 2 12 2zm.994 12.442l-2.546-2.716-4.97 2.716 5.467-5.804 2.609 2.716 4.907-2.716-5.467 5.804z"/></svg>
+          </div>
+          <div class="title-group">
+            <h1 id="title">Update Available</h1>
+            <div class="version">Version ${version}</div>
+          </div>
+        </div>
+        
+        <div class="content">
+          <div class="success-icon">
+            <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          </div>
+          
+          <p class="message" id="message">A new version of Messenger is available. Would you like to download it now?</p>
+          
+          <div class="error-message" id="error"></div>
+          
+          <div class="progress-section">
+            <div class="progress-container">
+              <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="progress-info">
+              <span id="progress-percent">Starting download...</span>
+              <span id="progress-speed"></span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="buttons">
+          <button class="btn-secondary" id="btn-later" onclick="window.electronAPI.later()">Later</button>
+          <button class="btn-secondary hidden" id="btn-cancel" onclick="window.electronAPI.cancel()">Cancel</button>
+          <button class="btn-secondary hidden" id="btn-close" onclick="window.electronAPI.close()">Close</button>
+          <button class="btn-primary" id="btn-download" onclick="window.electronAPI.download()">Download Now</button>
+          <button class="btn-primary hidden" id="btn-restart" onclick="window.electronAPI.restart()">Restart Now</button>
+        </div>
+      </div>
+      
+      <script>
+        window.setState = (state, data = {}) => {
+          document.body.dataset.state = state;
+          const title = document.getElementById('title');
+          const message = document.getElementById('message');
+          
+          switch (state) {
+            case 'downloading':
+              title.textContent = 'Downloading Update';
+              message.textContent = 'Please wait while the update downloads...';
+              break;
+            case 'ready':
+              title.textContent = 'Update Ready';
+              message.textContent = 'The update has been downloaded. Restart to apply the changes.';
+              break;
+            case 'error':
+              title.textContent = 'Update Failed';
+              message.textContent = 'There was a problem downloading the update.';
+              document.getElementById('error').textContent = data.error || 'Unknown error';
+              break;
+          }
+        };
+        
+        window.setProgress = (percent, speed) => {
+          document.getElementById('progress-bar').style.width = percent + '%';
+          document.getElementById('progress-percent').textContent = percent + '%';
+          document.getElementById('progress-speed').textContent = speed || '';
+        };
+      </script>
+    </body>
+    </html>
+  `;
+}
+
+function createUpdateWindow(version: string): void {
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.focus();
+    return;
+  }
+
+  updateWindow = new BrowserWindow({
+    width: 420,
+    height: 300,
+    resizable: false,
+    minimizable: true,
+    maximizable: false,
+    fullscreenable: false,
+    title: 'Messenger Update',
+    show: false,
+    frame: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: undefined,
+    },
+  });
+
+  // Inject the electronAPI before loading HTML
+  updateWindow.webContents.on('did-finish-load', () => {
+    updateWindow?.webContents.executeJavaScript(`
+      window.electronAPI = {
+        download: () => window.postMessage({ type: 'updater-action', action: 'download' }, '*'),
+        later: () => window.postMessage({ type: 'updater-action', action: 'later' }, '*'),
+        cancel: () => window.postMessage({ type: 'updater-action', action: 'cancel' }, '*'),
+        close: () => window.postMessage({ type: 'updater-action', action: 'close' }, '*'),
+        restart: () => window.postMessage({ type: 'updater-action', action: 'restart' }, '*'),
+      };
+    `).catch(() => {});
+  });
+
+  // Listen for messages from the window
+  updateWindow.webContents.on('console-message', () => {});
+  
+  // Use devtools protocol to listen for window.postMessage
+  updateWindow.webContents.executeJavaScript(`
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'updater-action') {
+        console.log('__UPDATER_ACTION__:' + e.data.action);
+      }
+    });
+  `).catch(() => {});
+
+  updateWindow.webContents.on('console-message', (_event, _level, message) => {
+    if (message.startsWith('__UPDATER_ACTION__:')) {
+      const action = message.replace('__UPDATER_ACTION__:', '');
+      handleUpdateAction(action);
+    }
+  });
+
+  updateWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getUpdateWindowHTML(version))}`);
+  
+  updateWindow.once('ready-to-show', () => {
+    updateWindow?.show();
+  });
+
+  updateWindow.on('closed', () => {
+    updateWindow = null;
+  });
+}
+
+function handleUpdateAction(action: string): void {
+  switch (action) {
+    case 'download':
+      console.log('[AutoUpdater] User chose to download');
+      updateWindow?.webContents.executeJavaScript(`window.setState('downloading')`).catch(() => {});
+      autoUpdater.downloadUpdate().catch((err) => {
+        console.error('[AutoUpdater] Download failed:', err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        updateWindow?.webContents.executeJavaScript(
+          `window.setState('error', { error: ${JSON.stringify(errorMsg)} })`
+        ).catch(() => {});
+      });
+      break;
+    case 'later':
+    case 'cancel':
+    case 'close':
+      console.log('[AutoUpdater] User dismissed update window');
+      closeUpdateWindow();
+      break;
+    case 'restart':
+      console.log('[AutoUpdater] User chose to restart');
+      isQuitting = true;
+      autoUpdater.quitAndInstall();
+      break;
+  }
+}
+
+function closeUpdateWindow(): void {
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.close();
+  }
+  updateWindow = null;
+}
+
+function setupAutoUpdater(): void {
+  try {
+    autoUpdater.autoDownload = false;
+    autoUpdater.logger = console;
+
+    autoUpdater.on('update-available', (info) => {
+      const version = info?.version || 'unknown';
+      console.log('[AutoUpdater] Update available:', version);
+      createUpdateWindow(version);
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+      const percent = Math.round(progress.percent);
+      const speedKB = Math.round(progress.bytesPerSecond / 1024);
+      const speedDisplay = speedKB > 1024 
+        ? `${(speedKB / 1024).toFixed(1)} MB/s` 
+        : `${speedKB} KB/s`;
+      
+      console.log(`[AutoUpdater] Download progress: ${percent}% (${speedDisplay})`);
+
+      if (updateWindow && !updateWindow.isDestroyed()) {
+        updateWindow.webContents.executeJavaScript(
+          `window.setProgress(${percent}, '${speedDisplay}')`
+        ).catch(() => {});
+      }
+    });
+
+    autoUpdater.on('update-not-available', () => {
+      console.log('[AutoUpdater] No update available');
+      if (!manualUpdateCheckInProgress) {
+        return;
+      }
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'No Updates Available',
+        message: "You're up to date!",
+        detail: 'Messenger is running the latest version.',
+        buttons: ['OK'],
+      }).catch(() => {});
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      const version = info?.version || '';
+      console.log('[AutoUpdater] Update downloaded:', version);
+      
+      if (updateWindow && !updateWindow.isDestroyed()) {
+        updateWindow.webContents.executeJavaScript(`window.setState('ready')`).catch(() => {});
+      }
+    });
+
+    autoUpdater.on('error', (err: unknown) => {
+      console.error('[AutoUpdater] error', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      
+      if (updateWindow && !updateWindow.isDestroyed()) {
+        updateWindow.webContents.executeJavaScript(
+          `window.setState('error', { error: ${JSON.stringify(errorMessage)} })`
+        ).catch(() => {});
+      }
+    });
+
+    autoUpdater.checkForUpdates().catch((err: unknown) => {
+      console.warn('[AutoUpdater] check failed', err);
+    });
+  } catch (e) {
+    console.warn('[AutoUpdater] init failed', e);
+  }
+}
+
 // App lifecycle
 app.whenReady().then(async () => {
   // Auto-updater setup (skip in dev mode - app-update.yml only exists in published builds)
   if (!isDev) {
-    try {
-      autoUpdater.autoDownload = true;
-      autoUpdater.logger = console;
-      autoUpdater.on('update-available', () => {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'Update available',
-          message: 'A new version is available. It will download in the background.',
-          buttons: ['OK'],
-        }).catch(() => {});
-      });
-      autoUpdater.on('update-not-available', () => {
-        if (!manualUpdateCheckInProgress) {
-          return;
-        }
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'No Updates Available',
-          message: "You're up to date!",
-          detail: 'Messenger is running the latest version.',
-          buttons: ['OK'],
-        }).catch(() => {});
-      });
-      autoUpdater.on('update-downloaded', () => {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'Update ready',
-          message: 'Update downloaded. Restart to install now?',
-          buttons: ['Restart Now', 'Later'],
-          cancelId: 1,
-          defaultId: 0,
-        }).then(({ response }) => {
-          if (response === 0) {
-            // Set isQuitting to true so the window close handler allows the app to quit
-            // Without this, the close handler intercepts and just hides the window
-            isQuitting = true;
-            autoUpdater.quitAndInstall();
-          }
-        }).catch(() => {});
-      });
-      autoUpdater.on('error', (err: unknown) => {
-        console.warn('[AutoUpdater] error', err);
-      });
-      autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
-        console.warn('[AutoUpdater] check failed', err);
-      });
-    } catch (e) {
-      console.warn('[AutoUpdater] init failed', e);
-    }
+    setupAutoUpdater();
   } else {
     console.log('[AutoUpdater] Skipped in development mode');
   }
