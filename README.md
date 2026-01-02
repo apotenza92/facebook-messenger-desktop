@@ -26,7 +26,8 @@ winget install apotenza92.FacebookMessengerDesktop
 |----------|----------|
 | **macOS (Apple Silicon) (Signed and notarized)** | [Download](https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip) |
 | **macOS (Intel) (Signed and notarized)** | [Download](https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip) |
-| **Windows** | [Download](https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-setup.exe) |
+| **Windows (x64)** | [Download](https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe) |
+| **Windows (ARM)** | [Download](https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe) |
 | **Linux** | [Download](https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-linux.AppImage) |
 
 ## Development
