@@ -22,6 +22,7 @@ let backgroundService: BackgroundService;
 let isQuitting = false;
 let resetApplied = false;
 let manualUpdateCheckInProgress = false;
+let updateDownloadedAndReady = false;
 let tray: Tray | null = null;
 let titleOverlay: BrowserView | null = null;
 const overlayHeight = 32;
@@ -447,9 +448,15 @@ function createWindow(): void {
     if (!isQuitting) {
       event.preventDefault();
       if (process.platform === 'darwin') {
+        // macOS: standard behavior - hide app but keep in dock
         app.hide();
-      } else {
+      } else if (tray) {
+        // Windows/Linux with tray: hide to system tray
         mainWindow?.hide();
+      } else {
+        // Windows/Linux without tray: minimize to taskbar instead of hiding
+        // This ensures users can still access the app via taskbar
+        mainWindow?.minimize();
       }
       return;
     }
@@ -610,8 +617,15 @@ function createTray(): void {
     return;
   }
 
+  console.log('[Tray] Creating tray with icon:', trayIconPath);
+
   try {
     const trayIcon = nativeImage.createFromPath(trayIconPath);
+    if (trayIcon.isEmpty()) {
+      console.warn('[Tray] Icon loaded but is empty, path:', trayIconPath);
+      return;
+    }
+    
     tray = new Tray(trayIcon);
     tray.setToolTip('Messenger');
 
@@ -631,7 +645,16 @@ function createTray(): void {
     ]);
 
     tray.setContextMenu(contextMenu);
-    tray.on('double-click', () => showMainWindow());
+    
+    // On Windows, single-click shows the app (more intuitive than double-click)
+    // On Linux, keep double-click as single-click typically shows context menu
+    if (process.platform === 'win32') {
+      tray.on('click', () => showMainWindow());
+    } else {
+      tray.on('double-click', () => showMainWindow());
+    }
+    
+    console.log('[Tray] Tray created successfully');
   } catch (e) {
     console.warn('[Tray] Failed to create tray', e);
   }
@@ -775,6 +798,8 @@ function createApplicationMenu(): void {
     {
       label: 'File',
       submenu: [
+        { role: 'about' as const },
+        { type: 'separator' },
         checkUpdatesMenuItem,
         uninstallMenuItem,
         { type: 'separator' },
@@ -1095,7 +1120,7 @@ async function checkMediaPermissions(): Promise<void> {
 // Auto-updater with single unified window (cross-platform)
 let updateWindow: BrowserWindow | null = null;
 
-function getUpdateWindowHTML(version: string): string {
+function getUpdateWindowHTML(version: string, iconDataUrl: string): string {
   const isDark = nativeTheme.shouldUseDarkColors;
   const bg = isDark ? '#1a1a1a' : '#ffffff';
   const text = isDark ? '#e8e8e8' : '#1a1a1a';
@@ -1105,6 +1130,11 @@ function getUpdateWindowHTML(version: string): string {
   const btnPrimary = '#0084ff';
   const btnSecondary = isDark ? '#333' : '#e8e8e8';
   const btnSecondaryText = isDark ? '#e8e8e8' : '#333';
+
+  // Use the app icon if available, otherwise show a fallback SVG
+  const iconHtml = iconDataUrl 
+    ? `<img src="${iconDataUrl}" alt="Messenger">`
+    : `<svg viewBox="0 0 24 24" style="width:100%;height:100%;"><circle cx="12" cy="12" r="10" fill="#0084ff"/><path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.438 5.503 3.686 7.2V22l3.372-1.852c.9.25 1.855.385 2.942.385 5.523 0 10-4.145 10-9.243S17.523 2 12 2zm.994 12.442l-2.546-2.716-4.97 2.716 5.467-5.804 2.609 2.716 4.907-2.716-5.467 5.804z" fill="white"/></svg>`;
 
   return `
     <!DOCTYPE html>
@@ -1121,7 +1151,7 @@ function getUpdateWindowHTML(version: string): string {
           overflow: hidden;
         }
         .container {
-          padding: 28px 32px;
+          padding: 24px;
           display: flex;
           flex-direction: column;
           height: 100vh;
@@ -1130,19 +1160,18 @@ function getUpdateWindowHTML(version: string): string {
           display: flex;
           align-items: center;
           gap: 16px;
-          margin-bottom: 20px;
+          margin-bottom: 24px;
         }
         .icon {
-          width: 48px;
-          height: 48px;
-          border-radius: 12px;
-          background: linear-gradient(135deg, #0084ff 0%, #00c6ff 100%);
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          width: 64px;
+          height: 64px;
           flex-shrink: 0;
         }
-        .icon svg { width: 28px; height: 28px; fill: white; }
+        .icon img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
         .title-group h1 {
           font-size: 18px;
           font-weight: 600;
@@ -1157,18 +1186,18 @@ function getUpdateWindowHTML(version: string): string {
           display: flex;
           flex-direction: column;
           justify-content: center;
+          align-items: center;
+          text-align: center;
         }
         .message {
           font-size: 14px;
           line-height: 1.5;
           color: ${textMuted};
-          margin-bottom: 20px;
         }
         .progress-section {
           display: none;
-        }
-        .progress-section.active {
-          display: block;
+          width: 100%;
+          margin-top: 16px;
         }
         .progress-container {
           background: ${progressBg};
@@ -1198,35 +1227,30 @@ function getUpdateWindowHTML(version: string): string {
           padding: 12px 16px;
           font-size: 13px;
           color: ${isDark ? '#fca5a5' : '#dc2626'};
-          margin-bottom: 20px;
-        }
-        .error-message.active {
-          display: block;
+          margin-top: 16px;
+          width: 100%;
+          text-align: left;
         }
         .success-icon {
           display: none;
-          width: 48px;
-          height: 48px;
-          margin: 0 auto 16px;
+          width: 56px;
+          height: 56px;
+          margin-bottom: 16px;
           border-radius: 50%;
-          background: ${isDark ? '#1a2e1a' : '#f0fdf4'};
+          background: ${isDark ? '#1a2e1a' : '#dcfce7'};
           align-items: center;
           justify-content: center;
         }
-        .success-icon.active {
-          display: flex;
-        }
         .success-icon svg {
-          width: 24px;
-          height: 24px;
+          width: 28px;
+          height: 28px;
           fill: #22c55e;
         }
         .buttons {
           display: flex;
           gap: 12px;
           justify-content: flex-end;
-          margin-top: auto;
-          padding-top: 20px;
+          padding-top: 24px;
           border-top: 1px solid ${border};
         }
         button {
@@ -1238,6 +1262,7 @@ function getUpdateWindowHTML(version: string): string {
           border: none;
           transition: all 0.15s ease;
           min-width: 100px;
+          display: none;
         }
         button:active {
           transform: scale(0.97);
@@ -1256,21 +1281,22 @@ function getUpdateWindowHTML(version: string): string {
         .btn-secondary:hover {
           background: ${isDark ? '#404040' : '#d8d8d8'};
         }
-        .hidden { display: none !important; }
         
-        /* State-specific styles */
-        [data-state="available"] .progress-section { display: none; }
+        /* State: available (initial) */
+        [data-state="available"] #btn-later { display: inline-block; }
+        [data-state="available"] #btn-download { display: inline-block; }
+        
+        /* State: downloading */
         [data-state="downloading"] .progress-section { display: block; }
-        [data-state="downloading"] #btn-download { display: none; }
-        [data-state="downloading"] #btn-later { display: none; }
         [data-state="downloading"] #btn-cancel { display: inline-block; }
+        
+        /* State: ready */
         [data-state="ready"] .success-icon { display: flex; }
-        [data-state="ready"] #btn-download { display: none; }
         [data-state="ready"] #btn-later { display: inline-block; }
         [data-state="ready"] #btn-restart { display: inline-block; }
+        
+        /* State: error */
         [data-state="error"] .error-message { display: block; }
-        [data-state="error"] #btn-download { display: none; }
-        [data-state="error"] #btn-later { display: none; }
         [data-state="error"] #btn-close { display: inline-block; }
       </style>
     </head>
@@ -1278,7 +1304,7 @@ function getUpdateWindowHTML(version: string): string {
       <div class="container">
         <div class="header">
           <div class="icon">
-            <svg viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.438 5.503 3.686 7.2V22l3.372-1.852c.9.25 1.855.385 2.942.385 5.523 0 10-4.145 10-9.243S17.523 2 12 2zm.994 12.442l-2.546-2.716-4.97 2.716 5.467-5.804 2.609 2.716 4.907-2.716-5.467 5.804z"/></svg>
+            ${iconHtml}
           </div>
           <div class="title-group">
             <h1 id="title">Update Available</h1>
@@ -1308,10 +1334,10 @@ function getUpdateWindowHTML(version: string): string {
         
         <div class="buttons">
           <button class="btn-secondary" id="btn-later" onclick="window.electronAPI.later()">Later</button>
-          <button class="btn-secondary hidden" id="btn-cancel" onclick="window.electronAPI.cancel()">Cancel</button>
-          <button class="btn-secondary hidden" id="btn-close" onclick="window.electronAPI.close()">Close</button>
+          <button class="btn-secondary" id="btn-cancel" onclick="window.electronAPI.cancel()">Cancel</button>
+          <button class="btn-secondary" id="btn-close" onclick="window.electronAPI.close()">Close</button>
           <button class="btn-primary" id="btn-download" onclick="window.electronAPI.download()">Download Now</button>
-          <button class="btn-primary hidden" id="btn-restart" onclick="window.electronAPI.restart()">Restart Now</button>
+          <button class="btn-primary" id="btn-restart" onclick="window.electronAPI.restart()">Restart Now</button>
         </div>
       </div>
       
@@ -1355,9 +1381,27 @@ function createUpdateWindow(version: string): void {
     return;
   }
 
+  // Get the app icon as base64 for embedding in the HTML
+  let iconPath: string;
+  if (isDev) {
+    iconPath = path.join(__dirname, '../../assets/icons/icon-128.png');
+  } else {
+    // In production, the assets folder is at the app root (inside asar)
+    iconPath = path.join(__dirname, '../assets/icons/icon-128.png');
+  }
+  
+  let iconDataUrl = '';
+  try {
+    const iconBuffer = fs.readFileSync(iconPath);
+    iconDataUrl = `data:image/png;base64,${iconBuffer.toString('base64')}`;
+  } catch {
+    // Fallback to a simple colored square if icon can't be loaded
+    iconDataUrl = '';
+  }
+
   updateWindow = new BrowserWindow({
-    width: 420,
-    height: 300,
+    width: 480,
+    height: 340,
     resizable: false,
     minimizable: true,
     maximizable: false,
@@ -1404,7 +1448,7 @@ function createUpdateWindow(version: string): void {
     }
   });
 
-  updateWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getUpdateWindowHTML(version))}`);
+  updateWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getUpdateWindowHTML(version, iconDataUrl))}`);
   
   updateWindow.once('ready-to-show', () => {
     updateWindow?.show();
@@ -1452,6 +1496,7 @@ function closeUpdateWindow(): void {
 function setupAutoUpdater(): void {
   try {
     autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = console;
 
     autoUpdater.on('update-available', (info) => {
@@ -1493,6 +1538,7 @@ function setupAutoUpdater(): void {
     autoUpdater.on('update-downloaded', (info) => {
       const version = info?.version || '';
       console.log('[AutoUpdater] Update downloaded:', version);
+      updateDownloadedAndReady = true;
       
       if (updateWindow && !updateWindow.isDestroyed()) {
         updateWindow.webContents.executeJavaScript(`window.setState('ready')`).catch(() => {});
@@ -1671,6 +1717,17 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  
+  // If an update was downloaded and ready, install it now
+  if (updateDownloadedAndReady) {
+    console.log('[AutoUpdater] Installing pending update on quit...');
+    updateDownloadedAndReady = false; // Prevent re-entry
+    event.preventDefault();
+    // quitAndInstall(isSilent, isForceRunAfter)
+    // isSilent: false - show the installer UI on Windows
+    // isForceRunAfter: false - respect user's choice to quit, don't auto-restart
+    autoUpdater.quitAndInstall(false, false);
+  }
 });

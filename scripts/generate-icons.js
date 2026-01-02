@@ -244,11 +244,26 @@ async function generateIcons() {
     
     // Tray icons (smaller sizes)
     console.log('Generating tray icons...');
+    // Linux tray icon
     await generateIconWithWhiteBackground(svgBuffer, 22, path.join(trayDir, 'icon.png'));
-    
+    // macOS tray icon (template)
     await generateIconWithWhiteBackground(svgBuffer, 22, path.join(trayDir, 'iconTemplate.png'));
     
-    await generateIconWithWhiteBackground(svgBuffer, 32, path.join(trayDir, 'icon.ico'));
+    // Windows tray icon - generate proper ICO file with multiple sizes
+    console.log('Generating Windows tray ICO...');
+    const trayIcoSizes = [32, 24, 16];
+    const trayIcoPngs = [];
+    for (const size of trayIcoSizes) {
+      const pngPath = path.join(trayDir, `icon-${size}.png`);
+      await generateIconWithWhiteBackground(svgBuffer, size, pngPath);
+      trayIcoPngs.push(pngPath);
+    }
+    const trayIcoBuffer = await pngToIco(trayIcoPngs);
+    await fs.promises.writeFile(path.join(trayDir, 'icon.ico'), trayIcoBuffer);
+    // Clean up temporary PNGs
+    for (const pngPath of trayIcoPngs) {
+      fs.unlinkSync(pngPath);
+    }
     
     // Generate macOS iconset for ICNS
     console.log('Generating macOS iconset...');

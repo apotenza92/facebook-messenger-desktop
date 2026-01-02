@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.5] - 2026-01-02
+
+### Fixed
+- **Update dialog fixes**: Restart button now shows correctly, window properly sized for all platforms, uses standard app icon
+- **Windows system tray**: Fixed tray icon not appearing (was malformed ICO file)
+- **Windows tray behavior**: Single-click now shows app (standard Windows convention)
+- **Update install on quit**: If user clicks "Later" then quits, update installs silently without auto-restarting (respects user's choice to quit)
+
+### Added
+- Windows/Linux: "About Messenger" now in File menu
+
 ## [0.5.4] - 2026-01-02
 
 ### Fixed
