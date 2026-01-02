@@ -77,6 +77,8 @@
       "artifactName": "Messenger-windows-${arch}-setup.${ext}"
     },
     "nsis": {
+      "oneClick": true,
+      "perMachine": false,
       "differentialPackage": false,
       "shortcutName": "Messenger",
       "deleteAppDataOnUninstall": true,
