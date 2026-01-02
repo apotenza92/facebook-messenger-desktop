@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.6] - 2026-01-02
+
+### Fixed
+- **Windows about dialog**: Version now displays correctly as "0.5.6" instead of "0.5.6.0"
+
 ## [0.5.5] - 2026-01-02
 
 ### Fixed
