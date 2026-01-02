@@ -39,12 +39,7 @@ winget install apotenza92.FacebookMessengerDesktop
 npm install
 ```
 
-2. Generate icons (first time only):
-```bash
-npm run generate-icons
-```
-
-3. Run the app:
+2. Run the app:
 ```bash
 npm start
 ```
