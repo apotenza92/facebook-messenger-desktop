@@ -249,13 +249,13 @@ async function generateIcons() {
     // macOS tray icon (template)
     await generateIconWithWhiteBackground(svgBuffer, 22, path.join(trayDir, 'iconTemplate.png'));
     
-    // Windows tray icon - generate proper ICO file with multiple sizes
-    console.log('Generating Windows tray ICO...');
+    // Windows tray icon - generate proper ICO file with multiple sizes (rounded)
+    console.log('Generating Windows tray ICO (rounded)...');
     const trayIcoSizes = [32, 24, 16];
     const trayIcoPngs = [];
     for (const size of trayIcoSizes) {
       const pngPath = path.join(trayDir, `icon-${size}.png`);
-      await generateIconWithWhiteBackground(svgBuffer, size, pngPath);
+      await generateIconWithRoundedWhiteBackground(svgBuffer, size, pngPath);
       trayIcoPngs.push(pngPath);
     }
     const trayIcoBuffer = await pngToIco(trayIcoPngs);

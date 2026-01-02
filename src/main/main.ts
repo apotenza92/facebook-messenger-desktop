@@ -17,6 +17,28 @@ const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
 console.log(`Messenger starting on ${process.platform} ${process.arch}`);
 
+// In dev mode, kill any existing production Messenger instances to avoid conflicts
+if (isDev) {
+  try {
+    const { execSync } = require('child_process');
+    if (process.platform === 'win32') {
+      // Kill production Messenger.exe (but not this Electron dev process)
+      // Look for Messenger.exe in Program Files or LocalAppData (installed locations)
+      execSync('taskkill /F /IM "Messenger.exe" /FI "WINDOWTITLE ne electron*"', { stdio: 'ignore' });
+    } else if (process.platform === 'darwin') {
+      // Kill production Messenger.app (but not this dev process)
+      // pkill with -f matches the full path, so we target /Applications/Messenger.app
+      execSync('pkill -f "/Applications/Messenger.app" || true', { stdio: 'ignore' });
+    } else {
+      // Linux: kill any Messenger process from installed location
+      execSync('pkill -f "/opt/Messenger" || pkill -f "messenger-desktop" || true', { stdio: 'ignore' });
+    }
+    console.log('[Dev Mode] Killed any existing production Messenger instances');
+  } catch {
+    // Ignore errors - process might not exist
+  }
+}
+
 let mainWindow: BrowserWindow | null = null;
 let contentView: BrowserView | null = null;
 let notificationHandler: NotificationHandler;
@@ -138,6 +160,58 @@ function scheduleExternalCleanup(paths: string[]): void {
 
   const quoted = filtered.map((p) => `"${p.replace(/"/g, '\\"')}"`).join(' ');
   const child = spawn('/bin/sh', ['-c', `sleep 2; rm -rf ${quoted}`], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+}
+
+// Schedule moving the macOS app bundle to Trash after the app quits
+function scheduleMacAppTrash(): void {
+  if (process.platform !== 'darwin' || isDev) return;
+
+  // Get the path to the .app bundle
+  const exePath = app.getPath('exe');
+  // exe is inside Messenger.app/Contents/MacOS/Messenger, so go up 3 levels
+  const appBundlePath = path.resolve(exePath, '../../..');
+  
+  // Only proceed if it looks like a .app bundle
+  if (!appBundlePath.endsWith('.app')) {
+    console.log('[Uninstall] Not a .app bundle, skipping trash:', appBundlePath);
+    return;
+  }
+
+  console.log('[Uninstall] Scheduling app bundle for Trash:', appBundlePath);
+
+  // Use AppleScript to move to Trash (safer, recoverable)
+  // Wait for app to quit, then move to Trash
+  const script = `sleep 2; osascript -e 'tell application "Finder" to delete POSIX file "${appBundlePath}"' 2>/dev/null || true`;
+  const child = spawn('/bin/sh', ['-c', script], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+}
+
+// Schedule running the Windows uninstaller after the app quits
+function scheduleWindowsUninstaller(): void {
+  if (process.platform !== 'win32' || isDev) return;
+
+  // NSIS uninstaller is in the app installation directory
+  const installDir = path.dirname(app.getPath('exe'));
+  const uninstallerPath = path.join(installDir, 'Uninstall Messenger.exe');
+
+  if (!fs.existsSync(uninstallerPath)) {
+    console.log('[Uninstall] Uninstaller not found:', uninstallerPath);
+    return;
+  }
+
+  console.log('[Uninstall] Scheduling uninstaller:', uninstallerPath);
+
+  // Run the NSIS uninstaller in silent mode after a delay
+  // /S = silent mode, _?= sets the install directory to prevent immediate reboot
+  const cmd = `Start-Sleep -Seconds 2; Start-Process -FilePath '${uninstallerPath.replace(/'/g, "''")}' -ArgumentList '/S'`;
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], {
     detached: true,
     stdio: 'ignore',
   });
@@ -907,9 +981,9 @@ async function handleUninstallRequest(): Promise<void> {
     }
     switch (process.platform) {
       case 'darwin':
-        return 'If you want to remove the application itself, move Messenger.app to the Trash.';
+        return 'The app will be moved to Trash after it quits.';
       case 'win32':
-        return 'If you want to remove the application itself, uninstall Messenger from Apps & Features.';
+        return 'The uninstaller will run after the app quits.';
       default:
         return 'If you want to remove the application itself, uninstall it using your package manager or delete the AppImage/binary.';
     }
@@ -935,11 +1009,11 @@ async function handleUninstallRequest(): Promise<void> {
     // Run the package manager uninstall command
     runPackageManagerUninstall(packageManager);
   } else {
-    // Open platform-specific uninstall UI to remove the app bundle
+    // Automatically remove the app bundle/installation
     if (process.platform === 'darwin') {
-      await shell.openPath('/Applications');
+      scheduleMacAppTrash();
     } else if (process.platform === 'win32') {
-      await shell.openExternal('ms-settings:appsfeatures');
+      scheduleWindowsUninstaller();
     }
   }
 
@@ -989,6 +1063,91 @@ function createApplicationMenu(): void {
     click: () => { openGitHubPage(); },
   };
 
+  // Dev-only menu for testing features
+  const developMenu: Electron.MenuItemConstructorOptions = {
+    label: 'Develop',
+    visible: isDev,
+    submenu: [
+      {
+        label: 'Test Update Workflow…',
+        click: async () => {
+          // Simulate the full update workflow
+          const testVersion = '99.0.0';
+          
+          // Step 1: Show "Update Available" dialog
+          const downloadResult = await dialog.showMessageBox({
+            type: 'info',
+            title: 'Update Available (Test)',
+            message: 'A new version of Messenger is available',
+            detail: `Version ${testVersion} is ready to download. Would you like to download it now?\n\n(This is a test - no actual update will be downloaded)`,
+            buttons: ['Download Now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+          });
+          
+          if (downloadResult.response !== 0) {
+            console.log('[Test] User chose to update later');
+            return;
+          }
+          
+          // Step 2: Show download progress (native - taskbar + title + tray + notifications)
+          console.log('[Test] Starting simulated download');
+          showDownloadProgress();
+          
+          let progress = 0;
+          
+          // Simulate download progress
+          await new Promise<void>((resolve) => {
+            const testInterval = setInterval(() => {
+              progress += Math.random() * 12 + 3;
+              if (progress >= 100) {
+                progress = 100;
+                clearInterval(testInterval);
+                const speed = (1.5 + Math.random() * 2).toFixed(1) + ' MB/s';
+                updateDownloadProgress(100, speed, '67.5 MB', '67.5 MB');
+                setTimeout(() => {
+                  hideDownloadProgress();
+                  resolve();
+                }, 500);
+              } else {
+                const speed = (1.5 + Math.random() * 2).toFixed(1) + ' MB/s';
+                const downloaded = ((progress / 100) * 67.5).toFixed(1) + ' MB';
+                updateDownloadProgress(Math.round(progress), speed, downloaded, '67.5 MB');
+              }
+            }, 300);
+          });
+          
+          // Step 3: Show "Update Ready" dialog
+          console.log('[Test] Download complete, showing restart dialog');
+          const restartResult = await dialog.showMessageBox({
+            type: 'info',
+            title: 'Update Ready (Test)',
+            message: 'Update downloaded successfully',
+            detail: `Version ${testVersion} has been downloaded. Restart now to apply the update.\n\n(This is a test - clicking "Restart Now" will restart the app)`,
+            buttons: ['Restart Now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+          });
+          
+          if (restartResult.response === 0) {
+            console.log('[Test] User chose to restart - relaunching app');
+            app.relaunch();
+            app.quit();
+          } else {
+            console.log('[Test] User chose to restart later');
+          }
+        },
+      },
+      {
+        label: 'Test Notification',
+        click: () => { testNotification(); },
+      },
+      { type: 'separator' },
+      { role: 'toggleDevTools' as const },
+      { role: 'forceReload' as const },
+    ],
+  };
+
   if (process.platform === 'darwin') {
     const template: Electron.MenuItemConstructorOptions[] = [
       {
@@ -1019,6 +1178,7 @@ function createApplicationMenu(): void {
       { role: 'editMenu' as const },
       { role: 'viewMenu' as const },
       { role: 'windowMenu' as const },
+      developMenu,
     ];
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
@@ -1070,6 +1230,7 @@ function createApplicationMenu(): void {
         { role: 'about' as const },
       ],
     },
+    developMenu,
   ];
 
   const menu = Menu.buildFromTemplate(template);
@@ -1357,6 +1518,85 @@ async function checkMediaPermissions(): Promise<void> {
 
 // Auto-updater state
 let pendingUpdateVersion: string | null = null;
+let originalWindowTitle: string = 'Messenger';
+let isDownloading = false;
+
+function showDownloadProgress(): void {
+  isDownloading = true;
+  
+  // Store original title to restore later
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    originalWindowTitle = mainWindow.getTitle() || 'Messenger';
+  }
+  
+  // Show native notification that download is starting
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: 'Downloading Update',
+      body: 'Messenger is downloading an update in the background...',
+      silent: true,
+    });
+    notification.show();
+  }
+  
+  // Update tray tooltip
+  if (tray) {
+    tray.setToolTip('Messenger - Downloading update...');
+  }
+}
+
+function updateDownloadProgress(percent: number, speed: string, downloaded: string, total: string): void {
+  if (!isDownloading) return;
+  
+  // Update taskbar/dock progress
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setProgressBar(percent / 100);
+    
+    // Update window title with progress
+    mainWindow.setTitle(`Downloading ${percent}% - Messenger`);
+  }
+
+  // Update tray tooltip with progress
+  if (tray) {
+    tray.setToolTip(`Messenger - Downloading ${percent}% (${speed})`);
+  }
+}
+
+function hideDownloadProgress(): void {
+  isDownloading = false;
+  
+  // Clear taskbar/dock progress
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setProgressBar(-1); // -1 removes the progress bar
+    
+    // Restore original window title
+    mainWindow.setTitle(originalWindowTitle);
+    
+    // Flash taskbar to get attention (Windows)
+    if (process.platform === 'win32') {
+      mainWindow.flashFrame(true);
+      // Stop flashing after a few seconds
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.flashFrame(false);
+        }
+      }, 3000);
+    }
+  }
+  
+  // Restore tray tooltip
+  if (tray) {
+    tray.setToolTip('Messenger');
+  }
+  
+  // Note: No notification here - the "Update Ready" dialog will be shown by the auto-updater
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
 
 // GitHub repo URL for about dialog
 const GITHUB_REPO_URL = 'https://github.com/apotenza92/facebook-messenger-desktop';
@@ -1404,8 +1644,10 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
   if (result.response === 0) {
     console.log('[AutoUpdater] User chose to download');
     pendingUpdateVersion = version;
+    showDownloadProgress();
     autoUpdater.downloadUpdate().catch((err) => {
       console.error('[AutoUpdater] Download failed:', err);
+      hideDownloadProgress();
       const errorMsg = err instanceof Error ? err.message : String(err);
       dialog.showMessageBox({
         type: 'error',
@@ -1472,8 +1714,11 @@ function setupAutoUpdater(): void {
       const speedDisplay = speedKB > 1024 
         ? `${(speedKB / 1024).toFixed(1)} MB/s` 
         : `${speedKB} KB/s`;
+      const downloaded = formatBytes(progress.transferred);
+      const total = formatBytes(progress.total);
       
       console.log(`[AutoUpdater] Download progress: ${percent}% (${speedDisplay})`);
+      updateDownloadProgress(percent, speedDisplay, downloaded, total);
     });
 
     autoUpdater.on('update-not-available', () => {
@@ -1493,12 +1738,14 @@ function setupAutoUpdater(): void {
     autoUpdater.on('update-downloaded', (info) => {
       const version = info?.version || pendingUpdateVersion || '';
       console.log('[AutoUpdater] Update downloaded:', version);
+      hideDownloadProgress();
       updateDownloadedAndReady = true;
       showUpdateReadyDialog(version);
     });
 
     autoUpdater.on('error', (err: unknown) => {
       console.error('[AutoUpdater] error', err);
+      hideDownloadProgress();
     });
 
     autoUpdater.checkForUpdates().catch((err: unknown) => {
@@ -1675,6 +1922,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  
+  // Close download progress window if open
+  hideDownloadProgress();
   
   // Note: If an update was downloaded, autoInstallOnAppQuit (set to true in setupAutoUpdater)
   // will automatically install the update when the app quits.
