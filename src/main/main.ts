@@ -720,7 +720,8 @@ function createApplicationMenu(): void {
         return;
       }
       manualUpdateCheckInProgress = true;
-      autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
+      // Use checkForUpdates() instead of checkForUpdatesAndNotify() to use our custom update window
+      autoUpdater.checkForUpdates().catch((err: unknown) => {
         console.warn('[AutoUpdater] manual check failed', err);
         dialog.showMessageBox({
           type: 'warning',

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.4] - 2026-01-02
+
+### Fixed
+- macOS: "Check for Updates" no longer shows a brief flash notification - now consistently uses the custom update window
+
 ## [0.5.3] - 2026-01-02
 
 ### Added
