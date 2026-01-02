@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.6] - 2026-01-02
+
+### Fixed
+- Uninstall now properly removes all app data, including cache directory (was causing login to persist after reinstall)
+  - Windows: Now cleans both %APPDATA%\Messenger and %LOCALAPPDATA%\Messenger
+  - macOS: Now cleans both ~/Library/Application Support/Messenger and ~/Library/Caches/Messenger
+  - Linux: Now cleans both ~/.config/Messenger and ~/.cache/Messenger
+- Fixed Windows uninstall cleanup command using incorrect PowerShell syntax for multiple paths
+
+### Improved
+- macOS: Uninstall now also removes Saved Application State (window position memory)
+- Increased cleanup delay from 1 to 2 seconds for more reliable file deletion
+
 ## [0.6.5] - 2026-01-02
 
 ### Changed

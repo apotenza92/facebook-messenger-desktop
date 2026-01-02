@@ -63,11 +63,55 @@ const uninstallTargets = () => {
   // Only remove app-owned temp directory to avoid touching system temp roots
   const tempDir = path.join(app.getPath('temp'), app.getName());
 
-  return [
+  // Collect all data directories - cache is often in a different location than userData!
+  // Windows: userData = %APPDATA%\Messenger, cache = %LOCALAPPDATA%\Messenger
+  // macOS: userData = ~/Library/Application Support/Messenger, cache = ~/Library/Caches/Messenger
+  // Linux: userData = ~/.config/Messenger, cache = ~/.cache/Messenger
+  const targets = [
     { label: 'User data', path: app.getPath('userData') },
     { label: 'Temporary files', path: tempDir },
     { label: 'Logs', path: app.getPath('logs') },
+    { label: 'Crash dumps', path: app.getPath('crashDumps') },
   ];
+
+  // Add platform-specific cache directory (separate from userData!)
+  // This is where Chromium stores browser cache, GPU cache, etc.
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  if (process.platform === 'win32') {
+    // Windows: cache is in LocalAppData (not Roaming AppData where userData lives)
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) {
+      targets.push({ label: 'Cache', path: path.join(localAppData, APP_DIR_NAME) });
+    }
+  } else if (process.platform === 'darwin') {
+    // macOS: cache is in ~/Library/Caches/ (not Application Support where userData lives)
+    targets.push({ label: 'Cache', path: path.join(homeDir, 'Library', 'Caches', APP_DIR_NAME) });
+    // Also clean up Saved Application State
+    targets.push({ label: 'Saved app state', path: path.join(homeDir, 'Library', 'Saved Application State', 'com.electron.messenger.savedState') });
+  } else {
+    // Linux: cache is in ~/.cache/ (not ~/.config/ where userData lives)
+    targets.push({ label: 'Cache', path: path.join(homeDir, '.cache', APP_DIR_NAME) });
+  }
+
+  // Add sessionData if different from userData (Electron 28+)
+  try {
+    const sessionDataPath = app.getPath('sessionData');
+    if (sessionDataPath && sessionDataPath !== app.getPath('userData')) {
+      targets.push({ label: 'Session data', path: sessionDataPath });
+    }
+  } catch {
+    // sessionData path not available in older Electron versions
+  }
+
+  // Deduplicate paths (some paths like logs may be inside userData)
+  const uniquePaths = new Map<string, { label: string; path: string }>();
+  for (const target of targets) {
+    if (target.path && !uniquePaths.has(target.path)) {
+      uniquePaths.set(target.path, target);
+    }
+  }
+
+  return Array.from(uniquePaths.values());
 };
 
 function scheduleExternalCleanup(paths: string[]): void {
@@ -75,8 +119,15 @@ function scheduleExternalCleanup(paths: string[]): void {
   if (filtered.length === 0) return;
 
   if (process.platform === 'win32') {
-    const quoted = filtered.map((p) => `\\"${p}\\"`).join(',');
-    const cmd = `Start-Sleep -Seconds 1; Remove-Item -LiteralPath ${quoted} -Recurse -Force -ErrorAction SilentlyContinue`;
+    // Build PowerShell commands to delete each path
+    // Use separate Remove-Item calls for reliability, and handle paths that may not exist
+    const deleteCommands = filtered.map((p) => {
+      // Escape single quotes in paths for PowerShell
+      const escaped = p.replace(/'/g, "''");
+      return `if (Test-Path -LiteralPath '${escaped}') { Remove-Item -LiteralPath '${escaped}' -Recurse -Force -ErrorAction SilentlyContinue }`;
+    }).join('; ');
+    
+    const cmd = `Start-Sleep -Seconds 2; ${deleteCommands}`;
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], {
       detached: true,
       stdio: 'ignore',
@@ -86,7 +137,7 @@ function scheduleExternalCleanup(paths: string[]): void {
   }
 
   const quoted = filtered.map((p) => `"${p.replace(/"/g, '\\"')}"`).join(' ');
-  const child = spawn('/bin/sh', ['-c', `sleep 1; rm -rf ${quoted}`], {
+  const child = spawn('/bin/sh', ['-c', `sleep 2; rm -rf ${quoted}`], {
     detached: true,
     stdio: 'ignore',
   });
