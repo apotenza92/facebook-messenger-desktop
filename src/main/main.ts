@@ -1824,8 +1824,8 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
       type: 'info',
       title: 'Update Available',
       message: `A new version of Messenger is available`,
-      detail: `Version ${version} is available. Click "Download & Install" to automatically download and run the installer.\n\nNote: After the installer opens, you may need to click "More info" → "Run anyway" if Windows SmartScreen appears.`,
-      buttons: ['Download & Install', 'Later'],
+      detail: `Version ${version} is available. Click "Download and Install" to automatically download and run the installer.\n\nNote: After the installer opens, you may need to click "More info" → "Run anyway" if Windows SmartScreen appears.`,
+      buttons: ['Download and Install', 'Later'],
       defaultId: 0,
       cancelId: 1,
     });
