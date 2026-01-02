@@ -1,5 +1,8 @@
 import { app, BrowserWindow, BrowserView, ipcMain, Notification, Menu, nativeImage, screen, dialog, systemPreferences, Tray, shell, nativeTheme } from 'electron';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import * as path from 'path';
 import * as fs from 'fs';
 import { NotificationHandler } from './notification-handler';
@@ -719,22 +722,120 @@ function createTray(): void {
   }
 }
 
+// Package manager constants
+const HOMEBREW_CASK = 'apotenza92/tap/facebook-messenger-desktop';
+const WINGET_ID = 'apotenza92.FacebookMessengerDesktop';
+
+type PackageManagerInfo = {
+  name: string;
+  detected: boolean;
+  uninstallCommand: string[];
+};
+
+async function detectHomebrewInstall(): Promise<PackageManagerInfo> {
+  const result: PackageManagerInfo = {
+    name: 'Homebrew',
+    detected: false,
+    uninstallCommand: ['brew', 'uninstall', '--cask', HOMEBREW_CASK],
+  };
+  
+  if (process.platform !== 'darwin') {
+    return result;
+  }
+  
+  try {
+    // Check if this cask is installed via Homebrew
+    await execAsync(`brew list --cask ${HOMEBREW_CASK}`);
+    result.detected = true;
+    console.log('[Uninstall] Detected Homebrew cask installation');
+  } catch {
+    // Command failed = not installed via Homebrew
+    console.log('[Uninstall] Not installed via Homebrew');
+  }
+  
+  return result;
+}
+
+async function detectWingetInstall(): Promise<PackageManagerInfo> {
+  const result: PackageManagerInfo = {
+    name: 'winget',
+    detected: false,
+    uninstallCommand: ['winget', 'uninstall', '--id', WINGET_ID, '--silent'],
+  };
+  
+  if (process.platform !== 'win32') {
+    return result;
+  }
+  
+  try {
+    // Check if this package is installed via winget
+    const { stdout } = await execAsync(`winget list --id ${WINGET_ID} --accept-source-agreements`);
+    // winget list returns the package info if found, check if our ID is in the output
+    if (stdout.includes(WINGET_ID) || stdout.includes('FacebookMessengerDesktop')) {
+      result.detected = true;
+      console.log('[Uninstall] Detected winget installation');
+    }
+  } catch {
+    // Command failed = not installed via winget or winget not available
+    console.log('[Uninstall] Not installed via winget or winget unavailable');
+  }
+  
+  return result;
+}
+
+async function detectPackageManager(): Promise<PackageManagerInfo | null> {
+  if (process.platform === 'darwin') {
+    const homebrew = await detectHomebrewInstall();
+    if (homebrew.detected) return homebrew;
+  } else if (process.platform === 'win32') {
+    const winget = await detectWingetInstall();
+    if (winget.detected) return winget;
+  }
+  return null;
+}
+
+function runPackageManagerUninstall(pm: PackageManagerInfo): void {
+  console.log(`[Uninstall] Running ${pm.name} uninstall:`, pm.uninstallCommand.join(' '));
+  
+  const [command, ...args] = pm.uninstallCommand;
+  
+  if (process.platform === 'win32') {
+    // On Windows, run via cmd to ensure proper PATH resolution
+    const child = spawn('cmd.exe', ['/c', ...pm.uninstallCommand], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } else {
+    // On macOS/Linux, spawn directly
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: 'ignore',
+      shell: true,
+    });
+    child.unref();
+  }
+}
+
 async function handleUninstallRequest(): Promise<void> {
-  const detailByPlatform: Record<NodeJS.Platform, string> = {
-    darwin:
-      'This removes Messenger app data (settings, cache, logs) from this Mac.\n\nTo fully remove the application bundle, move Messenger.app to the Trash after this finishes.',
-    win32:
-      'This removes Messenger app data (settings, cache, logs) from this PC.\nTo fully uninstall the app, remove it from Apps & Features after this finishes.',
-    linux:
-      'This removes Messenger app data (settings, cache, logs) from this machine.\nIf you installed from a package manager, remove the package separately after this finishes.',
-    aix: 'This removes Messenger app data (settings, cache, logs).',
-    android: 'This removes Messenger app data (settings, cache, logs).',
-    freebsd: 'This removes Messenger app data (settings, cache, logs).',
-    haiku: 'This removes Messenger app data (settings, cache, logs).',
-    openbsd: 'This removes Messenger app data (settings, cache, logs).',
-    sunos: 'This removes Messenger app data (settings, cache, logs).',
-    cygwin: 'This removes Messenger app data (settings, cache, logs).',
-    netbsd: 'This removes Messenger app data (settings, cache, logs).',
+  // Check if installed via a package manager
+  const packageManager = await detectPackageManager();
+  
+  const getDetailText = (): string => {
+    if (packageManager) {
+      return `Messenger was installed via ${packageManager.name}. This will run the ${packageManager.name} uninstall command to properly remove the app and update the package manager.`;
+    }
+    
+    switch (process.platform) {
+      case 'darwin':
+        return 'This removes Messenger app data (settings, cache, logs) from this Mac.\n\nTo fully remove the application bundle, move Messenger.app to the Trash after this finishes.';
+      case 'win32':
+        return 'This removes Messenger app data (settings, cache, logs) from this PC.\nTo fully uninstall the app, remove it from Apps & Features after this finishes.';
+      case 'linux':
+        return 'This removes Messenger app data (settings, cache, logs) from this machine.\nIf you installed from a package manager, remove the package separately after this finishes.';
+      default:
+        return 'This removes Messenger app data (settings, cache, logs).';
+    }
   };
 
   const { response } = await dialog.showMessageBox({
@@ -744,12 +845,27 @@ async function handleUninstallRequest(): Promise<void> {
     cancelId: 1,
     title: 'Uninstall Messenger',
     message: 'Remove all Messenger data from this device?',
-    detail: detailByPlatform[process.platform] || detailByPlatform.linux,
+    detail: getDetailText(),
   });
 
   if (response !== 0) {
     return;
   }
+
+  // Show completion dialog with appropriate message
+  const getCompletionDetail = (): string => {
+    if (packageManager) {
+      return `The ${packageManager.name} uninstall command will run after the app quits.`;
+    }
+    switch (process.platform) {
+      case 'darwin':
+        return 'If you want to remove the application itself, move Messenger.app to the Trash.';
+      case 'win32':
+        return 'If you want to remove the application itself, uninstall Messenger from Apps & Features.';
+      default:
+        return 'If you want to remove the application itself, uninstall it using your package manager or delete the AppImage/binary.';
+    }
+  };
 
   await dialog.showMessageBox({
     type: 'info',
@@ -757,12 +873,7 @@ async function handleUninstallRequest(): Promise<void> {
     defaultId: 0,
     title: 'Uninstall complete',
     message: 'Messenger will quit and remove its data.',
-    detail:
-      process.platform === 'darwin'
-        ? 'If you want to remove the application itself, move Messenger.app to the Trash.'
-        : process.platform === 'win32'
-        ? 'If you want to remove the application itself, uninstall Messenger from Apps & Features.'
-        : 'If you want to remove the application itself, uninstall it using your package manager or delete the AppImage/binary.',
+    detail: getCompletionDetail(),
   });
 
   // Remove from dock (macOS) or taskbar (Windows)
@@ -772,11 +883,16 @@ async function handleUninstallRequest(): Promise<void> {
   const targets = uninstallTargets().map((t) => t.path);
   scheduleExternalCleanup(targets);
 
-  // Open platform-specific uninstall UI to remove the app bundle
-  if (process.platform === 'darwin') {
-    await shell.openPath('/Applications');
-  } else if (process.platform === 'win32') {
-    await shell.openExternal('ms-settings:appsfeatures');
+  if (packageManager) {
+    // Run the package manager uninstall command
+    runPackageManagerUninstall(packageManager);
+  } else {
+    // Open platform-specific uninstall UI to remove the app bundle
+    if (process.platform === 'darwin') {
+      await shell.openPath('/Applications');
+    } else if (process.platform === 'win32') {
+      await shell.openExternal('ms-settings:appsfeatures');
+    }
   }
 
   app.quit();
@@ -1247,7 +1363,21 @@ async function showUpdateReadyDialog(version: string): Promise<void> {
   if (result.response === 0) {
     console.log('[AutoUpdater] User chose to restart');
     isQuitting = true;
-    autoUpdater.quitAndInstall();
+    
+    // On Windows, quitAndInstall() doesn't always properly quit the app
+    // Use setImmediate to ensure event loop is cleared, and pass (false, true)
+    // to ensure the app restarts after install. Add fallback app.exit() for Windows.
+    setImmediate(() => {
+      autoUpdater.quitAndInstall(false, true);
+    });
+    
+    // Fallback: Force quit on Windows if quitAndInstall doesn't work within 1 second
+    if (process.platform === 'win32') {
+      setTimeout(() => {
+        console.log('[AutoUpdater] Force quitting for Windows update install');
+        app.exit(0);
+      }, 1000);
+    }
   } else {
     console.log('[AutoUpdater] User chose to restart later');
   }

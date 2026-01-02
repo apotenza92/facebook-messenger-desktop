@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.4] - 2026-01-02
+
+### Fixed
+- Windows: "Restart Now" for updates now properly quits the app to install the update
+
+### Improved
+- Uninstall now detects Homebrew (macOS) and winget (Windows) installations and runs the appropriate package manager uninstall command
+
 ## [0.6.3] - 2026-01-02
 
 ### Changed
