@@ -1063,10 +1063,9 @@ function createApplicationMenu(): void {
     click: () => { openGitHubPage(); },
   };
 
-  // Dev-only menu for testing features
+  // Dev-only menu for testing features (only included in menu when isDev is true)
   const developMenu: Electron.MenuItemConstructorOptions = {
     label: 'Develop',
-    visible: isDev,
     submenu: [
       {
         label: 'Test Update Workflow…',
@@ -1178,7 +1177,8 @@ function createApplicationMenu(): void {
       { role: 'editMenu' as const },
       { role: 'viewMenu' as const },
       { role: 'windowMenu' as const },
-      developMenu,
+      // Only include Develop menu in dev mode
+      ...(isDev ? [developMenu] : []),
     ];
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
@@ -1230,7 +1230,8 @@ function createApplicationMenu(): void {
         { role: 'about' as const },
       ],
     },
-    developMenu,
+    // Only include Develop menu in dev mode
+    ...(isDev ? [developMenu] : []),
   ];
 
   const menu = Menu.buildFromTemplate(template);
