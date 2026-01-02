@@ -1566,6 +1566,13 @@ function setupAutoUpdater(): void {
 
 // App lifecycle
 app.whenReady().then(async () => {
+  // Set about panel options to fix version display on Windows
+  // Windows .exe files use 4-part versions (0.5.5.0), but we want to show just 0.5.5
+  app.setAboutPanelOptions({
+    applicationName: 'Messenger',
+    applicationVersion: app.getVersion(),
+  });
+
   // Auto-updater setup (skip in dev mode - app-update.yml only exists in published builds)
   if (!isDev) {
     setupAutoUpdater();
