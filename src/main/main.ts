@@ -825,7 +825,10 @@ function createApplicationMenu(): void {
       {
         label: app.name,
         submenu: [
-          { role: 'about' as const },
+          {
+            label: 'About Messenger',
+            click: () => { void showCustomAboutDialog(); },
+          },
           { type: 'separator' },
           checkUpdatesMenuItem,
           { type: 'separator' },
@@ -860,7 +863,10 @@ function createApplicationMenu(): void {
     {
       label: 'File',
       submenu: [
-        { role: 'about' as const },
+        {
+          label: 'About Messenger',
+          click: () => { void showCustomAboutDialog(); },
+        },
         { type: 'separator' },
         checkUpdatesMenuItem,
         uninstallMenuItem,
@@ -1182,6 +1188,198 @@ async function checkMediaPermissions(): Promise<void> {
 // Auto-updater state
 let pendingUpdateVersion: string | null = null;
 
+// GitHub repo URL for about dialog
+const GITHUB_REPO_URL = 'https://github.com/apotenza92/facebook-messenger-desktop';
+
+async function showCustomAboutDialog(): Promise<void> {
+  const version = app.getVersion();
+  const year = new Date().getFullYear();
+  
+  // On macOS, we can use a more native-looking dialog
+  // On Windows/Linux, we create a styled BrowserWindow for better appearance
+  if (process.platform === 'darwin') {
+    // Use native macOS about panel with our custom options
+    app.showAboutPanel();
+    return;
+  }
+
+  // Create a custom about window for Windows/Linux
+  const aboutWindow = new BrowserWindow({
+    width: 380,
+    height: 340,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: 'About Messenger',
+    parent: mainWindow || undefined,
+    modal: true,
+    show: false,
+    frame: false,
+    transparent: true,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+    },
+  });
+
+  const isDark = nativeTheme.shouldUseDarkColors;
+  const bgColor = isDark ? '#1a1a1a' : '#ffffff';
+  const textColor = isDark ? '#f5f5f7' : '#1c1c1e';
+  const secondaryColor = isDark ? '#86868b' : '#6e6e73';
+  const linkColor = isDark ? '#58a6ff' : '#0066cc';
+  const borderColor = isDark ? '#3a3a3c' : '#d2d2d7';
+  const hoverBg = isDark ? '#2a2a2c' : '#f5f5f7';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          html, body {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Display", sans-serif;
+            -webkit-user-select: none;
+            cursor: default;
+          }
+          .container {
+            width: 100%;
+            height: 100%;
+            background: ${bgColor};
+            border-radius: 12px;
+            border: 1px solid ${borderColor};
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 28px 24px 20px;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.2);
+          }
+          .icon {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 16px;
+            border-radius: 18px;
+          }
+          .title {
+            font-size: 18px;
+            font-weight: 600;
+            color: ${textColor};
+            margin-bottom: 4px;
+            letter-spacing: -0.3px;
+          }
+          .version {
+            font-size: 12px;
+            color: ${secondaryColor};
+            margin-bottom: 16px;
+          }
+          .divider {
+            width: 100%;
+            height: 1px;
+            background: ${borderColor};
+            margin: 8px 0;
+          }
+          .info-row {
+            font-size: 12px;
+            color: ${secondaryColor};
+            text-align: center;
+            line-height: 1.5;
+            margin-bottom: 8px;
+          }
+          .link {
+            color: ${linkColor};
+            text-decoration: none;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            transition: background 0.15s;
+          }
+          .link:hover {
+            background: ${hoverBg};
+            text-decoration: underline;
+          }
+          .button-row {
+            margin-top: auto;
+            display: flex;
+            gap: 8px;
+          }
+          .button {
+            background: ${isDark ? '#0a84ff' : '#007aff'};
+            color: #ffffff;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.15s;
+          }
+          .button:hover {
+            opacity: 0.85;
+          }
+          .button:active {
+            opacity: 0.7;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <img class="icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+CjxyZWN0IHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgcng9IjUiIGZpbGw9InVybCgjZ3JhZCkiLz4KPGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJncmFkIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjAlIiB5Mj0iMTAwJSI+PHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6IzAwQzZGRiIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3R5bGU9InN0b3AtY29sb3I6IzAwNjZGRiIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPgo8cGF0aCBkPSJNMTIgM0M3LjAzIDMgMyA2LjkgMyAxMS4zYzAgMi42IDEuMyA0LjkgMy4zIDYuNGwuMSAyLjYgMi40LTEuM2MuOC4yIDEuNS4zIDIuMi4zIDQuOTcgMCA5LTMuOSA5LTguM1MxNi45NyAzIDEyIDN6bTEgMTEuNGwtMi4zLTIuNC0zLjggMi40IDQuMi00LjUgMi4zIDIuNCAzLjgtMi40LTQuMiA0LjV6IiBmaWxsPSJ3aGl0ZSIvPgo8L3N2Zz4=" />
+          <div class="title">Messenger</div>
+          <div class="version">Version ${version}</div>
+          <div class="divider"></div>
+          <div class="info-row">
+            An unofficial desktop app for<br/>Facebook Messenger
+          </div>
+          <div class="info-row">
+            © ${year} Alex Potenza
+          </div>
+          <a class="link" href="${GITHUB_REPO_URL}" id="github-link">View on GitHub</a>
+          <div class="button-row">
+            <button class="button" id="close-btn">OK</button>
+          </div>
+        </div>
+        <script>
+          document.getElementById('close-btn').addEventListener('click', () => {
+            window.close();
+          });
+          // Close on Escape key or Enter
+          document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' || e.key === 'Enter') {
+              window.close();
+            }
+          });
+        </script>
+      </body>
+    </html>
+  `;
+
+  // Handle link clicks to open in external browser
+  aboutWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
+
+  // Handle navigation (for href links)
+  aboutWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault();
+    shell.openExternal(url).catch(() => {});
+  });
+
+  aboutWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  
+  aboutWindow.once('ready-to-show', () => {
+    aboutWindow.show();
+  });
+}
+
 async function showUpdateAvailableDialog(version: string): Promise<void> {
   const result = await dialog.showMessageBox({
     type: 'info',
@@ -1289,11 +1487,15 @@ function setupAutoUpdater(): void {
 
 // App lifecycle
 app.whenReady().then(async () => {
-  // Set about panel options to fix version display on Windows
-  // Windows .exe files use 4-part versions (0.5.5.0), but we want to show just 0.5.5
+  // Set about panel options for macOS native about panel
+  // Include GitHub link in credits
+  const year = new Date().getFullYear();
   app.setAboutPanelOptions({
     applicationName: 'Messenger',
     applicationVersion: app.getVersion(),
+    copyright: `© ${year} Alex Potenza`,
+    credits: `An unofficial desktop app for Facebook Messenger\n\nGitHub: ${GITHUB_REPO_URL}`,
+    website: GITHUB_REPO_URL,
   });
 
   // Auto-updater setup (skip in dev mode - app-update.yml only exists in published builds)
@@ -1447,17 +1649,14 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-app.on('before-quit', (event) => {
+app.on('before-quit', () => {
   isQuitting = true;
   
-  // If an update was downloaded and ready, install it now
+  // Note: If an update was downloaded, autoInstallOnAppQuit (set to true in setupAutoUpdater)
+  // will automatically install the update when the app quits.
+  // We don't call quitAndInstall() here because that can cause "app can't be closed" errors
+  // on Windows when the installer tries to start while the app is still closing.
   if (updateDownloadedAndReady) {
-    console.log('[AutoUpdater] Installing pending update on quit...');
-    updateDownloadedAndReady = false; // Prevent re-entry
-    event.preventDefault();
-    // quitAndInstall(isSilent, isForceRunAfter)
-    // isSilent: false - show the installer UI on Windows
-    // isForceRunAfter: false - respect user's choice to quit, don't auto-restart
-    autoUpdater.quitAndInstall(false, false);
+    console.log('[AutoUpdater] Update will be installed on quit via autoInstallOnAppQuit');
   }
 });

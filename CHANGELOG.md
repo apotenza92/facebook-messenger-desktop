@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0] - 2026-01-02
+
+### Added
+- **GitHub link in About dialog** - All platforms now show a link to the project's GitHub page
+- **Custom About dialog for Windows/Linux** - Beautiful, modern dialog matching macOS aesthetics with app icon, version, and GitHub link
+
+### Fixed
+- **"Messenger can't be closed" error during auto-update** - Fixed race condition in quit handler that prevented the NSIS installer from starting properly on Windows
+- **Duplicate version display** - Windows no longer shows version in brackets (e.g., was showing "0.5.8 (0.5.8.0)")
+
+### Changed
+- About dialog now respects system dark/light mode on Windows/Linux
+- macOS About panel now includes credits with GitHub URL
+
 ## [0.5.8] - 2026-01-02
 
 ### Changed
