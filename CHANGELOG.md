@@ -1,10 +1,24 @@
 # Changelog
 
+## [0.7.3] - 2026-01-04
+
+### Fixed
+- Windows: In-app uninstall now properly removes the app from Apps and Features
+- Windows: Uninstaller now kills running Messenger process and removes taskbar pins
+- macOS: Fixed Homebrew detection by using full path to brew executable
+- Windows: Fixed dialog buttons showing ampersand instead of and
+
+### Improved
+- Simplified uninstall flow to single confirmation dialog on all platforms
+- Added administrator permission notice to Windows uninstall dialog
+- Install source detection now re-runs when app version changes (handles reinstall via different method)
+- Consistent uninstall messaging across all platforms
+
 ## [0.7.2] - 2026-01-03
 
 ### Fixed
 - Uninstall dialog no longer hangs - install source is now detected at startup and cached
-- Uninstalling via Apps & Features now fully removes all app data (login, cache, etc.)
+- Uninstalling via Apps and Features now fully removes all app data (login, cache, etc.)
 - macOS: Fixed Saved Application State cleanup using wrong bundle ID
 
 ### Improved

@@ -215,14 +215,34 @@ function scheduleWindowsUninstaller(): void {
 
   console.log('[Uninstall] Scheduling uninstaller:', uninstallerPath);
 
-  // Run the NSIS uninstaller in silent mode after a delay
-  // /S = silent mode, _?= sets the install directory to prevent immediate reboot
-  const cmd = `Start-Sleep -Seconds 2; Start-Process -FilePath '${uninstallerPath.replace(/'/g, "''")}' -ArgumentList '/S'`;
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  child.unref();
+  // Create a temporary VBS script to run the uninstaller with elevation
+  // VBS is more reliable for UAC elevation than PowerShell when the parent process exits
+  const tempDir = app.getPath('temp');
+  const vbsPath = path.join(tempDir, 'messenger-uninstall.vbs');
+  
+  // VBS script that waits for the app to exit, then runs the uninstaller elevated
+  // Using ShellExecute with "runas" verb triggers UAC properly
+  // Note: VBS doesn't need backslash escaping, but we need to escape quotes by doubling them
+  const vbsContent = `
+Set WshShell = CreateObject("WScript.Shell")
+WScript.Sleep 2000
+Set objShell = CreateObject("Shell.Application")
+objShell.ShellExecute "${uninstallerPath.replace(/"/g, '""')}", "/S", "", "runas", 1
+`;
+
+  try {
+    fs.writeFileSync(vbsPath, vbsContent.trim(), 'utf8');
+    console.log('[Uninstall] Created uninstall script:', vbsPath);
+    
+    // Run the VBS script detached
+    const child = spawn('wscript.exe', [vbsPath], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch (err) {
+    console.error('[Uninstall] Failed to create uninstall script:', err);
+  }
 }
 
 function removeFromDockAndTaskbar(): void {
@@ -873,13 +893,21 @@ function getInstallSourceCachePath(): string {
   return path.join(app.getPath('userData'), INSTALL_SOURCE_CACHE_FILE);
 }
 
-function readInstallSourceCache(): InstallSource | null {
+type InstallSourceCache = {
+  source: InstallSource;
+  version: string;
+};
+
+function readInstallSourceCache(): InstallSourceCache | null {
   try {
     const cachePath = getInstallSourceCachePath();
     if (fs.existsSync(cachePath)) {
       const data = fs.readFileSync(cachePath, 'utf-8');
       const parsed = JSON.parse(data);
-      return parsed.source as InstallSource;
+      // Handle old cache format (just { source }) by treating it as version mismatch
+      if (parsed.source && parsed.version) {
+        return parsed as InstallSourceCache;
+      }
     }
   } catch (error) {
     console.log('[InstallSource] Failed to read cache:', error instanceof Error ? error.message : 'unknown');
@@ -890,62 +918,56 @@ function readInstallSourceCache(): InstallSource | null {
 function writeInstallSourceCache(source: InstallSource): void {
   try {
     const cachePath = getInstallSourceCachePath();
-    fs.writeFileSync(cachePath, JSON.stringify({ source }, null, 2));
-    console.log('[InstallSource] Saved install source:', source);
+    const cache: InstallSourceCache = { source, version: app.getVersion() };
+    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2));
+    console.log('[InstallSource] Saved install source:', source, 'for version:', app.getVersion());
   } catch (error) {
     console.log('[InstallSource] Failed to write cache:', error instanceof Error ? error.message : 'unknown');
   }
 }
 
 // Detect install source on startup and cache it
-// Re-detects if cached as 'direct' in case user reinstalled via package manager
+// Re-detects if: no cache, cached as 'direct', or app version changed (possible reinstall via different method)
 async function detectAndCacheInstallSource(): Promise<void> {
   // Skip in dev mode
   if (isDev) return;
   
   const cached = readInstallSourceCache();
+  const currentVersion = app.getVersion();
+  const versionChanged = cached && cached.version !== currentVersion;
   
-  // If already detected as a package manager, don't re-check
-  // (package manager installs are reliable and unlikely to change)
-  if (cached && cached !== 'direct') {
-    console.log('[InstallSource] Already detected:', cached);
+  // Re-detect if:
+  // 1. No cache (first run)
+  // 2. Cached as 'direct' (user might have reinstalled via package manager)
+  // 3. Version changed (user might have reinstalled via different method)
+  const shouldRedetect = !cached || cached.source === 'direct' || versionChanged;
+  
+  if (!shouldRedetect) {
+    console.log('[InstallSource] Using cached:', cached.source, '(version:', cached.version + ')');
     return;
   }
   
-  // Re-detect if no cache or cached as 'direct' (user might have reinstalled via package manager)
-  console.log('[InstallSource] Detecting install source...', cached ? '(re-checking direct install)' : '(first run)');
+  const reason = !cached ? 'first run' : versionChanged ? `version changed ${cached.version} → ${currentVersion}` : 're-checking direct install';
+  console.log('[InstallSource] Detecting install source...', `(${reason})`);
   
   try {
     if (process.platform === 'darwin') {
       const homebrew = await detectHomebrewInstall();
       const newSource = homebrew.detected ? 'homebrew' : 'direct';
-      if (newSource !== cached) {
-        writeInstallSourceCache(newSource);
-        if (homebrew.detected) {
-          console.log('[InstallSource] Updated: detected Homebrew installation');
-        }
-      } else {
-        console.log('[InstallSource] Install source unchanged:', newSource);
-      }
+      writeInstallSourceCache(newSource);
+      console.log('[InstallSource] Detected:', newSource);
     } else if (process.platform === 'win32') {
       const winget = await detectWingetInstall();
       const newSource = winget.detected ? 'winget' : 'direct';
-      if (newSource !== cached) {
-        writeInstallSourceCache(newSource);
-        if (winget.detected) {
-          console.log('[InstallSource] Updated: detected winget installation');
-        }
-      } else {
-        console.log('[InstallSource] Install source unchanged:', newSource);
-      }
+      writeInstallSourceCache(newSource);
+      console.log('[InstallSource] Detected:', newSource);
     } else {
-      if (!cached) {
-        writeInstallSourceCache('direct');
-      }
+      writeInstallSourceCache('direct');
+      console.log('[InstallSource] Detected: direct (Linux)');
     }
   } catch (error) {
     console.log('[InstallSource] Detection failed:', error instanceof Error ? error.message : 'unknown');
-    // Only write 'direct' if no cache exists - don't overwrite good data on failure
+    // On failure, only write 'direct' if no cache exists - don't overwrite good data
     if (!cached) {
       writeInstallSourceCache('direct');
     }
@@ -1033,7 +1055,8 @@ async function detectWingetInstall(): Promise<PackageManagerInfo> {
 
 function detectPackageManagerFromCache(): PackageManagerInfo | null {
   // Read from cache (instant) instead of running slow detection commands
-  const source = readInstallSourceCache();
+  const cached = readInstallSourceCache();
+  const source = cached?.source;
   
   if (!source || source === 'direct') {
     console.log('[Uninstall] Install source:', source ?? 'not cached');
@@ -1090,17 +1113,25 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
 }
 
 async function handleUninstallRequest(): Promise<void> {
-  // Show confirmation dialog immediately (don't wait for slow package manager detection)
+  // Read package manager from cache (instant - detection was done at app startup)
+  const packageManager = detectPackageManagerFromCache();
+
+  // Build detail text based on platform and install method
   const getDetailText = (): string => {
+    const baseMessage = 'This will quit Messenger and remove all app data (settings, cache, and logs).';
+    
+    if (packageManager) {
+      return `${baseMessage}\n\nThe app will be uninstalled using ${packageManager.name}.`;
+    }
     switch (process.platform) {
       case 'darwin':
-        return 'This removes Messenger app data and moves the app to Trash.';
+        return `${baseMessage}\n\nThe app will be moved to Trash.`;
       case 'win32':
-        return 'This removes Messenger app data and runs the uninstaller.';
+        return `${baseMessage}\n\nYou will be asked for administrator permission to complete the uninstall.`;
       case 'linux':
-        return 'This removes Messenger app data (settings, cache, logs) from this machine.\nIf you installed from a package manager, remove the package separately after this finishes.';
+        return `${baseMessage}\n\nIf you installed via a package manager, remove the package separately.`;
       default:
-        return 'This removes Messenger app data (settings, cache, logs).';
+        return baseMessage;
     }
   };
 
@@ -1110,40 +1141,13 @@ async function handleUninstallRequest(): Promise<void> {
     defaultId: 0,
     cancelId: 1,
     title: 'Uninstall Messenger',
-    message: 'Remove all Messenger data from this device?',
+    message: 'Uninstall Messenger from this device?',
     detail: getDetailText(),
   });
 
   if (response !== 0) {
     return;
   }
-
-  // Read package manager from cache (instant - detection was done at app startup)
-  const packageManager = detectPackageManagerFromCache();
-
-  // Show completion dialog with appropriate message
-  const getCompletionDetail = (): string => {
-    if (packageManager) {
-      return `The ${packageManager.name} uninstall command will run after the app quits.`;
-    }
-    switch (process.platform) {
-      case 'darwin':
-        return 'The app will be moved to Trash after it quits.';
-      case 'win32':
-        return 'The uninstaller will run after the app quits.';
-      default:
-        return 'If you want to remove the application itself, uninstall it using your package manager or delete the AppImage/binary.';
-    }
-  };
-
-  await dialog.showMessageBox({
-    type: 'info',
-    buttons: ['Quit Messenger'],
-    defaultId: 0,
-    title: 'Uninstall complete',
-    message: 'Messenger will quit and remove its data.',
-    detail: getCompletionDetail(),
-  });
 
   // Remove from dock (macOS) or taskbar (Windows)
   removeFromDockAndTaskbar();
