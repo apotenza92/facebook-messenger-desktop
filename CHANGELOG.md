@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.1] - 2026-01-02
+
+### Changed
+- **macOS About dialog**: Now uses custom dialog (same as Windows/Linux) so GitHub link is actually clickable
+
 ## [0.6.0] - 2026-01-02
 
 ### Added

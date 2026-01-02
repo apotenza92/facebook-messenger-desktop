@@ -1195,18 +1195,13 @@ async function showCustomAboutDialog(): Promise<void> {
   const version = app.getVersion();
   const year = new Date().getFullYear();
   
-  // On macOS, we can use a more native-looking dialog
-  // On Windows/Linux, we create a styled BrowserWindow for better appearance
-  if (process.platform === 'darwin') {
-    // Use native macOS about panel with our custom options
-    app.showAboutPanel();
-    return;
-  }
-
-  // Create a custom about window for Windows/Linux
+  // Use custom about window on all platforms for consistent experience
+  // and to have a clickable GitHub link (native macOS about panel doesn't support links)
+  const isMac = process.platform === 'darwin';
+  
   const aboutWindow = new BrowserWindow({
     width: 380,
-    height: 340,
+    height: isMac ? 320 : 340,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -1217,6 +1212,8 @@ async function showCustomAboutDialog(): Promise<void> {
     show: false,
     frame: false,
     transparent: true,
+    // macOS: hide traffic lights since we have our own close button
+    titleBarStyle: isMac ? 'hidden' : undefined,
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
