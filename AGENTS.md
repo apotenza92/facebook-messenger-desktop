@@ -41,7 +41,7 @@ npm run build       # Compile TypeScript only
 npm run dist        # Build distributable for current platform
 npm run dist:mac    # macOS (both architectures)
 npm run dist:win    # Windows (both architectures)
-npm run dist:linux  # Linux (AppImage + .deb)
+npm run dist:linux  # Linux (AppImage, .deb, .rpm, Snap, Flatpak)
 ```
 
 ## Key Conventions
@@ -156,4 +156,36 @@ When ready to publish a new version:
 - Do NOT use `npm version patch --no-git-tag-version` - this skips the tag which is needed to trigger releases
 - Never manually edit the version in `package.json` - always use `npm version` to keep files in sync
 - The GitHub Actions "Build and Release" workflow is triggered by version tags (e.g., `v0.6.7`)
+
+### CRITICAL: Version Management Rules
+
+**Before creating ANY release:**
+
+1. **Check the latest successful release** on GitHub releases page
+2. **Test builds locally first** before pushing version tags:
+   ```bash
+   npm run dist:mac      # Test macOS build
+   npm run dist:win      # Test Windows build  
+   npm run dist:linux    # Test Linux build
+   ```
+3. **Only bump version ONCE** - the next version after the latest successful release
+
+**If a release build fails:**
+- Do NOT keep bumping versions trying to fix it
+- Fix the issue, then reset `package.json` version to what it should be (one above last successful release)
+- Use `npm version X.Y.Z` with the exact version number to set it correctly
+
+**Example:** If v0.7.5 was the last successful release and builds are failing:
+1. Fix the build issue
+2. Reset version: edit `package.json` to `"version": "0.7.5"` (or one below target)
+3. Then run `npm version patch` to get `0.7.6`
+4. Push with tags
+
+**Never publish broken releases** - users will receive update notifications for versions that don't work.
+
+### Linux Build Notes
+
+- **Snap**: Only builds for x64 (snapcraft cannot cross-compile to ARM64)
+- **Flatpak**: Requires `flatpak` and `flatpak-builder` installed, plus Freedesktop runtime
+- **Test Linux builds on CI** - local macOS/Windows machines may lack required tools
 
