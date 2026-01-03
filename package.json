@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "0.7.6",
+  "version": "0.7.5",
   "description": "A self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "dist:win": "npm run build && electron-builder --win --arm64 --x64 --publish=never",
     "dist:win:arm": "npm run build && electron-builder --win --arm64 --publish=never",
     "dist:win:x64": "npm run build && electron-builder --win --x64 --publish=never",
-    "dist:linux": "npm run build && electron-builder --linux --arm64 --x64 --publish=never",
+    "dist:linux": "npm run build && electron-builder --linux --publish=never",
     "dist:linux:arm": "npm run build && electron-builder --linux --arm64 --publish=never",
     "dist:linux:x64": "npm run build && electron-builder --linux --x64 --publish=never",
     "dist:all": "npm run build && electron-builder --mac --win --linux --publish=never"
