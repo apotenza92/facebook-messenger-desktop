@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.6] - 2026-01-03
+
+### Added
+- Linux: Now builds Snap packages for Snap Store users
+- Linux: Now builds Flatpak packages for Flathub users
+- Download page: Added Snap and Flatpak options to Linux format picker
+
+### Changed
+- Linux packages now use consistent naming: facebook-messenger-desktop-{arch}.{ext}
+
 ## [0.7.5] - 2026-01-03
 
 ### Added

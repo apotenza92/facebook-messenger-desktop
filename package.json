@@ -90,17 +90,44 @@
       "target": [
         "AppImage",
         "deb",
-        "rpm"
+        "rpm",
+        "snap",
+        "flatpak"
       ],
       "category": "Network",
       "icon": "assets/icons/icon.png",
-      "artifactName": "Messenger-linux-${arch}.${ext}"
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
+      "executableName": "facebook-messenger-desktop",
+      "desktop": {
+        "Name": "Messenger",
+        "Comment": "Desktop client for Facebook Messenger",
+        "Categories": "Network;InstantMessaging;Chat;"
+      }
     },
     "deb": {
-      "artifactName": "Messenger-linux-${arch}.${ext}"
+      "packageName": "facebook-messenger-desktop",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
     },
     "rpm": {
-      "artifactName": "Messenger-linux-${arch}.${ext}"
+      "packageName": "facebook-messenger-desktop",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
+    },
+    "snap": {
+      "confinement": "strict",
+      "grade": "stable",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
+      "plugs": [
+        "default",
+        "camera",
+        "audio-record",
+        "removable-media"
+      ]
+    },
+    "flatpak": {
+      "runtime": "org.freedesktop.Platform",
+      "runtimeVersion": "23.08",
+      "sdk": "org.freedesktop.Sdk",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
     }
   }
 }

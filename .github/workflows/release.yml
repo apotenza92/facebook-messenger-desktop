@@ -46,6 +46,14 @@ jobs:
         run: npm ci
         timeout-minutes: 10
 
+      - name: Install Linux build tools (Snap & Flatpak)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y snapcraft flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
+
       - name: Generate icons
         run: npm run generate-icons
 
@@ -78,6 +86,8 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
+            release/*.snap
+            release/*.flatpak
             release/*.yml
             release/*.blockmap
           retention-days: 30
