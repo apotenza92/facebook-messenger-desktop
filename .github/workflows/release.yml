@@ -75,20 +75,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
-      - name: Build distributables (Windows)
-        if: matrix.platform == 'win'
+      - name: Build distributables (Windows/Linux)
+        if: matrix.platform != 'mac'
         run: npm run dist:${{ matrix.platform }}
-        timeout-minutes: 30
-
-      - name: Build Linux x64 (all formats)
-        if: matrix.platform == 'linux'
-        run: npm run build && electron-builder --linux --x64 --publish=never
-        timeout-minutes: 30
-
-      - name: Build Linux arm64 (no snap - cross-compile not supported)
-        if: matrix.platform == 'linux'
-        run: electron-builder --linux AppImage deb rpm flatpak --arm64 --publish=never
-        timeout-minutes: 30
+        timeout-minutes: 45
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

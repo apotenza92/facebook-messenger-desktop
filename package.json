@@ -88,11 +88,26 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb",
-        "rpm",
-        "snap",
-        "flatpak"
+        {
+          "target": "AppImage",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "rpm",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "snap",
+          "arch": ["x64"]
+        },
+        {
+          "target": "flatpak",
+          "arch": ["x64", "arm64"]
+        }
       ],
       "category": "Network",
       "icon": "assets/icons/icon.png",
@@ -103,15 +118,21 @@
         "Categories": "Network;InstantMessaging;Chat;"
       }
     },
+    "appImage": {
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
+    },
     "deb": {
-      "packageName": "facebook-messenger-desktop"
+      "packageName": "facebook-messenger-desktop",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
     },
     "rpm": {
-      "packageName": "facebook-messenger-desktop"
+      "packageName": "facebook-messenger-desktop",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
     },
     "snap": {
       "confinement": "strict",
       "grade": "stable",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
       "plugs": [
         "default",
         "camera",
@@ -122,7 +143,8 @@
     "flatpak": {
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "23.08",
-      "sdk": "org.freedesktop.Sdk"
+      "sdk": "org.freedesktop.Sdk",
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
     }
   }
 }
