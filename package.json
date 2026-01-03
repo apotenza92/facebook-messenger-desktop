@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "0.7.6",
+  "version": "0.7.5",
   "description": "A self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -118,8 +118,7 @@
         {
           "target": "flatpak",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         }
       ],

@@ -334,7 +334,39 @@
 
         if (!hasAlreadyNotified(key, bodyStr) && canSendNotification()) {
           recordNotification(key, bodyStr);
-          sendNotification(String(title), String(body), 'NATIVE', options?.icon as string);
+          
+          // Try to find the conversation href from the sidebar based on the notification title
+          // This enables click-to-navigate for native notifications
+          let href: string | undefined;
+          const sidebar = findSidebarElement();
+          if (sidebar) {
+            const rows = Array.from(sidebar.querySelectorAll(selectors.conversationRow));
+            for (const row of rows) {
+              if (isConversationUnread(row)) {
+                const info = extractConversationInfo(row);
+                if (info && info.title === title) {
+                  href = info.href;
+                  log('Found href for native notification', { title, href });
+                  break;
+                }
+              }
+            }
+            // If no exact match, try partial match (title might be truncated)
+            if (!href) {
+              for (const row of rows) {
+                if (isConversationUnread(row)) {
+                  const info = extractConversationInfo(row);
+                  if (info && (info.title.includes(String(title)) || String(title).includes(info.title))) {
+                    href = info.href;
+                    log('Found href via partial match for native notification', { title, infoTitle: info.title, href });
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          
+          sendNotification(String(title), String(body), 'NATIVE', options?.icon as string, href);
         } else {
           log('Native notification deduplicated', { key });
         }

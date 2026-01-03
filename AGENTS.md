@@ -186,6 +186,6 @@ When ready to publish a new version:
 ### Linux Build Notes
 
 - **Snap**: Only builds for x64 (snapcraft cannot cross-compile to ARM64)
-- **Flatpak**: Requires `flatpak` and `flatpak-builder` installed, plus Freedesktop runtime
+- **Flatpak**: Only builds for x64 (flatpak-builder cannot cross-compile to ARM64)
 - **Test Linux builds on CI** - local macOS/Windows machines may lack required tools
 
