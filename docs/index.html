@@ -16,6 +16,7 @@
       --border: #e0e0e0;
       --btn-shadow: rgba(0, 132, 255, 0.25);
       --btn-shadow-hover: rgba(0, 132, 255, 0.35);
+      --code-bg: #f4f4f4;
     }
     
     @media (prefers-color-scheme: dark) {
@@ -28,6 +29,7 @@
         --border: #333;
         --btn-shadow: rgba(0, 132, 255, 0.3);
         --btn-shadow-hover: rgba(0, 132, 255, 0.4);
+        --code-bg: #1a1a1a;
       }
     }
     
@@ -44,7 +46,7 @@
     .container {
       text-align: center;
       padding: 2rem;
-      max-width: 500px;
+      max-width: 600px;
     }
     
     .icon {
@@ -133,6 +135,10 @@
       border-color: #0084ff;
     }
     
+    .platform-link.hidden {
+      display: none;
+    }
+    
     .github-link {
       margin-top: 2rem;
       color: var(--text-subtle);
@@ -150,11 +156,8 @@
     
     .linux-formats {
       display: none;
-      margin-top: 1rem;
-      padding: 1rem;
-      background: rgba(0, 132, 255, 0.05);
-      border-radius: 12px;
-      border: 1px solid var(--border);
+      margin-top: 1.5rem;
+      text-align: left;
     }
     
     .linux-formats.visible {
@@ -162,50 +165,142 @@
     }
     
     .linux-formats h3 {
-      font-size: 0.85rem;
-      font-weight: 500;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+    
+    .linux-arch-toggle {
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+    
+    .arch-btn {
+      background: none;
+      border: 1px solid var(--border);
+      padding: 0.4rem 1rem;
+      font-size: 0.8rem;
+      cursor: pointer;
       color: var(--text-muted);
-      margin-bottom: 0.75rem;
+      transition: all 0.2s ease;
     }
     
-    .format-options {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      justify-content: center;
+    .arch-btn:first-child {
+      border-radius: 6px 0 0 6px;
     }
     
-    .format-btn {
+    .arch-btn:last-child {
+      border-radius: 0 6px 6px 0;
+      border-left: none;
+    }
+    
+    .arch-btn.active {
+      background: #0084ff;
+      border-color: #0084ff;
+      color: white;
+    }
+    
+    .format-list {
       display: flex;
       flex-direction: column;
+      gap: 0.75rem;
+    }
+    
+    .format-item {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: left;
+    }
+    
+    .format-header {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 0.25rem;
-      padding: 0.75rem 1rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .format-title {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .format-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+    
+    .format-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--border);
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+    }
+    
+    .format-download {
+      color: #0084ff;
+      text-decoration: none;
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 0.3rem 0.75rem;
+      border: 1px solid #0084ff;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+    }
+    
+    .format-download:hover {
+      background: #0084ff;
+      color: white;
+    }
+    
+    .format-command {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      text-decoration: none;
-      color: var(--text);
-      transition: all 0.2s ease;
-      min-width: 100px;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-family: "SF Mono", "Monaco", "Consolas", monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      overflow-x: auto;
     }
     
-    .format-btn:hover {
-      border-color: #0084ff;
-      background: rgba(0, 132, 255, 0.1);
+    .format-command code {
+      flex: 1;
+      white-space: nowrap;
     }
     
-    .format-btn .format-name {
-      font-weight: 600;
-      font-size: 0.9rem;
+    .copy-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.25rem;
+      color: var(--text-muted);
+      transition: color 0.2s ease;
+      flex-shrink: 0;
+    }
+    
+    .copy-btn:hover {
       color: #0084ff;
     }
     
-    .format-btn .format-desc {
-      font-size: 0.7rem;
-      color: var(--text-muted);
+    .copy-btn svg {
+      width: 14px;
+      height: 14px;
     }
     
+    .copy-btn.copied {
+      color: #22c55e;
+    }
+
     .version-info {
       display: flex;
       align-items: center;
@@ -286,50 +381,164 @@
     <p class="platform" id="platform-text">Detecting your platform...</p>
     
     <div class="linux-formats" id="linux-formats">
-      <h3 id="linux-arch-title">Choose your preferred format (x64)</h3>
-      <div class="format-options" id="linux-x64-formats">
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-btn">
-          <span class="format-name">AppImage</span>
-          <span class="format-desc">Universal</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-btn">
-          <span class="format-name">.deb</span>
-          <span class="format-desc">Ubuntu/Debian</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="format-btn">
-          <span class="format-name">.rpm</span>
-          <span class="format-desc">Fedora/RHEL</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.snap" class="format-btn">
-          <span class="format-name">Snap</span>
-          <span class="format-desc">Snap Store</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.flatpak" class="format-btn">
-          <span class="format-name">Flatpak</span>
-          <span class="format-desc">Flathub</span>
-        </a>
+      <h3>Linux Downloads</h3>
+      
+      <div class="linux-arch-toggle">
+        <button class="arch-btn active" id="arch-x64">x64</button>
+        <button class="arch-btn" id="arch-arm64">ARM64</button>
       </div>
-      <div class="format-options" id="linux-arm64-formats" style="display: none;">
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-btn">
-          <span class="format-name">AppImage</span>
-          <span class="format-desc">Universal</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-btn">
-          <span class="format-name">.deb</span>
-          <span class="format-desc">Ubuntu/Debian</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="format-btn">
-          <span class="format-name">.rpm</span>
-          <span class="format-desc">Fedora/RHEL</span>
-        </a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.flatpak" class="format-btn">
-          <span class="format-name">Flatpak</span>
-          <span class="format-desc">Flathub</span>
-        </a>
+      
+      <div class="format-list" id="format-list-x64">
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">AppImage</span>
+              <span class="format-desc">Universal</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">.deb</span>
+              <span class="format-desc">Ubuntu / Debian</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>sudo apt install ./facebook-messenger-desktop-amd64.deb</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">.rpm</span>
+              <span class="format-desc">Fedora / RHEL</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>sudo dnf install ./facebook-messenger-desktop-x86_64.rpm</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">Snap</span>
+              <span class="format-desc">Snap Store</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.snap" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>sudo snap install --dangerous ./facebook-messenger-desktop-amd64.snap</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">Flatpak</span>
+              <span class="format-desc">Flathub</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.flatpak" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>flatpak install ./facebook-messenger-desktop-x86_64.flatpak</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
-      <p class="linux-arch-switch" id="linux-arch-switch" style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-muted);">
-        Looking for <a href="#" id="switch-arch-link" style="color: #0084ff;">ARM64 builds</a>?
-      </p>
+      
+      <div class="format-list" id="format-list-arm64" style="display: none;">
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">AppImage</span>
+              <span class="format-desc">Universal</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>chmod +x facebook-messenger-desktop-arm64.AppImage && ./facebook-messenger-desktop-arm64.AppImage</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">.deb</span>
+              <span class="format-desc">Ubuntu / Debian</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>sudo apt install ./facebook-messenger-desktop-arm64.deb</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">.rpm</span>
+              <span class="format-desc">Fedora / RHEL</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>sudo dnf install ./facebook-messenger-desktop-aarch64.rpm</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <div class="format-title">
+              <span class="format-name">Flatpak</span>
+              <span class="format-desc">Flathub</span>
+            </div>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.flatpak" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>flatpak install ./facebook-messenger-desktop-aarch64.flatpak</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <p style="text-align: center; font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
+          Note: Snap is only available for x64 architecture
+        </p>
+      </div>
     </div>
     
     <div class="version-info" id="version-info">
@@ -345,20 +554,13 @@
     
     <div class="other-platforms">
       <h2>Other platforms</h2>
-      <div class="platform-links">
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link">macOS (Apple Silicon)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link">macOS (Intel)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link">Windows (x64)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link">Windows (ARM)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="platform-link">Linux x64 (AppImage)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="platform-link">Linux x64 (.deb)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="platform-link">Linux x64 (.rpm)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.snap" class="platform-link">Linux x64 (Snap)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.flatpak" class="platform-link">Linux x64 (Flatpak)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="platform-link">Linux ARM64 (AppImage)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="platform-link">Linux ARM64 (.deb)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="platform-link">Linux ARM64 (.rpm)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.flatpak" class="platform-link">Linux ARM64 (Flatpak)</a>
+      <div class="platform-links" id="platform-links">
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link" data-platform="mac-arm">macOS (Apple Silicon)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link" data-platform="mac-intel">macOS (Intel)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link" data-platform="windows">Windows (x64)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link" data-platform="windows-arm">Windows (ARM)</a>
+        <a href="#linux-formats" class="platform-link" data-platform="linux" onclick="showLinuxFormats(event)">Linux (x64)</a>
+        <a href="#linux-formats" class="platform-link" data-platform="linux-arm" onclick="showLinuxFormats(event, 'arm64')">Linux (ARM64)</a>
       </div>
     </div>
     
@@ -405,13 +607,14 @@
       }
     };
 
+    let currentPlatform = null;
+
     function detectPlatform() {
       const ua = navigator.userAgent.toLowerCase();
       const platform = navigator.platform?.toLowerCase() || '';
       
       // Check for Windows
       if (ua.includes('win')) {
-        // Check for ARM Windows
         if (ua.includes('arm') || ua.includes('aarch64')) {
           return 'windows-arm';
         }
@@ -420,8 +623,6 @@
       
       // Check for macOS
       if (ua.includes('mac')) {
-        // Check for Apple Silicon using various detection methods
-        // GPU detection for M1/M2/M3
         const canvas = document.createElement('canvas');
         const gl = canvas.getContext('webgl');
         if (gl) {
@@ -433,26 +634,51 @@
             }
           }
         }
-        // Fallback: assume Intel for older detection
-        // Modern Safari on Apple Silicon reports differently
         if (platform.includes('arm') || ua.includes('arm64')) {
           return 'mac-arm';
         }
-        // Default to Apple Silicon for newer macOS (most users now)
         return 'mac-arm';
       }
       
       // Check for Linux
       if (ua.includes('linux') && !ua.includes('android')) {
-        // Check for ARM Linux (Raspberry Pi, Pine64, etc.)
         if (ua.includes('aarch64') || ua.includes('arm64') || platform.includes('arm')) {
           return 'linux-arm';
         }
         return 'linux';
       }
       
-      // Default fallback
       return 'windows';
+    }
+
+    function showLinuxFormats(event, arch) {
+      event.preventDefault();
+      const linuxFormats = document.getElementById('linux-formats');
+      linuxFormats.classList.add('visible');
+      linuxFormats.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      
+      if (arch === 'arm64') {
+        setLinuxArch('arm64');
+      }
+    }
+
+    function setLinuxArch(arch) {
+      const x64List = document.getElementById('format-list-x64');
+      const arm64List = document.getElementById('format-list-arm64');
+      const x64Btn = document.getElementById('arch-x64');
+      const arm64Btn = document.getElementById('arch-arm64');
+      
+      if (arch === 'arm64') {
+        x64List.style.display = 'none';
+        arm64List.style.display = 'flex';
+        x64Btn.classList.remove('active');
+        arm64Btn.classList.add('active');
+      } else {
+        x64List.style.display = 'flex';
+        arm64List.style.display = 'none';
+        x64Btn.classList.add('active');
+        arm64Btn.classList.remove('active');
+      }
     }
 
     async function fetchReleaseInfo() {
@@ -461,11 +687,9 @@
         if (!response.ok) throw new Error('Failed to fetch');
         const release = await response.json();
         
-        // Update version badge
         const versionBadge = document.getElementById('version-badge');
         versionBadge.textContent = release.tag_name || release.name;
         
-        // Update release date
         const releaseDateEl = document.getElementById('release-date');
         if (release.published_at) {
           const date = new Date(release.published_at);
@@ -482,20 +706,18 @@
           `;
         }
         
-        // Add release notes link
         const releaseNotesEl = document.getElementById('release-notes');
         releaseNotesEl.innerHTML = `<a href="${release.html_url}" target="_blank">View release notes →</a>`;
         
       } catch (e) {
-        // Silently fail - version info is optional
         console.log('Could not fetch release info:', e);
         document.getElementById('version-info').style.display = 'none';
       }
     }
 
     function init() {
-      const platform = detectPlatform();
-      const download = downloads[platform];
+      currentPlatform = detectPlatform();
+      const download = downloads[currentPlatform];
       const btn = document.getElementById('download-btn');
       const btnText = document.getElementById('btn-text');
       const platformText = document.getElementById('platform-text');
@@ -505,46 +727,42 @@
       btnText.textContent = `Download for ${download.name}`;
       platformText.textContent = `${download.file}`;
       
+      // Hide detected platform from "Other platforms"
+      const platformLinks = document.querySelectorAll('.platform-link');
+      platformLinks.forEach(link => {
+        const linkPlatform = link.getAttribute('data-platform');
+        if (linkPlatform === currentPlatform) {
+          link.classList.add('hidden');
+        }
+      });
+      
       // Show Linux format picker if on Linux
       if (download.showFormats && linuxFormats) {
         linuxFormats.classList.add('visible');
-        const archLabel = download.arch === 'arm64' ? 'ARM64' : 'x64';
-        platformText.textContent = `AppImage (recommended) - or choose ${archLabel} format below`;
-        
-        // Show the correct arch formats
-        const x64Formats = document.getElementById('linux-x64-formats');
-        const arm64Formats = document.getElementById('linux-arm64-formats');
-        const archTitle = document.getElementById('linux-arch-title');
-        const switchLink = document.getElementById('switch-arch-link');
-        const switchText = document.getElementById('linux-arch-switch');
+        platformText.textContent = `AppImage (recommended) - or choose format below`;
         
         if (download.arch === 'arm64') {
-          x64Formats.style.display = 'none';
-          arm64Formats.style.display = 'flex';
-          archTitle.textContent = 'Choose your preferred format (ARM64)';
-          switchLink.textContent = 'x64 builds';
-          switchText.innerHTML = 'Looking for <a href="#" id="switch-arch-link" style="color: #0084ff;">x64 builds</a>?';
+          setLinuxArch('arm64');
         }
-        
-        // Handle arch switch
-        document.getElementById('linux-arch-switch').addEventListener('click', (e) => {
-          if (e.target.tagName === 'A') {
-            e.preventDefault();
-            const showingX64 = x64Formats.style.display !== 'none';
-            if (showingX64) {
-              x64Formats.style.display = 'none';
-              arm64Formats.style.display = 'flex';
-              archTitle.textContent = 'Choose your preferred format (ARM64)';
-              e.target.textContent = 'x64 builds';
-            } else {
-              x64Formats.style.display = 'flex';
-              arm64Formats.style.display = 'none';
-              archTitle.textContent = 'Choose your preferred format (x64)';
-              e.target.textContent = 'ARM64 builds';
-            }
+      }
+      
+      // Arch toggle buttons
+      document.getElementById('arch-x64').addEventListener('click', () => setLinuxArch('x64'));
+      document.getElementById('arch-arm64').addEventListener('click', () => setLinuxArch('arm64'));
+      
+      // Copy buttons
+      document.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const code = btn.parentElement.querySelector('code').textContent;
+          try {
+            await navigator.clipboard.writeText(code);
+            btn.classList.add('copied');
+            setTimeout(() => btn.classList.remove('copied'), 1500);
+          } catch (e) {
+            console.error('Failed to copy:', e);
           }
         });
-      }
+      });
       
       btn.addEventListener('click', () => {
         btn.classList.add('downloading');
@@ -555,7 +773,6 @@
         }, 2000);
       });
       
-      // Fetch release info (version, date)
       fetchReleaseInfo();
     }
 
@@ -563,4 +780,3 @@
   </script>
 </body>
 </html>
-
