@@ -3,12 +3,16 @@
 ## [0.7.6] - 2026-01-03
 
 ### Added
-- Linux: Now builds Snap packages for Snap Store users
-- Linux: Now builds Flatpak packages for Flathub users
+- Linux: Now builds Snap packages for Snap Store users (x64 only)
+- Linux: Now builds Flatpak packages for Flathub users (x64 only)
 - Download page: Added Snap and Flatpak options to Linux format picker
+- Download page: Install commands for each Linux format (apt, dnf, snap, flatpak)
+- Download page: Copy button for each install command
 
 ### Changed
 - Linux packages now use consistent naming: facebook-messenger-desktop-{arch}.{ext}
+- Download page: Detected platform is now hidden from Other platforms section
+- Download page: Linux section shows clean format list with install instructions
 
 ## [0.7.5] - 2026-01-03
 
