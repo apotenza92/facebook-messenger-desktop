@@ -12,6 +12,7 @@ on:
 
 jobs:
   build:
+    name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -21,12 +22,15 @@ jobs:
           - os: macos-latest
             platform: mac
             artifact_name: mac
+            name: macOS
           - os: windows-latest
             platform: win
             artifact_name: windows
+            name: Windows
           - os: ubuntu-latest
             platform: linux
             artifact_name: linux
+            name: Linux
 
     steps:
       - name: Checkout code
@@ -72,6 +76,8 @@ jobs:
             release/*.zip
             release/*.exe
             release/*.AppImage
+            release/*.deb
+            release/*.rpm
             release/*.yml
             release/*.blockmap
           retention-days: 30
