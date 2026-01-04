@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.1] - 2026-01-04
+
+### Fixed
+- Windows: Fixed taskbar icon showing as missing after app updates
+  - NSIS installer now updates existing pinned shortcuts to point to the new executable
+  - Preserves pinned status while refreshing the shortcut target path
+- Linux: Restart to update now works for deb and rpm package installs
+  - Downloads the correct package type and installs with pkexec (graphical sudo)
+  - Previously only worked for AppImage installs
+- Linux: Added detection for Snap and Flatpak installs
+- Linux: Fixed duplicate window appearing briefly when clicking dock icon after closing window
+  - Activate event handler was incorrectly registered inside createWindow, causing listeners to accumulate
+
 ## [0.8.0] - 2026-01-04
 
 ### Added
