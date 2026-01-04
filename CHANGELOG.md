@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.7] - 2026-01-04
+
+### Fixed
+- Linux: Desktop icon now appears in application menu after installing .deb/.rpm packages
+  - Icons are now installed to hicolor icon theme in all required sizes (16x16 through 512x512)
+  - Added StartupWMClass to .desktop file for proper window grouping in taskbar
+
 ## [0.7.6] - 2026-01-03
 
 ### Added

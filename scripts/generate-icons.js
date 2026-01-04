@@ -222,9 +222,20 @@ async function generateIcons() {
       await generateIconWithWhiteBackground(svgBuffer, size, path.join(iconsDir, `icon-${size}.png`));
     }
 
-    // Generate rounded 512px icon for Linux
+    // Generate rounded 512px icon for Linux (fallback)
     console.log('Generating rounded Linux icon...');
     await generateIconWithRoundedWhiteBackground(svgBuffer, 512, path.join(iconsDir, 'icon.png'));
+    
+    // Generate Linux icons directory with proper NxN.png naming for hicolor theme
+    console.log('Generating Linux icons directory...');
+    const linuxIconsDir = path.join(iconsDir, 'linux');
+    if (!fs.existsSync(linuxIconsDir)) {
+      fs.mkdirSync(linuxIconsDir, { recursive: true });
+    }
+    const linuxIconSizes = [512, 256, 128, 96, 72, 64, 48, 32, 24, 22, 16];
+    for (const size of linuxIconSizes) {
+      await generateIconWithRoundedWhiteBackground(svgBuffer, size, path.join(linuxIconsDir, `${size}x${size}.png`));
+    }
 
     // Generate rounded PNGs for Windows ICO
     console.log('Generating rounded PNGs for Windows ICO...');

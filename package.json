@@ -123,12 +123,13 @@
         }
       ],
       "category": "Network",
-      "icon": "assets/icons/icon.png",
+      "icon": "assets/icons/linux",
       "executableName": "facebook-messenger-desktop",
       "desktop": {
         "Name": "Messenger",
         "Comment": "Desktop client for Facebook Messenger",
-        "Categories": "Network;InstantMessaging;Chat;"
+        "Categories": "Network;InstantMessaging;Chat;",
+        "StartupWMClass": "facebook-messenger-desktop"
       }
     },
     "appImage": {
