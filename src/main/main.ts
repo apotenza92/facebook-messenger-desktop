@@ -28,7 +28,8 @@ const resetFlag =
   process.argv.includes('--reset'); // legacy
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
-console.log(`Messenger starting on ${process.platform} ${process.arch}`);
+const appStartTime = Date.now();
+console.log(`[App] Starting at ${appStartTime} on ${process.platform} ${process.arch}`);
 
 // In dev mode, kill any existing production Messenger instances to avoid conflicts
 if (isDev) {
@@ -65,6 +66,8 @@ let tray: Tray | null = null;
 let titleOverlay: BrowserView | null = null;
 let isCreatingWindow = false; // Guard against race conditions during window creation
 let lastShowWindowTime = 0; // Debounce for showMainWindow to prevent double window on Linux
+let appReady = false; // Flag to indicate app is fully initialized (window created)
+let pendingShowWindow = false; // Queue second-instance events that arrive before app is ready
 const overlayHeight = 32;
 
 type WindowState = {
@@ -109,8 +112,19 @@ if (!gotTheLock) {
   // Handle second instance attempts - show existing window or create one
   // Uses showMainWindow() for consistent behavior with tray icon click
   app.on('second-instance', () => {
-    console.log('[SingleInstance] Second instance detected, showing main window');
-    showMainWindow();
+    const now = Date.now();
+    console.log(`[SecondInstance] Event fired at ${now}`);
+    console.log(`[SecondInstance] State: appReady=${appReady}, isCreatingWindow=${isCreatingWindow}, mainWindow=${mainWindow ? 'exists' : 'null'}, pendingShowWindow=${pendingShowWindow}`);
+    
+    // If app isn't ready yet, queue the request instead of calling showMainWindow immediately
+    // This prevents race conditions on Linux where second-instance fires before window is created
+    if (!appReady) {
+      console.log('[SecondInstance] App not ready yet, queuing show request');
+      pendingShowWindow = true;
+      return;
+    }
+    console.log('[SecondInstance] Calling showMainWindow()');
+    showMainWindow('second-instance');
   });
 }
 
@@ -415,14 +429,23 @@ function getOverlayColors(): { background: string; text: string; symbols: string
     : { background: '#f5f5f5', text: '#1c1c1e', symbols: '#1c1c1e' };
 }
 
-function createWindow(): void {
+function createWindow(source: string = 'unknown'): void {
+  const now = Date.now();
+  const windowState = mainWindow 
+    ? (mainWindow.isDestroyed() ? 'destroyed' : 'exists')
+    : 'null';
+  
+  console.log(`[CreateWindow] Called from: ${source} at ${now}`);
+  console.log(`[CreateWindow] Pre-check state: mainWindow=${windowState}, isCreatingWindow=${isCreatingWindow}`);
+  
   // Guard against creating multiple windows due to race conditions
   // (e.g., second-instance + activate firing simultaneously on Linux)
   if (isCreatingWindow || (mainWindow && !mainWindow.isDestroyed())) {
-    console.log('[Window] Window creation already in progress or window exists, skipping');
+    console.log(`[CreateWindow] BLOCKED - isCreatingWindow=${isCreatingWindow}, mainWindow=${windowState}`);
     return;
   }
   
+  console.log('[CreateWindow] Guard passed, setting isCreatingWindow=true');
   isCreatingWindow = true;
   
   const restoredState = ensureWindowInBounds(loadWindowState());
@@ -762,6 +785,7 @@ function createWindow(): void {
   }
 
   // Window creation complete
+  console.log(`[CreateWindow] Complete at ${Date.now()}, setting isCreatingWindow=false`);
   isCreatingWindow = false;
 }
 
@@ -871,19 +895,30 @@ function getTrayIconPath(): string | undefined {
   return undefined;
 }
 
-function showMainWindow(): void {
-  // Debounce: On Linux, both second-instance and activate events can fire from a single
-  // dock/taskbar click. Ignore calls within 500ms of each other.
+function showMainWindow(source: string = 'unknown'): void {
   const now = Date.now();
-  if (now - lastShowWindowTime < 500) {
-    console.log('[Window] showMainWindow debounced (called within 500ms)');
+  const timeSinceLast = now - lastShowWindowTime;
+  const windowState = mainWindow 
+    ? (mainWindow.isDestroyed() ? 'destroyed' : `exists(visible=${mainWindow.isVisible()},minimized=${mainWindow.isMinimized()})`)
+    : 'null';
+  
+  console.log(`[ShowWindow] Called from: ${source}`);
+  console.log(`[ShowWindow] Time: ${now}, since last: ${timeSinceLast}ms`);
+  console.log(`[ShowWindow] State: mainWindow=${windowState}, isCreatingWindow=${isCreatingWindow}, appReady=${appReady}`);
+  
+  // Debounce: On Linux, rapid clicks on dock/dash icon can trigger multiple second-instance events.
+  // Use a longer debounce (1 second) to catch double-clicks and rapid repeated clicks.
+  if (timeSinceLast < 1000) {
+    console.log(`[ShowWindow] DEBOUNCED - only ${timeSinceLast}ms since last call`);
     return;
   }
   lastShowWindowTime = now;
   
   // Check if window exists and is not destroyed
   if (mainWindow && !mainWindow.isDestroyed()) {
+    console.log('[ShowWindow] Window exists and not destroyed - showing and focusing');
     if (mainWindow.isMinimized()) {
+      console.log('[ShowWindow] Window was minimized, restoring');
       mainWindow.restore();
     }
     mainWindow.show();
@@ -893,16 +928,18 @@ function showMainWindow(): void {
   
   // Don't create a new window if one is already being created (race condition guard)
   if (isCreatingWindow) {
-    console.log('[Window] Window creation already in progress, waiting...');
+    console.log('[ShowWindow] BLOCKED - window creation already in progress');
     return;
   }
   
   // Clean up stale reference if window was destroyed
   if (mainWindow) {
+    console.log('[ShowWindow] Cleaning up destroyed window reference');
     mainWindow = null;
   }
   
-  createWindow();
+  console.log('[ShowWindow] Creating new window...');
+  createWindow(source);
 }
 
 function createTray(): void {
@@ -948,9 +985,9 @@ function createTray(): void {
     // On Windows, single-click shows the app (more intuitive than double-click)
     // On Linux, keep double-click as single-click typically shows context menu
     if (process.platform === 'win32') {
-      tray.on('click', () => showMainWindow());
+      tray.on('click', () => showMainWindow('tray-click'));
     } else {
-      tray.on('double-click', () => showMainWindow());
+      tray.on('double-click', () => showMainWindow('tray-double-click'));
     }
     
     console.log('[Tray] Tray created successfully');
@@ -1621,20 +1658,80 @@ function scheduleFlatpakUninstall(): void {
   child.unref();
 }
 
+// Show confirmation dialog using native Linux tools (zenity/kdialog) to bypass slow xdg-desktop-portal
+// These tools are commonly pre-installed and match the user's desktop theme
+async function showLinuxConfirmDialog(options: {
+  title: string;
+  message: string;
+  detail?: string;
+}): Promise<boolean> {
+  const fullMessage = options.detail 
+    ? `${options.message}\n\n${options.detail}`
+    : options.message;
+  
+  // Try zenity first (GTK, common on GNOME/Ubuntu), then kdialog (KDE)
+  const zenityCmd = `zenity --question --title="${options.title}" --text="${fullMessage.replace(/"/g, '\\"')}" --ok-label="Uninstall" --cancel-label="Cancel" 2>/dev/null`;
+  const kdialogCmd = `kdialog --warningyesno "${fullMessage.replace(/"/g, '\\"')}" --title "${options.title}" --yes-label "Uninstall" --no-label "Cancel" 2>/dev/null`;
+  
+  return new Promise((resolve) => {
+    // Try zenity first
+    exec(zenityCmd, (error) => {
+      if (error && error.code === 127) {
+        // zenity not found, try kdialog
+        exec(kdialogCmd, (error2) => {
+          if (error2 && error2.code === 127) {
+            // Neither found, fall back to Electron dialog (may be slow on Snap)
+            console.log('[Dialog] Neither zenity nor kdialog found, falling back to Electron dialog');
+            dialog.showMessageBox({
+              type: 'warning',
+              buttons: ['Uninstall', 'Cancel'],
+              defaultId: 0,
+              cancelId: 1,
+              title: options.title,
+              message: options.message,
+              detail: options.detail,
+            }).then(({ response }) => resolve(response === 0));
+          } else {
+            // kdialog found - exit code 0 = Yes, 1 = No
+            resolve(!error2);
+          }
+        });
+      } else {
+        // zenity found - exit code 0 = OK, 1 = Cancel
+        resolve(!error);
+      }
+    });
+  });
+}
+
 async function handleUninstallRequest(): Promise<void> {
   // Show confirmation dialog IMMEDIATELY - don't do any detection before this
-  // This ensures the dialog appears instantly on all platforms/installs (especially Snap)
-  const { response } = await dialog.showMessageBox({
-    type: 'warning',
-    buttons: ['Uninstall', 'Cancel'],
-    defaultId: 0,
-    cancelId: 1,
-    title: 'Uninstall Messenger',
-    message: 'Uninstall Messenger from this device?',
-    detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
-  });
+  let confirmed: boolean;
+  
+  if (process.platform === 'linux') {
+    // On Linux (especially Snap), Electron's native dialog goes through xdg-desktop-portal
+    // which can be extremely slow (20+ seconds). Use zenity/kdialog instead which are fast
+    // and match the user's desktop theme.
+    confirmed = await showLinuxConfirmDialog({
+      title: 'Uninstall Messenger',
+      message: 'Uninstall Messenger from this device?',
+      detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
+    });
+  } else {
+    // Use native dialog on macOS/Windows where it's fast
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Uninstall', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Uninstall Messenger',
+      message: 'Uninstall Messenger from this device?',
+      detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
+    });
+    confirmed = response === 0;
+  }
 
-  if (response !== 0) {
+  if (!confirmed) {
     return;
   }
 
@@ -3031,14 +3128,29 @@ app.whenReady().then(async () => {
   createTray();
 
   // Create window
-  createWindow();
+  console.log(`[App] whenReady: About to create window at ${Date.now()}`);
+  createWindow('whenReady');
   setupIpcHandlers();
+
+  // Mark app as fully initialized - now safe to handle second-instance events
+  appReady = true;
+  console.log(`[App] App fully ready at ${Date.now()}, appReady=true, pendingShowWindow=${pendingShowWindow}`);
+  
+  // Process any second-instance events that arrived before we were ready
+  if (pendingShowWindow) {
+    console.log('[App] Processing pending show window request');
+    pendingShowWindow = false;
+    // Use setTimeout to ensure all initialization is complete
+    setTimeout(() => showMainWindow('pending-from-second-instance'), 100);
+  }
 
   // Restore window when dock/taskbar icon is clicked
   // This must be registered ONCE here, not inside createWindow() to avoid accumulating listeners
   // Uses showMainWindow() for consistent behavior with tray icon click
   app.on('activate', () => {
-    showMainWindow();
+    console.log(`[Activate] Event fired at ${Date.now()}`);
+    console.log(`[Activate] State: appReady=${appReady}, isCreatingWindow=${isCreatingWindow}, mainWindow=${mainWindow ? (mainWindow.isDestroyed() ? 'destroyed' : 'exists') : 'null'}`);
+    showMainWindow('activate');
   });
 });
 

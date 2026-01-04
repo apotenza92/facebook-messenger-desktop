@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.8.8] - 2026-01-04
+
+### Added
+- Linux: Comprehensive diagnostic logging for window creation to debug double window issue
+  - Logs timestamps, event sources (second-instance, activate, tray-click), and full state at each step
+  - Shows exactly when events fire and what guards block/allow window creation
+  - Check logs at ~/.config/Messenger/logs/ or run from terminal to see output
+
+### Fixed
+- Windows: Fixed pinned taskbar shortcut showing "Can't open this item" after installing auto-update
+  - NSIS installer now deletes and recreates the taskbar shortcut to clear stale state
+  - Writes PowerShell script to temp file for reliable execution (avoids escaping issues)
+  - Kills any running Messenger process first to prevent file locks
+  - Added multiple shell notifications and icon cache refresh for reliability
+- Linux: Attempted fix for double window still appearing despite 0.8.7 debounce fix
+  - Added app initialization flag to queue second-instance events until window is ready
+  - Increased debounce from 500ms to 1000ms to catch rapid double-clicks
+- Linux: Fixed 20+ second delay when clicking Uninstall Messenger (especially on Snap)
+  - Electron's native dialogs go through xdg-desktop-portal which can be very slow
+  - Now uses zenity (GTK) or kdialog (KDE) which are fast and match desktop theme
+  - Falls back to Electron dialog if neither tool is available
+- Linux deb/rpm: Fixed app icon not appearing in applications menu on Ubuntu
+  - Icons are now explicitly installed to hicolor theme during package installation
+  - Added after-remove script to clean up icons when package is uninstalled
+
 ## [0.8.7] - 2026-01-04
 
 ### Fixed
