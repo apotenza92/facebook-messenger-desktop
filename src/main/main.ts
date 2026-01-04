@@ -103,7 +103,7 @@ if (!gotTheLock) {
   console.log('[SingleInstance] Another instance is already running, quitting...');
   app.quit();
 } else {
-  // Handle second instance attempts - show existing window
+  // Handle second instance attempts - show existing window or create one
   app.on('second-instance', () => {
     if (mainWindow) {
       // Window may be hidden (close to tray) or minimized
@@ -114,6 +114,9 @@ if (!gotTheLock) {
         mainWindow.restore();
       }
       mainWindow.focus();
+    } else {
+      // Window was destroyed (e.g., on Linux without tray) - recreate it
+      createWindow();
     }
   });
 }
@@ -712,15 +715,6 @@ function createWindow(): void {
     }
   });
 
-  // Restore window when dock icon is clicked (macOS)
-  app.on('activate', () => {
-    if (mainWindow === null) {
-      createWindow();
-    } else {
-      mainWindow.show();
-    }
-  });
-
   if (isMac && mainWindow) {
     setupTitleOverlay(mainWindow, overlayHeight);
     nativeTheme.on('updated', () => {
@@ -924,7 +918,7 @@ type PackageManagerInfo = {
 // Cache file for install source detection (detected once on first run, never changes)
 const INSTALL_SOURCE_CACHE_FILE = 'install-source.json';
 
-type InstallSource = 'homebrew' | 'winget' | 'deb' | 'rpm' | 'direct';
+type InstallSource = 'homebrew' | 'winget' | 'deb' | 'rpm' | 'snap' | 'flatpak' | 'direct';
 
 function getInstallSourceCachePath(): string {
   return path.join(app.getPath('userData'), INSTALL_SOURCE_CACHE_FILE);
@@ -999,19 +993,28 @@ async function detectAndCacheInstallSource(): Promise<void> {
       writeInstallSourceCache(newSource);
       console.log('[InstallSource] Detected:', newSource);
     } else if (process.platform === 'linux') {
-      // Check for .deb first (Debian/Ubuntu), then .rpm (Fedora/RHEL)
-      const deb = await detectDebInstall();
-      if (deb.detected) {
-        writeInstallSourceCache('deb');
-        console.log('[InstallSource] Detected: deb');
+      // Check for containerized installs first (snap/flatpak), then system packages (deb/rpm)
+      if (detectSnapInstall()) {
+        writeInstallSourceCache('snap');
+        console.log('[InstallSource] Detected: snap');
+      } else if (detectFlatpakInstall()) {
+        writeInstallSourceCache('flatpak');
+        console.log('[InstallSource] Detected: flatpak');
       } else {
-        const rpm = await detectRpmInstall();
-        if (rpm.detected) {
-          writeInstallSourceCache('rpm');
-          console.log('[InstallSource] Detected: rpm');
+        // Check for .deb (Debian/Ubuntu), then .rpm (Fedora/RHEL)
+        const deb = await detectDebInstall();
+        if (deb.detected) {
+          writeInstallSourceCache('deb');
+          console.log('[InstallSource] Detected: deb');
         } else {
-          writeInstallSourceCache('direct');
-          console.log('[InstallSource] Detected: direct (AppImage or manual)');
+          const rpm = await detectRpmInstall();
+          if (rpm.detected) {
+            writeInstallSourceCache('rpm');
+            console.log('[InstallSource] Detected: rpm');
+          } else {
+            writeInstallSourceCache('direct');
+            console.log('[InstallSource] Detected: direct (AppImage or manual)');
+          }
         }
       }
     } else {
@@ -1156,6 +1159,50 @@ async function detectRpmInstall(): Promise<PackageManagerInfo> {
   }
   
   return result;
+}
+
+function detectSnapInstall(): boolean {
+  // Snap apps run from /snap/ paths and have SNAP environment variable
+  if (process.platform !== 'linux') {
+    return false;
+  }
+  
+  // Check for SNAP environment variable (set by snapd when running snap apps)
+  if (process.env.SNAP) {
+    console.log('[InstallSource] Detected Snap installation via SNAP env');
+    return true;
+  }
+  
+  // Also check if running from /snap/ path
+  const execPath = process.execPath;
+  if (execPath.startsWith('/snap/')) {
+    console.log('[InstallSource] Detected Snap installation via exec path');
+    return true;
+  }
+  
+  return false;
+}
+
+function detectFlatpakInstall(): boolean {
+  // Flatpak apps run with FLATPAK_ID environment variable
+  if (process.platform !== 'linux') {
+    return false;
+  }
+  
+  // Check for FLATPAK_ID environment variable (set by Flatpak runtime)
+  if (process.env.FLATPAK_ID) {
+    console.log('[InstallSource] Detected Flatpak installation via FLATPAK_ID env');
+    return true;
+  }
+  
+  // Also check if running from Flatpak path
+  const execPath = process.execPath;
+  if (execPath.includes('/app/') && execPath.includes('flatpak')) {
+    console.log('[InstallSource] Detected Flatpak installation via exec path');
+    return true;
+  }
+  
+  return false;
 }
 
 function detectPackageManagerFromCache(): PackageManagerInfo | null {
@@ -2041,7 +2088,303 @@ async function downloadWindowsUpdate(version: string): Promise<void> {
   });
 }
 
+// Linux direct download function - downloads .deb or .rpm package and installs with pkexec
+async function downloadLinuxPackage(version: string, packageType: 'deb' | 'rpm'): Promise<string> {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const fileName = `facebook-messenger-desktop-${arch}.${packageType}`;
+  const downloadUrl = `https://github.com/apotenza92/FacebookMessengerDesktop/releases/download/v${version}/${fileName}`;
+  
+  // Get user's Downloads folder
+  const downloadsPath = app.getPath('downloads');
+  const filePath = path.join(downloadsPath, fileName);
+  
+  console.log(`[AutoUpdater] Starting Linux ${packageType} download: ${downloadUrl}`);
+  console.log(`[AutoUpdater] Saving to: ${filePath}`);
+  
+  showDownloadProgress();
+  
+  return new Promise((resolve, reject) => {
+    // Function to handle the actual download (after redirects)
+    const downloadFromUrl = (url: string, redirectCount = 0): void => {
+      if (redirectCount > 5) {
+        hideDownloadProgress();
+        reject(new Error('Too many redirects'));
+        return;
+      }
+      
+      const request = https.get(url, (response) => {
+        // Handle redirects (GitHub uses 302 redirects to the actual file)
+        if (response.statusCode === 301 || response.statusCode === 302) {
+          const redirectUrl = response.headers.location;
+          if (redirectUrl) {
+            console.log(`[AutoUpdater] Following redirect to: ${redirectUrl}`);
+            downloadFromUrl(redirectUrl, redirectCount + 1);
+            return;
+          }
+        }
+        
+        if (response.statusCode !== 200) {
+          hideDownloadProgress();
+          reject(new Error(`Download failed with status: ${response.statusCode}`));
+          return;
+        }
+        
+        const totalSize = parseInt(response.headers['content-length'] || '0', 10);
+        let downloadedSize = 0;
+        const startTime = Date.now();
+        
+        // Delete existing file if present
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        } catch (e) {
+          console.warn('[AutoUpdater] Could not delete existing file:', e);
+        }
+        
+        const fileStream = fs.createWriteStream(filePath);
+        
+        response.on('data', (chunk: Buffer) => {
+          downloadedSize += chunk.length;
+          
+          // Calculate progress
+          const percent = totalSize > 0 ? Math.round((downloadedSize / totalSize) * 100) : 0;
+          const elapsedSeconds = (Date.now() - startTime) / 1000;
+          const speedBps = elapsedSeconds > 0 ? downloadedSize / elapsedSeconds : 0;
+          const speedKB = Math.round(speedBps / 1024);
+          const speedDisplay = speedKB > 1024 
+            ? `${(speedKB / 1024).toFixed(1)} MB/s` 
+            : `${speedKB} KB/s`;
+          const downloaded = formatBytes(downloadedSize);
+          const total = formatBytes(totalSize);
+          
+          updateDownloadProgress(percent, speedDisplay, downloaded, total);
+        });
+        
+        response.pipe(fileStream);
+        
+        fileStream.on('finish', () => {
+          fileStream.close();
+          hideDownloadProgress();
+          console.log(`[AutoUpdater] Download complete: ${filePath}`);
+          resolve(filePath);
+        });
+        
+        fileStream.on('error', (err) => {
+          hideDownloadProgress();
+          // Clean up partial file
+          try {
+            fs.unlinkSync(filePath);
+          } catch {
+            // Ignore cleanup errors
+          }
+          reject(err);
+        });
+      });
+      
+      request.on('error', (err) => {
+        hideDownloadProgress();
+        reject(err);
+      });
+    };
+    
+    downloadFromUrl(downloadUrl);
+  });
+}
+
+// Install a Linux package using pkexec (graphical sudo prompt)
+async function installLinuxPackage(filePath: string, packageType: 'deb' | 'rpm'): Promise<void> {
+  console.log(`[AutoUpdater] Installing ${packageType} package: ${filePath}`);
+  
+  let installCommand: string[];
+  if (packageType === 'deb') {
+    // Use apt for deb packages (handles dependencies better than dpkg)
+    installCommand = ['pkexec', 'apt', 'install', '-y', filePath];
+  } else {
+    // Use dnf for rpm packages (handles dependencies better than rpm)
+    installCommand = ['pkexec', 'dnf', 'install', '-y', filePath];
+  }
+  
+  return new Promise((resolve, reject) => {
+    const proc = spawn(installCommand[0], installCommand.slice(1), {
+      stdio: 'pipe',
+    });
+    
+    let stdout = '';
+    let stderr = '';
+    
+    proc.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    proc.on('close', (code) => {
+      if (code === 0) {
+        console.log(`[AutoUpdater] Package installed successfully`);
+        resolve();
+      } else {
+        console.error(`[AutoUpdater] Package install failed with code ${code}`);
+        console.error(`[AutoUpdater] stdout: ${stdout}`);
+        console.error(`[AutoUpdater] stderr: ${stderr}`);
+        reject(new Error(`Installation failed: ${stderr || stdout || `exit code ${code}`}`));
+      }
+    });
+    
+    proc.on('error', (err) => {
+      console.error(`[AutoUpdater] Failed to spawn pkexec:`, err);
+      reject(err);
+    });
+  });
+}
+
 async function showUpdateAvailableDialog(version: string): Promise<void> {
+  // On Linux, electron-updater only supports AppImage for auto-updates.
+  // For deb/rpm, we download and install the package directly.
+  // For snap/flatpak, they have their own update mechanisms.
+  if (process.platform === 'linux') {
+    const cached = readInstallSourceCache();
+    const source = cached?.source;
+    
+    // Handle deb/rpm - download and install directly
+    if (source === 'deb' || source === 'rpm') {
+      const packageType = source;
+      const packageManagerName = source === 'deb' ? 'apt (deb)' : 'dnf (rpm)';
+      
+      console.log(`[AutoUpdater] Linux ${packageType} install detected, offering direct download`);
+      
+      const result = await dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Available',
+        message: `A new version of Messenger is available`,
+        detail: `Version ${version} is available.\n\nThe update will be downloaded and installed using ${packageManagerName}. You'll be prompted for your password to authorize the installation.`,
+        buttons: ['Download and Install', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      
+      if (result.response === 0) {
+        try {
+          // Download the package
+          const filePath = await downloadLinuxPackage(version, packageType);
+          
+          // Show confirmation before installing
+          const installResult = await dialog.showMessageBox({
+            type: 'info',
+            title: 'Download Complete',
+            message: 'Update downloaded successfully',
+            detail: `The update has been downloaded to:\n${filePath}\n\nClick "Install Now" to install the update. You'll be prompted for your password.\n\nMessenger will restart after installation.`,
+            buttons: ['Install Now', 'Open Downloads Folder', 'Later'],
+            defaultId: 0,
+            cancelId: 2,
+          });
+          
+          if (installResult.response === 0) {
+            // Install the package
+            console.log('[AutoUpdater] Starting package installation...');
+            try {
+              await installLinuxPackage(filePath, packageType);
+              
+              // Installation succeeded - restart the app
+              await dialog.showMessageBox({
+                type: 'info',
+                title: 'Update Installed',
+                message: 'Update installed successfully',
+                detail: 'Messenger will now restart to apply the update.',
+                buttons: ['OK'],
+              });
+              
+              isQuitting = true;
+              app.relaunch();
+              app.exit(0);
+            } catch (installErr) {
+              console.error('[AutoUpdater] Package installation failed:', installErr);
+              const errorMsg = installErr instanceof Error ? installErr.message : String(installErr);
+              
+              // Check if user cancelled the pkexec prompt
+              if (errorMsg.includes('126') || errorMsg.includes('dismissed') || errorMsg.includes('cancelled')) {
+                await dialog.showMessageBox({
+                  type: 'info',
+                  title: 'Installation Cancelled',
+                  message: 'Installation was cancelled',
+                  detail: 'The update has been saved to your Downloads folder. You can install it manually later.',
+                  buttons: ['OK'],
+                });
+              } else {
+                await dialog.showMessageBox({
+                  type: 'error',
+                  title: 'Installation Failed',
+                  message: 'Could not install the update',
+                  detail: `${errorMsg}\n\nThe update has been saved to:\n${filePath}\n\nYou can install it manually with:\nsudo ${packageType === 'deb' ? 'apt install' : 'dnf install'} "${filePath}"`,
+                  buttons: ['OK'],
+                });
+              }
+              shell.showItemInFolder(filePath);
+            }
+          } else if (installResult.response === 1) {
+            shell.showItemInFolder(filePath);
+          }
+        } catch (err) {
+          console.error('[AutoUpdater] Linux package download failed:', err);
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          
+          const fallbackResult = await dialog.showMessageBox({
+            type: 'error',
+            title: 'Download Failed',
+            message: 'Could not download the update',
+            detail: `${errorMsg}\n\nWould you like to open the download page instead?`,
+            buttons: ['Open Download Page', 'Cancel'],
+            defaultId: 0,
+            cancelId: 1,
+          });
+          
+          if (fallbackResult.response === 0) {
+            shell.openExternal('https://apotenza92.github.io/facebook-messenger-desktop/').catch((shellErr) => {
+              console.error('[AutoUpdater] Failed to open download page:', shellErr);
+            });
+          }
+        }
+      }
+      return;
+    }
+    
+    // Handle snap/flatpak - these update through their own mechanisms
+    if (source === 'snap' || source === 'flatpak') {
+      let updateInstructions = '';
+      let packageManagerName = '';
+      
+      if (source === 'snap') {
+        packageManagerName = 'Snap Store';
+        updateInstructions = 'Snap updates automatically, or run:\nsudo snap refresh facebook-messenger-desktop';
+      } else {
+        packageManagerName = 'Flatpak';
+        updateInstructions = 'Run:\nflatpak update com.facebook.messenger.desktop';
+      }
+      
+      console.log(`[AutoUpdater] Linux ${source} install detected, showing manual update instructions`);
+      
+      const result = await dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Available',
+        message: `A new version of Messenger is available`,
+        detail: `Version ${version} is available.\n\nYou installed Messenger via ${packageManagerName}. Please update using your package manager.\n\n${updateInstructions}`,
+        buttons: ['Open Download Page', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      
+      if (result.response === 0) {
+        shell.openExternal('https://apotenza92.github.io/facebook-messenger-desktop/').catch((err) => {
+          console.error('[AutoUpdater] Failed to open download page:', err);
+        });
+      }
+      return;
+    }
+    // 'direct' means AppImage - continue with normal auto-update flow below
+  }
+
   // On Windows, download directly and run installer
   // This is a temporary workaround until code signing is set up
   // Without signing, auto-updates get blocked by Windows Application Control
@@ -2336,6 +2679,16 @@ app.whenReady().then(async () => {
   // Create window
   createWindow();
   setupIpcHandlers();
+
+  // Restore window when dock/taskbar icon is clicked
+  // This must be registered ONCE here, not inside createWindow() to avoid accumulating listeners
+  app.on('activate', () => {
+    if (mainWindow === null) {
+      createWindow();
+    } else {
+      mainWindow.show();
+    }
+  });
 });
 
 function setupTitleOverlay(window: BrowserWindow, overlayHeight: number, title: string = 'Messenger'): void {

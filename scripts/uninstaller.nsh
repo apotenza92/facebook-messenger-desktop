@@ -1,5 +1,41 @@
 ; Custom NSIS script for Facebook Messenger Desktop
-; This runs during uninstall to clean up ALL app data
+; This runs during install/update and uninstall
+
+; Custom install macro - runs after installation/update
+; This fixes the "missing" taskbar icon issue after updates by refreshing pinned shortcuts
+!macro customInstall
+  ; Use PowerShell to update any existing Messenger taskbar shortcuts to point to the new executable
+  ; This preserves the pinned status while updating the target path
+  ; $INSTDIR contains the new installation directory
+  nsExec::ExecToStack 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "\
+    $$taskbarPath = [Environment]::GetFolderPath(\"ApplicationData\") + \"\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\"; \
+    $$shell = New-Object -ComObject WScript.Shell; \
+    Get-ChildItem -Path $$taskbarPath -Filter \"*Messenger*.lnk\" -ErrorAction SilentlyContinue | ForEach-Object { \
+      $$shortcut = $$shell.CreateShortcut($$_.FullName); \
+      $$shortcut.TargetPath = \"$INSTDIR\Messenger.exe\"; \
+      $$shortcut.WorkingDirectory = \"$INSTDIR\"; \
+      $$shortcut.IconLocation = \"$INSTDIR\Messenger.exe,0\"; \
+      $$shortcut.Save(); \
+    }"'
+  Pop $0
+  
+  ; Also update Start Menu shortcuts if they exist
+  nsExec::ExecToStack 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "\
+    $$startMenuPath = [Environment]::GetFolderPath(\"StartMenu\") + \"\Programs\"; \
+    $$shell = New-Object -ComObject WScript.Shell; \
+    Get-ChildItem -Path $$startMenuPath -Filter \"*Messenger*.lnk\" -Recurse -ErrorAction SilentlyContinue | ForEach-Object { \
+      $$shortcut = $$shell.CreateShortcut($$_.FullName); \
+      $$shortcut.TargetPath = \"$INSTDIR\Messenger.exe\"; \
+      $$shortcut.WorkingDirectory = \"$INSTDIR\"; \
+      $$shortcut.IconLocation = \"$INSTDIR\Messenger.exe,0\"; \
+      $$shortcut.Save(); \
+    }"'
+  Pop $0
+  
+  ; Notify Windows shell to refresh icons and update the taskbar
+  ; SHCNE_ASSOCCHANGED (0x08000000) with SHCNF_IDLIST (0) tells the shell that file associations changed
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+!macroend
 
 !macro customUnInstall
   ; First, close Messenger if it's running
