@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.9] - 2026-01-04
+
+### Fixed
+- Linux: Fixed app showing with wrong icon (gear) in taskbar/dock due to WMClass mismatch
+- Fixed race condition where clicking app icon could spawn multiple instances before single instance lock was checked
+
 ## [0.7.8] - 2026-01-04
 
 ### Fixed

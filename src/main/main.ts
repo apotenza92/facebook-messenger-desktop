@@ -82,6 +82,29 @@ const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
 const movePromptFile = path.join(app.getPath('userData'), 'move-to-applications-prompted.json');
 const notificationPermissionFile = path.join(app.getPath('userData'), 'notification-permission-requested.json');
 
+// Request single instance lock early (before app.whenReady) to prevent race conditions
+// on Linux/Windows where multiple instances might start before lock is checked
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  // Another instance is already running - quit immediately
+  console.log('[SingleInstance] Another instance is already running, quitting...');
+  app.quit();
+} else {
+  // Handle second instance attempts - show existing window
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      // Window may be hidden (close to tray) or minimized
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+    }
+  });
+}
+
 const uninstallTargets = () => {
   // Only remove app-owned temp directory to avoid touching system temp roots
   const tempDir = path.join(app.getPath('temp'), app.getName());
@@ -2244,25 +2267,6 @@ app.whenReady().then(async () => {
   // Create window
   createWindow();
   setupIpcHandlers();
-
-  // Prevent multiple instances
-  const gotTheLock = app.requestSingleInstanceLock();
-  if (!gotTheLock) {
-    app.quit();
-  } else {
-    app.on('second-instance', () => {
-      if (mainWindow) {
-        // Window may be hidden (close to tray) or minimized
-        if (!mainWindow.isVisible()) {
-          mainWindow.show();
-        }
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-        mainWindow.focus();
-      }
-    });
-  }
 });
 
 function setupTitleOverlay(window: BrowserWindow, overlayHeight: number, title: string = 'Messenger'): void {
