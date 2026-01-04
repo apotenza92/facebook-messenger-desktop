@@ -20,11 +20,15 @@ This project exists because the original Facebook Desktop Messenger app was depr
 brew install --cask apotenza92/tap/facebook-messenger-desktop
 ```
 
+---
+
 ### Windows
 
 #### WinGet
 
 Pending approval.
+
+---
 
 ### Linux
 
