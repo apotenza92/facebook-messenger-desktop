@@ -6,6 +6,9 @@
 - Linux: Fixed duplicate window appearing briefly when clicking dock/dash icon after closing window
   - Activate event handler was incorrectly registered inside createWindow, causing listeners to accumulate
   - Now uses same showMainWindow() function as tray icon for consistent behavior
+- Linux: Fixed app icon appearing too large in dash/dock compared to other apps
+  - Reduced icon size from 80% to 68% of canvas (16% margins instead of 10%)
+  - Now matches proportions of other desktop applications in GNOME/KDE
 
 ## [0.8.1] - 2026-01-04
 

@@ -121,9 +121,9 @@ async function generateIconWithWhiteBackground(svgBuffer, size, outputPath) {
 
 // Helper function to generate macOS icon with rounded white background
 // macOS expects icons with rounded corners (squircle shape) for proper shadow rendering
-async function generateIconWithRoundedWhiteBackground(svgBuffer, size, outputPath) {
-  // Scale icon to 80% of size to add padding (10% margin on each side)
-  const iconSize = Math.floor(size * 0.8);
+async function generateIconWithRoundedWhiteBackground(svgBuffer, size, outputPath, iconScale = 0.8) {
+  // Scale icon to specified percentage of size (default 80% = 10% margin on each side)
+  const iconSize = Math.floor(size * iconScale);
   const padding = Math.floor((size - iconSize) / 2);
   
   // macOS icon corner radius is approximately 22.37% of icon size (Big Sur style)
@@ -227,14 +227,17 @@ async function generateIcons() {
     await generateIconWithRoundedWhiteBackground(svgBuffer, 512, path.join(iconsDir, 'icon.png'));
     
     // Generate Linux icons directory with proper NxN.png naming for hicolor theme
+    // Linux desktop environments (GNOME, KDE) expect smaller icons relative to canvas
+    // Using 68% scale (16% margin on each side) to match other apps in the dash
     console.log('Generating Linux icons directory...');
     const linuxIconsDir = path.join(iconsDir, 'linux');
     if (!fs.existsSync(linuxIconsDir)) {
       fs.mkdirSync(linuxIconsDir, { recursive: true });
     }
     const linuxIconSizes = [512, 256, 128, 96, 72, 64, 48, 32, 24, 22, 16];
+    const linuxIconScale = 0.68; // Smaller than macOS/Windows to match Linux dash aesthetics
     for (const size of linuxIconSizes) {
-      await generateIconWithRoundedWhiteBackground(svgBuffer, size, path.join(linuxIconsDir, `${size}x${size}.png`));
+      await generateIconWithRoundedWhiteBackground(svgBuffer, size, path.join(linuxIconsDir, `${size}x${size}.png`), linuxIconScale);
     }
 
     // Generate rounded PNGs for Windows ICO
