@@ -719,10 +719,6 @@
       const platformText = document.getElementById('platform-text');
       const linuxFormats = document.getElementById('linux-formats');
       
-      btn.href = download.url;
-      btnText.textContent = `Download for ${download.name}`;
-      platformText.textContent = `${download.file}`;
-      
       // Hide detected platform from "Other platforms"
       const platformLinks = document.querySelectorAll('.platform-link');
       platformLinks.forEach(link => {
@@ -730,17 +726,35 @@
         if (linkPlatform === currentPlatform) {
           link.classList.add('hidden');
         }
+        // Also hide both Linux options if on Linux (they're shown in format picker)
+        if (download.showFormats && (linkPlatform === 'linux' || linkPlatform === 'linux-arm')) {
+          link.classList.add('hidden');
+        }
       });
       
-      // Show Linux format picker if on Linux
+      // For Linux: hide download button, show format picker directly
       if (download.showFormats && linuxFormats) {
+        btn.style.display = 'none';
+        platformText.textContent = 'Choose your installation method';
         linuxFormats.classList.add('visible');
+        
         if (download.arch === 'arm64') {
-          platformText.textContent = `Choose installation method below`;
           setLinuxArch('arm64');
-        } else {
-          platformText.textContent = `Snap Store recommended - or choose format below`;
         }
+      } else {
+        // For macOS/Windows: show download button normally
+        btn.href = download.url;
+        btnText.textContent = `Download for ${download.name}`;
+        platformText.textContent = `${download.file}`;
+        
+        btn.addEventListener('click', () => {
+          btn.classList.add('downloading');
+          btnText.textContent = 'Starting download...';
+          setTimeout(() => {
+            btn.classList.remove('downloading');
+            btnText.textContent = `Download for ${download.name}`;
+          }, 2000);
+        });
       }
       
       // Arch toggle buttons
@@ -759,15 +773,6 @@
             console.error('Failed to copy:', e);
           }
         });
-      });
-      
-      btn.addEventListener('click', () => {
-        btn.classList.add('downloading');
-        btnText.textContent = 'Starting download...';
-        setTimeout(() => {
-          btn.classList.remove('downloading');
-          btnText.textContent = `Download for ${download.name}`;
-        }, 2000);
       });
       
       fetchReleaseInfo();
