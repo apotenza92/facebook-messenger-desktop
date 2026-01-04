@@ -146,12 +146,18 @@
     "snap": {
       "confinement": "strict",
       "grade": "stable",
+      "base": "core22",
       "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
       "plugs": [
         "default",
         "camera",
         "audio-record",
-        "removable-media"
+        "removable-media",
+        "desktop",
+        "desktop-legacy",
+        "unity7",
+        "wayland",
+        "x11"
       ]
     },
     "flatpak": {
