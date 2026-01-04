@@ -11,6 +11,18 @@ import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
 import { autoUpdater } from 'electron-updater';
 
+// On Linux AppImage: fork and detach from terminal so the command returns immediately
+// This must happen before single instance lock is acquired
+if (process.platform === 'linux' && process.env.APPIMAGE && !process.env.MESSENGER_FORKED) {
+  const child = spawn(process.argv[0], process.argv.slice(1), {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, MESSENGER_FORKED: '1' }
+  });
+  child.unref();
+  process.exit(0);
+}
+
 const resetFlag =
   process.argv.includes('--reset-window') ||
   process.argv.includes('--reset'); // legacy
@@ -81,6 +93,7 @@ app.setPath('logs', path.join(userDataPath, 'logs'));
 const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
 const movePromptFile = path.join(app.getPath('userData'), 'move-to-applications-prompted.json');
 const notificationPermissionFile = path.join(app.getPath('userData'), 'notification-permission-requested.json');
+const snapHelpShownFile = path.join(app.getPath('userData'), 'snap-help-shown.json');
 
 // Request single instance lock early (before app.whenReady) to prevent race conditions
 // on Linux/Windows where multiple instances might start before lock is checked
@@ -811,7 +824,7 @@ function getTrayIconPath(): string | undefined {
       ? 'icon.ico'
       : process.platform === 'darwin'
       ? 'iconTemplate.png'
-      : 'icon.png';
+      : 'icon-rounded.png';  // Linux: use the nicer rounded icon
 
   const possiblePaths = [
     path.join(trayDir, platformIcon),
@@ -1778,6 +1791,48 @@ async function checkMediaPermissions(): Promise<void> {
   }
 }
 
+// Snap desktop integration help (shown once on first run)
+// When snap is manually installed (not pre-installed with distro), users may need to set up desktop integration
+function showSnapDesktopIntegrationHelp(): void {
+  // Only show for Linux snap installs
+  if (process.platform !== 'linux' || !process.env.SNAP) {
+    return;
+  }
+
+  // Only show once
+  try {
+    if (fs.existsSync(snapHelpShownFile)) {
+      return;
+    }
+    fs.writeFileSync(snapHelpShownFile, JSON.stringify({ shown: true, date: new Date().toISOString() }));
+  } catch (e) {
+    // Continue anyway if file operations fail
+  }
+
+  console.log('');
+  console.log('╔════════════════════════════════════════════════════════════════════════════╗');
+  console.log('║                     Messenger - Snap Installation Help                     ║');
+  console.log('╠════════════════════════════════════════════════════════════════════════════╣');
+  console.log('║                                                                            ║');
+  console.log('║  If the app doesn\'t appear in your applications menu, you may need to     ║');
+  console.log('║  set up desktop integration for snap packages:                             ║');
+  console.log('║                                                                            ║');
+  console.log('║  1. Add snap desktop directory to your environment:                        ║');
+  console.log('║     Add this line to ~/.profile or /etc/profile.d/snap.sh:                 ║');
+  console.log('║                                                                            ║');
+  console.log('║     export XDG_DATA_DIRS="/var/lib/snapd/desktop:$XDG_DATA_DIRS"           ║');
+  console.log('║                                                                            ║');
+  console.log('║  2. Log out and back in (or restart your session)                          ║');
+  console.log('║                                                                            ║');
+  console.log('║  3. Alternatively, run: sudo update-desktop-database                       ║');
+  console.log('║                                                                            ║');
+  console.log('║  This is only needed when snap is manually installed (not pre-configured   ║');
+  console.log('║  with Ubuntu or other distros that include snap by default).               ║');
+  console.log('║                                                                            ║');
+  console.log('╚════════════════════════════════════════════════════════════════════════════╝');
+  console.log('');
+}
+
 // Auto-updater state
 let pendingUpdateVersion: string | null = null;
 let originalWindowTitle: string = 'Messenger';
@@ -1995,7 +2050,7 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
       type: 'info',
       title: 'Update Available',
       message: `A new version of Messenger is available`,
-      detail: `Version ${version} is available. Click "Download and Install" to automatically download and run the installer.\n\nNote: After the installer opens, you may need to click "More info" → "Run anyway" if Windows SmartScreen appears.`,
+      detail: `Version ${version} is available. The installer will be downloaded to your Downloads folder.\n\n⚠️ Windows Security Note:\nIf Windows SmartScreen appears, click "More info" → "Run anyway".\nIf the installer won't run, right-click the file → Properties → check "Unblock" → OK.`,
       buttons: ['Download and Install', 'Later'],
       defaultId: 0,
       cancelId: 1,
@@ -2018,14 +2073,14 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
           type: 'info',
           title: 'Download Complete',
           message: 'Update downloaded successfully',
-          detail: `The installer has been saved to your Downloads folder.\n\nClick "Install Now" to run the installer and close Messenger.`,
+          detail: `The installer has been saved to:\n${filePath}\n\nClick "Install Now" to run the installer. Messenger will close automatically.\n\nIf Windows blocks the file, right-click → Properties → Unblock.`,
           buttons: ['Install Now', 'Open Downloads Folder', 'Later'],
           defaultId: 0,
           cancelId: 2,
         });
         
         if (installResult.response === 0) {
-          // Run the installer and quit the app
+          // Run the installer and quit the app immediately (no extra confirmation dialog)
           console.log('[AutoUpdater] Opening installer and quitting...');
           const openError = await shell.openPath(filePath);
           
@@ -2036,26 +2091,13 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
               type: 'error',
               title: 'Could Not Open Installer',
               message: 'The installer could not be opened automatically',
-              detail: `Error: ${openError}\n\nThe file has been saved to your Downloads folder. Please run it manually.`,
+              detail: `Error: ${openError}\n\nThe file has been saved to your Downloads folder. Please run it manually.\n\nIf the file is blocked: right-click → Properties → check "Unblock" → OK.`,
               buttons: ['Show in Downloads'],
             });
             shell.showItemInFolder(filePath);
           } else {
-            // Show SmartScreen help dialog - this stays visible while SmartScreen may be blocking
-            const helpResult = await dialog.showMessageBox({
-              type: 'info',
-              title: 'Installing Update',
-              message: 'The installer has been launched',
-              detail: `If Windows SmartScreen appears:\n\n1. Click "More info"\n2. Click "Run anyway"\n\nThe app will now close to allow the update to install.`,
-              buttons: ['Close Messenger', 'Show SmartScreen Help'],
-              defaultId: 0,
-            });
-            
-            if (helpResult.response === 1) {
-              // Open help page about SmartScreen
-              shell.openExternal('https://support.microsoft.com/en-us/windows/microsoft-defender-smartscreen-warning-8a7f912d-1a28-47b5-a7c8-0c5a3e3f2c2c').catch(() => {});
-            }
-            
+            // Quit immediately to allow installer to run - no additional dialog needed
+            console.log('[AutoUpdater] Installer launched, quitting app...');
             isQuitting = true;
             app.quit();
           }
@@ -2135,19 +2177,43 @@ async function showUpdateReadyDialog(version: string): Promise<void> {
     console.log('[AutoUpdater] User chose to restart');
     isQuitting = true;
     
-    // On Windows, quitAndInstall() doesn't always properly quit the app
-    // Use setImmediate to ensure event loop is cleared, and pass (false, true)
-    // to ensure the app restarts after install. Add fallback app.exit() for Windows.
-    setImmediate(() => {
-      autoUpdater.quitAndInstall(false, true);
-    });
-    
-    // Fallback: Force quit on Windows if quitAndInstall doesn't work within 1 second
-    if (process.platform === 'win32') {
+    // On Linux, quitAndInstall() can terminate abruptly causing crash messages.
+    // Close all windows cleanly first to save session state.
+    if (process.platform === 'linux') {
+      console.log('[AutoUpdater] Linux: Closing windows cleanly before update...');
+      // Close all windows first to trigger proper cleanup
+      BrowserWindow.getAllWindows().forEach(win => {
+        try {
+          win.destroy();
+        } catch (e) {
+          console.log('[AutoUpdater] Error destroying window:', e);
+        }
+      });
+      // Small delay to allow cleanup, then quit and install
       setTimeout(() => {
-        console.log('[AutoUpdater] Force quitting for Windows update install');
+        console.log('[AutoUpdater] Linux: Calling quitAndInstall...');
+        autoUpdater.quitAndInstall(false, true);
+      }, 300);
+      // Fallback: Force quit on Linux if quitAndInstall doesn't work within 2 seconds
+      setTimeout(() => {
+        console.log('[AutoUpdater] Linux: Force quitting for update install');
         app.exit(0);
-      }, 1000);
+      }, 2000);
+    } else {
+      // On Windows, quitAndInstall() doesn't always properly quit the app
+      // Use setImmediate to ensure event loop is cleared, and pass (false, true)
+      // to ensure the app restarts after install. Add fallback app.exit() for Windows.
+      setImmediate(() => {
+        autoUpdater.quitAndInstall(false, true);
+      });
+      
+      // Fallback: Force quit on Windows if quitAndInstall doesn't work within 1 second
+      if (process.platform === 'win32') {
+        setTimeout(() => {
+          console.log('[AutoUpdater] Force quitting for Windows update install');
+          app.exit(0);
+        }, 1000);
+      }
     }
   } else {
     console.log('[AutoUpdater] User chose to restart later');
@@ -2233,6 +2299,9 @@ app.whenReady().then(async () => {
   } else {
     console.log('[AutoUpdater] Skipped in development mode');
   }
+
+  // Show snap desktop integration help on first run (Linux snap only)
+  showSnapDesktopIntegrationHelp();
 
   // Detect and cache install source in background (so uninstall is instant later)
   // This runs async and doesn't block startup

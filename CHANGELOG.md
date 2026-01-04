@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0] - 2026-01-04
+
+### Added
+- Linux Snap: First-run help message for desktop integration (XDG_DATA_DIRS setup)
+- Linux: New rounded tray icon for better visibility in system tray
+
+### Fixed
+- Linux AppImage: App now detaches from terminal immediately so the command returns
+- Linux Snap: Added desktop integration plugs for better system integration (wayland, x11, unity7)
+- Linux: Auto-update no longer shows crash message (windows closed cleanly before quitAndInstall)
+- Windows: Improved update dialog with clear SmartScreen bypass and file unblock instructions
+
+### Changed
+- Linux Snap: Updated to core22 base for better compatibility
+
 ## [0.7.9] - 2026-01-04
 
 ### Fixed
