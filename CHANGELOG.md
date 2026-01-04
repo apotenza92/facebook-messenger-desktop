@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.7] - 2026-01-04
+
+### Fixed
+- Fixed slow uninstall dialog on Snap (and other platforms)
+  - Confirmation dialog now appears immediately when clicking Uninstall
+  - Package manager detection moved to after user confirms, not before
+- Linux deb/rpm: Fixed app failing to launch with sandbox error
+  - Post-install script now sets correct ownership and SUID permissions on chrome-sandbox
+  - Previously required manual fix: sudo chown root:root /opt/Messenger/chrome-sandbox && sudo chmod 4755
+- Linux: Fixed double window appearing when clicking dock/dash icon repeatedly
+  - Added debounce to prevent both second-instance and activate events from creating windows
+- Linux: Fixed app icon appearing too small in dash/dock
+  - Increased icon background from 72% to 85% of canvas size
+  - Logo now fills 68% of canvas (was 56%)
+- Linux deb/rpm: Fixed app icon not showing in application menu
+  - Added explicit Icon field to desktop file configuration
+- Linux deb/rpm: Fixed installation hanging when installing via terminal
+  - Removed dbus-send command that could block without a desktop session
+
 ## [0.8.6] - 2026-01-04
 
 ### Fixed

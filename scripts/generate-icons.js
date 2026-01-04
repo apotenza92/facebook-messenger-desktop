@@ -274,18 +274,18 @@ async function generateIcons() {
     await generateIconWithRoundedWhiteBackground(svgBuffer, 512, path.join(iconsDir, 'icon.png'));
     
     // Generate Linux icons directory with proper NxN.png naming for hicolor theme
-    // Linux desktop environments (GNOME, KDE) need icons with transparent padding around
-    // the white background so the overall icon appears smaller in the dash
-    // backgroundScale: white rounded rect is 72% of canvas
-    // iconScale: messenger logo is 56% of canvas (sits inside the background)
+    // Linux desktop environments (GNOME, KDE) need slight padding around the icon
+    // for visual consistency with system icons, but not too much or it looks tiny
+    // backgroundScale: white rounded rect is 85% of canvas (slight padding)
+    // iconScale: messenger logo is 68% of canvas (sits inside the background)
     console.log('Generating Linux icons directory...');
     const linuxIconsDir = path.join(iconsDir, 'linux');
     if (!fs.existsSync(linuxIconsDir)) {
       fs.mkdirSync(linuxIconsDir, { recursive: true });
     }
     const linuxIconSizes = [512, 256, 128, 96, 72, 64, 48, 32, 24, 22, 16];
-    const linuxBgScale = 0.72;   // White background is 72% of canvas (28% transparent padding)
-    const linuxLogoScale = 0.56; // Messenger logo is 56% of canvas (larger inside background)
+    const linuxBgScale = 0.85;   // White background is 85% of canvas (15% transparent padding)
+    const linuxLogoScale = 0.68; // Messenger logo is 68% of canvas (inside background)
     for (const size of linuxIconSizes) {
       await generateLinuxIcon(svgBuffer, size, path.join(linuxIconsDir, `${size}x${size}.png`), linuxBgScale, linuxLogoScale);
     }
@@ -308,8 +308,10 @@ async function generateIcons() {
     
     // Tray icons (smaller sizes)
     console.log('Generating tray icons...');
-    // Linux tray icon
+    // Linux tray icon (square)
     await generateIconWithWhiteBackground(svgBuffer, 22, path.join(trayDir, 'icon.png'));
+    // Linux tray icon (rounded - preferred)
+    await generateIconWithRoundedWhiteBackground(svgBuffer, 22, path.join(trayDir, 'icon-rounded.png'), 0.85);
     // macOS tray icon (template)
     await generateIconWithWhiteBackground(svgBuffer, 22, path.join(trayDir, 'iconTemplate.png'));
     

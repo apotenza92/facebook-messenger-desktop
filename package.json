@@ -129,7 +129,8 @@
         "Name": "Messenger",
         "Comment": "Desktop client for Facebook Messenger",
         "Categories": "Network;InstantMessaging;Chat;",
-        "StartupWMClass": "Messenger"
+        "StartupWMClass": "Messenger",
+        "Icon": "facebook-messenger-desktop"
       }
     },
     "appImage": {
