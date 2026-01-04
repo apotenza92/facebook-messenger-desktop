@@ -98,17 +98,6 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 0.75rem;
-    }
-    
-    .download-ext {
-      font-size: 0.9rem;
-      color: var(--text-muted);
-      font-weight: 500;
-      padding: 0.5rem 0.75rem;
-      background: var(--code-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
     }
     
     .platform {
@@ -446,7 +435,6 @@
         <div class="spinner"></div>
         <span id="btn-text">Download</span>
       </a>
-      <span class="download-ext" id="download-ext"></span>
     </div>
     <p class="platform" id="platform-text">Detecting your platform...</p>
     
@@ -599,10 +587,10 @@
     <div class="other-platforms">
       <h2>Other platforms</h2>
       <div class="platform-links" id="platform-links">
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link" data-platform="mac-arm">macOS (Apple Silicon)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link" data-platform="mac-intel">macOS (Intel)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link" data-platform="windows">Windows (x64)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link" data-platform="windows-arm">Windows (ARM)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link" data-platform="mac-arm">macOS (Apple Silicon) .zip</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link" data-platform="mac-intel">macOS (Intel) .zip</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link" data-platform="windows">Windows (x64) .exe</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link" data-platform="windows-arm">Windows (ARM) .exe</a>
         <a href="#linux-formats" class="platform-link" data-platform="linux" onclick="showLinuxFormats(event)">Linux (x64)</a>
         <a href="#linux-formats" class="platform-link" data-platform="linux-arm" onclick="showLinuxFormats(event, 'arm64')">Linux (ARM64)</a>
       </div>
@@ -771,7 +759,6 @@
       const btn = document.getElementById('download-btn');
       const btnText = document.getElementById('btn-text');
       const downloadWrapper = document.getElementById('download-wrapper');
-      const downloadExt = document.getElementById('download-ext');
       const platformText = document.getElementById('platform-text');
       const linuxFormats = document.getElementById('linux-formats');
       
@@ -798,11 +785,10 @@
           setLinuxArch('arm64');
         }
       } else {
-        // For macOS/Windows: show download button with extension badge
+        // For macOS/Windows: show download button with extension in platform text
         btn.href = download.url;
         btnText.textContent = 'Download';
-        downloadExt.textContent = download.ext;
-        platformText.textContent = `for ${download.name}`;
+        platformText.textContent = `for ${download.name} (${download.ext})`;
         
         btn.addEventListener('click', () => {
           btn.classList.add('downloading');
