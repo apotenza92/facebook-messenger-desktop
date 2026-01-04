@@ -5,7 +5,7 @@
 ; This fixes the "missing" taskbar icon issue after updates by refreshing pinned shortcuts
 !macro customInstall
   ; Use PowerShell to update any existing Messenger taskbar shortcuts to point to the new executable
-  ; This preserves the pinned status while updating the target path
+  ; This preserves the pinned status while updating the target path and icon location
   ; $INSTDIR contains the new installation directory
   nsExec::ExecToStack 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "\
     $$taskbarPath = [Environment]::GetFolderPath(\"ApplicationData\") + \"\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\"; \
@@ -30,6 +30,13 @@
       $$shortcut.IconLocation = \"$INSTDIR\Messenger.exe,0\"; \
       $$shortcut.Save(); \
     }"'
+  Pop $0
+  
+  ; Clear the Windows icon cache to force refresh of all icons
+  ; This is more aggressive than SHChangeNotify alone and helps fix stale cached icons
+  nsExec::ExecToStack 'cmd.exe /c del /f /q "%LOCALAPPDATA%\IconCache.db" 2>nul'
+  Pop $0
+  nsExec::ExecToStack 'cmd.exe /c del /f /q "%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*.db" 2>nul'
   Pop $0
   
   ; Notify Windows shell to refresh icons and update the taskbar

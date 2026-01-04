@@ -477,6 +477,27 @@ function createWindow(): void {
       mainWindow.setIcon(windowIcon);
       console.log('[Icon] Window icon set successfully');
     }
+    
+    // On Windows, re-apply icon after window is ready to fix blank icon after auto-update
+    // Windows caches icons by path, and after an update the executable path changes
+    // Re-applying the icon after ready-to-show ensures Windows refreshes its cache
+    if (process.platform === 'win32') {
+      mainWindow.once('ready-to-show', () => {
+        const icon = getWindowIcon();
+        if (icon && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setIcon(icon);
+          console.log('[Icon] Windows taskbar icon re-applied after ready-to-show');
+        }
+      });
+      
+      // Also re-apply icon when window is shown (handles case where window was hidden)
+      mainWindow.on('show', () => {
+        const icon = getWindowIcon();
+        if (icon && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setIcon(icon);
+        }
+      });
+    }
   }
 
   // On macOS, use BrowserView for content with title bar overlay on top
@@ -930,6 +951,8 @@ function createTray(): void {
 const HOMEBREW_CASK = 'apotenza92/tap/facebook-messenger-desktop';
 const WINGET_ID = 'apotenza92.FacebookMessengerDesktop';
 const LINUX_PACKAGE_NAME = 'facebook-messenger-desktop';
+const SNAP_PACKAGE_NAME = 'facebook-messenger-desktop';
+const FLATPAK_APP_ID = 'com.facebook.messenger.desktop';
 
 type PackageManagerInfo = {
   name: string;
@@ -1283,6 +1306,24 @@ function detectPackageManagerFromCache(): PackageManagerInfo | null {
     };
   }
   
+  if (source === 'snap' && process.platform === 'linux') {
+    console.log('[Uninstall] Using cached Snap detection');
+    return {
+      name: 'Snap',
+      detected: true,
+      uninstallCommand: ['/usr/bin/pkexec', '/usr/bin/snap', 'remove', SNAP_PACKAGE_NAME],
+    };
+  }
+  
+  if (source === 'flatpak' && process.platform === 'linux') {
+    console.log('[Uninstall] Using cached Flatpak detection');
+    return {
+      name: 'Flatpak',
+      detected: true,
+      uninstallCommand: ['/usr/bin/flatpak', 'uninstall', '-y', FLATPAK_APP_ID],
+    };
+  }
+  
   return null;
 }
 
@@ -1329,6 +1370,13 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
         rm -f "${homeDir}/.local/share/icons/hicolor/"*"/apps/${LINUX_PACKAGE_NAME}.png" 2>/dev/null
         rm -f "${homeDir}/.local/share/icons/hicolor/"*"/apps/messenger.png" 2>/dev/null
         
+        # Clear pop-launcher cache (for Pop!_OS COSMIC)
+        rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
+        rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
+        
+        # Clear COSMIC app cache
+        rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
+        
         # Update user desktop database
         if command -v update-desktop-database >/dev/null 2>&1; then
           update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
@@ -1359,7 +1407,9 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
     });
     child.unref();
   } else {
-    // On macOS/other Linux (Homebrew, Snap, Flatpak), spawn directly
+    // Note: Snap and Flatpak are handled by scheduleSnapUninstall() and scheduleFlatpakUninstall()
+    // which are called from handleUninstallRequest() before this function
+    // On macOS (Homebrew), spawn directly
     const child = spawn(command, args, {
       detached: true,
       stdio: 'ignore',
@@ -1367,6 +1417,153 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
     });
     child.unref();
   }
+}
+
+function scheduleSnapUninstall(): void {
+  // Snap apps can't uninstall themselves while running due to sandbox confinement.
+  // We schedule the uninstall to run AFTER the app exits by spawning a detached process.
+  const homeDir = process.env.HOME || '';
+  
+  // This script runs outside the Snap sandbox after the app quits
+  const uninstallScript = `
+    #!/bin/sh
+    # Wait for the Messenger snap to fully exit
+    sleep 2
+    
+    # Wait for any messenger processes to terminate
+    while pgrep -f "snap.*${SNAP_PACKAGE_NAME}" > /dev/null 2>&1; do
+      sleep 1
+    done
+    
+    # Additional wait to ensure snap daemon recognizes the app is closed
+    sleep 1
+    
+    # Run snap remove with pkexec for authentication
+    /usr/bin/pkexec /usr/bin/snap remove ${SNAP_PACKAGE_NAME}
+    UNINSTALL_EXIT=$?
+    
+    # Only proceed with cleanup if uninstall succeeded
+    if [ $UNINSTALL_EXIT -eq 0 ]; then
+      sleep 2
+      
+      # Remove user-specific desktop entries that might persist
+      rm -f "${homeDir}/.local/share/applications/${SNAP_PACKAGE_NAME}_"*.desktop 2>/dev/null
+      rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
+      rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
+      
+      # Clear pop-launcher cache (for Pop!_OS COSMIC)
+      rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
+      rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
+      
+      # Clear COSMIC app cache
+      rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
+      
+      # Update user desktop database
+      if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
+      fi
+      
+      # Refresh icon caches
+      if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
+      fi
+      
+      # Force desktop environment to reload application list
+      if command -v dbus-send >/dev/null 2>&1; then
+        dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
+      fi
+      
+      touch "${homeDir}/.local/share/applications" 2>/dev/null || true
+    fi
+  `.trim();
+  
+  console.log('[Uninstall] Scheduling Snap uninstall to run after app exits');
+  
+  // Spawn detached process that will outlive the app
+  // Using /usr/bin/sh directly (system shell, outside snap sandbox)
+  const child = spawn('/usr/bin/sh', ['-c', uninstallScript], {
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      // Ensure we're using system paths, not snap paths
+      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    },
+  });
+  child.unref();
+}
+
+function scheduleFlatpakUninstall(): void {
+  // Flatpak apps run in a sandbox and may have issues uninstalling themselves while running.
+  // We schedule the uninstall to run AFTER the app exits by spawning a detached process.
+  const homeDir = process.env.HOME || '';
+  
+  // This script runs outside the Flatpak sandbox after the app quits
+  const uninstallScript = `
+    #!/bin/sh
+    # Wait for the Messenger flatpak to fully exit
+    sleep 2
+    
+    # Wait for any messenger processes to terminate
+    while pgrep -f "${FLATPAK_APP_ID}" > /dev/null 2>&1; do
+      sleep 1
+    done
+    
+    # Additional wait to ensure flatpak recognizes the app is closed
+    sleep 1
+    
+    # Run flatpak uninstall (no sudo needed for user installs, may prompt for system installs)
+    /usr/bin/flatpak uninstall -y ${FLATPAK_APP_ID}
+    UNINSTALL_EXIT=$?
+    
+    # Only proceed with cleanup if uninstall succeeded
+    if [ $UNINSTALL_EXIT -eq 0 ]; then
+      sleep 1
+      
+      # Remove user-specific desktop entries that might persist
+      rm -f "${homeDir}/.local/share/applications/${FLATPAK_APP_ID}.desktop" 2>/dev/null
+      rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
+      rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
+      
+      # Clear pop-launcher cache (for Pop!_OS COSMIC)
+      rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
+      rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
+      
+      # Clear COSMIC app cache
+      rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
+      
+      # Update user desktop database
+      if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
+      fi
+      
+      # Refresh icon caches
+      if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
+      fi
+      
+      # Force desktop environment to reload application list
+      if command -v dbus-send >/dev/null 2>&1; then
+        dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
+      fi
+      
+      touch "${homeDir}/.local/share/applications" 2>/dev/null || true
+    fi
+  `.trim();
+  
+  console.log('[Uninstall] Scheduling Flatpak uninstall to run after app exits');
+  
+  // Spawn detached process that will outlive the app
+  const child = spawn('/usr/bin/sh', ['-c', uninstallScript], {
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      // Ensure we're using system paths
+      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    },
+  });
+  child.unref();
 }
 
 async function handleUninstallRequest(): Promise<void> {
@@ -1378,6 +1575,12 @@ async function handleUninstallRequest(): Promise<void> {
     const baseMessage = 'This will quit Messenger and remove all app data (settings, cache, and logs).';
     
     if (packageManager) {
+      if (packageManager.name === 'Snap') {
+        return `${baseMessage}\n\nAfter quitting, you'll be asked for your password to complete the uninstall.`;
+      }
+      if (packageManager.name === 'Flatpak') {
+        return `${baseMessage}\n\nAfter quitting, the app will be removed via Flatpak.`;
+      }
       return `${baseMessage}\n\nThe app will be uninstalled using ${packageManager.name}.`;
     }
     switch (process.platform) {
@@ -1413,19 +1616,37 @@ async function handleUninstallRequest(): Promise<void> {
   const targets = uninstallTargets().map((t) => t.path);
   scheduleExternalCleanup(targets);
 
+  // Special handling for Snap/Flatpak: must quit app FIRST, then run uninstall
+  // These run in sandboxes that prevent uninstalling from within
+  if (packageManager?.name === 'Snap') {
+    console.log('[Uninstall] Snap detected - scheduling uninstall after app quits');
+    scheduleSnapUninstall();
+    app.quit();
+    return;
+  }
+  
+  if (packageManager?.name === 'Flatpak') {
+    console.log('[Uninstall] Flatpak detected - scheduling uninstall after app quits');
+    scheduleFlatpakUninstall();
+    app.quit();
+    return;
+  }
+
   if (packageManager) {
     // Run the package manager uninstall command
     runPackageManagerUninstall(packageManager);
     
-    // For Linux deb/rpm with pkexec, we need to give time for the authentication dialog to appear
+    // For Linux package managers with pkexec, we need to give time for the authentication dialog to appear
     // Hide the window but don't quit immediately - the uninstall script will terminate the app
-    if (process.platform === 'linux' && (packageManager.name.includes('deb') || packageManager.name.includes('rpm'))) {
-      console.log('[Uninstall] Hiding window for pkexec authentication...');
+    const needsAuthDialog = packageManager.name.includes('deb') || 
+                            packageManager.name.includes('rpm');
+    if (process.platform === 'linux' && needsAuthDialog) {
+      console.log('[Uninstall] Hiding window for authentication dialog...');
       mainWindow?.hide();
-      // Give pkexec time to show its authentication dialog and complete
+      // Give the authentication dialog time to show and complete
       // The app will be killed by the package manager or cleanup script
       setTimeout(() => {
-        console.log('[Uninstall] Quitting after delay for pkexec...');
+        console.log('[Uninstall] Quitting after delay for authentication...');
         app.quit();
       }, 30000); // 30 second timeout as fallback
       return;

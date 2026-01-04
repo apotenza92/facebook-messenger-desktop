@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.6] - 2026-01-04
+
+### Fixed
+- Windows: Fixed taskbar icon becoming blank after auto-update
+  - Icon is now re-applied after window ready-to-show and on window show events
+  - NSIS installer clears Windows icon cache during updates to force refresh
+  - Shell notification sent to refresh taskbar after update completes
+- Linux Snap: Fixed app crashing when using in-app uninstaller
+  - Snap apps cannot uninstall themselves while running due to sandbox confinement
+  - App now quits first, then runs snap remove in a detached process
+- Linux Flatpak: Fixed potential crash when using in-app uninstaller
+  - Same deferred uninstall approach as Snap for sandbox compatibility
+- Linux: Fixed ghost icons remaining in Pop!_OS COSMIC app launcher after uninstall
+  - All uninstallers now clear pop-launcher cache
+  - All uninstallers now clear COSMIC app cache
+  - Desktop database and icon caches are refreshed after uninstall
+
 ## [0.8.5] - 2026-01-04
 
 ### Fixed
