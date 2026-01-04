@@ -587,10 +587,10 @@
     <div class="other-platforms">
       <h2>Other platforms</h2>
       <div class="platform-links" id="platform-links">
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link" data-platform="mac-arm">macOS (Apple Silicon) .zip</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link" data-platform="mac-intel">macOS (Intel) .zip</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link" data-platform="windows">Windows (x64) .exe</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link" data-platform="windows-arm">Windows (ARM) .exe</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link" data-platform="mac-arm">.zip for macOS (Apple Silicon)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link" data-platform="mac-intel">.zip for macOS (Intel)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link" data-platform="windows">.exe for Windows (x64)</a>
+        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link" data-platform="windows-arm">.exe for Windows (ARM)</a>
         <a href="#linux-formats" class="platform-link" data-platform="linux" onclick="showLinuxFormats(event)">Linux (x64)</a>
         <a href="#linux-formats" class="platform-link" data-platform="linux-arm" onclick="showLinuxFormats(event, 'arm64')">Linux (ARM64)</a>
       </div>
@@ -788,7 +788,7 @@
         // For macOS/Windows: show download button with extension in platform text
         btn.href = download.url;
         btnText.textContent = 'Download';
-        platformText.textContent = `for ${download.name} (${download.ext})`;
+        platformText.textContent = `${download.ext} for ${download.name}`;
         
         btn.addEventListener('click', () => {
           btn.classList.add('downloading');
