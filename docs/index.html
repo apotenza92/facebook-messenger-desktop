@@ -94,6 +94,23 @@
       height: 20px;
     }
     
+    .download-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+    }
+    
+    .download-ext {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      padding: 0.5rem 0.75rem;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    
     .platform {
       margin-top: 0.75rem;
       color: var(--text-subtle);
@@ -244,6 +261,9 @@
     }
     
     .format-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
       color: #0084ff;
       text-decoration: none;
       font-size: 0.8rem;
@@ -257,6 +277,15 @@
     .format-download:hover {
       background: #0084ff;
       color: white;
+    }
+    
+    .format-download .ext {
+      opacity: 0.7;
+      font-weight: 400;
+    }
+    
+    .format-download:hover .ext {
+      opacity: 1;
     }
     
     .format-command {
@@ -389,13 +418,16 @@
     <h1>Messenger Desktop</h1>
     <p class="subtitle">Download for your platform</p>
     
-    <a href="#" class="download-btn" id="download-btn">
-      <svg class="download-icon" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-      </svg>
-      <div class="spinner"></div>
-      <span id="btn-text">Download</span>
-    </a>
+    <div class="download-wrapper" id="download-wrapper">
+      <a href="#" class="download-btn" id="download-btn">
+        <svg class="download-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+        </svg>
+        <div class="spinner"></div>
+        <span id="btn-text">Download</span>
+      </a>
+      <span class="download-ext" id="download-ext"></span>
+    </div>
     <p class="platform" id="platform-text">Detecting your platform...</p>
     
     <div class="linux-formats" id="linux-formats">
@@ -410,7 +442,7 @@
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">AppImage</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-download">.AppImage</a>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-download">Download <span class="ext">.AppImage</span></a>
           </div>
           <div class="format-command">
             <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage && chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage</code>
@@ -423,7 +455,7 @@
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">Fedora</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="format-download">.rpm</a>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="format-download">Download <span class="ext">.rpm</span></a>
           </div>
           <div class="format-command">
             <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm && sudo dnf install ./facebook-messenger-desktop-x86_64.rpm</code>
@@ -462,7 +494,7 @@
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">Ubuntu / Debian</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-download">.deb</a>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-download">Download <span class="ext">.deb</span></a>
           </div>
           <div class="format-command">
             <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb && sudo apt install ./facebook-messenger-desktop-amd64.deb</code>
@@ -477,7 +509,7 @@
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">AppImage</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-download">.AppImage</a>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-download">Download <span class="ext">.AppImage</span></a>
           </div>
           <div class="format-command">
             <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage && chmod +x facebook-messenger-desktop-arm64.AppImage && ./facebook-messenger-desktop-arm64.AppImage</code>
@@ -490,7 +522,7 @@
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">Fedora</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="format-download">.rpm</a>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="format-download">Download <span class="ext">.rpm</span></a>
           </div>
           <div class="format-command">
             <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm && sudo dnf install ./facebook-messenger-desktop-aarch64.rpm</code>
@@ -503,7 +535,7 @@
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">Ubuntu / Debian</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-download">.deb</a>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-download">Download <span class="ext">.deb</span></a>
           </div>
           <div class="format-command">
             <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb && sudo apt install ./facebook-messenger-desktop-arm64.deb</code>
@@ -552,27 +584,32 @@
       'mac-arm': {
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip',
         name: 'macOS (Apple Silicon)',
-        file: 'Messenger-macos-arm64.zip'
+        file: 'Messenger-macos-arm64.zip',
+        ext: '.zip'
       },
       'mac-intel': {
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip',
         name: 'macOS (Intel)',
-        file: 'Messenger-macos-x64.zip'
+        file: 'Messenger-macos-x64.zip',
+        ext: '.zip'
       },
       'windows': {
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe',
         name: 'Windows',
-        file: 'Messenger-windows-x64-setup.exe'
+        file: 'Messenger-windows-x64-setup.exe',
+        ext: '.exe'
       },
       'windows-arm': {
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe',
         name: 'Windows (ARM)',
-        file: 'Messenger-windows-arm64-setup.exe'
+        file: 'Messenger-windows-arm64-setup.exe',
+        ext: '.exe'
       },
       'linux': {
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage',
         name: 'Linux',
         file: 'facebook-messenger-desktop-x86_64.AppImage',
+        ext: '.AppImage',
         showFormats: true,
         arch: 'x64'
       },
@@ -580,6 +617,7 @@
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage',
         name: 'Linux (ARM64)',
         file: 'facebook-messenger-desktop-arm64.AppImage',
+        ext: '.AppImage',
         showFormats: true,
         arch: 'arm64'
       }
@@ -698,6 +736,8 @@
       const download = downloads[currentPlatform];
       const btn = document.getElementById('download-btn');
       const btnText = document.getElementById('btn-text');
+      const downloadWrapper = document.getElementById('download-wrapper');
+      const downloadExt = document.getElementById('download-ext');
       const platformText = document.getElementById('platform-text');
       const linuxFormats = document.getElementById('linux-formats');
       
@@ -716,7 +756,7 @@
       
       // For Linux: hide download button, show format picker directly
       if (download.showFormats && linuxFormats) {
-        btn.style.display = 'none';
+        downloadWrapper.style.display = 'none';
         platformText.style.display = 'none';
         linuxFormats.classList.add('visible');
         
@@ -724,17 +764,18 @@
           setLinuxArch('arm64');
         }
       } else {
-        // For macOS/Windows: show download button normally
+        // For macOS/Windows: show download button with extension badge
         btn.href = download.url;
-        btnText.textContent = `Download for ${download.name}`;
-        platformText.textContent = `${download.file}`;
+        btnText.textContent = 'Download';
+        downloadExt.textContent = download.ext;
+        platformText.textContent = `for ${download.name}`;
         
         btn.addEventListener('click', () => {
           btn.classList.add('downloading');
-          btnText.textContent = 'Starting download...';
+          btnText.textContent = 'Starting...';
           setTimeout(() => {
             btn.classList.remove('downloading');
-            btnText.textContent = `Download for ${download.name}`;
+            btnText.textContent = 'Download';
           }, 2000);
         });
       }
