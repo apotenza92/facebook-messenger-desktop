@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2] - 2026-01-04
+
+### Fixed
+- Linux: Fixed duplicate window appearing briefly when clicking dock/dash icon after closing window
+  - Activate event handler was incorrectly registered inside createWindow, causing listeners to accumulate
+  - Now uses same showMainWindow() function as tray icon for consistent behavior
+
 ## [0.8.1] - 2026-01-04
 
 ### Fixed
@@ -10,8 +17,6 @@
   - Downloads the correct package type and installs with pkexec (graphical sudo)
   - Previously only worked for AppImage installs
 - Linux: Added detection for Snap and Flatpak installs
-- Linux: Fixed duplicate window appearing briefly when clicking dock icon after closing window
-  - Activate event handler was incorrectly registered inside createWindow, causing listeners to accumulate
 
 ## [0.8.0] - 2026-01-04
 

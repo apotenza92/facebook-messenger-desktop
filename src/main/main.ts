@@ -104,20 +104,9 @@ if (!gotTheLock) {
   app.quit();
 } else {
   // Handle second instance attempts - show existing window or create one
+  // Uses showMainWindow() for consistent behavior with tray icon click
   app.on('second-instance', () => {
-    if (mainWindow) {
-      // Window may be hidden (close to tray) or minimized
-      if (!mainWindow.isVisible()) {
-        mainWindow.show();
-      }
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      mainWindow.focus();
-    } else {
-      // Window was destroyed (e.g., on Linux without tray) - recreate it
-      createWindow();
-    }
+    showMainWindow();
   });
 }
 
@@ -2682,12 +2671,9 @@ app.whenReady().then(async () => {
 
   // Restore window when dock/taskbar icon is clicked
   // This must be registered ONCE here, not inside createWindow() to avoid accumulating listeners
+  // Uses showMainWindow() for consistent behavior with tray icon click
   app.on('activate', () => {
-    if (mainWindow === null) {
-      createWindow();
-    } else {
-      mainWindow.show();
-    }
+    showMainWindow();
   });
 });
 
