@@ -403,14 +403,11 @@
       <div class="format-list" id="format-list-x64">
         <div class="format-item">
           <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">Snap Store</span>
-              <span class="format-desc">Ubuntu & more</span>
-            </div>
-            <a href="https://snapcraft.io/facebook-messenger-desktop" class="format-download" target="_blank">View in Store</a>
+            <span class="format-name">AppImage</span>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-download">Download</a>
           </div>
           <div class="format-command">
-            <code>sudo snap install facebook-messenger-desktop</code>
+            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage && chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage</code>
             <button class="copy-btn" title="Copy command">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             </button>
@@ -419,42 +416,7 @@
         
         <div class="format-item">
           <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">Flathub</span>
-              <span class="format-desc">Coming Soon</span>
-            </div>
-            <span class="format-pending">Pending Review</span>
-          </div>
-          <div class="format-command format-disabled">
-            <code>flatpak install flathub com.facebook.messenger.desktop</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">.deb</span>
-              <span class="format-desc">Ubuntu / Debian</span>
-            </div>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-download">Download</a>
-          </div>
-          <div class="format-command">
-            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb && sudo apt install ./facebook-messenger-desktop-amd64.deb</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">.rpm</span>
-              <span class="format-desc">Fedora / RHEL</span>
-            </div>
+            <span class="format-name">Fedora</span>
             <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="format-download">Download</a>
           </div>
           <div class="format-command">
@@ -467,14 +429,37 @@
         
         <div class="format-item">
           <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">AppImage</span>
-              <span class="format-desc">Universal</span>
-            </div>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-download">Download</a>
+            <span class="format-name">Flathub</span>
+            <span class="format-pending">Pending</span>
+          </div>
+          <div class="format-command format-disabled">
+            <code>flatpak install flathub com.facebook.messenger.desktop</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <span class="format-name">Snap</span>
+            <a href="https://snapcraft.io/facebook-messenger-desktop" class="format-download" target="_blank">View in Store</a>
           </div>
           <div class="format-command">
-            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage && chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage</code>
+            <code>sudo snap install facebook-messenger-desktop</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <span class="format-name">Ubuntu / Debian</span>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-download">Download</a>
+          </div>
+          <div class="format-command">
+            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb && sudo apt install ./facebook-messenger-desktop-amd64.deb</code>
             <button class="copy-btn" title="Copy command">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             </button>
@@ -485,14 +470,11 @@
       <div class="format-list" id="format-list-arm64" style="display: none;">
         <div class="format-item">
           <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">.deb</span>
-              <span class="format-desc">Ubuntu / Debian</span>
-            </div>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-download">Download</a>
+            <span class="format-name">AppImage</span>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-download">Download</a>
           </div>
           <div class="format-command">
-            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb && sudo apt install ./facebook-messenger-desktop-arm64.deb</code>
+            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage && chmod +x facebook-messenger-desktop-arm64.AppImage && ./facebook-messenger-desktop-arm64.AppImage</code>
             <button class="copy-btn" title="Copy command">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             </button>
@@ -501,10 +483,7 @@
         
         <div class="format-item">
           <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">.rpm</span>
-              <span class="format-desc">Fedora / RHEL</span>
-            </div>
+            <span class="format-name">Fedora</span>
             <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="format-download">Download</a>
           </div>
           <div class="format-command">
@@ -517,14 +496,11 @@
         
         <div class="format-item">
           <div class="format-header">
-            <div class="format-title">
-              <span class="format-name">AppImage</span>
-              <span class="format-desc">Universal</span>
-            </div>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-download">Download</a>
+            <span class="format-name">Ubuntu / Debian</span>
+            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-download">Download</a>
           </div>
           <div class="format-command">
-            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage && chmod +x facebook-messenger-desktop-arm64.AppImage && ./facebook-messenger-desktop-arm64.AppImage</code>
+            <code>wget -q https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb && sudo apt install ./facebook-messenger-desktop-arm64.deb</code>
             <button class="copy-btn" title="Copy command">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             </button>
@@ -532,7 +508,7 @@
         </div>
         
         <p style="text-align: center; font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
-          Note: Snap Store and Flathub are only available for x64 architecture
+          Snap and Flathub are only available for x64
         </p>
       </div>
     </div>
@@ -735,7 +711,7 @@
       // For Linux: hide download button, show format picker directly
       if (download.showFormats && linuxFormats) {
         btn.style.display = 'none';
-        platformText.textContent = 'Choose your installation method';
+        platformText.style.display = 'none';
         linuxFormats.classList.add('visible');
         
         if (download.arch === 'arm64') {
