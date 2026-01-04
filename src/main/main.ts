@@ -64,6 +64,7 @@ let updateDownloadedAndReady = false;
 let tray: Tray | null = null;
 let titleOverlay: BrowserView | null = null;
 let isCreatingWindow = false; // Guard against race conditions during window creation
+let lastShowWindowTime = 0; // Debounce for showMainWindow to prevent double window on Linux
 const overlayHeight = 32;
 
 type WindowState = {
@@ -99,6 +100,7 @@ const snapHelpShownFile = path.join(app.getPath('userData'), 'snap-help-shown.js
 // Request single instance lock early (before app.whenReady) to prevent race conditions
 // on Linux/Windows where multiple instances might start before lock is checked
 const gotTheLock = app.requestSingleInstanceLock();
+console.log(`[SingleInstance] Lock acquired: ${gotTheLock}`);
 if (!gotTheLock) {
   // Another instance is already running - quit immediately
   console.log('[SingleInstance] Another instance is already running, quitting...');
@@ -107,6 +109,7 @@ if (!gotTheLock) {
   // Handle second instance attempts - show existing window or create one
   // Uses showMainWindow() for consistent behavior with tray icon click
   app.on('second-instance', () => {
+    console.log('[SingleInstance] Second instance detected, showing main window');
     showMainWindow();
   });
 }
@@ -869,6 +872,15 @@ function getTrayIconPath(): string | undefined {
 }
 
 function showMainWindow(): void {
+  // Debounce: On Linux, both second-instance and activate events can fire from a single
+  // dock/taskbar click. Ignore calls within 500ms of each other.
+  const now = Date.now();
+  if (now - lastShowWindowTime < 500) {
+    console.log('[Window] showMainWindow debounced (called within 500ms)');
+    return;
+  }
+  lastShowWindowTime = now;
+  
   // Check if window exists and is not destroyed
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) {
@@ -1421,76 +1433,119 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
 
 function scheduleSnapUninstall(): void {
   // Snap apps can't uninstall themselves while running due to sandbox confinement.
-  // We schedule the uninstall to run AFTER the app exits by spawning a detached process.
+  // We schedule the uninstall to run AFTER the app exits.
+  // CRITICAL: Normal detached processes don't survive Snap app exit due to cgroup cleanup.
+  // We must use systemd-run to escape the Snap's process lifecycle management.
   const homeDir = process.env.HOME || '';
   
-  // This script runs outside the Snap sandbox after the app quits
-  const uninstallScript = `
-    #!/bin/sh
-    # Wait for the Messenger snap to fully exit
-    sleep 2
-    
-    # Wait for any messenger processes to terminate
-    while pgrep -f "snap.*${SNAP_PACKAGE_NAME}" > /dev/null 2>&1; do
-      sleep 1
-    done
-    
-    # Additional wait to ensure snap daemon recognizes the app is closed
-    sleep 1
-    
-    # Run snap remove with pkexec for authentication
-    /usr/bin/pkexec /usr/bin/snap remove ${SNAP_PACKAGE_NAME}
-    UNINSTALL_EXIT=$?
-    
-    # Only proceed with cleanup if uninstall succeeded
-    if [ $UNINSTALL_EXIT -eq 0 ]; then
-      sleep 2
-      
-      # Remove user-specific desktop entries that might persist
-      rm -f "${homeDir}/.local/share/applications/${SNAP_PACKAGE_NAME}_"*.desktop 2>/dev/null
-      rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
-      rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
-      
-      # Clear pop-launcher cache (for Pop!_OS COSMIC)
-      rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
-      rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
-      
-      # Clear COSMIC app cache
-      rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
-      
-      # Update user desktop database
-      if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
-      fi
-      
-      # Refresh icon caches
-      if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-        gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
-      fi
-      
-      # Force desktop environment to reload application list
-      if command -v dbus-send >/dev/null 2>&1; then
-        dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
-      fi
-      
-      touch "${homeDir}/.local/share/applications" 2>/dev/null || true
-    fi
-  `.trim();
+  // Write the uninstall script to a temp file so systemd-run can execute it
+  const scriptPath = path.join('/tmp', `messenger-snap-uninstall-${Date.now()}.sh`);
   
-  console.log('[Uninstall] Scheduling Snap uninstall to run after app exits');
+  const uninstallScript = `#!/bin/sh
+# Wait for the Messenger snap to fully exit
+sleep 3
+
+# Wait for any messenger processes to terminate (with timeout)
+WAIT_COUNT=0
+while pgrep -f "snap.*${SNAP_PACKAGE_NAME}" > /dev/null 2>&1; do
+  sleep 1
+  WAIT_COUNT=$((WAIT_COUNT + 1))
+  if [ $WAIT_COUNT -gt 30 ]; then
+    break
+  fi
+done
+
+# Additional wait to ensure snap daemon recognizes the app is closed
+sleep 2
+
+# Run snap remove with pkexec for authentication
+/usr/bin/pkexec /usr/bin/snap remove ${SNAP_PACKAGE_NAME}
+UNINSTALL_EXIT=$?
+
+# Only proceed with cleanup if uninstall succeeded
+if [ $UNINSTALL_EXIT -eq 0 ]; then
+  sleep 2
   
-  // Spawn detached process that will outlive the app
-  // Using /usr/bin/sh directly (system shell, outside snap sandbox)
-  const child = spawn('/usr/bin/sh', ['-c', uninstallScript], {
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      // Ensure we're using system paths, not snap paths
-      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    },
-  });
-  child.unref();
+  # Remove user-specific desktop entries that might persist
+  rm -f "${homeDir}/.local/share/applications/${SNAP_PACKAGE_NAME}_"*.desktop 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
+  
+  # Clear pop-launcher cache (for Pop!_OS COSMIC)
+  rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
+  rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
+  
+  # Clear COSMIC app cache
+  rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
+  
+  # Update user desktop database
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
+  fi
+  
+  # Refresh icon caches
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
+  fi
+  
+  # Force desktop environment to reload application list
+  if command -v dbus-send >/dev/null 2>&1; then
+    dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
+  fi
+  
+  touch "${homeDir}/.local/share/applications" 2>/dev/null || true
+fi
+
+# Clean up this script
+rm -f "${scriptPath}"
+`;
+
+  try {
+    // Write script to temp location (accessible outside snap sandbox)
+    fs.writeFileSync(scriptPath, uninstallScript, { mode: 0o755 });
+    console.log('[Uninstall] Wrote uninstall script to:', scriptPath);
+    
+    // Use systemd-run to schedule execution outside the Snap's cgroup
+    // This ensures the process survives when the Snap app exits
+    // --user: Run in user session (no root needed to start)
+    // --scope: Run in a new scope that persists after we exit
+    // --collect: Clean up the scope after the script finishes
+    const child = spawn('/usr/bin/systemd-run', [
+      '--user',
+      '--scope',
+      '--collect',
+      '--description=Messenger Uninstaller',
+      '/bin/sh', scriptPath,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        // Minimal env outside snap
+        HOME: homeDir,
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        DISPLAY: process.env.DISPLAY || ':0',
+        XAUTHORITY: process.env.XAUTHORITY || `${homeDir}/.Xauthority`,
+        XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() || 1000}`,
+        DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '',
+      },
+    });
+    child.unref();
+    console.log('[Uninstall] Scheduled Snap uninstall via systemd-run');
+  } catch (error) {
+    console.error('[Uninstall] Failed to schedule snap uninstall:', error);
+    // Fallback: try direct spawn (might not work but better than nothing)
+    const child = spawn('/usr/bin/sh', ['-c', `sleep 3 && /usr/bin/pkexec /usr/bin/snap remove ${SNAP_PACKAGE_NAME}`], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        HOME: homeDir,
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        DISPLAY: process.env.DISPLAY || ':0',
+      },
+    });
+    child.unref();
+    console.log('[Uninstall] Fallback: scheduled snap uninstall via direct spawn');
+  }
 }
 
 function scheduleFlatpakUninstall(): void {
@@ -1567,34 +1622,8 @@ function scheduleFlatpakUninstall(): void {
 }
 
 async function handleUninstallRequest(): Promise<void> {
-  // Read package manager from cache (instant - detection was done at app startup)
-  const packageManager = detectPackageManagerFromCache();
-
-  // Build detail text based on platform and install method
-  const getDetailText = (): string => {
-    const baseMessage = 'This will quit Messenger and remove all app data (settings, cache, and logs).';
-    
-    if (packageManager) {
-      if (packageManager.name === 'Snap') {
-        return `${baseMessage}\n\nAfter quitting, you'll be asked for your password to complete the uninstall.`;
-      }
-      if (packageManager.name === 'Flatpak') {
-        return `${baseMessage}\n\nAfter quitting, the app will be removed via Flatpak.`;
-      }
-      return `${baseMessage}\n\nThe app will be uninstalled using ${packageManager.name}.`;
-    }
-    switch (process.platform) {
-      case 'darwin':
-        return `${baseMessage}\n\nThe app will be moved to Trash.`;
-      case 'win32':
-        return `${baseMessage}\n\nYou will be asked for administrator permission to complete the uninstall.`;
-      case 'linux':
-        return `${baseMessage}\n\nIf you installed via a package manager, remove the package separately.`;
-      default:
-        return baseMessage;
-    }
-  };
-
+  // Show confirmation dialog IMMEDIATELY - don't do any detection before this
+  // This ensures the dialog appears instantly on all platforms/installs (especially Snap)
   const { response } = await dialog.showMessageBox({
     type: 'warning',
     buttons: ['Uninstall', 'Cancel'],
@@ -1602,12 +1631,15 @@ async function handleUninstallRequest(): Promise<void> {
     cancelId: 1,
     title: 'Uninstall Messenger',
     message: 'Uninstall Messenger from this device?',
-    detail: getDetailText(),
+    detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
   });
 
   if (response !== 0) {
     return;
   }
+
+  // Only after user confirms, detect the package manager (may involve file I/O)
+  const packageManager = detectPackageManagerFromCache();
 
   // Remove from dock (macOS) or taskbar (Windows)
   removeFromDockAndTaskbar();
