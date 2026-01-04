@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.5] - 2026-01-04
+
+### Fixed
+- Linux: App now appears in application menu after installing deb/rpm via terminal
+  - Added post-install script that updates desktop database and icon cache
+  - Notifies GNOME Shell to refresh its app list
+
 ## [0.8.4] - 2026-01-04
 
 ### Fixed

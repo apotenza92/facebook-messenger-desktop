@@ -137,11 +137,13 @@
     },
     "deb": {
       "packageName": "facebook-messenger-desktop",
-      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
+      "afterInstall": "scripts/linux-after-install.sh"
     },
     "rpm": {
       "packageName": "facebook-messenger-desktop",
-      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
+      "afterInstall": "scripts/linux-after-install.sh"
     },
     "snap": {
       "confinement": "strict",
