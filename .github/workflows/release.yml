@@ -179,7 +179,7 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables (Flatpak only - Snap ARM64 via remote build)
+      - name: Build distributables (Flatpak ARM64)
         run: npx electron-builder --linux flatpak --arm64 --publish=never
         timeout-minutes: 45
 
@@ -192,6 +192,50 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  # ARM64 Snap build using snapcraft remote-build (runs on Launchpad)
+  build-snap-arm64:
+    name: Build Snap ARM64
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Set version from package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          sed -i "s/^version:.*/version: $VERSION/" snapcraft.yaml
+
+      - name: Remote Build Snap for ARM64
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          snapcraft remote-build --build-for=arm64 --launchpad-accept-public-upload
+        timeout-minutes: 60
+
+      - name: Find and prepare snap artifact
+        run: |
+          SNAP_FILE=$(find . -name "facebook-messenger-desktop_*_arm64.snap" | head -1)
+          if [ -n "$SNAP_FILE" ]; then
+            echo "Found snap: $SNAP_FILE"
+            mkdir -p release
+            cp "$SNAP_FILE" release/facebook-messenger-desktop-arm64.snap
+          else
+            echo "No ARM64 snap file found"
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-arm64-build
+          path: release/*.snap
+          retention-days: 30
+          if-no-files-found: error
+
   # ============================================
   # PHASE 2: Create GitHub Release
   # (Runs after all builds complete)
@@ -199,7 +243,7 @@ jobs:
   
   release:
     name: Create Release
-    needs: [build-macos, build-windows, build-linux-x64, build-linux-arm64]
+    needs: [build-macos, build-windows, build-linux-x64, build-linux-arm64, build-snap-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
@@ -215,7 +259,7 @@ jobs:
           merge-multiple: true
 
       - name: List artifacts
-        run: find artifacts -type f | head -50
+        run: find artifacts -type f | sort
 
       - name: Extract version from tag
         id: tag_version
@@ -371,7 +415,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-x64-build
-          path: artifacts
+          path: artifacts/x64
+
+      - name: Download Snap ARM64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: snap-arm64-build
+          path: artifacts/arm64
 
       - name: Install snapcraft
         run: sudo snap install snapcraft --classic
@@ -381,12 +431,21 @@ jobs:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           # Upload x64 snap
-          X64_SNAP=$(find artifacts -name "*.snap" | head -1)
+          X64_SNAP=$(find artifacts/x64 -name "*.snap" | head -1)
           if [ -n "$X64_SNAP" ]; then
             echo "Uploading x64 snap: $X64_SNAP to Snap Store..."
             snapcraft upload --release=stable "$X64_SNAP"
           else
             echo "Warning: No x64 snap file found!"
+          fi
+          
+          # Upload ARM64 snap
+          ARM64_SNAP=$(find artifacts/arm64 -name "*.snap" | head -1)
+          if [ -n "$ARM64_SNAP" ]; then
+            echo "Uploading ARM64 snap: $ARM64_SNAP to Snap Store..."
+            snapcraft upload --release=stable "$ARM64_SNAP"
+          else
+            echo "Warning: No ARM64 snap file found!"
           fi
 
   update-flatpak-repo:
