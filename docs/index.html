@@ -97,6 +97,12 @@
       justify-content: center;
     }
     
+    .mac-homebrew-section {
+      margin-top: 1.5rem;
+      width: 100%;
+      max-width: 500px;
+    }
+    
     .platform-toggle {
       display: flex;
       justify-content: center;
@@ -525,6 +531,15 @@
         <div class="spinner"></div>
         <span id="btn-text">Download</span>
       </a>
+      <div class="mac-homebrew-section" id="mac-homebrew-section" style="display: none;">
+        <div class="command-label">Or install via Homebrew:</div>
+        <div class="format-command">
+          <code>brew install --cask apotenza92/tap/facebook-messenger-desktop</code>
+          <button class="copy-btn" id="mac-homebrew-copy" title="Copy command">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
     
     <div class="linux-formats" id="linux-formats">
@@ -963,6 +978,7 @@
       const linuxFormats = document.getElementById('linux-formats');
       const windowsArchToggle = document.getElementById('windows-arch-toggle');
       const macArchToggle = document.getElementById('mac-arch-toggle');
+      const macHomebrewSection = document.getElementById('mac-homebrew-section');
       
       // Update platform toggle button states
       document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
@@ -976,6 +992,7 @@
         linuxFormats.classList.remove('visible');
         macArchToggle.style.display = 'block';
         windowsArchToggle.style.display = 'none';
+        macHomebrewSection.style.display = 'block';
         
         // Determine initial architecture
         const urlArch = getArchFromURL();
@@ -999,6 +1016,7 @@
         linuxFormats.classList.remove('visible');
         windowsArchToggle.style.display = 'block';
         macArchToggle.style.display = 'none';
+        macHomebrewSection.style.display = 'none';
         
         // Determine initial architecture
         const urlArch = getArchFromURL();
@@ -1026,6 +1044,7 @@
         linuxFormats.classList.add('visible');
         windowsArchToggle.style.display = 'none';
         macArchToggle.style.display = 'none';
+        macHomebrewSection.style.display = 'none';
         
         // Determine initial architecture
         const urlArch = getArchFromURL();
@@ -1094,6 +1113,16 @@
         const code = document.getElementById('linux-command-code').textContent;
         navigator.clipboard.writeText(code);
         const copyBtn = document.getElementById('linux-copy-btn');
+        copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+        setTimeout(() => {
+          copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+        }, 2000);
+      });
+      
+      // macOS Homebrew copy button
+      document.getElementById('mac-homebrew-copy').addEventListener('click', () => {
+        navigator.clipboard.writeText('brew install --cask apotenza92/tap/facebook-messenger-desktop');
+        const copyBtn = document.getElementById('mac-homebrew-copy');
         copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
         setTimeout(() => {
           copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
