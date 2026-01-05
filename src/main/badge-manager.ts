@@ -15,23 +15,45 @@ export class BadgeManager {
     this.currentCount = count;
 
     if (process.platform === 'darwin') {
-      // macOS dock badge
-      app.setBadgeCount(count);
+      // macOS dock badge - use app.dock.setBadge() for better reliability
+      try {
+        if (count > 0) {
+          // Set badge with count (max 99+ for display)
+          const badgeText = count > 99 ? '99+' : count.toString();
+          app.dock?.setBadge(badgeText);
+          console.log(`[BadgeManager] macOS badge updated to: ${badgeText}`);
+        } else {
+          // Clear badge by setting empty string
+          app.dock?.setBadge('');
+          console.log('[BadgeManager] macOS badge cleared');
+        }
+      } catch (error) {
+        console.error('[BadgeManager] Failed to update macOS badge:', error);
+      }
     } else if (process.platform === 'win32') {
       // Windows taskbar badge (overlay icon)
       const mainWindow = this.getMainWindow?.();
       if (mainWindow && !mainWindow.isDestroyed()) {
-        if (count > 0) {
-          const overlayIcon = this.createWindowsBadgeIcon(count);
-          mainWindow.setOverlayIcon(overlayIcon, `${count} unread messages`);
-        } else {
-          mainWindow.setOverlayIcon(null, '');
+        try {
+          if (count > 0) {
+            const overlayIcon = this.createWindowsBadgeIcon(count);
+            mainWindow.setOverlayIcon(overlayIcon, `${count} unread messages`);
+            console.log(`[BadgeManager] Windows badge updated to: ${count}`);
+          } else {
+            mainWindow.setOverlayIcon(null, '');
+            console.log('[BadgeManager] Windows badge cleared');
+          }
+        } catch (error) {
+          console.error('[BadgeManager] Failed to update Windows badge:', error);
         }
+      } else {
+        console.warn('[BadgeManager] Main window not available for Windows badge update');
       }
     } else {
       // Linux - use app indicator or system tray
       // Most Linux desktop environments don't support badges natively
       // We'll rely on the system tray tooltip
+      console.log(`[BadgeManager] Linux badge count: ${count} (not displayed - using tray tooltip)`);
     }
   }
 

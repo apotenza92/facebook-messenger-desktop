@@ -2354,7 +2354,12 @@ function setupIpcHandlers(): void {
 
   // Handle unread count updates
   ipcMain.on('update-unread-count', (event, count: number) => {
-    badgeManager.updateBadgeCount(count);
+    console.log(`[IPC] Received update-unread-count: ${count}`);
+    if (badgeManager) {
+      badgeManager.updateBadgeCount(count);
+    } else {
+      console.warn('[IPC] BadgeManager not initialized yet');
+    }
   });
 
   // Handle clear badge request

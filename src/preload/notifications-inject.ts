@@ -42,12 +42,49 @@
 
   // Track notified conversations by href - stores the last message body we notified for
   const notifiedConversations = new Map<string, { body: string; time: number }>();
-  const NOTIFICATION_EXPIRY_MS = 600000; // Forget after 10 minutes
+  // Use 24 hours for expiry - this prevents duplicate notifications when the app runs
+  // in the background for extended periods. Records are also cleared when conversations
+  // are marked as read.
+  const NOTIFICATION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   const cleanupNotifiedConversations = () => {
     const now = Date.now();
     for (const [key, data] of notifiedConversations.entries()) {
       if (now - data.time > NOTIFICATION_EXPIRY_MS) {
+        notifiedConversations.delete(key);
+      }
+    }
+  };
+
+  // Clear notification records for conversations that are no longer unread
+  // This allows new notifications to be sent when new messages arrive in the same conversation
+  const clearReadConversationRecords = () => {
+    const sidebar = findSidebarElement();
+    if (!sidebar) return;
+
+    const rows = sidebar.querySelectorAll(selectors.conversationRow);
+    const unreadHrefs = new Set<string>();
+
+    // Collect all currently unread conversation hrefs
+    rows.forEach((row) => {
+      if (isConversationUnread(row)) {
+        const linkEl =
+          row.querySelector(selectors.conversationLink) ||
+          row.closest(selectors.conversationLink);
+        const href = linkEl?.getAttribute('href');
+        if (href) {
+          unreadHrefs.add(href);
+        }
+      }
+    });
+
+    // Remove records for conversations that are no longer unread
+    for (const key of notifiedConversations.keys()) {
+      // Skip native notification keys (they use a different format)
+      if (key.startsWith('native:')) continue;
+      
+      if (!unreadHrefs.has(key)) {
+        log('Clearing notification record for read conversation', { href: key });
         notifiedConversations.delete(key);
       }
     }
@@ -470,6 +507,7 @@
       }
 
       cleanupNotifiedConversations();
+      clearReadConversationRecords();
 
       const alreadyProcessed = new Set<string>();
 
@@ -605,6 +643,27 @@
     // Start after page settles
     setTimeout(startObserving, 2000);
   };
+
+  // ============================================================================
+  // FOCUS/VISIBILITY HANDLERS
+  // ============================================================================
+
+  // When the window regains focus, clear notification records for conversations
+  // that have been read. This allows new notifications to be sent for new messages.
+  const handleWindowFocus = () => {
+    log('Window focused - clearing read conversation records');
+    // Small delay to allow Messenger's UI to update the read status
+    setTimeout(() => {
+      clearReadConversationRecords();
+    }, 500);
+  };
+
+  window.addEventListener('focus', handleWindowFocus);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      handleWindowFocus();
+    }
+  });
 
   // ============================================================================
   // INITIALIZATION

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.1] - 2026-01-05
+
+### Fixed
+- macOS: Fixed badge count not displaying in dock icon
+  - Changed from app.setBadgeCount() to app.dock.setBadge() for better reliability
+  - Badge now properly shows unread message count on macOS
+- Fixed badge updates not working when marking chats as unread
+  - Added DOM-based unread conversation counting to catch manually marked unread chats
+  - Badge now updates correctly for both new messages and manually marked unread chats
+- Improved badge update responsiveness when reading messages
+  - Reduced debounce time from 500ms to 200ms for faster updates
+  - Added immediate checks on window focus and URL changes
+  - Fixed badge flash when opening conversations by adding delay for DOM verification
+
+### Improved
+- Badge count detection now works from page context using postMessage bridge
+  - No longer depends on electronAPI availability timing
+  - More reliable badge updates across all scenarios
+
 ## [0.9.0] - 2026-01-05
 
 ### Added

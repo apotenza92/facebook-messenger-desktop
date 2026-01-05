@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Unread count updates
   updateUnreadCount: (count: number) => {
+    console.log(`[Preload] Sending update-unread-count: ${count}`);
     ipcRenderer.send('update-unread-count', count);
   },
   
@@ -134,6 +135,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
         try {
           ipcRenderer.send('log-fallback', event.data.data);
         } catch (_) {}
+      } else if (event.data.type === 'electron-badge-update') {
+        // Handle badge count updates from page context
+        const count = event.data.count;
+        if (typeof count === 'number') {
+          console.log(`[Preload Bridge] Received badge update from page context: ${count}`);
+          ipcRenderer.send('update-unread-count', count);
+        }
       }
     }
   });
@@ -317,25 +325,88 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return match ? parseInt(match[1], 10) : 0;
     }
 
-    // Check initial title
-    unreadCount = parseUnreadCount(lastTitle);
-    if ((window as any).electronAPI && unreadCount > 0) {
-      (window as any).electronAPI.updateUnreadCount(unreadCount);
+    // Send badge update via postMessage (works from page context)
+    function sendBadgeUpdate(count: number) {
+      console.log(`[BadgeMonitor] Sending badge update via postMessage: ${count}`);
+      window.postMessage({ type: 'electron-badge-update', count }, '*');
     }
 
-    // Monitor title changes
+    // Check initial title
+    unreadCount = parseUnreadCount(lastTitle);
+    console.log(`[BadgeMonitor] Initial title: "${lastTitle}", parsed count: ${unreadCount}`);
+    // Send initial count
+    sendBadgeUpdate(unreadCount);
+
+    // Monitor title changes with immediate response
     const titleObserver = new MutationObserver(() => {
       if (document.title !== lastTitle) {
         lastTitle = document.title;
         const newCount = parseUnreadCount(lastTitle);
+        // Always send count updates (including 0) to ensure badge stays in sync
         if (newCount !== unreadCount) {
-          unreadCount = newCount;
-          if ((window as any).electronAPI) {
-            (window as any).electronAPI.updateUnreadCount(unreadCount);
+          console.log(`[BadgeMonitor] Title changed: "${lastTitle}", new count: ${newCount} (was ${unreadCount})`);
+          
+          // When count goes to 0, wait a bit for DOM to update before trusting the title
+          // This prevents the badge from flashing when opening a conversation
+          if (newCount === 0 && unreadCount > 0) {
+            // User likely opened a conversation - wait for DOM to reflect the read state
+            setTimeout(() => {
+              const domCount = countUnreadConversations();
+              const titleCount = parseUnreadCount(document.title);
+              
+              // Use DOM count if it's valid, otherwise use title count
+              const finalCount = (domCount >= 0 && domCount !== titleCount) ? domCount : titleCount;
+              
+              if (finalCount !== unreadCount) {
+                console.log(`[BadgeMonitor] After delay, final count: ${finalCount} (title: ${titleCount}, DOM: ${domCount})`);
+                unreadCount = finalCount;
+                sendBadgeUpdate(unreadCount);
+              }
+            }, 300); // Wait 300ms for DOM to update
+          } else {
+            // For increases or non-zero counts, update immediately
+            unreadCount = newCount;
+            sendBadgeUpdate(unreadCount);
+            // Also trigger DOM check when count changes to 0 from a non-zero value
+            if (newCount === 0) {
+              debouncedCountUnread();
+            }
           }
         }
       }
     });
+
+    // Debounce DOM counting to avoid performance issues
+    let domCountTimeout: number | null = null;
+    const debouncedCountUnread = () => {
+      if (domCountTimeout !== null) {
+        clearTimeout(domCountTimeout);
+      }
+      domCountTimeout = window.setTimeout(() => {
+        const domCount = countUnreadConversations();
+        console.log(`[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount})`);
+        
+        // Use DOM count if it's valid and provides useful information
+        if (domCount >= 0) {
+          const titleCount = parseUnreadCount(document.title);
+          
+          // Use DOM count when:
+          // 1. Title says 0 but DOM shows unread (catches manually marked unread chats)
+          // 2. DOM count is higher than title count (title might be stale)
+          // Prefer title count when it's > 0 and matches or is higher than DOM count
+          const shouldUseDomCount = 
+            (titleCount === 0 && domCount > 0) || // Title says 0 but DOM shows unread
+            (domCount > titleCount);               // DOM count is higher (more accurate)
+          
+          if (shouldUseDomCount && domCount !== unreadCount) {
+            console.log(`[BadgeMonitor] Using DOM count: ${domCount} (title count: ${titleCount})`);
+            unreadCount = domCount;
+            sendBadgeUpdate(unreadCount);
+          }
+        }
+        domCountTimeout = null;
+      }, 200); // Reduced debounce to 200ms for faster updates
+    };
 
     // Observe title element
     titleObserver.observe(document.querySelector('title') || document.head, {
@@ -345,40 +416,105 @@ contextBridge.exposeInMainWorld('electronAPI', {
     });
 
     // Also monitor for unread indicators in the DOM
-    // This is a fallback if title doesn't change
-    const domObserver = new MutationObserver(() => {
-      // Look for common unread indicators
-      const unreadSelectors = [
-        '[aria-label*="unread"]',
-        '[data-testid*="unread"]',
-        '.unread',
-        '[class*="Unread"]',
-      ];
+    // This catches manually marked unread chats and is a fallback if title doesn't change
+    function countUnreadConversations(): number {
+      try {
+        // Find conversation rows - use the same selectors as notifications-inject.ts
+        // Messenger uses [role="row"] for conversation rows
+        const conversationSelectors = [
+          '[role="row"]', // Standard conversation row (same as notification system)
+          'div[role="list"] > div[role="listitem"]', // Alternative structure
+          'ul[role="list"] > li[role="listitem"]',  // Another alternative
+        ];
 
-      let foundCount = 0;
-      unreadSelectors.forEach((selector) => {
-        try {
-          const elements = document.querySelectorAll(selector);
-          // Try to extract count from elements
-          elements.forEach((el: Element) => {
-            const text = el.textContent || '';
-            const match = text.match(/(\d+)/);
-            if (match) {
-              foundCount = Math.max(foundCount, parseInt(match[1], 10));
+        let allConversations: Element[] = [];
+        conversationSelectors.forEach((selector) => {
+          try {
+            const elements = document.querySelectorAll(selector);
+            allConversations.push(...Array.from(elements));
+          } catch (e) {
+            // Ignore selector errors
+          }
+        });
+
+        // If we didn't find conversations, try finding by links
+        if (allConversations.length === 0) {
+          const links = document.querySelectorAll('a[href*="/t/"], a[href*="/e2ee/t/"]');
+          links.forEach((link) => {
+            // Find the parent row element
+            let parent = link.parentElement;
+            while (parent && parent !== document.body) {
+              if (parent.getAttribute('role') === 'row' || 
+                  parent.getAttribute('role') === 'listitem' ||
+                  parent.querySelector('[aria-label*="Mark as Read"]')) {
+                allConversations.push(parent);
+                break;
+              }
+              parent = parent.parentElement;
             }
           });
-        } catch (e) {
-          // Ignore selector errors
         }
-      });
 
-      // Use DOM count if it's different from title count
-      if (foundCount > 0 && foundCount !== unreadCount) {
-        unreadCount = foundCount;
-        if ((window as any).electronAPI) {
-          (window as any).electronAPI.updateUnreadCount(unreadCount);
-        }
+        // Count unread conversations using the same logic as notifications-inject.ts
+        let unreadCount = 0;
+        const seenHrefs = new Set<string>();
+
+        allConversations.forEach((conversationEl) => {
+          // Check if this conversation is unread
+          const isUnread = (() => {
+            // PRIMARY CHECK: Look for "Unread message:" text
+            const textContent = conversationEl.textContent || '';
+            if (textContent.includes('Unread message:')) {
+              return true;
+            }
+
+            // Check aria-label patterns
+            const ariaLabel = conversationEl.getAttribute('aria-label') || '';
+            if (ariaLabel.includes('Unread message') || ariaLabel.toLowerCase().includes('unread')) {
+              return true;
+            }
+
+            // Look for the "Mark as Read" button which indicates unread
+            const markAsRead = conversationEl.querySelector('[aria-label="Mark as Read"]');
+            if (markAsRead) {
+              return true;
+            }
+
+            // Check aria-label on child elements
+            const childWithUnread = conversationEl.querySelector('[aria-label*="unread"], [aria-label*="Unread"]');
+            if (childWithUnread) {
+              return true;
+            }
+
+            return false;
+          })();
+
+          if (isUnread) {
+            // Try to get a unique identifier for this conversation to avoid double-counting
+            const link = conversationEl.querySelector('a[href*="/t/"]');
+            if (link) {
+              const href = (link as HTMLAnchorElement).href;
+              if (!seenHrefs.has(href)) {
+                seenHrefs.add(href);
+                unreadCount++;
+              }
+            } else {
+              // If no link found, count it anyway (might be a different structure)
+              unreadCount++;
+            }
+          }
+        });
+
+        return unreadCount;
+      } catch (e) {
+        // If DOM counting fails, return -1 to indicate we should rely on title
+        return -1;
       }
+    }
+
+    const domObserver = new MutationObserver(() => {
+      // Debounced counting to avoid performance issues
+      debouncedCountUnread();
     });
 
     // Observe body for changes
@@ -388,14 +524,76 @@ contextBridge.exposeInMainWorld('electronAPI', {
       attributes: true,
       attributeFilter: ['aria-label', 'data-testid', 'class'],
     });
+
+    // Run initial DOM count check after a short delay to ensure DOM is fully loaded
+    // This catches manually marked unread chats that might not be in the title
+    setTimeout(() => {
+      debouncedCountUnread();
+    }, 2000); // Wait 2 seconds for Messenger to fully load
+
+    // Also check when window becomes visible/focused (user clicks on conversation)
+    // This makes badge updates faster when reading messages
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // Window is visible, check immediately
+        debouncedCountUnread();
+      }
+    };
+    
+    const handleFocus = () => {
+      // Window focused, check immediately
+      debouncedCountUnread();
+    };
+
+    // Check when URL changes (user navigates to a conversation)
+    // Messenger uses pushState for navigation, so we need to intercept it
+    let lastUrl = window.location.href;
+    const checkUrlChange = () => {
+      const currentUrl = window.location.href;
+      if (currentUrl !== lastUrl) {
+        lastUrl = currentUrl;
+        // URL changed (likely opened a conversation), check badge immediately
+        debouncedCountUnread();
+      }
+    };
+
+    // Intercept pushState and replaceState to catch SPA navigation
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    
+    history.pushState = function(...args) {
+      originalPushState.apply(history, args);
+      setTimeout(checkUrlChange, 50); // Small delay to let DOM update
+    };
+    
+    history.replaceState = function(...args) {
+      originalReplaceState.apply(history, args);
+      setTimeout(checkUrlChange, 50);
+    };
+    
+    // Also listen for popstate (back/forward)
+    window.addEventListener('popstate', () => {
+      setTimeout(checkUrlChange, 50);
+    });
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
   }
 
-  // Wait for DOM to be ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', monitorUnreadCount);
-  } else {
-    monitorUnreadCount();
+  // Wait for DOM to be ready, then wait a bit more for electronAPI to be available
+  function startMonitoring() {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        // Wait a bit for contextBridge to complete
+        setTimeout(monitorUnreadCount, 100);
+      });
+    } else {
+      // Wait a bit for contextBridge to complete
+      setTimeout(monitorUnreadCount, 100);
+    }
   }
+  
+  startMonitoring();
 })();
 
 // Type definitions for TypeScript
