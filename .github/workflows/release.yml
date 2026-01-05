@@ -97,8 +97,132 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  build-linux-arm64:
+    name: Build Linux ARM64
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Install Linux build tools (Snap & Flatpak)
+        run: |
+          # Install LXD for Snap builds
+          sudo snap install lxd
+          # Initialize LXD with auto mode
+          sudo lxd init --auto --storage-backend=dir
+          # Add user to lxd group
+          sudo usermod -aG lxd $USER
+          # Configure LXD socket permissions (allows access without group membership in same session)
+          sudo chmod 666 /var/snap/lxd/common/lxd/unix.socket || true
+          # Pre-download LXD base image for ARM64 to avoid network issues in containers
+          # Use sg to run with lxd group to access LXD
+          sg lxd -c "lxc image copy ubuntu:22.04 local: --alias ubuntu-22.04-arm64 || echo 'Image copy failed, will try during build'" || true
+          # Install snapcraft via snap
+          sudo snap install snapcraft --classic
+          # Install flatpak and flatpak-builder
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          # Add flathub remote and install runtime
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
+
+      - name: Generate icons
+        run: npm run generate-icons
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build distributables (Linux ARM64 - Flatpak only, Snap via remote-build)
+        run: |
+          npm run build
+          # Build Flatpak (Snap ARM64 will be built via snapcraft remote-build job)
+          npx electron-builder --linux flatpak --arm64 --publish=never
+        timeout-minutes: 45
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-build
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.snap
+            release/*.flatpak
+          retention-days: 30
+          if-no-files-found: error
+
+  build-snap-arm64-remote:
+    name: Build Snap ARM64 (Remote Build)
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Authenticate with Snapcraft
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -n "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "$SNAPCRAFT_STORE_CREDENTIALS" | snapcraft login --with -
+          else
+            echo "Warning: SNAPCRAFT_STORE_CREDENTIALS not set. Remote build may fail."
+          fi
+
+      - name: Set version from package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          # Update snapcraft.yaml with version (git version extraction may not work on branches)
+          sed -i "s/^version:.*/version: $VERSION/" snapcraft.yaml || echo "Warning: Could not update version in snapcraft.yaml"
+
+      - name: Remote Build Snap for ARM64
+        run: |
+          # Build ARM64 snap using snapcraft remote-build
+          snapcraft remote-build --build-for=arm64 --launchpad-accept-public-upload || echo "Remote build failed or credentials not configured"
+        timeout-minutes: 60
+
+      - name: Download built snap
+        if: success()
+        run: |
+          # Find and download the built snap
+          SNAP_FILE=$(find . -name "facebook-messenger-desktop_*_arm64.snap" | head -1)
+          if [ -n "$SNAP_FILE" ]; then
+            echo "Found snap: $SNAP_FILE"
+            mkdir -p release
+            cp "$SNAP_FILE" release/
+          else
+            echo "No ARM64 snap file found after remote build"
+          fi
+
+      - name: Upload ARM64 snap artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-arm64-remote-build
+          path: release/*.snap
+          retention-days: 30
+          if-no-files-found: warn
+
   release:
-    needs: build
+    needs: [build, build-linux-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
@@ -112,6 +236,14 @@ jobs:
           path: artifacts
           pattern: '*-build'
           merge-multiple: true
+      
+      - name: Download ARM64 snap from remote build
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: 'snap-arm64-remote-build'
+          merge-multiple: true
+          if-no-files-found: warn
 
       - name: Extract version from tag
         id: tag_version
@@ -267,14 +399,23 @@ jobs:
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
-          # Find the snap file
-          SNAP_FILE=$(find artifacts -name "*.snap" | head -1)
-          if [ -z "$SNAP_FILE" ]; then
-            echo "No snap file found!"
-            exit 1
+          # Upload x64 snap
+          X64_SNAP=$(find artifacts -name "*x64*.snap" -o -name "*.snap" | grep -v arm64 | head -1)
+          if [ -n "$X64_SNAP" ]; then
+            echo "Uploading x64 snap: $X64_SNAP to Snap Store..."
+            snapcraft upload --release=stable "$X64_SNAP"
           fi
-          echo "Uploading $SNAP_FILE to Snap Store..."
-          snapcraft upload --release=stable "$SNAP_FILE"
+          
+          # Upload ARM64 snap (from remote build)
+          ARM64_SNAP=$(find artifacts -name "*arm64*.snap" | head -1)
+          if [ -n "$ARM64_SNAP" ]; then
+            echo "Uploading ARM64 snap: $ARM64_SNAP to Snap Store..."
+            snapcraft upload --release=stable "$ARM64_SNAP"
+          fi
+          
+          if [ -z "$X64_SNAP" ] && [ -z "$ARM64_SNAP" ]; then
+            echo "Warning: No snap files found! Continuing anyway..."
+          fi
 
   update-flatpak-repo:
     needs: release

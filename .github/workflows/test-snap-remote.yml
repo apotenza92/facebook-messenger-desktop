@@ -1,0 +1,61 @@
+name: Test Snap ARM64 Remote Build
+
+on:
+  push:
+    branches:
+      - test-snap-arm64
+  workflow_dispatch:
+
+jobs:
+  test-remote-build:
+    name: Test Snap ARM64 Remote Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Authenticate with Snapcraft
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -n "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "$SNAPCRAFT_STORE_CREDENTIALS" | snapcraft login --with -
+          else
+            echo "Warning: SNAPCRAFT_STORE_CREDENTIALS not set. Remote build may fail."
+          fi
+
+      - name: Set version and verify Node version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NODE_MAJOR=$(node -p "require('./package.json').engines?.node?.match(/>=?(\d+)/)?.[1] || '20'")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "NODE_MAJOR=$NODE_MAJOR" >> $GITHUB_ENV
+          # Update snapcraft.yaml with version (git version extraction may not work on branches)
+          sed -i "s/^version:.*/version: $VERSION/" snapcraft.yaml || echo "Warning: Could not update version in snapcraft.yaml"
+          # Verify Node version matches (warn if mismatch)
+          if ! grep -q "node/$NODE_MAJOR/stable" snapcraft.yaml; then
+            echo "⚠️  WARNING: Node version mismatch! package.json engines.node requires >=$NODE_MAJOR, but snapcraft.yaml has a different version"
+            echo "Update snapcraft.yaml build-snaps to use node/$NODE_MAJOR/stable"
+          fi
+          echo "Using version: $VERSION, Node: $NODE_MAJOR"
+
+      - name: Remote Build Snap for ARM64
+        run: |
+          # Build ARM64 snap using snapcraft remote-build
+          snapcraft remote-build --build-for=arm64 --launchpad-accept-public-upload
+        timeout-minutes: 60
+
+      - name: Verify built snap
+        run: |
+          SNAP_FILE=$(find . -name "facebook-messenger-desktop_*_arm64.snap" | head -1)
+          if [ -n "$SNAP_FILE" ]; then
+            echo "Found snap: $SNAP_FILE"
+            ls -lh "$SNAP_FILE"
+          else
+            echo "ERROR: No ARM64 snap file found"
+            exit 1
+          fi
+

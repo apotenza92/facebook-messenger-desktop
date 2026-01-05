@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2] - 2026-01-06
+
+### Changed
+- Cleaned up flatpak folder structure
+  - Moved flatpak-repo.gpg to project root (common convention for public keys)
+  - Removed flatpak README.md
+
 ## [0.9.1] - 2026-01-05
 
 ### Fixed

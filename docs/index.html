@@ -913,12 +913,18 @@
           command: 'wget -qO facebook-messenger-desktop-aarch64.rpm https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm && sudo dnf install ./facebook-messenger-desktop-aarch64.rpm'
         },
         snap: {
-          disabled: true,
-          note: 'Snap is only available for x64. Switch to x64 tab for Snap installation.'
+          url: 'https://snapcraft.io/facebook-messenger-desktop',
+          btnText: 'View in Snap Store',
+          label: 'Or install Snap via terminal:',
+          command: 'sudo snap install facebook-messenger-desktop',
+          external: true
         },
         flatpak: {
-          disabled: true,
-          note: 'Flatpak is only available for x64. Switch to x64 tab for Flatpak installation.'
+          url: null,
+          btnText: 'Install via Terminal',
+          label: 'Or add Flatpak repository and install:',
+          command: 'flatpak remote-add --if-not-exists --user messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop',
+          noDownload: true
         }
       }
     };

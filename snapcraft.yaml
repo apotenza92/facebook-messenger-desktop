@@ -1,0 +1,120 @@
+name: facebook-messenger-desktop
+base: core22
+version: git
+summary: Unofficial desktop client for Facebook Messenger
+description: |
+  An unofficial, self-contained desktop app for Facebook Messenger.
+  Built because Facebook deprecated their official desktop app.
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+    build-for: [amd64]
+  - build-on: arm64
+    build-for: [arm64]
+
+apps:
+  facebook-messenger-desktop:
+    command: desktop-launch $SNAP/opt/Messenger/facebook-messenger-desktop
+    plugs:
+      - default
+      - camera
+      - audio-record
+      - removable-media
+    desktop: com.facebook.messenger.desktop
+    environment:
+      TMPDIR: $XDG_RUNTIME_DIR
+      DISABLE_WAYLAND: 1
+
+parts:
+  messenger-app:
+    plugin: nil
+    source: .
+    build-snaps:
+      # Node version: extract major version from package.json engines.node
+      # Format: node/MAJOR/stable (e.g., node/20/stable, node/22/stable)
+      # Update this if you change Node version in package.json engines field
+      - node/20/stable
+    build-packages:
+      - build-essential
+      - python3
+      - curl
+      - unzip
+    override-build: |
+      set -e
+      
+      # Install dependencies
+      npm ci --production=false
+      
+      # Extract Electron version from installed package (after npm ci)
+      ELECTRON_VERSION=$(node -p "require('electron/package.json').version" 2>/dev/null || node -p "require('./package.json').devDependencies.electron.replace('^', '')" 2>/dev/null || echo "28.3.3")
+      
+      # Generate icons if needed
+      npm run generate-icons || true
+      
+      # Build TypeScript
+      npm run build
+      
+      # Download Electron binary for target architecture
+      ARCH="$CRAFT_ARCH"
+      if [ "$ARCH" = "amd64" ]; then
+        ELECTRON_ARCH="x64"
+      elif [ "$ARCH" = "arm64" ]; then
+        ELECTRON_ARCH="arm64"
+      else
+        ELECTRON_ARCH="$ARCH"
+      fi
+      
+      ELECTRON_URL="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${ELECTRON_ARCH}.zip"
+      mkdir -p $SNAPCRAFT_PART_INSTALL/opt/Messenger/electron
+      curl -L "$ELECTRON_URL" -o /tmp/electron.zip
+      unzip -q /tmp/electron.zip -d $SNAPCRAFT_PART_INSTALL/opt/Messenger/electron
+      rm /tmp/electron.zip
+      
+      # Copy app files to opt/Messenger
+      cp -r dist $SNAPCRAFT_PART_INSTALL/opt/Messenger/
+      cp -r assets $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
+      cp package.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
+      
+      # Create launcher script
+      cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'EOF'
+      #!/bin/bash
+      cd "$(dirname "$0")"
+      export TMPDIR="${XDG_RUNTIME_DIR:-/tmp}"
+      exec ./electron/electron dist/main/main.js "$@"
+      EOF
+      chmod +x $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop
+      
+      # Create desktop file
+      mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui
+      cat > $SNAPCRAFT_PART_INSTALL/meta/gui/com.facebook.messenger.desktop << EOF
+      [Desktop Entry]
+      Name=Messenger
+      Comment=Unofficial desktop client for Facebook Messenger
+      Exec=facebook-messenger-desktop
+      Icon=facebook-messenger-desktop
+      Type=Application
+      Categories=Network;InstantMessaging;Chat;
+      StartupWMClass=Messenger
+      EOF
+      
+      # Copy icons
+      mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui/icons
+      for size in 16 22 24 32 48 64 72 96 128 256 512; do
+        if [ -f assets/icons/linux/${size}x${size}.png ]; then
+          mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui/icons/hicolor/${size}x${size}/apps
+          cp assets/icons/linux/${size}x${size}.png $SNAPCRAFT_PART_INSTALL/meta/gui/icons/hicolor/${size}x${size}/apps/facebook-messenger-desktop.png
+        fi
+      done
+
+  desktop-gtk3:
+    plugin: nil
+    after: [messenger-app]
+    build-packages:
+      - desktop-file-utils
+    override-prime: |
+      # Desktop integration - ensure desktop file is correct
+      desktop-file-edit --set-key="Exec" --set-value="facebook-messenger-desktop" $SNAPCRAFT_PRIME/meta/gui/com.facebook.messenger.desktop || true
+
