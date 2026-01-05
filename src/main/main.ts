@@ -2107,6 +2107,8 @@ function createApplicationMenu(): void {
     },
   };
 
+  const isSnap = detectSnapInstall();
+  const isFlatpak = detectFlatpakInstall();
   const checkUpdatesMenuItem: Electron.MenuItemConstructorOptions = {
     label: 'Check for Updates…',
     enabled: !isDev,
@@ -2116,6 +2118,26 @@ function createApplicationMenu(): void {
           type: 'info',
           title: 'Development Mode',
           message: 'Auto-updates are disabled in development mode.',
+          buttons: ['OK'],
+        }).catch(() => {});
+        return;
+      }
+      if (isSnap) {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Snap Updates',
+          message: 'This app was installed via Snap.',
+          detail: 'To update, run "sudo snap refresh facebook-messenger-desktop" in your terminal or use your software center.',
+          buttons: ['OK'],
+        }).catch(() => {});
+        return;
+      }
+      if (isFlatpak) {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Flatpak Updates',
+          message: 'This app was installed via Flatpak.',
+          detail: 'To update, run "flatpak update" in your terminal or use your software center.',
           buttons: ['OK'],
         }).catch(() => {});
         return;
@@ -2973,22 +2995,53 @@ async function downloadLinuxPackage(version: string, packageType: 'deb' | 'rpm')
   });
 }
 
-// Install a Linux package using pkexec (graphical sudo prompt)
+// Install a Linux package using zenity/kdialog for password prompt (with pkexec fallback)
 async function installLinuxPackage(filePath: string, packageType: 'deb' | 'rpm'): Promise<void> {
   console.log(`[AutoUpdater] Installing ${packageType} package: ${filePath}`);
   
-  let installCommand: string[];
-  if (packageType === 'deb') {
-    // Use apt for deb packages (handles dependencies better than dpkg)
-    installCommand = ['pkexec', 'apt', 'install', '-y', filePath];
-  } else {
-    // Use dnf for rpm packages (handles dependencies better than rpm)
-    installCommand = ['pkexec', 'dnf', 'install', '-y', filePath];
-  }
+  const installCmd = packageType === 'deb'
+    ? `/usr/bin/apt install -y "${filePath}"`
+    : `/usr/bin/dnf install -y "${filePath}"`;
+  
+  // Build install script using zenity/kdialog for password prompt
+  // This is more reliable than pkexec which requires a polkit authentication agent
+  const installScript = `
+    INSTALL_EXIT=1
+    
+    # Method 1: Try zenity for password prompt (GNOME/GTK desktops)
+    if command -v zenity >/dev/null 2>&1; then
+      PASSWORD=$(zenity --password --title="Authentication Required" --text="Enter password to install update:" 2>/dev/null)
+      if [ -n "$PASSWORD" ]; then
+        echo "$PASSWORD" | sudo -S ${installCmd} 2>/dev/null
+        INSTALL_EXIT=$?
+      fi
+    fi
+    
+    # Method 2: Try kdialog for password prompt (KDE desktops)
+    if [ $INSTALL_EXIT -ne 0 ] && command -v kdialog >/dev/null 2>&1; then
+      PASSWORD=$(kdialog --password "Enter password to install update:" --title "Authentication Required" 2>/dev/null)
+      if [ -n "$PASSWORD" ]; then
+        echo "$PASSWORD" | sudo -S ${installCmd} 2>/dev/null
+        INSTALL_EXIT=$?
+      fi
+    fi
+    
+    # Method 3: Fall back to pkexec (if polkit agent is running)
+    if [ $INSTALL_EXIT -ne 0 ] && command -v pkexec >/dev/null 2>&1; then
+      /usr/bin/pkexec /bin/sh -c "${installCmd}" 2>/dev/null
+      INSTALL_EXIT=$?
+    fi
+    
+    exit $INSTALL_EXIT
+  `;
   
   return new Promise((resolve, reject) => {
-    const proc = spawn(installCommand[0], installCommand.slice(1), {
+    const proc = spawn('/bin/sh', ['-c', installScript], {
       stdio: 'pipe',
+      env: {
+        ...process.env,
+        DISPLAY: process.env.DISPLAY || ':0',
+      },
     });
     
     let stdout = '';
@@ -3015,7 +3068,7 @@ async function installLinuxPackage(filePath: string, packageType: 'deb' | 'rpm')
     });
     
     proc.on('error', (err) => {
-      console.error(`[AutoUpdater] Failed to spawn pkexec:`, err);
+      console.error(`[AutoUpdater] Failed to spawn install script:`, err);
       reject(err);
     });
   });
@@ -3417,11 +3470,15 @@ app.whenReady().then(async () => {
     website: GITHUB_REPO_URL,
   });
 
-  // Auto-updater setup (skip in dev mode - app-update.yml only exists in published builds)
-  if (!isDev) {
-    setupAutoUpdater();
-  } else {
+  // Auto-updater setup (skip in dev mode, Snap, and Flatpak - they use their own update mechanisms)
+  if (isDev) {
     console.log('[AutoUpdater] Skipped in development mode');
+  } else if (detectSnapInstall()) {
+    console.log('[AutoUpdater] Skipped for Snap installation (use "sudo snap refresh" instead)');
+  } else if (detectFlatpakInstall()) {
+    console.log('[AutoUpdater] Skipped for Flatpak installation (use "flatpak update" instead)');
+  } else {
+    setupAutoUpdater();
   }
 
   // Show snap desktop integration help on first run (Linux snap only)

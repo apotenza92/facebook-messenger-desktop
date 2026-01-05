@@ -172,7 +172,9 @@
       text-align: center;
     }
     
-    .linux-arch-toggle {
+    .linux-arch-toggle,
+    .windows-arch-toggle,
+    .mac-arch-toggle {
       text-align: center;
       margin-bottom: 1rem;
     }
@@ -423,6 +425,14 @@
     <p class="platform" id="platform-text">Detecting your platform...</p>
     
     <div class="download-wrapper" id="download-wrapper">
+      <div class="windows-arch-toggle" id="windows-arch-toggle" style="display: none;">
+        <button class="arch-btn active" id="windows-arch-x64">x64</button>
+        <button class="arch-btn" id="windows-arch-arm64">ARM64</button>
+      </div>
+      <div class="mac-arch-toggle" id="mac-arch-toggle" style="display: none;">
+        <button class="arch-btn active" id="mac-arch-arm">Apple Silicon</button>
+        <button class="arch-btn" id="mac-arch-intel">Intel</button>
+      </div>
       <a href="#" class="download-btn" id="download-btn">
         <svg class="download-icon" viewBox="0 0 24 24" fill="currentColor">
           <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
@@ -441,38 +451,6 @@
       </div>
       
       <div class="format-list" id="format-list-x64">
-        <div class="format-section-label">Package Managers</div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Snap</span>
-            <a href="https://snapcraft.io/facebook-messenger-desktop" class="format-download" target="_blank">View in Store</a>
-          </div>
-          <div class="command-label">Install via terminal:</div>
-          <div class="format-command">
-            <code>sudo snap install facebook-messenger-desktop</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Flathub</span>
-            <span class="format-pending">Pending</span>
-          </div>
-          <div class="command-label">Install via terminal:</div>
-          <div class="format-command format-disabled">
-            <code>flatpak install flathub com.facebook.messenger.desktop</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-section-label">Direct Downloads</div>
-        
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">AppImage</span>
@@ -514,11 +492,36 @@
             </button>
           </div>
         </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <span class="format-name">Snap</span>
+            <a href="https://snapcraft.io/facebook-messenger-desktop" class="format-download" target="_blank">View in Store</a>
+          </div>
+          <div class="command-label">Install via terminal:</div>
+          <div class="format-command">
+            <code>sudo snap install facebook-messenger-desktop</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="format-item">
+          <div class="format-header">
+            <span class="format-name">Flatpak</span>
+          </div>
+          <div class="command-label">Add repository & install:</div>
+          <div class="format-command">
+            <code>flatpak remote-add --if-not-exists --user messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop</code>
+            <button class="copy-btn" title="Copy command">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
       
       <div class="format-list" id="format-list-arm64" style="display: none;">
-        <div class="format-section-label">Direct Downloads</div>
-        
         <div class="format-item">
           <div class="format-header">
             <span class="format-name">AppImage</span>
@@ -561,9 +564,13 @@
           </div>
         </div>
         
-        <p style="text-align: center; font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
-          Snap and Flathub are only available for x64
-        </p>
+        <div class="format-item" style="opacity: 0.6;">
+          <div class="format-header">
+            <span class="format-name">Flatpak</span>
+            <span class="format-desc">x64 only</span>
+          </div>
+          <div class="command-label">Flatpak is only available for x64. Switch to x64 tab above for Flatpak installation.</div>
+        </div>
       </div>
     </div>
     
@@ -581,12 +588,9 @@
     <div class="other-platforms">
       <h2>Other platforms</h2>
       <div class="platform-links" id="platform-links">
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip" class="platform-link" data-platform="mac-arm">macOS (Apple Silicon)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-x64.zip" class="platform-link" data-platform="mac-intel">macOS (Intel)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-x64-setup.exe" class="platform-link" data-platform="windows">Windows (x64)</a>
-        <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-windows-arm64-setup.exe" class="platform-link" data-platform="windows-arm">Windows (ARM)</a>
-        <a href="#linux-formats" class="platform-link" data-platform="linux" onclick="showLinuxFormats(event)">Linux (x64)</a>
-        <a href="#linux-formats" class="platform-link" data-platform="linux-arm" onclick="showLinuxFormats(event, 'arm64')">Linux (ARM64)</a>
+        <a href="?platform=mac" class="platform-link" data-platform="mac">macOS</a>
+        <a href="?platform=windows" class="platform-link" data-platform="windows">Windows</a>
+        <a href="?platform=linux" class="platform-link" data-platform="linux">Linux</a>
       </div>
     </div>
     
@@ -644,7 +648,46 @@
 
     let currentPlatform = null;
 
+    function getPlatformFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const platformParam = params.get('platform');
+      if (platformParam === 'windows') {
+        return 'windows';
+      } else if (platformParam === 'linux') {
+        return 'linux';
+      } else if (platformParam === 'mac') {
+        return 'mac';
+      }
+      return null;
+    }
+
+    function getArchFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('arch'); // Returns 'x64', 'arm64', 'arm', 'intel', or null
+    }
+
     function detectPlatform() {
+      // Check URL parameter first
+      const urlPlatform = getPlatformFromURL();
+      if (urlPlatform) {
+        // If platform is specified, check for architecture override
+        const urlArch = getArchFromURL();
+        if (urlPlatform === 'windows' && urlArch === 'arm64') {
+          return 'windows-arm';
+        } else if (urlPlatform === 'linux' && urlArch === 'arm64') {
+          return 'linux-arm';
+        } else if (urlPlatform === 'mac') {
+          if (urlArch === 'intel' || urlArch === 'x64') {
+            return 'mac-intel';
+          } else if (urlArch === 'arm' || urlArch === 'arm64') {
+            return 'mac-arm';
+          }
+          // If no arch specified for mac, will auto-detect below
+        } else {
+          return urlPlatform;
+        }
+      }
+      
       const ua = navigator.userAgent.toLowerCase();
       const platform = navigator.platform?.toLowerCase() || '';
       
@@ -660,19 +703,23 @@
       if (ua.includes('mac')) {
         const canvas = document.createElement('canvas');
         const gl = canvas.getContext('webgl');
+        let isAppleSilicon = false;
+        
         if (gl) {
           const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
           if (debugInfo) {
             const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
             if (renderer && renderer.toLowerCase().includes('apple')) {
-              return 'mac-arm';
+              isAppleSilicon = true;
             }
           }
         }
-        if (platform.includes('arm') || ua.includes('arm64')) {
+        
+        if (platform.includes('arm') || ua.includes('arm64') || isAppleSilicon) {
           return 'mac-arm';
         }
-        return 'mac-arm';
+        // If not Apple Silicon, it's Intel
+        return 'mac-intel';
       }
       
       // Check for Linux
@@ -686,16 +733,6 @@
       return 'windows';
     }
 
-    function showLinuxFormats(event, arch) {
-      event.preventDefault();
-      const linuxFormats = document.getElementById('linux-formats');
-      linuxFormats.classList.add('visible');
-      linuxFormats.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      
-      if (arch === 'arm64') {
-        setLinuxArch('arm64');
-      }
-    }
 
     function setLinuxArch(arch) {
       const x64List = document.getElementById('format-list-x64');
@@ -714,6 +751,72 @@
         x64Btn.classList.add('active');
         arm64Btn.classList.remove('active');
       }
+    }
+
+    function setWindowsArch(arch) {
+      const x64Btn = document.getElementById('windows-arch-x64');
+      const arm64Btn = document.getElementById('windows-arch-arm64');
+      const btn = document.getElementById('download-btn');
+      const btnText = document.getElementById('btn-text');
+      const platformText = document.getElementById('platform-text');
+      
+      // Update button states
+      if (arch === 'arm64') {
+        x64Btn.classList.remove('active');
+        arm64Btn.classList.add('active');
+        btn.href = downloads['windows-arm'].url;
+        btnText.textContent = `Download ${downloads['windows-arm'].ext}`;
+        platformText.textContent = downloads['windows-arm'].name;
+      } else {
+        x64Btn.classList.add('active');
+        arm64Btn.classList.remove('active');
+        btn.href = downloads['windows'].url;
+        btnText.textContent = `Download ${downloads['windows'].ext}`;
+        platformText.textContent = downloads['windows'].name;
+      }
+      
+      // Update URL parameter
+      const params = new URLSearchParams(window.location.search);
+      if (arch === 'arm64') {
+        params.set('arch', 'arm64');
+      } else {
+        params.set('arch', 'x64');
+      }
+      params.set('platform', 'windows');
+      window.history.replaceState({}, '', '?' + params.toString());
+    }
+
+    function setMacArch(arch) {
+      const armBtn = document.getElementById('mac-arch-arm');
+      const intelBtn = document.getElementById('mac-arch-intel');
+      const btn = document.getElementById('download-btn');
+      const btnText = document.getElementById('btn-text');
+      const platformText = document.getElementById('platform-text');
+      
+      // Update button states
+      if (arch === 'intel' || arch === 'x64') {
+        armBtn.classList.remove('active');
+        intelBtn.classList.add('active');
+        btn.href = downloads['mac-intel'].url;
+        btnText.textContent = `Download ${downloads['mac-intel'].ext}`;
+        platformText.textContent = downloads['mac-intel'].name;
+      } else {
+        armBtn.classList.add('active');
+        intelBtn.classList.remove('active');
+        btn.href = downloads['mac-arm'].url;
+        btnText.textContent = `Download ${downloads['mac-arm'].ext}`;
+        platformText.textContent = downloads['mac-arm'].name;
+      }
+      
+      // Update URL parameter
+      const params = new URLSearchParams(window.location.search);
+      if (arch === 'intel' || arch === 'x64') {
+        params.set('arch', 'intel');
+      } else {
+        params.set('arch', 'arm');
+      }
+      params.set('platform', 'mac');
+      window.history.replaceState({}, '', '?' + params.toString());
     }
 
     async function fetchReleaseInfo() {
@@ -750,6 +853,23 @@
       }
     }
 
+    function getActualPlatform() {
+      // Get the actual platform without URL override
+      const ua = navigator.userAgent.toLowerCase();
+      const platform = navigator.platform?.toLowerCase() || '';
+      
+      if (ua.includes('win')) {
+        return 'windows';
+      }
+      if (ua.includes('mac')) {
+        return 'mac-arm'; // or mac-intel, but we'll treat all macOS the same for "Other platforms"
+      }
+      if (ua.includes('linux') && !ua.includes('android')) {
+        return 'linux';
+      }
+      return 'windows';
+    }
+
     function init() {
       currentPlatform = detectPlatform();
       const download = downloads[currentPlatform];
@@ -759,15 +879,16 @@
       const platformText = document.getElementById('platform-text');
       const linuxFormats = document.getElementById('linux-formats');
       
-      // Hide detected platform from "Other platforms"
+      // Show "Other platforms" section and hide currently viewed platform
       const platformLinks = document.querySelectorAll('.platform-link');
       platformLinks.forEach(link => {
         const linkPlatform = link.getAttribute('data-platform');
-        if (linkPlatform === currentPlatform) {
+        // Hide if it matches the currently viewed platform
+        if (linkPlatform === 'mac' && (currentPlatform === 'mac-arm' || currentPlatform === 'mac-intel')) {
           link.classList.add('hidden');
-        }
-        // Also hide both Linux options if on Linux (they're shown in format picker)
-        if (download.showFormats && (linkPlatform === 'linux' || linkPlatform === 'linux-arm')) {
+        } else if (linkPlatform === 'linux' && (currentPlatform === 'linux' || currentPlatform === 'linux-arm')) {
+          link.classList.add('hidden');
+        } else if (linkPlatform === 'windows' && (currentPlatform === 'windows' || currentPlatform === 'windows-arm')) {
           link.classList.add('hidden');
         }
       });
@@ -787,6 +908,78 @@
         btnText.textContent = `Download ${download.ext}`;
         platformText.textContent = download.name;
         
+        const windowsArchToggle = document.getElementById('windows-arch-toggle');
+        const macArchToggle = document.getElementById('mac-arch-toggle');
+        
+        // Show Windows architecture toggle if Windows is selected
+        if (currentPlatform === 'windows' || currentPlatform === 'windows-arm') {
+          if (windowsArchToggle) {
+            windowsArchToggle.style.display = 'block';
+          }
+          if (macArchToggle) {
+            macArchToggle.style.display = 'none';
+          }
+          // Determine initial architecture: URL param > auto-detect (if on Windows) > default to x64
+          const urlArch = getArchFromURL();
+          let initialArch = 'x64';
+          if (urlArch === 'arm64') {
+            initialArch = 'arm64';
+          } else if (urlArch === 'x64') {
+            initialArch = 'x64';
+          } else {
+            // Auto-detect: check if user is actually on Windows and detect their architecture
+            const actualPlatform = getActualPlatform();
+            if (actualPlatform === 'windows') {
+              // User is on Windows, detect their actual architecture
+              const ua = navigator.userAgent.toLowerCase();
+              if (ua.includes('arm') || ua.includes('aarch64')) {
+                initialArch = 'arm64';
+              } else {
+                initialArch = 'x64';
+              }
+            } else {
+              // User is not on Windows, default to x64
+              initialArch = 'x64';
+            }
+          }
+          setWindowsArch(initialArch);
+        } 
+        // Show macOS architecture toggle if macOS is selected
+        else if (currentPlatform === 'mac-arm' || currentPlatform === 'mac-intel') {
+          if (macArchToggle) {
+            macArchToggle.style.display = 'block';
+          }
+          if (windowsArchToggle) {
+            windowsArchToggle.style.display = 'none';
+          }
+          // Determine initial architecture: URL param > auto-detect (if on macOS) > default to Apple Silicon
+          const urlArch = getArchFromURL();
+          let initialArch = 'arm';
+          if (urlArch === 'intel' || urlArch === 'x64') {
+            initialArch = 'intel';
+          } else if (urlArch === 'arm' || urlArch === 'arm64') {
+            initialArch = 'arm';
+          } else {
+            // Auto-detect: check if user is actually on macOS and detect their architecture
+            const actualPlatform = getActualPlatform();
+            if (actualPlatform === 'mac-arm' || actualPlatform === 'mac-intel') {
+              // User is on macOS, use the detected platform
+              initialArch = actualPlatform === 'mac-intel' ? 'intel' : 'arm';
+            } else {
+              // User is not on macOS, default to Apple Silicon
+              initialArch = 'arm';
+            }
+          }
+          setMacArch(initialArch);
+        } else {
+          if (windowsArchToggle) {
+            windowsArchToggle.style.display = 'none';
+          }
+          if (macArchToggle) {
+            macArchToggle.style.display = 'none';
+          }
+        }
+        
         btn.addEventListener('click', () => {
           btn.classList.add('downloading');
           btnText.textContent = 'Starting...';
@@ -797,9 +990,17 @@
         });
       }
       
-      // Arch toggle buttons
+      // Linux arch toggle buttons
       document.getElementById('arch-x64').addEventListener('click', () => setLinuxArch('x64'));
       document.getElementById('arch-arm64').addEventListener('click', () => setLinuxArch('arm64'));
+      
+      // Windows arch toggle buttons
+      document.getElementById('windows-arch-x64').addEventListener('click', () => setWindowsArch('x64'));
+      document.getElementById('windows-arch-arm64').addEventListener('click', () => setWindowsArch('arm64'));
+      
+      // macOS arch toggle buttons
+      document.getElementById('mac-arch-arm').addEventListener('click', () => setMacArch('arm'));
+      document.getElementById('mac-arch-intel').addEventListener('click', () => setMacArch('intel'));
       
       // Copy buttons
       document.querySelectorAll('.copy-btn').forEach(btn => {
