@@ -10,35 +10,34 @@
      clip-path="none"
      id="g2"
      transform="translate(-0.940002,-0.91)">
-    <!-- Chat bubble matching original size -->
+    <!-- Distinct chat bubble - rounder with simpler tail -->
     <path
-       d="m 1000.94,485.90553 c 0,278.68297 -218.33611,484.99554 -500.00001,484.99554 -50.58364,0 -99.1207,-6.66838 -144.74082,-19.2103 -8.86599,-2.45104 -18.28875,-1.75604 -26.70037,1.94548 l -99.24741,43.81288 c -25.95418,11.46807 -55.25663,-6.99732 -56.12697,-35.36414 l -2.72879,-88.95303 C 171.05517,862.18098 166.12877,851.925 157.95777,844.63842 60.667611,757.62959 0.940002,631.68181 0.940002,485.90553 0.940002,207.23536 219.27609,0.91 500.93999,0.91 782.60389,0.91 1000.94,207.23536 1000.94,485.90553 Z"
-       fill="#3B82F6"
-       id="path1"
-       style="stroke-width:12.7992" />
-    <!-- Network diagram - nodes and connections (organic distribution) -->
+       d="M 500,30 C 780,30 970,220 970,485 C 970,750 780,940 500,940 C 400,940 310,910 235,860 L 100,920 C 70,935 40,905 55,875 L 115,760 C 55,680 30,590 30,485 C 30,220 220,30 500,30 Z"
+       fill="#2478FF"
+       id="path1" />
+    <!-- Network diagram - organic distribution, spread out -->
     <!-- Connection lines to center -->
-    <line x1="530" y1="295" x2="500" y2="465" stroke="#ffffff" stroke-width="14" stroke-linecap="round" />
-    <line x1="755" y1="400" x2="500" y2="465" stroke="#ffffff" stroke-width="14" stroke-linecap="round" />
-    <line x1="720" y1="650" x2="500" y2="465" stroke="#ffffff" stroke-width="14" stroke-linecap="round" />
-    <line x1="490" y1="750" x2="500" y2="465" stroke="#ffffff" stroke-width="14" stroke-linecap="round" />
-    <line x1="280" y1="630" x2="500" y2="465" stroke="#ffffff" stroke-width="14" stroke-linecap="round" />
-    <line x1="250" y1="370" x2="500" y2="465" stroke="#ffffff" stroke-width="14" stroke-linecap="round" />
+    <line x1="620" y1="150" x2="500" y2="440" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
+    <line x1="820" y1="450" x2="500" y2="440" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
+    <line x1="700" y1="750" x2="500" y2="440" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
+    <line x1="300" y1="720" x2="500" y2="440" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
+    <line x1="180" y1="400" x2="500" y2="440" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
+    <line x1="340" y1="200" x2="500" y2="440" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
     <!-- Connection lines between outer nodes -->
-    <line x1="530" y1="295" x2="755" y2="400" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
-    <line x1="755" y1="400" x2="720" y2="650" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
-    <line x1="720" y1="650" x2="490" y2="750" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
-    <line x1="490" y1="750" x2="280" y2="630" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
-    <line x1="280" y1="630" x2="250" y2="370" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
-    <line x1="250" y1="370" x2="530" y2="295" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+    <line x1="620" y1="150" x2="820" y2="450" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+    <line x1="820" y1="450" x2="700" y2="750" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+    <line x1="700" y1="750" x2="300" y2="720" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+    <line x1="300" y1="720" x2="180" y2="400" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+    <line x1="180" y1="400" x2="340" y2="200" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+    <line x1="340" y1="200" x2="620" y2="150" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
     <!-- Nodes (varied sizes for organic feel) -->
-    <circle cx="500" cy="465" r="50" fill="#ffffff" />
-    <circle cx="530" cy="295" r="42" fill="#ffffff" />
-    <circle cx="755" cy="400" r="38" fill="#ffffff" />
-    <circle cx="720" cy="650" r="44" fill="#ffffff" />
-    <circle cx="490" cy="750" r="36" fill="#ffffff" />
-    <circle cx="280" cy="630" r="42" fill="#ffffff" />
-    <circle cx="250" cy="370" r="38" fill="#ffffff" />
+    <circle cx="500" cy="440" r="52" fill="#ffffff" />
+    <circle cx="620" cy="150" r="44" fill="#ffffff" />
+    <circle cx="820" cy="450" r="40" fill="#ffffff" />
+    <circle cx="700" cy="750" r="46" fill="#ffffff" />
+    <circle cx="300" cy="720" r="42" fill="#ffffff" />
+    <circle cx="180" cy="400" r="44" fill="#ffffff" />
+    <circle cx="340" cy="200" r="38" fill="#ffffff" />
   </g>
   <defs
      id="defs2" />

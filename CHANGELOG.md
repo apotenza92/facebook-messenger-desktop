@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5] - 2026-01-06
+
+### Added
+- Re-added ARM64 Snap builds via snapcraft remote-build
+- Release now waits for all builds including ARM64 Snap before publishing
+- Snap Store now receives both x64 and ARM64 snaps
+
 ## [0.9.4] - 2026-01-06
 
 ### Changed
