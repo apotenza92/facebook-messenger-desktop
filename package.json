@@ -1,7 +1,7 @@
 {
   "name": "facebook-messenger-desktop",
   "version": "0.8.10",
-  "description": "A self-contained desktop app for Facebook Messenger",
+  "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
     "clean": "node scripts/clean.js",
@@ -131,7 +131,7 @@
       "executableName": "facebook-messenger-desktop",
       "desktop": {
         "Name": "Messenger",
-        "Comment": "Desktop client for Facebook Messenger",
+        "Comment": "Unofficial desktop client for Facebook Messenger",
         "Categories": "Network;InstantMessaging;Chat;",
         "StartupWMClass": "Messenger",
         "Icon": "facebook-messenger-desktop"

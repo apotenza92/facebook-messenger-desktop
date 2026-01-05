@@ -562,8 +562,14 @@ function createWindow(source: string = 'unknown'): void {
     // Set up permission handler on content view's session
     contentView.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = webContents.getURL();
+      console.log(`[Permissions] Request received: ${permission}`, {
+        url,
+        requestingUrl: details.requestingUrl,
+        isMainFrame: details.isMainFrame,
+        details: JSON.stringify(details),
+      });
       
-      if (!url.startsWith('https://www.messenger.com')) {
+      if (!url.startsWith('https://www.messenger.com') && !url.startsWith('https://messenger.com')) {
         console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
         callback(false);
         return;
@@ -587,11 +593,11 @@ function createWindow(source: string = 'unknown'): void {
     });
 
     contentView.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-      if (requestingOrigin.startsWith('https://www.messenger.com')) {
-        const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
-        return allowedPermissions.includes(permission);
-      }
-      return false;
+      const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+      const isAllowed = requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com');
+      const hasPermission = isAllowed && allowedPermissions.includes(permission);
+      console.log(`[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? 'allowed' : 'denied'}`);
+      return hasPermission;
     });
 
     // Load messenger.com in content view
@@ -599,9 +605,20 @@ function createWindow(source: string = 'unknown'): void {
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
     // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
-    contentView.webContents.setWindowOpenHandler(({ url, features }) => {
+    contentView.webContents.setWindowOpenHandler(({ url, features, frameName, disposition }) => {
+      console.log('[Window] Window open request:', {
+        url,
+        features,
+        frameName,
+        disposition,
+      });
+      
       // Allow messenger.com URLs to open as new windows (needed for video/audio calls)
-      if (url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com')) {
+      // Also allow about:blank - Messenger opens call windows with about:blank first, then navigates
+      const isMessengerUrl = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com');
+      const isAboutBlank = url === 'about:blank';
+      
+      if (isMessengerUrl || isAboutBlank) {
         console.log('[Window] Allowing Messenger pop-up window:', url);
         return {
           action: 'allow',
@@ -625,6 +642,7 @@ function createWindow(source: string = 'unknown'): void {
       }
       
       // Open external URLs in system browser
+      console.log('[Window] Opening external URL in browser:', url);
       shell.openExternal(url).catch((err) => {
         console.error('[External Link] Failed to open URL:', url, err);
       });
@@ -632,15 +650,39 @@ function createWindow(source: string = 'unknown'): void {
     });
     
     // Set up permission handlers on child windows (for call windows)
-    contentView.webContents.on('did-create-window', (childWindow) => {
-      console.log('[Window] Child window created, setting up permission handlers');
+    contentView.webContents.on('did-create-window', (childWindow, details) => {
+      console.log('[Window] Child window created:', {
+        url: details.url,
+        frameName: details.frameName,
+        options: details.options,
+      });
+      
+      // Allow navigation to messenger.com URLs (for about:blank windows that navigate to call URLs)
+      childWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+        console.log('[Window] Child window navigation requested:', navigationUrl);
+        if (!navigationUrl.startsWith('https://www.messenger.com') && !navigationUrl.startsWith('https://messenger.com') && navigationUrl !== 'about:blank') {
+          console.log('[Window] Blocking navigation to non-messenger URL:', navigationUrl);
+          event.preventDefault();
+        }
+      });
       
       // Set up permission handler for the child window's session
       childWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
         const url = webContents.getURL();
+        const requestingUrl = details.requestingUrl || url;
+        console.log(`[Permissions] Child window request: ${permission}`, {
+          url,
+          requestingUrl,
+          isMainFrame: details.isMainFrame,
+          details: JSON.stringify(details),
+        });
         
-        if (!url.startsWith('https://www.messenger.com') && !url.startsWith('https://messenger.com')) {
-          console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
+        // Check both current URL and requesting URL (for about:blank windows)
+        const isMessengerUrl = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com') || url === 'about:blank';
+        const isMessengerRequest = requestingUrl.startsWith('https://www.messenger.com') || requestingUrl.startsWith('https://messenger.com');
+        
+        if (!isMessengerUrl && !isMessengerRequest) {
+          console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url} (requesting: ${requestingUrl})`);
           callback(false);
           return;
         }
@@ -663,11 +705,21 @@ function createWindow(source: string = 'unknown'): void {
       });
       
       childWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-        if (requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com')) {
-          const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
-          return allowedPermissions.includes(permission);
-        }
-        return false;
+        const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+        const isAllowed = requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com');
+        const hasPermission = isAllowed && allowedPermissions.includes(permission);
+        console.log(`[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? 'allowed' : 'denied'}`);
+        return hasPermission;
+      });
+      
+      // Log when child window loads
+      childWindow.webContents.on('did-finish-load', () => {
+        console.log('[Window] Child window finished loading:', childWindow.webContents.getURL());
+      });
+      
+      // Log console messages from child window
+      childWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+        console.log(`[Child Window Console ${level}]`, message, `(${sourceId}:${line})`);
       });
     });
 
@@ -700,6 +752,11 @@ function createWindow(source: string = 'unknown'): void {
       }
     });
 
+    // Log console messages from content view
+    contentView.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      console.log(`[Content View Console ${level}]`, message, `(${sourceId}:${line})`);
+    });
+    
     // Update title bar overlay when page title changes (e.g., "(5) Messenger" for unread counts)
     contentView.webContents.on('page-title-updated', (event, title) => {
       updateTitleOverlayText(title);
@@ -724,8 +781,14 @@ function createWindow(source: string = 'unknown'): void {
     // Non-macOS: load directly in main window (standard frame)
     mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = webContents.getURL();
+      console.log(`[Permissions] Request received: ${permission}`, {
+        url,
+        requestingUrl: details.requestingUrl,
+        isMainFrame: details.isMainFrame,
+        details: JSON.stringify(details),
+      });
       
-      if (!url.startsWith('https://www.messenger.com')) {
+      if (!url.startsWith('https://www.messenger.com') && !url.startsWith('https://messenger.com')) {
         console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
         callback(false);
         return;
@@ -749,20 +812,31 @@ function createWindow(source: string = 'unknown'): void {
     });
 
     mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-      if (requestingOrigin.startsWith('https://www.messenger.com')) {
-        const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
-        return allowedPermissions.includes(permission);
-      }
-      return false;
+      const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+      const isAllowed = requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com');
+      const hasPermission = isAllowed && allowedPermissions.includes(permission);
+      console.log(`[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? 'allowed' : 'denied'}`);
+      return hasPermission;
     });
 
     mainWindow.loadURL('https://www.messenger.com');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
     // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
-    mainWindow.webContents.setWindowOpenHandler(({ url, features }) => {
+    mainWindow.webContents.setWindowOpenHandler(({ url, features, frameName, disposition }) => {
+      console.log('[Window] Window open request:', {
+        url,
+        features,
+        frameName,
+        disposition,
+      });
+      
       // Allow messenger.com URLs to open as new windows (needed for video/audio calls)
-      if (url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com')) {
+      // Also allow about:blank - Messenger opens call windows with about:blank first, then navigates
+      const isMessengerUrl = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com');
+      const isAboutBlank = url === 'about:blank';
+      
+      if (isMessengerUrl || isAboutBlank) {
         console.log('[Window] Allowing Messenger pop-up window:', url);
         return {
           action: 'allow',
@@ -786,6 +860,7 @@ function createWindow(source: string = 'unknown'): void {
       }
       
       // Open external URLs in system browser
+      console.log('[Window] Opening external URL in browser:', url);
       shell.openExternal(url).catch((err) => {
         console.error('[External Link] Failed to open URL:', url, err);
       });
@@ -793,15 +868,39 @@ function createWindow(source: string = 'unknown'): void {
     });
     
     // Set up permission handlers on child windows (for call windows)
-    mainWindow.webContents.on('did-create-window', (childWindow) => {
-      console.log('[Window] Child window created, setting up permission handlers');
+    mainWindow.webContents.on('did-create-window', (childWindow, details) => {
+      console.log('[Window] Child window created:', {
+        url: details.url,
+        frameName: details.frameName,
+        options: details.options,
+      });
+      
+      // Allow navigation to messenger.com URLs (for about:blank windows that navigate to call URLs)
+      childWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+        console.log('[Window] Child window navigation requested:', navigationUrl);
+        if (!navigationUrl.startsWith('https://www.messenger.com') && !navigationUrl.startsWith('https://messenger.com') && navigationUrl !== 'about:blank') {
+          console.log('[Window] Blocking navigation to non-messenger URL:', navigationUrl);
+          event.preventDefault();
+        }
+      });
       
       // Set up permission handler for the child window's session
       childWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
         const url = webContents.getURL();
+        const requestingUrl = details.requestingUrl || url;
+        console.log(`[Permissions] Child window request: ${permission}`, {
+          url,
+          requestingUrl,
+          isMainFrame: details.isMainFrame,
+          details: JSON.stringify(details),
+        });
         
-        if (!url.startsWith('https://www.messenger.com') && !url.startsWith('https://messenger.com')) {
-          console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
+        // Check both current URL and requesting URL (for about:blank windows)
+        const isMessengerUrl = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com') || url === 'about:blank';
+        const isMessengerRequest = requestingUrl.startsWith('https://www.messenger.com') || requestingUrl.startsWith('https://messenger.com');
+        
+        if (!isMessengerUrl && !isMessengerRequest) {
+          console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url} (requesting: ${requestingUrl})`);
           callback(false);
           return;
         }
@@ -824,12 +923,27 @@ function createWindow(source: string = 'unknown'): void {
       });
       
       childWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-        if (requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com')) {
-          const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
-          return allowedPermissions.includes(permission);
-        }
-        return false;
+        const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+        const isAllowed = requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com');
+        const hasPermission = isAllowed && allowedPermissions.includes(permission);
+        console.log(`[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? 'allowed' : 'denied'}`);
+        return hasPermission;
       });
+      
+      // Log when child window loads
+      childWindow.webContents.on('did-finish-load', () => {
+        console.log('[Window] Child window finished loading:', childWindow.webContents.getURL());
+      });
+      
+      // Log console messages from child window
+      childWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+        console.log(`[Child Window Console ${level}]`, message, `(${sourceId}:${line})`);
+      });
+    });
+
+    // Log console messages from main window
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      console.log(`[Main Window Console ${level}]`, message, `(${sourceId}:${line})`);
     });
 
     mainWindow.webContents.on('did-finish-load', async () => {
@@ -3299,7 +3413,7 @@ app.whenReady().then(async () => {
     applicationName: 'Messenger',
     applicationVersion: app.getVersion(),
     copyright: `© ${year} Alex Potenza`,
-    credits: `An unofficial desktop app for Facebook Messenger\n\nGitHub: ${GITHUB_REPO_URL}`,
+    credits: `An unofficial, third-party desktop app for Facebook Messenger\n\nNot affiliated with Facebook, Inc. or Meta Platforms, Inc.\n\nGitHub: ${GITHUB_REPO_URL}`,
     website: GITHUB_REPO_URL,
   });
 

@@ -5,12 +5,20 @@
 ### Fixed
 - Fixed audio and video call buttons not working (broken since v0.4.1)
   - Messenger opens calls in a pop-up window which was being blocked
+  - Messenger uses about:blank URLs for call windows, which are now allowed
   - Pop-up windows for messenger.com URLs now open as Electron windows
+  - Child windows can navigate to messenger.com call URLs after opening
   - External links still open in system browser as before
 - macOS: Fixed camera and microphone permissions not being requested
   - App now prompts for camera/microphone access on first launch
   - Added required Info.plist usage description strings
 - Linux Flatpak: Added device permissions for webcam and audio access
+
+### Changed
+- Added "unofficial" disclaimers throughout the app and documentation
+  - README, download page, About dialog, and LICENSE now include trademark notices
+  - Clarifies this is a third-party, non-affiliated project
+  - All references updated to indicate unofficial status
 
 ## [0.8.9] - 2026-01-04
 
