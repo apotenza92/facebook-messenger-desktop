@@ -45,6 +45,9 @@ parts:
       # Install dependencies
       npm ci --production=false
       
+      # Extract Electron version from installed package (after npm ci)
+      ELECTRON_VERSION=$(node -p "require('electron/package.json').version" 2>/dev/null || node -p "require('./package.json').devDependencies.electron.replace('^', '')" 2>/dev/null || echo "28.3.3")
+      
       # Generate icons if needed
       npm run generate-icons || true
       
@@ -52,7 +55,6 @@ parts:
       npm run build
       
       # Download Electron binary for target architecture
-      ELECTRON_VERSION="28.3.3"
       ARCH="$CRAFT_ARCH"
       if [ "$ARCH" = "amd64" ]; then
         ELECTRON_ARCH="x64"
