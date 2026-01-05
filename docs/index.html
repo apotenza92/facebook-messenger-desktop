@@ -92,7 +92,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 1.5rem;
+      gap: 1rem;
     }
     
     .mac-homebrew-section {
@@ -191,13 +191,19 @@
     .mac-arch-toggle {
       display: flex;
       justify-content: center;
-      margin-bottom: 1.5rem;
       position: relative;
     }
     
-    .linux-arch-toggle::after,
-    .windows-arch-toggle::after,
-    .mac-arch-toggle::after {
+    .windows-arch-toggle,
+    .mac-arch-toggle {
+      margin-bottom: 1rem;
+    }
+    
+    .linux-arch-toggle {
+      margin-bottom: 1.5rem;
+    }
+    
+    .linux-arch-toggle::after {
       content: '';
       position: absolute;
       bottom: -1.5rem;
