@@ -31,13 +31,14 @@ apps:
 parts:
   messenger-app:
     plugin: nil
-    after: [nodejs]
     source: .
     build-snaps:
       - node/20/stable
     build-packages:
       - build-essential
       - python3
+      - curl
+      - unzip
     override-build: |
       set -e
       
@@ -62,19 +63,17 @@ parts:
       fi
       
       ELECTRON_URL="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${ELECTRON_ARCH}.zip"
-      mkdir -p $SNAPCRAFT_PART_INSTALL/electron
+      mkdir -p $SNAPCRAFT_PART_INSTALL/opt/Messenger/electron
       curl -L "$ELECTRON_URL" -o /tmp/electron.zip
-      unzip -q /tmp/electron.zip -d $SNAPCRAFT_PART_INSTALL/electron
+      unzip -q /tmp/electron.zip -d $SNAPCRAFT_PART_INSTALL/opt/Messenger/electron
       rm /tmp/electron.zip
       
-      # Copy app files
-      mkdir -p $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop
-      cp -r dist $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop/
-      cp -r assets $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop/
-      cp package.json $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop/
+      # Copy app files to opt/Messenger
+      cp -r dist $SNAPCRAFT_PART_INSTALL/opt/Messenger/
+      cp -r assets $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
+      cp package.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
       
       # Create launcher script
-      mkdir -p $SNAPCRAFT_PART_INSTALL/opt/Messenger
       cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'EOF'
       #!/bin/bash
       cd "$(dirname "$0")"
@@ -82,12 +81,6 @@ parts:
       exec ./electron/electron dist/main/main.js "$@"
       EOF
       chmod +x $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop
-      
-      # Move electron and app files to opt/Messenger
-      mv $SNAPCRAFT_PART_INSTALL/electron $SNAPCRAFT_PART_INSTALL/opt/Messenger/
-      mv $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop/dist $SNAPCRAFT_PART_INSTALL/opt/Messenger/
-      mv $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop/assets $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
-      mv $SNAPCRAFT_PART_INSTALL/facebook-messenger-desktop/package.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
       
       # Create desktop file
       mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui
@@ -115,17 +108,8 @@ parts:
     plugin: nil
     after: [messenger-app]
     build-packages:
-      - libgtk-3-0
-      - libnotify4
-      - libnss3
-      - libxss1
-      - libxtst6
-      - xdg-utils
-      - libatspi2.0-0
-      - libuuid1
-      - libsecret-1-0
-      - libappindicator3-1
+      - desktop-file-utils
     override-prime: |
-      # Desktop integration
+      # Desktop integration - ensure desktop file is correct
       desktop-file-edit --set-key="Exec" --set-value="facebook-messenger-desktop" $SNAPCRAFT_PRIME/meta/gui/com.facebook.messenger.desktop || true
 
