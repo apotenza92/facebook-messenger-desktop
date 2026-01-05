@@ -41,22 +41,12 @@
   // ============================================================================
 
   // Track notified conversations by href - stores the last message body we notified for
-  const notifiedConversations = new Map<string, { body: string; time: number }>();
-  // Use 30 days for expiry - this prevents duplicate notifications for old unread messages
-  // when the app runs in the background for extended periods. The primary cleanup mechanism
-  // is clearReadConversationRecords() which removes records when conversations are marked
-  // as read. The time-based expiry is a fallback to prevent infinite Map growth.
+  // Records are cleared when:
+  // 1. The conversation is marked as read (via clearReadConversationRecords)
+  // 2. The app restarts (Map is in-memory only)
+  // No time-based expiry needed - memory usage is negligible (~400 bytes per conversation)
   // Fixes issue #13: users getting repeated notifications for weeks-old unread messages.
-  const NOTIFICATION_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-  const cleanupNotifiedConversations = () => {
-    const now = Date.now();
-    for (const [key, data] of notifiedConversations.entries()) {
-      if (now - data.time > NOTIFICATION_EXPIRY_MS) {
-        notifiedConversations.delete(key);
-      }
-    }
-  };
+  const notifiedConversations = new Map<string, { body: string }>();
 
   // Clear notification records for conversations that are no longer unread
   // This allows new notifications to be sent when new messages arrive in the same conversation
@@ -120,8 +110,7 @@
   };
 
   const recordNotification = (href: string, body: string) => {
-    const now = Date.now();
-    notifiedConversations.set(href, { body, time: now });
+    notifiedConversations.set(href, { body });
   };
 
   // ============================================================================
@@ -522,7 +511,6 @@
         return;
       }
 
-      cleanupNotifiedConversations();
       clearReadConversationRecords();
 
       const alreadyProcessed = new Set<string>();

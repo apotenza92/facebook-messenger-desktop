@@ -1,25 +1,21 @@
 # Changelog
 
-## [0.9.6] - 2026-01-06
+## [0.9.5] - 2026-01-06
 
 ### Changed
 - New distinctive app icon featuring an isometric cube/graph design in a speech bubble
   - Visually unique to avoid confusion and potential trademark issues with official Messenger
   - Updated across all platforms: macOS (app, dock, DMG), Windows (taskbar, tray), Linux (all sizes)
-
-### Fixed
-- Fixed repeated notifications for old unread messages (issue #13)
-  - Messages left unread for weeks no longer trigger duplicate notifications
-  - Notification deduplication records now persist for 30 days (was 24 hours)
-  - Native notification records are now properly cleared when conversations are read
-
-## [0.9.5] - 2026-01-06
-
-### Changed
 - ARM64 Snap builds now use Snapcraft's "Build from GitHub" service
   - snapcraft remote-build has OAuth issues in CI environments
   - x64 Snap still built and uploaded via GitHub Actions
   - ARM64 Snap built automatically by Snapcraft when repo is linked at snapcraft.io
+
+### Fixed
+- Fixed repeated notifications for old unread messages (issue #13)
+  - Messages left unread indefinitely no longer trigger duplicate notifications
+  - Removed time-based expiry; records now cleared only when conversations are read or app restarts
+  - Native notification records are now properly cleared when conversations are read
 
 ## [0.9.4] - 2026-01-06
 
