@@ -11,27 +11,96 @@ on:
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
-  build:
-    name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-        include:
-          - os: macos-latest
-            platform: mac
-            artifact_name: mac
-            name: macOS
-          - os: windows-latest
-            platform: win
-            artifact_name: windows
-            name: Windows
-          - os: ubuntu-latest
-            platform: linux
-            artifact_name: linux
-            name: Linux
+  # ============================================
+  # PHASE 1: Build all platforms
+  # ============================================
+  
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Generate icons
+        run: npm run generate-icons
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build distributables (signed/notarized)
+        run: npm run dist:mac
+        timeout-minutes: 30
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: |
+            release/*.zip
+            release/*.yml
+            release/*.blockmap
+          retention-days: 30
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Generate icons
+        run: npm run generate-icons
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build distributables
+        run: npm run dist:win
+        timeout-minutes: 30
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          retention-days: 30
+          if-no-files-found: error
+
+  build-linux-x64:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,14 +116,10 @@ jobs:
         timeout-minutes: 10
 
       - name: Install Linux build tools (Snap & Flatpak)
-        if: matrix.platform == 'linux'
         run: |
-          # Install snapcraft via snap (not apt)
           sudo snap install snapcraft --classic
-          # Install flatpak and flatpak-builder
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
-          # Add flathub remote and install runtime
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
 
@@ -65,35 +130,21 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables (mac signed/notarized)
-        if: matrix.platform == 'mac'
-        run: npm run dist:${{ matrix.platform }}
-        timeout-minutes: 30
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-
-      - name: Build distributables (Windows/Linux)
-        if: matrix.platform != 'mac'
-        run: npm run dist:${{ matrix.platform }}
+      - name: Build distributables
+        run: npm run dist:linux
         timeout-minutes: 45
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-build
+          name: linux-x64-build
           path: |
-            release/*.zip
-            release/*.exe
             release/*.AppImage
             release/*.deb
             release/*.rpm
             release/*.snap
             release/*.flatpak
             release/*.yml
-            release/*.blockmap
           retention-days: 30
           if-no-files-found: error
 
@@ -114,25 +165,10 @@ jobs:
         run: npm ci
         timeout-minutes: 10
 
-      - name: Install Linux build tools (Snap & Flatpak)
+      - name: Install Linux build tools (Flatpak)
         run: |
-          # Install LXD for Snap builds
-          sudo snap install lxd
-          # Initialize LXD with auto mode
-          sudo lxd init --auto --storage-backend=dir
-          # Add user to lxd group
-          sudo usermod -aG lxd $USER
-          # Configure LXD socket permissions (allows access without group membership in same session)
-          sudo chmod 666 /var/snap/lxd/common/lxd/unix.socket || true
-          # Pre-download LXD base image for ARM64 to avoid network issues in containers
-          # Use sg to run with lxd group to access LXD
-          sg lxd -c "lxc image copy ubuntu:22.04 local: --alias ubuntu-22.04-arm64 || echo 'Image copy failed, will try during build'" || true
-          # Install snapcraft via snap
-          sudo snap install snapcraft --classic
-          # Install flatpak and flatpak-builder
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
-          # Add flathub remote and install runtime
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
 
@@ -143,11 +179,8 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables (Linux ARM64 - Flatpak only, Snap via remote-build)
-        run: |
-          npm run build
-          # Build Flatpak (Snap ARM64 will be built via snapcraft remote-build job)
-          npx electron-builder --linux flatpak --arm64 --publish=never
+      - name: Build distributables (Flatpak only - Snap ARM64 via remote build)
+        run: npx electron-builder --linux flatpak --arm64 --publish=never
         timeout-minutes: 45
 
       - name: Upload artifacts
@@ -155,74 +188,18 @@ jobs:
         with:
           name: linux-arm64-build
           path: |
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
-            release/*.snap
             release/*.flatpak
           retention-days: 30
           if-no-files-found: error
 
-  build-snap-arm64-remote:
-    name: Build Snap ARM64 (Remote Build)
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    continue-on-error: true
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Snapcraft
-        run: sudo snap install snapcraft --classic
-
-      - name: Authenticate with Snapcraft
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
-            echo "Warning: SNAPCRAFT_STORE_CREDENTIALS not set. Remote build may fail."
-          fi
-          # SNAPCRAFT_STORE_CREDENTIALS is already set as environment variable above
-          # snapcraft will automatically use it
-
-      - name: Set version from package.json
-        id: version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          # Update snapcraft.yaml with version (git version extraction may not work on branches)
-          sed -i "s/^version:.*/version: $VERSION/" snapcraft.yaml || echo "Warning: Could not update version in snapcraft.yaml"
-
-      - name: Remote Build Snap for ARM64
-        run: |
-          # Build ARM64 snap using snapcraft remote-build
-          snapcraft remote-build --build-for=arm64 --launchpad-accept-public-upload || echo "Remote build failed or credentials not configured"
-        timeout-minutes: 60
-
-      - name: Download built snap
-        if: success()
-        run: |
-          # Find and download the built snap
-          SNAP_FILE=$(find . -name "facebook-messenger-desktop_*_arm64.snap" | head -1)
-          if [ -n "$SNAP_FILE" ]; then
-            echo "Found snap: $SNAP_FILE"
-            mkdir -p release
-            cp "$SNAP_FILE" release/
-          else
-            echo "No ARM64 snap file found after remote build"
-          fi
-
-      - name: Upload ARM64 snap artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snap-arm64-remote-build
-          path: release/*.snap
-          retention-days: 30
-          if-no-files-found: warn
-
+  # ============================================
+  # PHASE 2: Create GitHub Release
+  # (Runs after all builds complete)
+  # ============================================
+  
   release:
-    needs: [build, build-linux-arm64]
+    name: Create Release
+    needs: [build-macos, build-windows, build-linux-x64, build-linux-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
@@ -230,20 +207,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: '*-build'
           merge-multiple: true
-      
-      - name: Download ARM64 snap from remote build
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: 'snap-arm64-remote-build'
-          merge-multiple: true
-          if-no-files-found: warn
+
+      - name: List artifacts
+        run: find artifacts -type f | head -50
 
       - name: Extract version from tag
         id: tag_version
@@ -284,7 +256,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ============================================
+  # PHASE 3: Update package managers
+  # (Runs after release is created)
+  # ============================================
+
   update-homebrew:
+    name: Update Homebrew
     needs: release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
@@ -368,28 +346,31 @@ jobs:
           git push
 
   update-winget:
+    name: Update WinGet
     needs: release
     runs-on: windows-latest
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
+    continue-on-error: true  # Don't fail the workflow if winget update fails
     
     steps:
       - name: Submit to WinGet
         uses: vedantmgoyal2009/winget-releaser@v2
         with:
           identifier: apotenza92.FacebookMessengerDesktop
-          installers-regex: 'Messenger-windows-setup\.exe$'
+          installers-regex: 'Messenger-windows-x64-setup\.exe$'
           token: ${{ secrets.WINGET_TOKEN }}
 
   update-snapstore:
+    name: Update Snap Store
     needs: release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
     
     steps:
-      - name: Download Linux artifacts
+      - name: Download Linux x64 artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-build
+          name: linux-x64-build
           path: artifacts
 
       - name: Install snapcraft
@@ -400,27 +381,20 @@ jobs:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           # Upload x64 snap
-          X64_SNAP=$(find artifacts -name "*x64*.snap" -o -name "*.snap" | grep -v arm64 | head -1)
+          X64_SNAP=$(find artifacts -name "*.snap" | head -1)
           if [ -n "$X64_SNAP" ]; then
             echo "Uploading x64 snap: $X64_SNAP to Snap Store..."
             snapcraft upload --release=stable "$X64_SNAP"
-          fi
-          
-          # Upload ARM64 snap (from remote build)
-          ARM64_SNAP=$(find artifacts -name "*arm64*.snap" | head -1)
-          if [ -n "$ARM64_SNAP" ]; then
-            echo "Uploading ARM64 snap: $ARM64_SNAP to Snap Store..."
-            snapcraft upload --release=stable "$ARM64_SNAP"
-          fi
-          
-          if [ -z "$X64_SNAP" ] && [ -z "$ARM64_SNAP" ]; then
-            echo "Warning: No snap files found! Continuing anyway..."
+          else
+            echo "Warning: No x64 snap file found!"
           fi
 
   update-flatpak-repo:
+    name: Update Flatpak Repo
     needs: release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
+    continue-on-error: true  # Don't fail the workflow if flatpak update fails
     
     steps:
       - name: Checkout code
@@ -430,11 +404,17 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Download Linux artifacts
+      - name: Download Linux x64 artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-build
-          path: artifacts
+          name: linux-x64-build
+          path: artifacts/x64
+
+      - name: Download Linux ARM64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-arm64-build
+          path: artifacts/arm64
 
       - name: Install Flatpak tools
         run: |
@@ -445,10 +425,25 @@ jobs:
         env:
           FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
         run: |
-          echo "$FLATPAK_GPG_PRIVATE_KEY" | base64 -d | gpg --import
+          if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ]; then
+            echo "ERROR: FLATPAK_GPG_PRIVATE_KEY secret not set"
+            echo "To fix: Generate a GPG key, export it with 'gpg --export-secret-keys KEY_ID | base64', and add as secret"
+            exit 1
+          fi
+          # Try to decode and import the GPG key
+          echo "$FLATPAK_GPG_PRIVATE_KEY" | base64 -d | gpg --import || {
+            echo "ERROR: Failed to import GPG key. The FLATPAK_GPG_PRIVATE_KEY secret may be incorrectly encoded."
+            echo "To fix: Export your GPG key with 'gpg --export-secret-keys KEY_ID | base64 -w 0' and update the secret"
+            exit 1
+          }
           # Get the key ID for signing
           GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2)
+          if [ -z "$GPG_KEY_ID" ]; then
+            echo "ERROR: Failed to get GPG key ID after import"
+            exit 1
+          fi
           echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
+          echo "Successfully imported GPG key: $GPG_KEY_ID"
 
       - name: Checkout gh-pages branch
         run: |
@@ -458,24 +453,32 @@ jobs:
 
       - name: Build Flatpak repository
         run: |
-          # Find the flatpak bundle
-          FLATPAK_FILE=$(find artifacts -name "*.flatpak" | head -1)
-          if [ -z "$FLATPAK_FILE" ]; then
-            echo "No flatpak file found!"
-            exit 1
-          fi
-          echo "Found flatpak: $FLATPAK_FILE"
+          REPO_PATH="gh-pages-worktree/flatpak/repo"
           
           # Initialize OSTree repo if it doesn't exist
-          REPO_PATH="gh-pages-worktree/flatpak/repo"
           if [ ! -d "$REPO_PATH/objects" ]; then
             echo "Initializing new OSTree repository..."
             ostree init --repo="$REPO_PATH" --mode=archive-z2
           fi
           
-          # Import the flatpak bundle into the repository
-          echo "Importing flatpak bundle to repository..."
-          flatpak build-import-bundle "$REPO_PATH" "$FLATPAK_FILE" --gpg-sign="$GPG_KEY_ID"
+          # Import x64 flatpak
+          X64_FLATPAK=$(find artifacts/x64 -name "*.flatpak" | head -1)
+          if [ -n "$X64_FLATPAK" ]; then
+            echo "Importing x64 flatpak: $X64_FLATPAK"
+            flatpak build-import-bundle "$REPO_PATH" "$X64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
+          fi
+          
+          # Import ARM64 flatpak
+          ARM64_FLATPAK=$(find artifacts/arm64 -name "*.flatpak" | head -1)
+          if [ -n "$ARM64_FLATPAK" ]; then
+            echo "Importing ARM64 flatpak: $ARM64_FLATPAK"
+            flatpak build-import-bundle "$REPO_PATH" "$ARM64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
+          fi
+          
+          if [ -z "$X64_FLATPAK" ] && [ -z "$ARM64_FLATPAK" ]; then
+            echo "ERROR: No flatpak files found!"
+            exit 1
+          fi
           
           # Update repository metadata and sign
           echo "Updating repository metadata..."
