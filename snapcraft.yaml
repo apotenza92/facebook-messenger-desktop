@@ -33,6 +33,9 @@ parts:
     plugin: nil
     source: .
     build-snaps:
+      # Node version: extract major version from package.json engines.node
+      # Format: node/MAJOR/stable (e.g., node/20/stable, node/22/stable)
+      # Update this if you change Node version in package.json engines field
       - node/20/stable
     build-packages:
       - build-essential

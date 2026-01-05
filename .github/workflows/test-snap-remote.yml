@@ -27,13 +27,20 @@ jobs:
             echo "Warning: SNAPCRAFT_STORE_CREDENTIALS not set. Remote build may fail."
           fi
 
-      - name: Set version from package.json
+      - name: Set version and verify Node version
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          NODE_MAJOR=$(node -p "require('./package.json').engines?.node?.match(/>=?(\d+)/)?.[1] || '20'")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "NODE_MAJOR=$NODE_MAJOR" >> $GITHUB_ENV
           # Update snapcraft.yaml with version (git version extraction may not work on branches)
           sed -i "s/^version:.*/version: $VERSION/" snapcraft.yaml || echo "Warning: Could not update version in snapcraft.yaml"
-          echo "Using version: $VERSION"
+          # Verify Node version matches (warn if mismatch)
+          if ! grep -q "node/$NODE_MAJOR/stable" snapcraft.yaml; then
+            echo "⚠️  WARNING: Node version mismatch! package.json engines.node requires >=$NODE_MAJOR, but snapcraft.yaml has a different version"
+            echo "Update snapcraft.yaml build-snaps to use node/$NODE_MAJOR/stable"
+          fi
+          echo "Using version: $VERSION, Node: $NODE_MAJOR"
 
       - name: Remote Build Snap for ARM64
         run: |

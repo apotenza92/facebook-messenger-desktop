@@ -31,6 +31,9 @@
     "email": "apotenza92@gmail.com"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "electron-updater": "^6.1.8"
   },
