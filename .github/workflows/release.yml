@@ -124,6 +124,9 @@ jobs:
           sudo usermod -aG lxd $USER
           # Configure LXD socket permissions (allows access without group membership in same session)
           sudo chmod 666 /var/snap/lxd/common/lxd/unix.socket || true
+          # Pre-download LXD base image for ARM64 to avoid network issues in containers
+          # Use sg to run with lxd group to access LXD
+          sg lxd -c "lxc image copy ubuntu:22.04 local: --alias ubuntu-22.04-arm64 || echo 'Image copy failed, will try during build'" || true
           # Install snapcraft via snap
           sudo snap install snapcraft --classic
           # Install flatpak and flatpak-builder
