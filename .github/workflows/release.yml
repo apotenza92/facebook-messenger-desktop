@@ -167,6 +167,7 @@ jobs:
     name: Build Snap ARM64 (Remote Build)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -213,7 +214,7 @@ jobs:
           if-no-files-found: warn
 
   release:
-    needs: [build, build-linux-arm64, build-snap-arm64-remote]
+    needs: [build, build-linux-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
