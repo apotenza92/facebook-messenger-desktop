@@ -598,13 +598,77 @@ function createWindow(source: string = 'unknown'): void {
     contentView.webContents.loadURL('https://www.messenger.com');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
-    // Open external URLs in system browser instead of new Electron windows
-    contentView.webContents.setWindowOpenHandler(({ url }) => {
-      // Open all URLs in system browser - this is the standard behavior for wrapped web apps
+    // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
+    contentView.webContents.setWindowOpenHandler(({ url, features }) => {
+      // Allow messenger.com URLs to open as new windows (needed for video/audio calls)
+      if (url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com')) {
+        console.log('[Window] Allowing Messenger pop-up window:', url);
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 800,
+            height: 600,
+            minWidth: 400,
+            minHeight: 300,
+            title: 'Messenger Call',
+            icon: isDev ? undefined : getIconPath(),
+            webPreferences: {
+              preload: path.join(__dirname, '../preload/preload.js'),
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: false,
+              webSecurity: true,
+              spellcheck: true,
+            },
+          },
+        };
+      }
+      
+      // Open external URLs in system browser
       shell.openExternal(url).catch((err) => {
         console.error('[External Link] Failed to open URL:', url, err);
       });
       return { action: 'deny' };
+    });
+    
+    // Set up permission handlers on child windows (for call windows)
+    contentView.webContents.on('did-create-window', (childWindow) => {
+      console.log('[Window] Child window created, setting up permission handlers');
+      
+      // Set up permission handler for the child window's session
+      childWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+        const url = webContents.getURL();
+        
+        if (!url.startsWith('https://www.messenger.com') && !url.startsWith('https://messenger.com')) {
+          console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
+          callback(false);
+          return;
+        }
+
+        const allowedPermissions = [
+          'media',
+          'mediaKeySystem',
+          'notifications',
+          'fullscreen',
+          'pointerLock',
+        ];
+
+        if (allowedPermissions.includes(permission)) {
+          console.log(`[Permissions] Allowing ${permission} for messenger.com (child window)`);
+          callback(true);
+        } else {
+          console.log(`[Permissions] Denied ${permission} - not in allowlist (child window)`);
+          callback(false);
+        }
+      });
+      
+      childWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+        if (requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com')) {
+          const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+          return allowedPermissions.includes(permission);
+        }
+        return false;
+      });
     });
 
     // Inject notification override script after page loads
@@ -695,12 +759,77 @@ function createWindow(source: string = 'unknown'): void {
     mainWindow.loadURL('https://www.messenger.com');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
-    // Open external URLs in system browser instead of new Electron windows
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
+    mainWindow.webContents.setWindowOpenHandler(({ url, features }) => {
+      // Allow messenger.com URLs to open as new windows (needed for video/audio calls)
+      if (url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com')) {
+        console.log('[Window] Allowing Messenger pop-up window:', url);
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 800,
+            height: 600,
+            minWidth: 400,
+            minHeight: 300,
+            title: 'Messenger Call',
+            icon: isDev ? undefined : getIconPath(),
+            webPreferences: {
+              preload: path.join(__dirname, '../preload/preload.js'),
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: false,
+              webSecurity: true,
+              spellcheck: true,
+            },
+          },
+        };
+      }
+      
+      // Open external URLs in system browser
       shell.openExternal(url).catch((err) => {
         console.error('[External Link] Failed to open URL:', url, err);
       });
       return { action: 'deny' };
+    });
+    
+    // Set up permission handlers on child windows (for call windows)
+    mainWindow.webContents.on('did-create-window', (childWindow) => {
+      console.log('[Window] Child window created, setting up permission handlers');
+      
+      // Set up permission handler for the child window's session
+      childWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+        const url = webContents.getURL();
+        
+        if (!url.startsWith('https://www.messenger.com') && !url.startsWith('https://messenger.com')) {
+          console.log(`[Permissions] Denied ${permission} for non-messenger URL: ${url}`);
+          callback(false);
+          return;
+        }
+
+        const allowedPermissions = [
+          'media',
+          'mediaKeySystem',
+          'notifications',
+          'fullscreen',
+          'pointerLock',
+        ];
+
+        if (allowedPermissions.includes(permission)) {
+          console.log(`[Permissions] Allowing ${permission} for messenger.com (child window)`);
+          callback(true);
+        } else {
+          console.log(`[Permissions] Denied ${permission} - not in allowlist (child window)`);
+          callback(false);
+        }
+      });
+      
+      childWindow.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+        if (requestingOrigin.startsWith('https://www.messenger.com') || requestingOrigin.startsWith('https://messenger.com')) {
+          const allowedPermissions = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
+          return allowedPermissions.includes(permission);
+        }
+        return false;
+      });
     });
 
     mainWindow.webContents.on('did-finish-load', async () => {
@@ -1395,23 +1524,51 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
     // On Linux with deb/rpm, run uninstall followed by desktop/icon cache refresh
     // This ensures the app icon is properly removed from application menus
     const homeDir = process.env.HOME || '';
-    const uninstallCmd = pm.uninstallCommand.join(' ');
     
-    // Build comprehensive cleanup script:
-    // 1. Run the package manager uninstall (with pkexec for authentication)
-    // 2. Remove any lingering user desktop entries
-    // 3. Refresh icon caches (both system and user)
-    // 4. Update desktop database
-    // 5. Kill any remaining Messenger processes
+    // Determine the package manager command
+    const pmCmd = pm.name.includes('deb') 
+      ? `/usr/bin/apt remove -y ${LINUX_PACKAGE_NAME}`
+      : `/usr/bin/dnf remove -y ${LINUX_PACKAGE_NAME}`;
+    
+    // Build cleanup script using zenity/kdialog for password prompt
+    // This is more reliable than pkexec which requires a polkit authentication agent
     const cleanupScript = `
-      # Run package manager uninstall (this will show pkexec authentication dialog)
-      ${uninstallCmd}
-      UNINSTALL_EXIT=$?
+      UNINSTALL_EXIT=1
+      
+      # Method 1: Try zenity for password prompt (GNOME/GTK desktops)
+      if command -v zenity >/dev/null 2>&1; then
+        PASSWORD=$(zenity --password --title="Authentication Required" --text="Enter password to uninstall Messenger:" 2>/dev/null)
+        if [ -n "$PASSWORD" ]; then
+          echo "$PASSWORD" | sudo -S ${pmCmd} 2>/dev/null
+          UNINSTALL_EXIT=$?
+        fi
+      fi
+      
+      # Method 2: Try kdialog for password prompt (KDE desktops)
+      if [ $UNINSTALL_EXIT -ne 0 ] && command -v kdialog >/dev/null 2>&1; then
+        PASSWORD=$(kdialog --password "Enter password to uninstall Messenger:" 2>/dev/null)
+        if [ -n "$PASSWORD" ]; then
+          echo "$PASSWORD" | sudo -S ${pmCmd} 2>/dev/null
+          UNINSTALL_EXIT=$?
+        fi
+      fi
+      
+      # Method 3: Fall back to pkexec (if polkit agent is running)
+      if [ $UNINSTALL_EXIT -ne 0 ] && command -v pkexec >/dev/null 2>&1; then
+        /usr/bin/pkexec /bin/sh -c "${pmCmd}" 2>/dev/null
+        UNINSTALL_EXIT=$?
+      fi
       
       # Only proceed with cleanup if uninstall succeeded
       if [ $UNINSTALL_EXIT -eq 0 ]; then
+        echo "Uninstall succeeded, cleaning up..."
         # Wait for package manager to finish
         sleep 1
+        
+        # Purge config files too (for deb packages)
+        if command -v dpkg >/dev/null 2>&1; then
+          echo "$PASSWORD" | sudo -S dpkg --purge ${LINUX_PACKAGE_NAME} 2>/dev/null || true
+        fi
         
         # Remove user-specific desktop entries that might persist
         rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
@@ -1447,16 +1604,40 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
         # For KDE Plasma, touch the applications directory to trigger refresh
         touch "${homeDir}/.local/share/applications" 2>/dev/null || true
         
-        # Kill any remaining Messenger processes (the app should already be hidden/closing)
-        pkill -f "facebook-messenger-desktop" 2>/dev/null || true
-        pkill -f "/opt/Messenger" 2>/dev/null || true
+        # Kill any remaining Messenger processes aggressively
+        pkill -9 -f "facebook-messenger-desktop" 2>/dev/null || true
+        pkill -9 -f "/opt/Messenger" 2>/dev/null || true
+        pkill -9 -f "Messenger" 2>/dev/null || true
+        
+        echo "Cleanup complete!"
+      else
+        echo "Uninstall failed or was cancelled"
       fi
     `.trim();
     
+    // Pass graphical environment variables
+    const env = {
+      ...process.env,
+      DISPLAY: process.env.DISPLAY || ':0',
+      XAUTHORITY: process.env.XAUTHORITY || `${homeDir}/.Xauthority`,
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() || 1000}`,
+      WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || '',
+    };
+    
     const child = spawn('/bin/sh', ['-c', cleanupScript], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
     });
+    
+    // Log output for debugging
+    child.stderr?.on('data', (data: Buffer) => {
+      console.log('[Uninstall] stderr:', data.toString().trim());
+    });
+    child.stdout?.on('data', (data: Buffer) => {
+      console.log('[Uninstall] stdout:', data.toString().trim());
+    });
+    
     child.unref();
   } else {
     // Note: Snap and Flatpak are handled by scheduleSnapUninstall() and scheduleFlatpakUninstall()
@@ -1765,24 +1946,32 @@ async function handleUninstallRequest(): Promise<void> {
   }
 
   if (packageManager) {
-    // Run the package manager uninstall command
-    runPackageManagerUninstall(packageManager);
-    
     // For Linux package managers with pkexec, we need to give time for the authentication dialog to appear
-    // Hide the window but don't quit immediately - the uninstall script will terminate the app
+    // DON'T hide the window immediately - keep the app visible so pkexec has proper graphical context
     const needsAuthDialog = packageManager.name.includes('deb') || 
                             packageManager.name.includes('rpm');
     if (process.platform === 'linux' && needsAuthDialog) {
-      console.log('[Uninstall] Hiding window for authentication dialog...');
-      mainWindow?.hide();
+      console.log('[Uninstall] Running uninstall with authentication dialog...');
+      
+      // Minimize the window instead of hiding - this keeps graphical context available
+      // for pkexec while getting out of the user's way
+      mainWindow?.minimize();
+      
+      // Run the package manager uninstall command
+      runPackageManagerUninstall(packageManager);
+      
       // Give the authentication dialog time to show and complete
       // The app will be killed by the package manager or cleanup script
+      // Use a longer timeout since user needs to authenticate
       setTimeout(() => {
-        console.log('[Uninstall] Quitting after delay for authentication...');
+        console.log('[Uninstall] Quitting after timeout (uninstall may have completed or failed)...');
         app.quit();
-      }, 30000); // 30 second timeout as fallback
+      }, 60000); // 60 second timeout as fallback
       return;
     }
+    
+    // Run the package manager uninstall command for other cases
+    runPackageManagerUninstall(packageManager);
   } else {
     // Automatically remove the app bundle/installation
     if (process.platform === 'darwin') {
@@ -2270,25 +2459,41 @@ async function requestNotificationPermission(): Promise<void> {
 }
 
 // Request media permissions on macOS (camera/microphone)
-// This will prompt the user when they first try to use these features
-async function checkMediaPermissions(): Promise<void> {
+// This prompts the user for permission on first launch to ensure calls work
+async function requestMediaPermissions(): Promise<void> {
   if (process.platform !== 'darwin') return;
 
   try {
-    // Check current permission status (doesn't prompt, just checks)
+    // Check current permission status first
     const cameraStatus = systemPreferences.getMediaAccessStatus('camera');
     const micStatus = systemPreferences.getMediaAccessStatus('microphone');
     
     console.log('[Media Permissions] Camera status:', cameraStatus);
     console.log('[Media Permissions] Microphone status:', micStatus);
     
-    // If permissions are 'not-determined', they'll be prompted when first accessed
-    // If permissions are 'denied', user needs to enable in System Preferences
-    if (cameraStatus === 'denied' || micStatus === 'denied') {
-      console.log('[Media Permissions] Some permissions denied - user may need to enable in System Preferences for calls');
+    // Request permissions if not yet determined
+    // This triggers the macOS system permission prompt
+    if (cameraStatus === 'not-determined') {
+      console.log('[Media Permissions] Requesting camera access...');
+      const cameraGranted = await systemPreferences.askForMediaAccess('camera');
+      console.log('[Media Permissions] Camera access:', cameraGranted ? 'granted' : 'denied');
+    }
+    
+    if (micStatus === 'not-determined') {
+      console.log('[Media Permissions] Requesting microphone access...');
+      const micGranted = await systemPreferences.askForMediaAccess('microphone');
+      console.log('[Media Permissions] Microphone access:', micGranted ? 'granted' : 'denied');
+    }
+    
+    // If permissions are denied, log info for user
+    const finalCameraStatus = systemPreferences.getMediaAccessStatus('camera');
+    const finalMicStatus = systemPreferences.getMediaAccessStatus('microphone');
+    
+    if (finalCameraStatus === 'denied' || finalMicStatus === 'denied') {
+      console.log('[Media Permissions] Some permissions denied - user may need to enable in System Settings > Privacy & Security for video/audio calls to work');
     }
   } catch (e) {
-    console.warn('[Media Permissions] Failed to check status:', e);
+    console.warn('[Media Permissions] Failed to request permissions:', e);
   }
 }
 
@@ -3129,8 +3334,8 @@ app.whenReady().then(async () => {
   // Request notification permission on first launch (triggers macOS permission prompt)
   await requestNotificationPermission();
   
-  // Check media permission status (informational - actual prompts happen when messenger.com requests access)
-  await checkMediaPermissions();
+  // Request media permissions (camera/microphone) for video/audio calls on macOS
+  await requestMediaPermissions();
 
   // Create application menu
   createApplicationMenu();

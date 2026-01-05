@@ -69,7 +69,11 @@
       "notarize": {
         "teamId": "27JL2VERNC"
       },
-      "artifactName": "Messenger-macos-${arch}.${ext}"
+      "artifactName": "Messenger-macos-${arch}.${ext}",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Messenger needs access to your camera for video calls.",
+        "NSMicrophoneUsageDescription": "Messenger needs access to your microphone for audio and video calls."
+      }
     },
     "win": {
       "target": [
@@ -164,7 +168,18 @@
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "23.08",
       "sdk": "org.freedesktop.Sdk",
-      "artifactName": "facebook-messenger-desktop-${arch}.${ext}"
+      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
+      "finishArgs": [
+        "--share=ipc",
+        "--socket=x11",
+        "--socket=wayland",
+        "--socket=pulseaudio",
+        "--share=network",
+        "--device=dri",
+        "--device=all",
+        "--talk-name=org.freedesktop.Notifications",
+        "--filesystem=xdg-download"
+      ]
     }
   }
 }
