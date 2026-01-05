@@ -192,11 +192,13 @@
     
     .linux-formats {
       display: none;
-      text-align: left;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
     }
     
     .linux-formats.visible {
-      display: block;
+      display: flex;
     }
     
     .linux-arch-toggle,
@@ -208,12 +210,9 @@
     }
     
     .windows-arch-toggle,
-    .mac-arch-toggle {
-      margin-bottom: 1rem;
-    }
-    
+    .mac-arch-toggle,
     .linux-arch-toggle {
-      margin-bottom: 1.5rem;
+      margin-bottom: 0;
     }
     
     .arch-btn {
@@ -249,7 +248,7 @@
     .linux-format-toggle {
       display: flex;
       justify-content: center;
-      margin-bottom: 1.5rem;
+      margin-bottom: 0;
       position: relative;
     }
     
@@ -624,8 +623,8 @@
     // Generate a smooth S-curve between two points
     function createCurvedPath(x1, y1, x2, y2) {
       // Always use smooth S-curve with cubic bezier
-      const ctrl1Y = y1 + (y2 - y1) * 0.4;
-      const ctrl2Y = y1 + (y2 - y1) * 0.6;
+      const ctrl1Y = y1 + (y2 - y1) * 0.5;
+      const ctrl2Y = y1 + (y2 - y1) * 0.5;
       return `M ${x1} ${y1} C ${x1} ${ctrl1Y} ${x2} ${ctrl2Y} ${x2} ${y2}`;
     }
     
