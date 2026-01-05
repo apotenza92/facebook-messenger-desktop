@@ -212,8 +212,6 @@
     .linux-format-toggle {
       display: flex;
       justify-content: center;
-      flex-wrap: wrap;
-      gap: 0.5rem;
       margin-bottom: 1rem;
     }
     
@@ -225,23 +223,43 @@
       cursor: pointer;
       color: var(--text-muted);
       transition: all 0.2s ease;
-      border-radius: 6px;
+    }
+    
+    .format-btn:first-child {
+      border-radius: 8px 0 0 8px;
+    }
+    
+    .format-btn:last-child {
+      border-radius: 0 8px 8px 0;
+    }
+    
+    .format-btn:not(:first-child) {
+      margin-left: -1px;
     }
     
     .format-btn:hover {
       border-color: #0084ff;
       color: #0084ff;
+      position: relative;
+      z-index: 1;
     }
     
     .format-btn.active {
       background: #0084ff;
       border-color: #0084ff;
       color: white;
+      position: relative;
+      z-index: 1;
     }
     
     .format-btn.disabled {
       opacity: 0.4;
       cursor: not-allowed;
+    }
+    
+    .format-btn.disabled:hover {
+      border-color: var(--border);
+      color: var(--text-muted);
     }
     
     .linux-format-content {
@@ -466,7 +484,7 @@
   <div class="container">
     <img src="https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main/assets/icons/icon-rounded.png" alt="Messenger" class="icon">
     <h1>Facebook Messenger Desktop</h1>
-    <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 1rem; margin-bottom: 1rem;">This is an unofficial desktop application for Facebook Messenger, created because the official app was deprecated.</p>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 1rem; margin-bottom: 1rem;">An unofficial desktop application for Facebook Messenger.</p>
     
     <div class="header-meta" id="header-meta">
       <div class="version-info" id="version-info">
