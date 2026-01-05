@@ -40,6 +40,9 @@ Pending approval.
 ```bash
 sudo snap install facebook-messenger-desktop
 ```
-#### Flathub
 
-Pending approval.
+#### Flatpak
+
+```bash
+flatpak remote-add --if-not-exists --user messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop
+```

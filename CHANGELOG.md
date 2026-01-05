@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.9.0] - 2026-01-05
+
+### Added
+- Self-hosted Flatpak repository for Linux users
+  - Users can now install via: flatpak remote-add + flatpak install
+  - GPG-signed repository hosted on GitHub Pages
+  - Shows up in GNOME Software and KDE Discover after adding the repo
+  - Updates via flatpak update or software center
+
+### Changed
+- Download page: Complete redesign with platform-specific pages
+  - Each platform (macOS, Windows, Linux) now has its own dedicated download view
+  - Clicking "Other platforms" links switches to that platform's download page instead of direct downloads
+  - Architecture toggle (x64/ARM64 for Windows/Linux, Apple Silicon/Intel for macOS) on all platforms
+  - Auto-detection selects the correct architecture tab based on user's system
+  - Platform text shown as heading above the architecture toggle
+- Download page: Added Flatpak install command to Linux downloads
+- Linux Snap/Flatpak: Disabled built-in auto-updater
+  - These package formats must be updated through their package managers
+  - Check for Updates menu now shows helpful message with the correct update command
+- Linux deb/rpm: Update installation now uses zenity/kdialog for password prompts
+  - More reliable than pkexec which requires a polkit agent
+  - Consistent with the uninstall dialog behavior
+
 ## [0.8.10] - 2026-01-05
 
 ### Fixed
