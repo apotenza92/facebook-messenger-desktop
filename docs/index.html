@@ -96,9 +96,10 @@
     }
     
     .platform {
-      margin-bottom: 1.5rem;
-      color: var(--text-muted);
-      font-size: 0.95rem;
+      margin-bottom: 1rem;
+      color: var(--text);
+      font-size: 1.25rem;
+      font-weight: 600;
     }
     
     .other-platforms {
@@ -166,9 +167,9 @@
     }
     
     .linux-formats h3 {
-      font-size: 0.95rem;
-      font-weight: 400;
-      color: var(--text-muted);
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text);
       margin-bottom: 1rem;
       text-align: center;
     }
@@ -769,14 +770,13 @@
         arm64Btn.classList.add('active');
         btn.href = downloads['windows-arm'].url;
         btnText.textContent = `Download ${downloads['windows-arm'].ext}`;
-        platformText.textContent = downloads['windows-arm'].name;
       } else {
         x64Btn.classList.add('active');
         arm64Btn.classList.remove('active');
         btn.href = downloads['windows'].url;
         btnText.textContent = `Download ${downloads['windows'].ext}`;
-        platformText.textContent = downloads['windows'].name;
       }
+      platformText.textContent = 'Windows';
       
       // Update URL parameter
       const params = new URLSearchParams(window.location.search);
@@ -802,14 +802,13 @@
         intelBtn.classList.add('active');
         btn.href = downloads['mac-intel'].url;
         btnText.textContent = `Download ${downloads['mac-intel'].ext}`;
-        platformText.textContent = downloads['mac-intel'].name;
       } else {
         armBtn.classList.add('active');
         intelBtn.classList.remove('active');
         btn.href = downloads['mac-arm'].url;
         btnText.textContent = `Download ${downloads['mac-arm'].ext}`;
-        platformText.textContent = downloads['mac-arm'].name;
       }
+      platformText.textContent = 'macOS';
       
       // Update URL parameter
       const params = new URLSearchParams(window.location.search);
