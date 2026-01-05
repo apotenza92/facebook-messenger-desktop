@@ -101,21 +101,32 @@
       max-width: 500px;
     }
     
+    .selection-flow {
+      position: relative;
+    }
+    
+    .connector-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+    
+    .connector-path {
+      fill: none;
+      stroke: #0084ff;
+      stroke-width: 2;
+    }
+    
     .platform-toggle {
       display: flex;
       justify-content: center;
       margin-bottom: 1.5rem;
       position: relative;
-    }
-    
-    .platform-toggle::after {
-      content: '';
-      position: absolute;
-      bottom: -1.5rem;
-      left: 50%;
-      width: 1px;
-      height: 1.5rem;
-      background: var(--border);
+      z-index: 1;
     }
     
     .platform-btn {
@@ -203,16 +214,6 @@
       margin-bottom: 1.5rem;
     }
     
-    .linux-arch-toggle::after {
-      content: '';
-      position: absolute;
-      bottom: -1.5rem;
-      left: 50%;
-      width: 1px;
-      height: 1.5rem;
-      background: var(--border);
-    }
-    
     .arch-btn {
       background: none;
       border: 1px solid var(--border);
@@ -248,16 +249,6 @@
       justify-content: center;
       margin-bottom: 1.5rem;
       position: relative;
-    }
-    
-    .linux-format-toggle::after {
-      content: '';
-      position: absolute;
-      bottom: -1.5rem;
-      left: 50%;
-      width: 1px;
-      height: 1.5rem;
-      background: var(--border);
     }
     
     .format-btn {
@@ -560,13 +551,16 @@
       </a>
     </div>
     
-    <div class="platform-toggle" id="platform-toggle">
-      <button class="platform-btn" id="platform-btn-mac">macOS</button>
-      <button class="platform-btn" id="platform-btn-windows">Windows</button>
-      <button class="platform-btn" id="platform-btn-linux">Linux</button>
-    </div>
-    
-    <div class="download-wrapper" id="download-wrapper">
+    <div class="selection-flow" id="selection-flow">
+      <svg class="connector-svg" id="connector-svg"></svg>
+      
+      <div class="platform-toggle" id="platform-toggle">
+        <button class="platform-btn" id="platform-btn-mac">macOS</button>
+        <button class="platform-btn" id="platform-btn-windows">Windows</button>
+        <button class="platform-btn" id="platform-btn-linux">Linux</button>
+      </div>
+      
+      <div class="download-wrapper" id="download-wrapper">
       <div class="windows-arch-toggle" id="windows-arch-toggle" style="display: none;"><button class="arch-btn active" id="windows-arch-x64">x64</button><button class="arch-btn" id="windows-arch-arm64">ARM64</button></div>
       <div class="mac-arch-toggle" id="mac-arch-toggle" style="display: none;"><button class="arch-btn active" id="mac-arch-arm">Apple Silicon</button><button class="arch-btn" id="mac-arch-intel">Intel</button></div>
       <a href="#" class="download-btn" id="download-btn">
@@ -617,6 +611,7 @@
         <div class="linux-format-note" id="linux-format-note" style="display: none;"></div>
       </div>
     </div>
+    </div>
     
     <p style="font-size: 0.7rem; color: var(--text-subtle); margin-top: 1.5rem; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.4;">
       <strong>Trademark Notice:</strong> This project is not affiliated with, endorsed by, or connected to Facebook, Inc. or Meta Platforms, Inc. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc. This is an independent, open-source project.
@@ -624,6 +619,109 @@
   </div>
 
   <script>
+    function updateConnectors() {
+      const svg = document.getElementById('connector-svg');
+      const flow = document.getElementById('selection-flow');
+      if (!svg || !flow) return;
+      
+      const flowRect = flow.getBoundingClientRect();
+      svg.innerHTML = '';
+      
+      // Get active platform button
+      const activePlatform = document.querySelector('.platform-btn.active');
+      if (!activePlatform) return;
+      
+      const platformRect = activePlatform.getBoundingClientRect();
+      const platformCenterX = platformRect.left + platformRect.width / 2 - flowRect.left;
+      const platformBottomY = platformRect.bottom - flowRect.top;
+      
+      // Check which view is active
+      const downloadWrapper = document.getElementById('download-wrapper');
+      const linuxFormats = document.getElementById('linux-formats');
+      const isLinux = linuxFormats.classList.contains('visible');
+      
+      if (isLinux) {
+        // Linux: Platform -> Arch -> Format -> Download
+        const activeArch = document.querySelector('.linux-arch-toggle .arch-btn.active');
+        const activeFormat = document.querySelector('.format-btn.active');
+        const downloadBtn = document.getElementById('linux-download-btn');
+        
+        if (activeArch) {
+          const archRect = activeArch.getBoundingClientRect();
+          const archCenterX = archRect.left + archRect.width / 2 - flowRect.left;
+          const archTopY = archRect.top - flowRect.top;
+          const archBottomY = archRect.bottom - flowRect.top;
+          
+          // Draw path from platform to arch
+          const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          const midY1 = platformBottomY + (archTopY - platformBottomY) / 2;
+          path1.setAttribute('d', `M ${platformCenterX} ${platformBottomY} L ${platformCenterX} ${midY1} L ${archCenterX} ${midY1} L ${archCenterX} ${archTopY}`);
+          path1.setAttribute('class', 'connector-path');
+          svg.appendChild(path1);
+          
+          if (activeFormat) {
+            const formatRect = activeFormat.getBoundingClientRect();
+            const formatCenterX = formatRect.left + formatRect.width / 2 - flowRect.left;
+            const formatTopY = formatRect.top - flowRect.top;
+            const formatBottomY = formatRect.bottom - flowRect.top;
+            
+            // Draw path from arch to format
+            const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const midY2 = archBottomY + (formatTopY - archBottomY) / 2;
+            path2.setAttribute('d', `M ${archCenterX} ${archBottomY} L ${archCenterX} ${midY2} L ${formatCenterX} ${midY2} L ${formatCenterX} ${formatTopY}`);
+            path2.setAttribute('class', 'connector-path');
+            svg.appendChild(path2);
+            
+            if (downloadBtn && downloadBtn.offsetParent !== null) {
+              const dlRect = downloadBtn.getBoundingClientRect();
+              const dlCenterX = dlRect.left + dlRect.width / 2 - flowRect.left;
+              const dlTopY = dlRect.top - flowRect.top;
+              
+              // Draw path from format to download
+              const path3 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              const midY3 = formatBottomY + (dlTopY - formatBottomY) / 2;
+              path3.setAttribute('d', `M ${formatCenterX} ${formatBottomY} L ${formatCenterX} ${midY3} L ${dlCenterX} ${midY3} L ${dlCenterX} ${dlTopY}`);
+              path3.setAttribute('class', 'connector-path');
+              svg.appendChild(path3);
+            }
+          }
+        }
+      } else {
+        // Windows/Mac: Platform -> Arch -> Download
+        const macArch = document.querySelector('.mac-arch-toggle .arch-btn.active');
+        const winArch = document.querySelector('.windows-arch-toggle .arch-btn.active');
+        const activeArch = macArch && macArch.offsetParent !== null ? macArch : (winArch && winArch.offsetParent !== null ? winArch : null);
+        const downloadBtn = document.getElementById('download-btn');
+        
+        if (activeArch) {
+          const archRect = activeArch.getBoundingClientRect();
+          const archCenterX = archRect.left + archRect.width / 2 - flowRect.left;
+          const archTopY = archRect.top - flowRect.top;
+          const archBottomY = archRect.bottom - flowRect.top;
+          
+          // Draw path from platform to arch
+          const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          const midY1 = platformBottomY + (archTopY - platformBottomY) / 2;
+          path1.setAttribute('d', `M ${platformCenterX} ${platformBottomY} L ${platformCenterX} ${midY1} L ${archCenterX} ${midY1} L ${archCenterX} ${archTopY}`);
+          path1.setAttribute('class', 'connector-path');
+          svg.appendChild(path1);
+          
+          if (downloadBtn) {
+            const dlRect = downloadBtn.getBoundingClientRect();
+            const dlCenterX = dlRect.left + dlRect.width / 2 - flowRect.left;
+            const dlTopY = dlRect.top - flowRect.top;
+            
+            // Draw path from arch to download
+            const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const midY2 = archBottomY + (dlTopY - archBottomY) / 2;
+            path2.setAttribute('d', `M ${archCenterX} ${archBottomY} L ${archCenterX} ${midY2} L ${dlCenterX} ${midY2} L ${dlCenterX} ${dlTopY}`);
+            path2.setAttribute('class', 'connector-path');
+            svg.appendChild(path2);
+          }
+        }
+      }
+    }
+    
     const downloads = {
       'mac-arm': {
         url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/Messenger-macos-arm64.zip',
@@ -855,6 +953,8 @@
       } else {
         updateLinuxFormatDisplay();
       }
+      
+      setTimeout(updateConnectors, 0);
     }
     
     function setLinuxFormat(format) {
@@ -869,6 +969,7 @@
       });
       
       updateLinuxFormatDisplay();
+      setTimeout(updateConnectors, 0);
     }
     
     function updateLinuxFormatDisplay() {
@@ -934,6 +1035,8 @@
       }
       params.set('platform', 'windows');
       window.history.replaceState({}, '', '?' + params.toString());
+      
+      setTimeout(updateConnectors, 0);
     }
 
     function setMacArch(arch) {
@@ -964,6 +1067,8 @@
       }
       params.set('platform', 'mac');
       window.history.replaceState({}, '', '?' + params.toString());
+      
+      setTimeout(updateConnectors, 0);
     }
 
     async function fetchReleaseInfo() {
@@ -1110,6 +1215,8 @@
         params.set('platform', 'windows');
       }
       window.history.replaceState({}, '', '?' + params.toString());
+      
+      setTimeout(updateConnectors, 0);
     }
 
     function init() {
@@ -1213,6 +1320,11 @@
     }
 
     init();
+    
+    // Update connectors on resize
+    window.addEventListener('resize', () => {
+      requestAnimationFrame(updateConnectors);
+    });
   </script>
 </body>
 </html>
