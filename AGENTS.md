@@ -185,7 +185,11 @@ When ready to publish a new version:
 
 ### Linux Build Notes
 
-- **Snap**: Builds for both x64 and ARM64 (using GitHub's free ARM64 runners with LXD configuration)
+- **Snap**: 
+  - **x64**: Built with electron-builder on GitHub Actions
+  - **ARM64**: Built with Snapcraft remote-build (via Launchpad) due to LXD network restrictions in GitHub Actions
 - **Flatpak**: Builds for both x64 and ARM64 (using GitHub's free ARM64 runners)
 - **Test Linux builds on CI** - local macOS/Windows machines may lack required tools
+
+See `SNAP_SETUP.md` for details on Snap ARM64 remote build setup.
 
