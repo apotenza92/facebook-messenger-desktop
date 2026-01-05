@@ -179,11 +179,11 @@ jobs:
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
-          if [ -n "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
-            echo "$SNAPCRAFT_STORE_CREDENTIALS" | snapcraft login --with -
-          else
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
             echo "Warning: SNAPCRAFT_STORE_CREDENTIALS not set. Remote build may fail."
           fi
+          # SNAPCRAFT_STORE_CREDENTIALS is already set as environment variable above
+          # snapcraft will automatically use it
 
       - name: Set version from package.json
         id: version
