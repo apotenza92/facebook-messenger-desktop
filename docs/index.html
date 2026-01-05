@@ -344,7 +344,7 @@
     
     .command-label {
       font-size: 0.8rem;
-      color: var(--text-muted);
+      color: #0084ff;
       margin-bottom: 0.5rem;
       font-weight: 500;
       text-align: center;
@@ -623,7 +623,7 @@
   <script>
     // Generate a curved path with rounded corners
     function createCurvedPath(x1, y1, x2, y2, midY) {
-      const r = 6; // Corner radius
+      const r = 12; // Corner radius (more curvy)
       const goingRight = x2 > x1;
       const goingLeft = x2 < x1;
       
@@ -665,10 +665,11 @@
       const isLinux = linuxFormats.classList.contains('visible');
       
       if (isLinux) {
-        // Linux: Platform -> Arch -> Format -> Download
+        // Linux: Platform -> Arch -> Format -> Download -> Terminal
         const activeArch = document.querySelector('.linux-arch-toggle .arch-btn.active');
         const activeFormat = document.querySelector('.format-btn.active');
         const downloadBtn = document.getElementById('linux-download-btn');
+        const commandLabel = document.getElementById('linux-command-label');
         
         if (activeArch) {
           const archRect = activeArch.getBoundingClientRect();
@@ -700,6 +701,7 @@
               const dlRect = downloadBtn.getBoundingClientRect();
               const dlCenterX = dlRect.left + dlRect.width / 2 - flowRect.left;
               const dlTopY = dlRect.top - flowRect.top;
+              const dlBottomY = dlRect.bottom - flowRect.top;
               
               // Draw path from format to download
               const path3 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -707,15 +709,40 @@
               path3.setAttribute('d', createCurvedPath(formatCenterX, formatBottomY, dlCenterX, dlTopY, midY3));
               path3.setAttribute('class', 'connector-path');
               svg.appendChild(path3);
+              
+              // Draw path from download to terminal label
+              if (commandLabel && commandLabel.offsetParent !== null) {
+                const cmdRect = commandLabel.getBoundingClientRect();
+                const cmdCenterX = cmdRect.left + cmdRect.width / 2 - flowRect.left;
+                const cmdTopY = cmdRect.top - flowRect.top;
+                
+                const path4 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                const midY4 = dlBottomY + (cmdTopY - dlBottomY) / 2;
+                path4.setAttribute('d', createCurvedPath(dlCenterX, dlBottomY, cmdCenterX, cmdTopY, midY4));
+                path4.setAttribute('class', 'connector-path');
+                svg.appendChild(path4);
+              }
+            } else if (commandLabel && commandLabel.offsetParent !== null) {
+              // No download button (e.g. Flatpak), connect format directly to terminal
+              const cmdRect = commandLabel.getBoundingClientRect();
+              const cmdCenterX = cmdRect.left + cmdRect.width / 2 - flowRect.left;
+              const cmdTopY = cmdRect.top - flowRect.top;
+              
+              const path3 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              const midY3 = formatBottomY + (cmdTopY - formatBottomY) / 2;
+              path3.setAttribute('d', createCurvedPath(formatCenterX, formatBottomY, cmdCenterX, cmdTopY, midY3));
+              path3.setAttribute('class', 'connector-path');
+              svg.appendChild(path3);
             }
           }
         }
       } else {
-        // Windows/Mac: Platform -> Arch -> Download
+        // Windows/Mac: Platform -> Arch -> Download -> Terminal (for Mac)
         const macArch = document.querySelector('.mac-arch-toggle .arch-btn.active');
         const winArch = document.querySelector('.windows-arch-toggle .arch-btn.active');
         const activeArch = macArch && macArch.offsetParent !== null ? macArch : (winArch && winArch.offsetParent !== null ? winArch : null);
         const downloadBtn = document.getElementById('download-btn');
+        const macHomebrewSection = document.getElementById('mac-homebrew-section');
         
         if (activeArch) {
           const archRect = activeArch.getBoundingClientRect();
@@ -734,6 +761,7 @@
             const dlRect = downloadBtn.getBoundingClientRect();
             const dlCenterX = dlRect.left + dlRect.width / 2 - flowRect.left;
             const dlTopY = dlRect.top - flowRect.top;
+            const dlBottomY = dlRect.bottom - flowRect.top;
             
             // Draw path from arch to download
             const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -741,6 +769,22 @@
             path2.setAttribute('d', createCurvedPath(archCenterX, archBottomY, dlCenterX, dlTopY, midY2));
             path2.setAttribute('class', 'connector-path');
             svg.appendChild(path2);
+            
+            // For Mac, draw path to Homebrew section
+            if (macHomebrewSection && macHomebrewSection.offsetParent !== null) {
+              const cmdLabel = macHomebrewSection.querySelector('.command-label');
+              if (cmdLabel) {
+                const cmdRect = cmdLabel.getBoundingClientRect();
+                const cmdCenterX = cmdRect.left + cmdRect.width / 2 - flowRect.left;
+                const cmdTopY = cmdRect.top - flowRect.top;
+                
+                const path3 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                const midY3 = dlBottomY + (cmdTopY - dlBottomY) / 2;
+                path3.setAttribute('d', createCurvedPath(dlCenterX, dlBottomY, cmdCenterX, cmdTopY, midY3));
+                path3.setAttribute('class', 'connector-path');
+                svg.appendChild(path3);
+              }
+            }
           }
         }
       }
