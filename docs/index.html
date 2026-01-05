@@ -209,6 +209,63 @@
       z-index: 1;
     }
     
+    .linux-format-toggle {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+    
+    .format-btn {
+      background: none;
+      border: 1px solid var(--border);
+      padding: 0.4rem 0.75rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+      border-radius: 6px;
+    }
+    
+    .format-btn:hover {
+      border-color: #0084ff;
+      color: #0084ff;
+    }
+    
+    .format-btn.active {
+      background: #0084ff;
+      border-color: #0084ff;
+      color: white;
+    }
+    
+    .format-btn.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    
+    .linux-format-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+    
+    .linux-command-section {
+      width: 100%;
+      max-width: 600px;
+    }
+    
+    .linux-format-note {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 0.5rem;
+      background: rgba(0, 132, 255, 0.05);
+      border-radius: 6px;
+      max-width: 400px;
+    }
+    
     .format-list {
       display: flex;
       flex-direction: column;
@@ -458,127 +515,31 @@
         <button class="arch-btn" id="arch-arm64">ARM64</button>
       </div>
       
-      <div class="format-list" id="format-list-x64">
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">AppImage</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage" class="format-download">Download <span class="ext">.AppImage</span></a>
-          </div>
-          <div class="command-label">Download & run via terminal:</div>
-          <div class="format-command">
-            <code>wget -qO facebook-messenger-desktop-x86_64.AppImage https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage && chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Ubuntu / Debian</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb" class="format-download">Download <span class="ext">.deb</span></a>
-          </div>
-          <div class="command-label">Download & install via terminal:</div>
-          <div class="format-command">
-            <code>wget -qO facebook-messenger-desktop-amd64.deb https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb && sudo apt install ./facebook-messenger-desktop-amd64.deb</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Fedora / RHEL</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm" class="format-download">Download <span class="ext">.rpm</span></a>
-          </div>
-          <div class="command-label">Download & install via terminal:</div>
-          <div class="format-command">
-            <code>wget -qO facebook-messenger-desktop-x86_64.rpm https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm && sudo dnf install ./facebook-messenger-desktop-x86_64.rpm</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Snap</span>
-            <a href="https://snapcraft.io/facebook-messenger-desktop" class="format-download" target="_blank">View in Store</a>
-          </div>
-          <div class="command-label">Install via terminal:</div>
-          <div class="format-command">
-            <code>sudo snap install facebook-messenger-desktop</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Flatpak</span>
-          </div>
-          <div class="command-label">Add repository & install:</div>
-          <div class="format-command">
-            <code>flatpak remote-add --if-not-exists --user messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
+      <div class="linux-format-toggle" id="linux-format-toggle">
+        <button class="format-btn active" data-format="appimage">.AppImage</button>
+        <button class="format-btn" data-format="deb">.deb</button>
+        <button class="format-btn" data-format="rpm">.rpm</button>
+        <button class="format-btn" data-format="snap">Snap</button>
+        <button class="format-btn" data-format="flatpak">Flatpak</button>
       </div>
       
-      <div class="format-list" id="format-list-arm64" style="display: none;">
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">AppImage</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage" class="format-download">Download <span class="ext">.AppImage</span></a>
-          </div>
-          <div class="command-label">Download & run via terminal:</div>
+      <div class="linux-format-content" id="linux-format-content">
+        <a href="#" class="download-btn" id="linux-download-btn">
+          <svg class="download-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+          </svg>
+          <span id="linux-btn-text">Download .AppImage</span>
+        </a>
+        <div class="linux-command-section">
+          <div class="command-label" id="linux-command-label">Download & run via terminal:</div>
           <div class="format-command">
-            <code>wget -qO facebook-messenger-desktop-arm64.AppImage https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage && chmod +x facebook-messenger-desktop-arm64.AppImage && ./facebook-messenger-desktop-arm64.AppImage</code>
-            <button class="copy-btn" title="Copy command">
+            <code id="linux-command-code">wget -qO facebook-messenger-desktop-x86_64.AppImage https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage && chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage</code>
+            <button class="copy-btn" title="Copy command" id="linux-copy-btn">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
             </button>
           </div>
         </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Ubuntu / Debian</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb" class="format-download">Download <span class="ext">.deb</span></a>
-          </div>
-          <div class="command-label">Download & install via terminal:</div>
-          <div class="format-command">
-            <code>wget -qO facebook-messenger-desktop-arm64.deb https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb && sudo apt install ./facebook-messenger-desktop-arm64.deb</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item">
-          <div class="format-header">
-            <span class="format-name">Fedora / RHEL</span>
-            <a href="https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm" class="format-download">Download <span class="ext">.rpm</span></a>
-          </div>
-          <div class="command-label">Download & install via terminal:</div>
-          <div class="format-command">
-            <code>wget -qO facebook-messenger-desktop-aarch64.rpm https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm && sudo dnf install ./facebook-messenger-desktop-aarch64.rpm</code>
-            <button class="copy-btn" title="Copy command">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
-          </div>
-        </div>
-        
-        <div class="format-item" style="opacity: 0.6;">
-          <div class="format-header">
-            <span class="format-name">Flatpak</span>
-            <span class="format-desc">x64 only</span>
-          </div>
-          <div class="command-label">Flatpak is only available for x64. Switch to x64 tab above for Flatpak installation.</div>
-        </div>
+        <div class="linux-format-note" id="linux-format-note" style="display: none;"></div>
       </div>
     </div>
     
@@ -719,22 +680,154 @@
     }
 
 
+    // Linux format data
+    const linuxFormats = {
+      x64: {
+        appimage: {
+          url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage',
+          btnText: 'Download .AppImage (x64)',
+          label: 'Download & run via terminal:',
+          command: 'wget -qO facebook-messenger-desktop-x86_64.AppImage https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage && chmod +x facebook-messenger-desktop-x86_64.AppImage && ./facebook-messenger-desktop-x86_64.AppImage'
+        },
+        deb: {
+          url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb',
+          btnText: 'Download .deb (x64)',
+          label: 'Download & install via terminal:',
+          command: 'wget -qO facebook-messenger-desktop-amd64.deb https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-amd64.deb && sudo apt install ./facebook-messenger-desktop-amd64.deb'
+        },
+        rpm: {
+          url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm',
+          btnText: 'Download .rpm (x64)',
+          label: 'Download & install via terminal:',
+          command: 'wget -qO facebook-messenger-desktop-x86_64.rpm https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.rpm && sudo dnf install ./facebook-messenger-desktop-x86_64.rpm'
+        },
+        snap: {
+          url: 'https://snapcraft.io/facebook-messenger-desktop',
+          btnText: 'View in Snap Store',
+          label: 'Install via terminal:',
+          command: 'sudo snap install facebook-messenger-desktop',
+          external: true
+        },
+        flatpak: {
+          url: null,
+          btnText: 'Install via Terminal',
+          label: 'Add repository & install:',
+          command: 'flatpak remote-add --if-not-exists --user messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop',
+          noDownload: true
+        }
+      },
+      arm64: {
+        appimage: {
+          url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage',
+          btnText: 'Download .AppImage (ARM64)',
+          label: 'Download & run via terminal:',
+          command: 'wget -qO facebook-messenger-desktop-arm64.AppImage https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.AppImage && chmod +x facebook-messenger-desktop-arm64.AppImage && ./facebook-messenger-desktop-arm64.AppImage'
+        },
+        deb: {
+          url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb',
+          btnText: 'Download .deb (ARM64)',
+          label: 'Download & install via terminal:',
+          command: 'wget -qO facebook-messenger-desktop-arm64.deb https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-arm64.deb && sudo apt install ./facebook-messenger-desktop-arm64.deb'
+        },
+        rpm: {
+          url: 'https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm',
+          btnText: 'Download .rpm (ARM64)',
+          label: 'Download & install via terminal:',
+          command: 'wget -qO facebook-messenger-desktop-aarch64.rpm https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-aarch64.rpm && sudo dnf install ./facebook-messenger-desktop-aarch64.rpm'
+        },
+        snap: {
+          disabled: true,
+          note: 'Snap is only available for x64. Switch to x64 tab for Snap installation.'
+        },
+        flatpak: {
+          disabled: true,
+          note: 'Flatpak is only available for x64. Switch to x64 tab for Flatpak installation.'
+        }
+      }
+    };
+    
+    let currentLinuxArch = 'x64';
+    let currentLinuxFormat = 'appimage';
+    
     function setLinuxArch(arch) {
-      const x64List = document.getElementById('format-list-x64');
-      const arm64List = document.getElementById('format-list-arm64');
+      currentLinuxArch = arch;
       const x64Btn = document.getElementById('arch-x64');
       const arm64Btn = document.getElementById('arch-arm64');
       
       if (arch === 'arm64') {
-        x64List.style.display = 'none';
-        arm64List.style.display = 'flex';
         x64Btn.classList.remove('active');
         arm64Btn.classList.add('active');
       } else {
-        x64List.style.display = 'flex';
-        arm64List.style.display = 'none';
         x64Btn.classList.add('active');
         arm64Btn.classList.remove('active');
+      }
+      
+      // Update format button states (some disabled for ARM64)
+      document.querySelectorAll('.format-btn').forEach(btn => {
+        const format = btn.getAttribute('data-format');
+        const formatData = linuxFormats[arch][format];
+        if (formatData && formatData.disabled) {
+          btn.classList.add('disabled');
+        } else {
+          btn.classList.remove('disabled');
+        }
+      });
+      
+      // If current format is disabled, switch to appimage
+      const currentFormatData = linuxFormats[arch][currentLinuxFormat];
+      if (currentFormatData && currentFormatData.disabled) {
+        setLinuxFormat('appimage');
+      } else {
+        updateLinuxFormatDisplay();
+      }
+    }
+    
+    function setLinuxFormat(format) {
+      currentLinuxFormat = format;
+      
+      // Update button states
+      document.querySelectorAll('.format-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.getAttribute('data-format') === format) {
+          btn.classList.add('active');
+        }
+      });
+      
+      updateLinuxFormatDisplay();
+    }
+    
+    function updateLinuxFormatDisplay() {
+      const formatData = linuxFormats[currentLinuxArch][currentLinuxFormat];
+      const downloadBtn = document.getElementById('linux-download-btn');
+      const btnText = document.getElementById('linux-btn-text');
+      const commandLabel = document.getElementById('linux-command-label');
+      const commandCode = document.getElementById('linux-command-code');
+      const formatNote = document.getElementById('linux-format-note');
+      const commandSection = document.querySelector('.linux-command-section');
+      
+      if (formatData.disabled) {
+        downloadBtn.style.display = 'none';
+        commandSection.style.display = 'none';
+        formatNote.style.display = 'block';
+        formatNote.textContent = formatData.note;
+      } else {
+        formatNote.style.display = 'none';
+        commandSection.style.display = 'block';
+        commandLabel.textContent = formatData.label;
+        commandCode.textContent = formatData.command;
+        
+        if (formatData.noDownload) {
+          downloadBtn.style.display = 'none';
+        } else {
+          downloadBtn.style.display = 'flex';
+          downloadBtn.href = formatData.url;
+          btnText.textContent = formatData.btnText;
+          if (formatData.external) {
+            downloadBtn.target = '_blank';
+          } else {
+            downloadBtn.removeAttribute('target');
+          }
+        }
       }
     }
 
@@ -967,6 +1060,28 @@
       // Linux arch toggle buttons
       document.getElementById('arch-x64').addEventListener('click', () => setLinuxArch('x64'));
       document.getElementById('arch-arm64').addEventListener('click', () => setLinuxArch('arm64'));
+      
+      // Linux format toggle buttons
+      document.querySelectorAll('.format-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const format = btn.getAttribute('data-format');
+          const formatData = linuxFormats[currentLinuxArch][format];
+          if (!formatData || !formatData.disabled) {
+            setLinuxFormat(format);
+          }
+        });
+      });
+      
+      // Linux copy button
+      document.getElementById('linux-copy-btn').addEventListener('click', () => {
+        const code = document.getElementById('linux-command-code').textContent;
+        navigator.clipboard.writeText(code);
+        const copyBtn = document.getElementById('linux-copy-btn');
+        copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+        setTimeout(() => {
+          copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+        }, 2000);
+      });
       
       // Windows arch toggle buttons
       document.getElementById('windows-arch-x64').addEventListener('click', () => setWindowsArch('x64'));
