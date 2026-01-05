@@ -8,6 +8,8 @@ on:
   push:
     tags:
       - 'v*'  # Triggers on version tags like v1.0.0
+    branches:
+      - test-snap-arm64  # Test branch for ARM64 snap builds
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
@@ -184,6 +186,14 @@ jobs:
           else
             echo "Warning: SNAPCRAFT_STORE_CREDENTIALS not set. Remote build may fail."
           fi
+
+      - name: Set version from package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          # Update snapcraft.yaml with version (git version extraction may not work on branches)
+          sed -i "s/^version:.*/version: $VERSION/" snapcraft.yaml || echo "Warning: Could not update version in snapcraft.yaml"
 
       - name: Remote Build Snap for ARM64
         run: |
