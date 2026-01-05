@@ -1,12 +1,5 @@
 # Changelog
 
-## [0.9.7] - 2026-01-06
-
-### Fixed
-- Fixed Flatpak repository deployment to GitHub Pages
-  - Previous workflow incorrectly added all source files to gh-pages branch
-  - Now properly clones gh-pages separately and only copies flatpak repo files
-
 ## [0.9.6] - 2026-01-06
 
 ### Changed
@@ -16,6 +9,11 @@
   - Snapcraft automatically builds and publishes both amd64 and arm64 snaps
   - Added .launchpad.yaml for auto-release to stable channel
 - Linux ARM64 job now builds all package types (AppImage, deb, rpm, flatpak) not just flatpak
+
+### Fixed
+- Fixed Flatpak repository deployment to GitHub Pages
+  - Previous workflow incorrectly added all source files to gh-pages branch
+  - Now properly clones gh-pages separately and only copies flatpak repo files
 
 ## [0.9.5] - 2026-01-06
 

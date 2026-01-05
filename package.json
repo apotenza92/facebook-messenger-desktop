@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "0.9.7",
+  "version": "0.9.5",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
