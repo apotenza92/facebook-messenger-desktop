@@ -405,15 +405,16 @@
       right: 0;
       top: 0;
       bottom: 0;
-      background: linear-gradient(to right, transparent, var(--code-bg) 30%);
+      background: var(--code-bg);
       border: none;
+      border-left: 1px solid var(--border);
       cursor: pointer;
-      padding: 0.25rem 0.75rem 0.25rem 1.5rem;
+      padding: 0.25rem 0.75rem;
       color: var(--text-muted);
       transition: color 0.2s ease;
       display: flex;
       align-items: center;
-      border-radius: 0 8px 8px 0;
+      border-radius: 0 7px 7px 0;
     }
     
     .copy-btn:hover {
