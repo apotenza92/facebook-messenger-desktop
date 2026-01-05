@@ -454,6 +454,12 @@
       border-radius: 5px;
       font-weight: 500;
       font-size: 0.75rem;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    
+    .version-badge:hover {
+      background: rgba(0, 132, 255, 0.2);
     }
     
     .version-info svg {
@@ -492,7 +498,7 @@
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
           </svg>
-          <span class="version-badge" id="version-badge">...</span>
+          <a href="#" class="version-badge" id="version-badge" title="View release notes">...</a>
         </span>
         <span id="release-date"></span>
       </div>
@@ -917,6 +923,8 @@
         
         const versionBadge = document.getElementById('version-badge');
         versionBadge.textContent = release.tag_name || release.name;
+        versionBadge.href = release.html_url;
+        versionBadge.target = '_blank';
         
         const releaseDateEl = document.getElementById('release-date');
         if (release.published_at) {
