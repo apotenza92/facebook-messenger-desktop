@@ -333,19 +333,55 @@ jobs:
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic
 
-      - name: Wait for Snapcraft builds to complete
-        run: |
-          echo "Waiting 45 minutes for Snapcraft builds to complete..."
-          echo "(Queue time can be 10-30 min + build time 15-25 min)"
-          echo "Builds are running at: https://snapcraft.io/facebook-messenger-desktop/builds"
-          sleep 2700  # 45 minutes
-
-      - name: Promote to stable channel
+      - name: Wait for Snapcraft builds and promote to stable
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
-          # Get the latest revisions from edge channel
-          echo "Checking edge channel for latest revisions..."
+          echo "Monitoring Snapcraft builds..."
+          echo "Builds page: https://snapcraft.io/facebook-messenger-desktop/builds"
+          
+          # Get current edge revisions before new builds complete
+          get_edge_revs() {
+            snapcraft status facebook-messenger-desktop 2>/dev/null | grep -E "latest/edge" | awk '{print $2, $3}' | sort
+          }
+          
+          INITIAL_REVS=$(get_edge_revs)
+          echo "Current edge revisions:"
+          echo "$INITIAL_REVS"
+          
+          # Poll every 2 minutes for up to 60 minutes
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+          
+          echo ""
+          echo "Waiting for new builds to appear in edge channel..."
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Check $ATTEMPT/$MAX_ATTEMPTS ($(date +%H:%M:%S))"
+            
+            CURRENT_REVS=$(get_edge_revs)
+            
+            # Check if revisions changed (new builds completed)
+            if [ "$CURRENT_REVS" != "$INITIAL_REVS" ]; then
+              echo ""
+              echo "✅ New builds detected!"
+              echo "New edge revisions:"
+              echo "$CURRENT_REVS"
+              break
+            fi
+            
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo ""
+              echo "⏰ Timeout after 60 minutes. Proceeding with current revisions..."
+              break
+            fi
+            
+            sleep 120  # Wait 2 minutes between checks
+          done
+          
+          echo ""
+          echo "Promoting to stable channel..."
           snapcraft status facebook-messenger-desktop
           
           # Get revision numbers for each architecture from edge
@@ -371,7 +407,8 @@ jobs:
             echo "Warning: No arm64 revision found in edge channel"
           fi
           
-          echo "Snap promotion complete!"
+          echo ""
+          echo "✅ Snap promotion complete!"
           snapcraft status facebook-messenger-desktop
 
   update-flatpak-repo:
