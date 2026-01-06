@@ -141,13 +141,13 @@ When ready to publish a new version:
    - Format: `## [X.Y.Z] - YYYY-MM-DD`
    - Never use bold (`**text**`) in changelog entries - keep it plain text
 
-2. Run `npm version` to bump version AND create a git tag:
+2. Run `npm version` to bump version AND create an **annotated** git tag:
    ```bash
    npm version patch   # 0.6.4 → 0.6.5 (bug fixes)
    npm version minor   # 0.6.4 → 0.7.0 (new features)
    npm version major   # 0.6.4 → 1.0.0 (breaking changes)
    ```
-   This automatically updates `package.json`, `package-lock.json`, commits, and creates a `vX.Y.Z` tag.
+   This automatically updates `package.json`, `package-lock.json`, commits, and creates an annotated `vX.Y.Z` tag.
 
 3. **STOP and wait for user permission** before pushing.
 
@@ -157,9 +157,18 @@ When ready to publish a new version:
    ```
 
 **Important:**
+- **Always use `npm version`** - it creates annotated tags which `--follow-tags` will push
 - Do NOT use `npm version patch --no-git-tag-version` - this skips the tag which is needed to trigger releases
 - Never manually edit the version in `package.json` - always use `npm version` to keep files in sync
 - The GitHub Actions "Build and Release" workflow is triggered by version tags (e.g., `v0.6.7`)
+
+**Why this matters:** Git has two types of tags:
+- **Annotated tags** (created by `npm version`) - Full objects with metadata; pushed by `--follow-tags`
+- **Lightweight tags** (created by `git tag v1.0.0`) - Simple pointers; NOT pushed by `--follow-tags`
+
+If you ever need to manually recreate a tag, either:
+- Use `git tag -a v1.0.0 -m "Release v1.0.0"` (annotated), OR
+- Push explicitly with `git push origin v1.0.0`
 
 ### CRITICAL: Version Management Rules
 
