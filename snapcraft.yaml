@@ -17,13 +17,22 @@ architectures:
 
 apps:
   facebook-messenger-desktop:
-    command: desktop-launch $SNAP/opt/Messenger/facebook-messenger-desktop
+    command: opt/Messenger/facebook-messenger-desktop
     plugs:
-      - default
-      - camera
+      - desktop
+      - desktop-legacy
+      - home
+      - x11
+      - wayland
+      - unity7
+      - browser-support
+      - network
+      - network-bind
+      - pulseaudio
+      - audio-playback
       - audio-record
+      - camera
       - removable-media
-    desktop: com.facebook.messenger.desktop
     environment:
       TMPDIR: $XDG_RUNTIME_DIR
       DISABLE_WAYLAND: 1
@@ -81,42 +90,37 @@ parts:
       cp package.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
       
       # Create launcher script
-      cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'EOF'
-      #!/bin/bash
-      cd "$(dirname "$0")"
-      export TMPDIR="${XDG_RUNTIME_DIR:-/tmp}"
-      exec ./electron/electron dist/main/main.js "$@"
-      EOF
+      cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'LAUNCHER_EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+export TMPDIR="${XDG_RUNTIME_DIR:-/tmp}"
+exec ./electron/electron dist/main/main.js "$@"
+LAUNCHER_EOF
       chmod +x $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop
       
-      # Create desktop file
-      mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui
-      cat > $SNAPCRAFT_PART_INSTALL/meta/gui/com.facebook.messenger.desktop << EOF
-      [Desktop Entry]
-      Name=Messenger
-      Comment=Unofficial desktop client for Facebook Messenger
-      Exec=facebook-messenger-desktop
-      Icon=facebook-messenger-desktop
-      Type=Application
-      Categories=Network;InstantMessaging;Chat;
-      StartupWMClass=Messenger
-      EOF
+      # Create desktop file in the standard location
+      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
+      cat > $SNAPCRAFT_PART_INSTALL/usr/share/applications/facebook-messenger-desktop.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Name=Messenger
+Comment=Unofficial desktop client for Facebook Messenger
+Exec=facebook-messenger-desktop
+Icon=\${SNAP}/meta/gui/icon.png
+Type=Application
+Categories=Network;InstantMessaging;Chat;
+StartupWMClass=Messenger
+DESKTOP_EOF
       
-      # Copy icons
-      mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui/icons
+      # Copy snap icon to meta/gui for snap store
+      mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui
+      if [ -f assets/icons/linux/256x256.png ]; then
+        cp assets/icons/linux/256x256.png $SNAPCRAFT_PART_INSTALL/meta/gui/icon.png
+      fi
+      
+      # Copy icons to standard hicolor location
       for size in 16 22 24 32 48 64 72 96 128 256 512; do
         if [ -f assets/icons/linux/${size}x${size}.png ]; then
-          mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui/icons/hicolor/${size}x${size}/apps
-          cp assets/icons/linux/${size}x${size}.png $SNAPCRAFT_PART_INSTALL/meta/gui/icons/hicolor/${size}x${size}/apps/facebook-messenger-desktop.png
+          mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/${size}x${size}/apps
+          cp assets/icons/linux/${size}x${size}.png $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/${size}x${size}/apps/facebook-messenger-desktop.png
         fi
       done
-
-  desktop-gtk3:
-    plugin: nil
-    after: [messenger-app]
-    build-packages:
-      - desktop-file-utils
-    override-prime: |
-      # Desktop integration - ensure desktop file is correct
-      desktop-file-edit --set-key="Exec" --set-value="facebook-messenger-desktop" $SNAPCRAFT_PRIME/meta/gui/com.facebook.messenger.desktop || true
-
