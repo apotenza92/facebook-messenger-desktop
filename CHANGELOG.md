@@ -2,6 +2,10 @@
 
 ## [1.0.2] - 2026-01-06
 
+### Added
+- Automatic Snap promotion to stable channel after GitHub releases
+  - New releases now automatically get promoted from edge to stable on Snap Store
+
 ### Fixed
 - Linux deb/rpm: Icon not appearing in application menu (was showing generic gear icon)
   - Fixed icon name mismatch between desktop entry and installed icons
