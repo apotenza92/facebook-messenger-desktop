@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.0] - 2026-01-06
+
+### Fixed
+- Flatpak repository not accessible from self-hosted repo
+  - GitHub Pages was serving from main branch /docs folder, but Flatpak repo was deployed to gh-pages branch
+  - Now correctly deploys Flatpak repo to docs/flatpak/repo on main branch
+  - Added .nojekyll file to prevent Jekyll from ignoring OSTree files
+
 ## [0.9.9] - 2026-01-06
 
 ### Added

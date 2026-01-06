@@ -414,27 +414,18 @@ jobs:
 
       - name: Deploy to GitHub Pages
         run: |
-          # Clone gh-pages branch into separate directory
-          git clone --single-branch --branch gh-pages "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages-deploy 2>/dev/null || {
-            # If gh-pages doesn't exist, create empty directory and initialize
-            echo "gh-pages branch doesn't exist, creating it..."
-            mkdir gh-pages-deploy
-            cd gh-pages-deploy
-            git init
-            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-            git checkout -b gh-pages
-            cd ..
-          }
+          # Clone main branch to update the docs folder
+          git clone --single-branch --branch main "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main-deploy
           
-          # Copy flatpak repo to gh-pages
-          mkdir -p gh-pages-deploy/flatpak
-          rm -rf gh-pages-deploy/flatpak/repo
-          cp -r flatpak-repo gh-pages-deploy/flatpak/repo
+          # Copy flatpak repo to docs/flatpak/repo (GitHub Pages serves from docs/ on main)
+          mkdir -p main-deploy/docs/flatpak
+          rm -rf main-deploy/docs/flatpak/repo
+          cp -r flatpak-repo main-deploy/docs/flatpak/repo
           
           # Commit and push
-          cd gh-pages-deploy
+          cd main-deploy
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add flatpak/
+          git add docs/flatpak/
           git commit -m "Update Flatpak repository to v${{ steps.version.outputs.VERSION }}" || echo "No changes to commit"
-          git push origin gh-pages
+          git push origin main
