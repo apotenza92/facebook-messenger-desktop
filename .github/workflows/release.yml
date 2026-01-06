@@ -98,8 +98,10 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  build-linux-x64:
-    name: Build Linux x64
+  # Builds all Linux packages for BOTH x64 and ARM64 (cross-compilation)
+  # Produces: AppImage, deb, rpm, flatpak for both architectures
+  build-linux:
+    name: Build Linux
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -136,7 +138,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64-build
+          name: linux-build
           path: |
             release/*.AppImage
             release/*.deb
@@ -146,8 +148,10 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  build-linux-arm64:
-    name: Build Linux ARM64
+  # Builds ARM64 Flatpak natively on ARM64 runner (faster/more reliable than cross-compile)
+  # The build-linux job also produces ARM64 Flatpak, but native build is preferred
+  build-flatpak-arm64:
+    name: Build Flatpak ARM64 (Native)
     runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout code
@@ -184,7 +188,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-build
+          name: flatpak-arm64-build
           path: |
             release/*.flatpak
           retention-days: 30
@@ -201,7 +205,7 @@ jobs:
   
   release:
     name: Create Release
-    needs: [build-macos, build-windows, build-linux-x64, build-linux-arm64]
+    needs: [build-macos, build-windows, build-linux, build-flatpak-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
@@ -381,17 +385,17 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Download Linux x64 artifacts
+      - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-x64-build
-          path: artifacts/x64
+          name: linux-build
+          path: artifacts/linux
 
-      - name: Download Linux ARM64 artifacts
+      - name: Download Flatpak ARM64 artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-arm64-build
-          path: artifacts/arm64
+          name: flatpak-arm64-build
+          path: artifacts/flatpak-arm64
 
       - name: Install Flatpak tools
         run: |
@@ -432,15 +436,15 @@ jobs:
           echo "Initializing OSTree repository..."
           ostree init --repo="$REPO_PATH" --mode=archive-z2
           
-          # Import x64 flatpak
-          X64_FLATPAK=$(find artifacts/x64 -name "*.flatpak" | head -1)
+          # Import x64 flatpak (from linux-build, filename: *-x86_64.flatpak)
+          X64_FLATPAK=$(find artifacts/linux -name "*x86_64*.flatpak" | head -1)
           if [ -n "$X64_FLATPAK" ]; then
             echo "Importing x64 flatpak: $X64_FLATPAK"
             flatpak build-import-bundle "$REPO_PATH" "$X64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
           fi
           
-          # Import ARM64 flatpak
-          ARM64_FLATPAK=$(find artifacts/arm64 -name "*.flatpak" | head -1)
+          # Import ARM64 flatpak (from flatpak-arm64-build, filename: *-aarch64.flatpak)
+          ARM64_FLATPAK=$(find artifacts/flatpak-arm64 -name "*.flatpak" | head -1)
           if [ -n "$ARM64_FLATPAK" ]; then
             echo "Importing ARM64 flatpak: $ARM64_FLATPAK"
             flatpak build-import-bundle "$REPO_PATH" "$ARM64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
