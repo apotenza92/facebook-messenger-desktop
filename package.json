@@ -63,6 +63,9 @@
       "dist/**/*",
       "assets/**/*"
     ],
+    "asarUnpack": [
+      "assets/icons/linux/**/*"
+    ],
     "mac": {
       "category": "public.app-category.social-networking",
       "target": "zip",

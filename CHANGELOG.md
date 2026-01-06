@@ -6,7 +6,10 @@
 - Snapcraft builds failing due to YAML indentation issues in heredocs
 - Desktop file not being generated correctly for Snap packages
 - First successful ARM64 Snap build
-- Flatpak icon not displaying (Icon name mismatch between desktop entry and installed icons)
+- Linux deb/rpm: Icon not appearing in application menu (was showing generic gear icon)
+  - Fixed icon name mismatch between desktop entry and installed icons
+  - Added asarUnpack config to extract icons from asar archive for post-install script
+  - Icons now correctly installed to /usr/share/icons/hicolor/
 - Added note to uninstall dialog about package manager uninstall for Flatpak/Snap/apt/dnf users
 
 ## [1.0.0] - 2026-01-06

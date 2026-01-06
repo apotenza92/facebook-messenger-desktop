@@ -17,9 +17,15 @@ fi
 
 # Install icons to hicolor theme (electron-builder may not do this properly)
 # This ensures the app icon appears in the applications menu
-ICONS_SRC="/opt/Messenger/resources/app/assets/icons/linux"
+# Icons are unpacked from asar to app.asar.unpacked/ via asarUnpack config
+ICONS_SRC="/opt/Messenger/resources/app.asar.unpacked/assets/icons/linux"
 ICONS_DST="/usr/share/icons/hicolor"
 APP_ICON="facebook-messenger-desktop.png"
+
+# Fallback to old location if not using asar unpack (for backwards compatibility)
+if [ ! -d "$ICONS_SRC" ] && [ -d "/opt/Messenger/resources/app/assets/icons/linux" ]; then
+    ICONS_SRC="/opt/Messenger/resources/app/assets/icons/linux"
+fi
 
 if [ -d "$ICONS_SRC" ]; then
     # Install each icon size explicitly to avoid shell variable syntax issues
