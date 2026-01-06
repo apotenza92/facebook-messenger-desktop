@@ -177,8 +177,8 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables (ARM64)
-        run: npm run dist:linux:arm
+      - name: Build distributables (Flatpak ARM64)
+        run: npx electron-builder --linux flatpak --arm64 --publish=never
         timeout-minutes: 45
 
       - name: Upload artifacts
@@ -186,9 +186,6 @@ jobs:
         with:
           name: linux-arm64-build
           path: |
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
             release/*.flatpak
           retention-days: 30
           if-no-files-found: error

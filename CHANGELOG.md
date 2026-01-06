@@ -8,7 +8,6 @@
   - Removed update-snapstore job from release workflow
   - Snapcraft automatically builds and publishes both amd64 and arm64 snaps
   - Added .launchpad.yaml for auto-release to stable channel
-- Linux ARM64 job now builds all package types (AppImage, deb, rpm, flatpak) not just flatpak
 
 ### Fixed
 - Fixed Flatpak repository deployment to GitHub Pages
