@@ -133,6 +133,8 @@ This does NOT trigger a release - it just updates the main branch.
 
 ### Creating a Release
 
+**⚠️ NEVER push release tags (`git push --follow-tags`) without EXPLICIT permission from the user in a separate, independent message.** Do not assume permission is granted as part of a larger request. Wait for the user to explicitly say "push the release" or similar before running any push command that includes tags.
+
 When ready to publish a new version:
 
 1. Add entry to `CHANGELOG.md` (newest at top)
@@ -147,7 +149,9 @@ When ready to publish a new version:
    ```
    This automatically updates `package.json`, `package-lock.json`, commits, and creates a `vX.Y.Z` tag.
 
-3. Push with tags to trigger the release workflow:
+3. **STOP and wait for user permission** before pushing.
+
+4. Only after explicit user approval, push with tags to trigger the release workflow:
    ```bash
    git push --follow-tags
    ```
