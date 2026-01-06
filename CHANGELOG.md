@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.6] - 2026-01-06
+## [0.9.7] - 2026-01-06
 
 ### Changed
 - All Snap builds now handled by Snapcraft's "Build from GitHub" service
