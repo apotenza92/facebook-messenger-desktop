@@ -99,6 +99,14 @@ const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
 const movePromptFile = path.join(app.getPath('userData'), 'move-to-applications-prompted.json');
 const notificationPermissionFile = path.join(app.getPath('userData'), 'notification-permission-requested.json');
 const snapHelpShownFile = path.join(app.getPath('userData'), 'snap-help-shown.json');
+const iconThemeFile = path.join(app.getPath('userData'), 'icon-theme.json');
+
+// Icon theme: 'light', 'dark', or 'system' (default)
+// 'system' mode: Auto-switches between our light/dark icons based on OS dark mode
+// This ensures our dark icon (with white interior) is shown instead of system's
+// automatic darkening which would make everything dark including the interior
+type IconTheme = 'light' | 'dark' | 'system';
+let currentIconTheme: IconTheme = 'system';
 
 // Request single instance lock early (before app.whenReady) to prevent race conditions
 // on Linux/Windows where multiple instances might start before lock is checked
@@ -359,6 +367,139 @@ function removeFromDockAndTaskbar(): void {
     });
     child.unref();
   }
+}
+
+// ===== Icon Theme Functions =====
+
+function loadIconTheme(): IconTheme {
+  try {
+    if (fs.existsSync(iconThemeFile)) {
+      const raw = fs.readFileSync(iconThemeFile, 'utf8');
+      const parsed = JSON.parse(raw);
+      // Handle migration from old 'native' setting
+      if (parsed.theme === 'native') {
+        return 'system';
+      }
+      if (parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system') {
+        console.log('[Icon Theme] Loaded theme:', parsed.theme);
+        return parsed.theme;
+      }
+    }
+  } catch (e) {
+    console.warn('[Icon Theme] Failed to load theme, using default:', e);
+  }
+  console.log('[Icon Theme] Using default theme: system');
+  return 'system';
+}
+
+function saveIconTheme(theme: IconTheme): void {
+  try {
+    fs.writeFileSync(iconThemeFile, JSON.stringify({ theme }));
+    console.log('[Icon Theme] Saved theme:', theme);
+  } catch (e) {
+    console.warn('[Icon Theme] Failed to save theme:', e);
+  }
+}
+
+function shouldUseDarkIcon(): boolean {
+  if (currentIconTheme === 'light') return false;
+  if (currentIconTheme === 'dark') return true;
+  // 'system' mode: use nativeTheme to determine
+  return nativeTheme.shouldUseDarkColors;
+}
+
+function getIconSubdir(): string {
+  // Returns 'dark' or '' (empty for light/default icons)
+  return shouldUseDarkIcon() ? 'dark' : '';
+}
+
+function applyCurrentIconTheme(): void {
+  const useDark = shouldUseDarkIcon();
+  console.log(`[Icon Theme] Applying theme, useDark=${useDark}, currentIconTheme=${currentIconTheme}`);
+  
+  // Update window icon (Windows/Linux only)
+  if (process.platform !== 'darwin' && mainWindow && !mainWindow.isDestroyed()) {
+    const icon = getWindowIcon();
+    if (icon) {
+      mainWindow.setIcon(icon);
+      console.log('[Icon Theme] Window icon updated');
+    }
+  }
+  
+  // Update macOS dock icon
+  if (process.platform === 'darwin' && app.dock) {
+    if (currentIconTheme === 'system') {
+      // In 'system' mode on macOS: Use native bundle icon
+      // This allows Tahoe's glass/clear effects AND automatic dark mode handling
+      app.dock.setIcon(null as unknown as Electron.NativeImage);
+      console.log('[Icon Theme] macOS system mode - using native bundle icon (system effects enabled)');
+    } else {
+      // Explicit light/dark selection - use our custom icon
+      const dockIcon = getDockIcon();
+      if (dockIcon) {
+        app.dock.setIcon(dockIcon);
+        console.log('[Icon Theme] Dock icon updated (explicit selection)');
+      }
+    }
+  }
+  
+  // Update tray icon (Windows/Linux only - macOS uses template)
+  if (tray && process.platform !== 'darwin') {
+    const trayIconPath = getTrayIconPath();
+    if (trayIconPath) {
+      tray.setImage(trayIconPath);
+      console.log('[Icon Theme] Tray icon updated');
+    }
+  }
+}
+
+function setIconTheme(theme: IconTheme): void {
+  if (theme === currentIconTheme) return;
+  
+  currentIconTheme = theme;
+  saveIconTheme(theme);
+  applyCurrentIconTheme();
+  
+  // Rebuild menu to update checkmarks
+  createApplicationMenu();
+}
+
+function getDockIcon(): Electron.NativeImage | undefined {
+  // For macOS dock, get the appropriate PNG icon
+  const appPath = app.getAppPath();
+  const subdir = getIconSubdir();
+  
+  // The icon.png in dark or root directory
+  const possiblePaths: string[] = [];
+  if (subdir) {
+    possiblePaths.push(
+      path.join(appPath, 'assets/icons', subdir, 'icon.png'),
+      path.join(__dirname, '../../assets/icons', subdir, 'icon.png'),
+      path.join(process.cwd(), 'assets/icons', subdir, 'icon.png'),
+    );
+  }
+  // Fallback to light icons
+  possiblePaths.push(
+    path.join(appPath, 'assets/icons/icon.png'),
+    path.join(__dirname, '../../assets/icons/icon.png'),
+    path.join(process.cwd(), 'assets/icons/icon.png'),
+  );
+  
+  for (const iconPath of possiblePaths) {
+    if (fs.existsSync(iconPath)) {
+      try {
+        const icon = nativeImage.createFromPath(iconPath);
+        if (!icon.isEmpty()) {
+          console.log('[Icon] Created dock nativeImage from:', iconPath);
+          return icon;
+        }
+      } catch (e) {
+        console.error('[Icon] Failed to create dock nativeImage:', e);
+      }
+    }
+  }
+  
+  return undefined;
 }
 
 function loadWindowState(): WindowState {
@@ -1077,6 +1218,7 @@ function getWindowIcon(): Electron.NativeImage | undefined {
   // For Windows taskbar, ICO files work better as they contain multiple sizes
   // For Linux, PNG is the standard format
   const appPath = app.getAppPath();
+  const subdir = getIconSubdir();
   
   // On Windows, try ICO first (contains multiple sizes for taskbar), then PNG
   // On Linux, use PNG
@@ -1086,6 +1228,15 @@ function getWindowIcon(): Electron.NativeImage | undefined {
   
   const possiblePaths: string[] = [];
   for (const iconFile of iconFiles) {
+    // Try dark icons first if dark mode
+    if (subdir) {
+      possiblePaths.push(
+        path.join(appPath, 'assets/icons', subdir, iconFile),
+        path.join(__dirname, '../../assets/icons', subdir, iconFile),
+        path.join(process.cwd(), 'assets/icons', subdir, iconFile),
+      );
+    }
+    // Fallback to light icons
     possiblePaths.push(
       path.join(appPath, 'assets/icons', iconFile),
       path.join(__dirname, '../../assets/icons', iconFile),
@@ -1115,18 +1266,32 @@ function getWindowIcon(): Electron.NativeImage | undefined {
 function getTrayIconPath(): string | undefined {
   const trayDir = path.join(app.getAppPath(), 'assets', 'tray');
   const devTrayDir = path.join(process.cwd(), 'assets', 'tray');
+  const subdir = getIconSubdir();
 
+  // macOS uses template icons (always same), Windows/Linux use themed icons
   const platformIcon =
     process.platform === 'win32'
       ? 'icon.ico'
       : process.platform === 'darwin'
-      ? 'iconTemplate.png'
+      ? 'iconTemplate.png'  // macOS template icons are not themed
       : 'icon-rounded.png';  // Linux: use the nicer rounded icon
 
-  const possiblePaths = [
+  const possiblePaths: string[] = [];
+  
+  // For Windows/Linux, try dark icons first if in dark mode
+  // macOS uses template icons which don't need theming
+  if (subdir && process.platform !== 'darwin') {
+    possiblePaths.push(
+      path.join(trayDir, subdir, platformIcon),
+      path.join(devTrayDir, subdir, platformIcon),
+    );
+  }
+  
+  // Fallback to light/default icons
+  possiblePaths.push(
     path.join(trayDir, platformIcon),
     path.join(devTrayDir, platformIcon),
-  ];
+  );
 
   try {
     for (const iconPath of possiblePaths) {
@@ -2163,6 +2328,39 @@ function createApplicationMenu(): void {
     click: () => { openGitHubPage(); },
   };
 
+  // Menu item for opening system notification settings
+  const notificationSettingsMenuItem: Electron.MenuItemConstructorOptions = {
+    label: 'Notification Settings…',
+    click: () => {
+      openNotificationSettings();
+    },
+  };
+
+  // Icon theme submenu - allows switching between light/dark/system icons
+  const iconThemeSubmenu: Electron.MenuItemConstructorOptions = {
+    label: 'Icon Appearance',
+    submenu: [
+      {
+        label: 'Match System',
+        type: 'radio',
+        checked: currentIconTheme === 'system',
+        click: () => { setIconTheme('system'); },
+      },
+      {
+        label: 'Light Icon',
+        type: 'radio',
+        checked: currentIconTheme === 'light',
+        click: () => { setIconTheme('light'); },
+      },
+      {
+        label: 'Dark Icon',
+        type: 'radio',
+        checked: currentIconTheme === 'dark',
+        click: () => { setIconTheme('dark'); },
+      },
+    ],
+  };
+
   // Dev-only menu for testing features (only included in menu when isDev is true)
   const developMenu: Electron.MenuItemConstructorOptions = {
     label: 'Develop',
@@ -2256,6 +2454,8 @@ function createApplicationMenu(): void {
           { type: 'separator' },
           viewOnGitHubMenuItem,
           checkUpdatesMenuItem,
+          notificationSettingsMenuItem,
+          iconThemeSubmenu,
           { type: 'separator' },
           { role: 'services' as const },
           { type: 'separator' },
@@ -2290,6 +2490,8 @@ function createApplicationMenu(): void {
     {
       label: 'File',
       submenu: [
+        iconThemeSubmenu,
+        { type: 'separator' },
         { role: 'quit' as const },
       ],
     },
@@ -2324,6 +2526,7 @@ function createApplicationMenu(): void {
       submenu: [
         viewOnGitHubMenuItem,
         checkUpdatesMenuItem,
+        notificationSettingsMenuItem,
         { type: 'separator' },
         uninstallMenuItem,
         { type: 'separator' },
@@ -2365,6 +2568,28 @@ function setupIpcHandlers(): void {
   // Handle clear badge request
   ipcMain.on('clear-badge', () => {
     badgeManager.clearBadge();
+  });
+
+  // Handle incoming call - bring window to foreground
+  // This is triggered when Messenger shows an incoming call popup
+  ipcMain.on('incoming-call', () => {
+    console.log('[IPC] Incoming call detected - bringing window to foreground');
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Restore if minimized
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      // Show the window (unhides if hidden)
+      mainWindow.show();
+      // Focus the window to bring it to foreground
+      mainWindow.focus();
+      
+      // On macOS, also bounce the dock icon to get user attention
+      if (process.platform === 'darwin' && app.dock) {
+        app.dock.bounce('critical');
+      }
+    }
   });
 
   // Handle notification click (emitted by notification handler)
@@ -2548,54 +2773,233 @@ async function promptMoveToApplications(): Promise<void> {
   }
 }
 
-// Check if we've already requested notification permission
-function hasRequestedNotificationPermission(): boolean {
+// Notification permission state tracking
+interface NotificationPermissionState {
+  requested: boolean;
+  date: string;
+  version: string;
+  neverPromptAgain?: boolean; // User chose "Don't ask again" for denied notifications
+}
+
+// Notification authorization status from macOS
+type NotificationAuthStatus = 'authorized' | 'denied' | 'not-determined' | 'provisional' | 'ephemeral' | 'unknown' | 'error';
+
+// Read notification permission state
+function readNotificationPermissionState(): NotificationPermissionState | null {
   try {
     if (fs.existsSync(notificationPermissionFile)) {
-      const data = JSON.parse(fs.readFileSync(notificationPermissionFile, 'utf8'));
-      return data.requested === true;
+      return JSON.parse(fs.readFileSync(notificationPermissionFile, 'utf8'));
     }
   } catch (e) {
     // Ignore errors, will request again
   }
-  return false;
+  return null;
 }
 
-// Mark that we've requested notification permission
-function setRequestedNotificationPermission(): void {
+// Save notification permission state
+function saveNotificationPermissionState(state: NotificationPermissionState): void {
   try {
-    fs.writeFileSync(notificationPermissionFile, JSON.stringify({ requested: true, date: new Date().toISOString() }));
+    fs.writeFileSync(notificationPermissionFile, JSON.stringify(state, null, 2));
   } catch (e) {
-    console.warn('[Notification Permission] Failed to save request state:', e);
+    console.warn('[Notification Permission] Failed to save state:', e);
   }
 }
 
-// Request notification permission on macOS (first launch only)
+// Check macOS notification authorization using the bundled Swift helper app
+// Returns the authorization status or 'error' if the helper is not available
+async function checkNotificationAuthorization(): Promise<NotificationAuthStatus> {
+  if (process.platform !== 'darwin') {
+    return 'unknown';
+  }
+
+  // In dev mode, the helper won't exist (it's compiled during packaging)
+  if (!app.isPackaged) {
+    console.log('[Notification Permission] Dev mode - skipping authorization check');
+    return 'unknown';
+  }
+
+  // Find the notification helper app bundle in Resources folder
+  // The helper is packaged as NotificationHelper.app/Contents/MacOS/NotificationHelper
+  const helperAppPath = path.join(process.resourcesPath, 'NotificationHelper.app', 'Contents', 'MacOS', 'NotificationHelper');
+
+  if (!fs.existsSync(helperAppPath)) {
+    console.log('[Notification Permission] Helper not found at:', helperAppPath);
+    return 'error';
+  }
+
+  return new Promise((resolve) => {
+    exec(`"${helperAppPath}"`, { timeout: 5000 }, (error, stdout) => {
+      if (error) {
+        console.warn('[Notification Permission] Helper execution failed:', error.message);
+        resolve('error');
+        return;
+      }
+
+      const status = stdout.trim() as NotificationAuthStatus;
+      console.log('[Notification Permission] Authorization status:', status);
+      
+      // Validate the status is one of the expected values
+      const validStatuses: NotificationAuthStatus[] = ['authorized', 'denied', 'not-determined', 'provisional', 'ephemeral', 'unknown'];
+      if (validStatuses.includes(status)) {
+        resolve(status);
+      } else {
+        resolve('unknown');
+      }
+    });
+  });
+}
+
+// Open System Settings > Notifications
+function openNotificationSettings(): void {
+  if (process.platform === 'darwin') {
+    // This opens System Settings directly to the Notifications section
+    // Works on macOS Ventura (13+) and later including Sequoia
+    shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension').catch(() => {
+      // Fallback for older macOS versions
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.notifications').catch(() => {
+        // Ultimate fallback: open System Settings
+        shell.openPath('/System/Applications/System Settings.app').catch(() => {
+          shell.openPath('/System/Applications/System Preferences.app').catch(() => {});
+        });
+      });
+    });
+  } else if (process.platform === 'win32') {
+    // Windows: Open Settings > System > Notifications
+    shell.openExternal('ms-settings:notifications').catch(() => {
+      // Fallback: Open general Settings app
+      shell.openPath('ms-settings:').catch(() => {});
+    });
+  } else {
+    // Linux: Try common desktop environment settings
+    // GNOME uses gnome-control-center, KDE uses systemsettings
+    const { exec } = require('child_process');
+    
+    // Try GNOME first (most common)
+    exec('gnome-control-center notifications', (error: Error | null) => {
+      if (error) {
+        // Try KDE Plasma
+        exec('systemsettings kcm_notifications', (kdeError: Error | null) => {
+          if (kdeError) {
+            // Try older KDE
+            exec('systemsettings5 kcm_notifications', (kde5Error: Error | null) => {
+              if (kde5Error) {
+                // Fallback: Try to open general settings
+                exec('gnome-control-center', (gnomeError: Error | null) => {
+                  if (gnomeError) {
+                    exec('systemsettings', () => {});
+                  }
+                });
+              }
+            });
+          }
+        });
+      }
+    });
+  }
+}
+
+// Request notification permission on macOS
+// Runs on first launch AND after updates to ensure users don't miss the permission prompt
 async function requestNotificationPermission(): Promise<void> {
   // Only needed on macOS
   if (process.platform !== 'darwin') return;
   
-  // Skip if we've already requested
-  if (hasRequestedNotificationPermission()) {
-    console.log('[Notification Permission] Already requested, skipping');
+  const currentVersion = app.getVersion();
+  const state = readNotificationPermissionState();
+  
+  // Determine if we should prompt
+  const isFirstLaunch = !state;
+  const isPostUpdate = state && state.version !== currentVersion;
+  
+  if (!isFirstLaunch && !isPostUpdate) {
+    console.log('[Notification Permission] Already requested for this version, skipping');
     return;
   }
-
-  console.log('[Notification Permission] Requesting permission on first launch');
   
-  // Mark as requested before showing the notification (to avoid re-prompting on crash)
-  setRequestedNotificationPermission();
-
-  // On macOS, showing a notification triggers the system permission prompt
-  // We'll show a welcome notification to trigger the permission request
-  if (Notification.isSupported()) {
-    const notification = new Notification({
-      title: 'Welcome to Messenger',
-      body: 'You\'ll receive notifications here when you get new messages.',
-      silent: true,
+  if (isFirstLaunch) {
+    console.log('[Notification Permission] First launch - requesting permission');
+    
+    // Save state before showing notification
+    saveNotificationPermissionState({
+      requested: true,
+      date: new Date().toISOString(),
+      version: currentVersion,
     });
-    notification.show();
-    console.log('[Notification Permission] Welcome notification shown to trigger permission prompt');
+
+    // On macOS, showing a notification triggers the system permission prompt
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'Welcome to Messenger',
+        body: 'You\'ll receive notifications here when you get new messages.',
+        silent: true,
+      });
+      notification.show();
+      console.log('[Notification Permission] Welcome notification shown to trigger permission prompt');
+    }
+  } else if (isPostUpdate) {
+    console.log('[Notification Permission] Post-update - checking authorization status');
+    
+    // Update version in state (preserve neverPromptAgain setting)
+    saveNotificationPermissionState({
+      requested: true,
+      date: state?.date || new Date().toISOString(),
+      version: currentVersion,
+      neverPromptAgain: state?.neverPromptAgain,
+    });
+
+    // Check if notifications are denied and prompt user
+    // Delay to not block startup and let the app fully load first
+    setTimeout(async () => {
+      const authStatus = await checkNotificationAuthorization();
+      
+      if (authStatus === 'denied') {
+        // Check if user previously chose "Don't ask again"
+        const currentState = readNotificationPermissionState();
+        if (currentState?.neverPromptAgain) {
+          console.log('[Notification Permission] Notifications denied but user chose not to be prompted');
+          return;
+        }
+        
+        console.log('[Notification Permission] Notifications are denied - prompting user');
+        
+        const result = await dialog.showMessageBox({
+          type: 'info',
+          title: 'Notifications Disabled',
+          message: 'Messenger notifications are turned off',
+          detail: 'You won\'t receive notifications for new messages. Would you like to enable them in System Settings?',
+          buttons: ['Open Settings', 'Not Now'],
+          defaultId: 0,
+          cancelId: 1,
+          checkboxLabel: 'Don\'t ask again',
+          checkboxChecked: false,
+        });
+        
+        // Save "Don't ask again" preference if checked
+        if (result.checkboxChecked) {
+          console.log('[Notification Permission] User chose "Don\'t ask again"');
+          const updatedState = readNotificationPermissionState();
+          if (updatedState) {
+            updatedState.neverPromptAgain = true;
+            saveNotificationPermissionState(updatedState);
+          }
+        }
+        
+        if (result.response === 0) {
+          openNotificationSettings();
+        }
+      } else if (authStatus === 'not-determined') {
+        // Permission not yet requested - show a notification to trigger the prompt
+        console.log('[Notification Permission] Permission not determined - triggering prompt');
+        if (Notification.isSupported()) {
+          const notification = new Notification({
+            title: 'Messenger Updated',
+            body: 'You\'ll receive notifications here when you get new messages.',
+            silent: true,
+          });
+          notification.show();
+        }
+      }
+    }, 3000);
   }
 }
 
@@ -3512,6 +3916,23 @@ app.whenReady().then(async () => {
   
   // Request media permissions (camera/microphone) for video/audio calls on macOS
   await requestMediaPermissions();
+
+  // Load icon theme preference
+  currentIconTheme = loadIconTheme();
+  console.log(`[Icon Theme] Initial theme: ${currentIconTheme}`);
+  
+  // Listen for system theme changes (for 'system' mode auto-switching)
+  nativeTheme.on('updated', () => {
+    if (currentIconTheme === 'system') {
+      console.log('[Icon Theme] System theme changed, updating icons');
+      applyCurrentIconTheme();
+    }
+  });
+  
+  // Apply initial icon theme (for macOS dock icon)
+  if (process.platform === 'darwin') {
+    applyCurrentIconTheme();
+  }
 
   // Create application menu
   createApplicationMenu();

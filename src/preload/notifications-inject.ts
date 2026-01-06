@@ -6,6 +6,28 @@
   const DEBUG = true;
   const notifications = new Map<number, any>();
 
+  // Call detection patterns - these phrases indicate an incoming call
+  const callPatterns = [
+    /calling you/i,
+    /incoming (video |audio )?call/i,
+    /is calling/i,
+    /video call from/i,
+    /audio call from/i,
+    /wants to call/i,
+  ];
+
+  // Check if text indicates an incoming call
+  const isCallNotification = (title: string, body: string): boolean => {
+    const combined = `${title} ${body}`;
+    return callPatterns.some((pattern) => pattern.test(combined));
+  };
+
+  // Signal the main process to bring the window to foreground for incoming call
+  const signalIncomingCall = () => {
+    log('=== INCOMING CALL DETECTED - Bringing window to foreground ===');
+    window.postMessage({ type: 'electron-incoming-call' }, '*');
+  };
+
   // Selectors for Messenger's DOM structure (these may need updates as Messenger changes)
   const selectors = {
     // The navigation area containing the chat list
@@ -135,6 +157,11 @@
   // Send notification via bridge or postMessage
   const sendNotification = (title: string, body: string, source: string, icon?: string, href?: string) => {
     log(`=== SENDING NOTIFICATION [${source}] ===`, { title, body: body.slice(0, 50), href });
+
+    // Check if this is an incoming call notification - bring window to foreground
+    if (isCallNotification(title, body)) {
+      signalIncomingCall();
+    }
 
     const notificationData = {
       title: String(title),
@@ -706,5 +733,131 @@
   // Start MutationObserver detection
   log('Starting MutationObserver notification detection...');
   setupMutationObserver();
+
+  // ============================================================================
+  // INCOMING CALL POPUP DETECTION
+  // ============================================================================
+  // Messenger shows an in-page popup for incoming calls with Answer/Decline buttons.
+  // We observe DOM changes to detect when this popup appears and bring window to foreground.
+
+  const setupCallPopupObserver = () => {
+    log('Setting up call popup detection...');
+
+    // Track if we've already signaled for the current call to avoid repeated signals
+    let lastCallSignalTime = 0;
+    const CALL_SIGNAL_DEBOUNCE_MS = 5000; // Don't signal more than once every 5 seconds
+
+    // Selectors and patterns that indicate an incoming call popup
+    // Messenger's call UI typically contains:
+    // - "Answer" or "Accept" button
+    // - "Decline" or "Ignore" button
+    // - Video/audio call icons
+    // - Caller's profile picture with calling animation
+    const callPopupSelectors = [
+      // Buttons with call-related aria-labels
+      '[aria-label*="Answer"]',
+      '[aria-label*="Decline"]',
+      '[aria-label*="Accept call"]',
+      '[aria-label*="Ignore call"]',
+      '[aria-label*="Accept video call"]',
+      '[aria-label*="Accept audio call"]',
+      // Text content patterns
+      '[data-testid*="incoming"]',
+      '[data-testid*="call"]',
+    ];
+
+    // Text patterns that indicate incoming call UI
+    const callTextPatterns = [
+      /incoming (video |audio )?call/i,
+      /is calling/i,
+      /calling you/i,
+      /wants to (video )?call/i,
+    ];
+
+    // Check if an element or its children contain call-related UI
+    const isCallPopupElement = (element: Element): boolean => {
+      // Check for call-related selectors
+      for (const selector of callPopupSelectors) {
+        try {
+          if (element.matches?.(selector) || element.querySelector?.(selector)) {
+            return true;
+          }
+        } catch {
+          // Ignore invalid selector errors
+        }
+      }
+
+      // Check text content for call patterns
+      const textContent = element.textContent || '';
+      for (const pattern of callTextPatterns) {
+        if (pattern.test(textContent)) {
+          // Make sure it's actually a call UI and not just a message about calls
+          // Look for action buttons nearby
+          const buttons = element.querySelectorAll('button, [role="button"]');
+          for (const button of Array.from(buttons)) {
+            const buttonLabel = button.getAttribute('aria-label') || button.textContent || '';
+            if (/answer|accept|decline|ignore/i.test(buttonLabel)) {
+              return true;
+            }
+          }
+        }
+      }
+
+      return false;
+    };
+
+    // Process added nodes to check for call popup
+    const checkForCallPopup = (nodes: NodeList) => {
+      const now = Date.now();
+      if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) {
+        return; // Debounce - don't check if we recently signaled
+      }
+
+      for (const node of Array.from(nodes)) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+        const element = node as Element;
+
+        // Check if this element or its descendants indicate a call popup
+        if (isCallPopupElement(element)) {
+          log('Call popup detected in DOM - bringing window to foreground');
+          lastCallSignalTime = now;
+          signalIncomingCall();
+          return;
+        }
+
+        // Also check children for deeply nested call UI
+        const descendants = element.querySelectorAll('*');
+        for (const desc of Array.from(descendants)) {
+          if (isCallPopupElement(desc)) {
+            log('Call popup detected in descendant - bringing window to foreground');
+            lastCallSignalTime = now;
+            signalIncomingCall();
+            return;
+          }
+        }
+      }
+    };
+
+    // Observe the entire document for call popup additions
+    const callObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length > 0) {
+          checkForCallPopup(mutation.addedNodes);
+        }
+      }
+    });
+
+    // Start observing after the page has settled
+    setTimeout(() => {
+      callObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+      log('Call popup observer active');
+    }, 3000);
+  };
+
+  setupCallPopupObserver();
   log('Initialization complete');
 })(window, Notification);

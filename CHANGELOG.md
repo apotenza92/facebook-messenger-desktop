@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.9.9] - 2026-01-06
+
+### Added
+- Bring window to foreground on incoming calls (issue #17)
+  - When you receive a call, the app automatically opens if hidden and comes to foreground
+  - Works when the app is minimized, in the background, or hidden to the tray
+  - Detects calls via notification content and in-page call popup UI
+  - On macOS, also bounces the dock icon for extra visibility
+- Dark mode app icon with theme switching
+  - New "Icon Appearance" submenu with three options: Match System, Light Icon, Dark Icon
+  - "Match System" (default) on macOS: Uses native bundle icon, enabling Tahoe's glass/clear effects and automatic dark mode
+  - "Match System" on Windows/Linux: Auto-switches between light/dark icons based on OS theme
+  - "Light Icon" / "Dark Icon": Override with our custom icons (dark icon has white interior)
+  - Menu location: Messenger menu (macOS) or File menu (Windows/Linux)
+  - Preference is saved and persists across app restarts
+- Notification Settings menu item on all platforms
+  - macOS: Messenger menu → Notification Settings (opens System Settings > Notifications)
+  - Windows: Help menu → Notification Settings (opens Settings > Notifications)
+  - Linux: Help menu → Notification Settings (opens GNOME/KDE notification settings)
+  - Helps users easily enable notifications if they're not receiving them (issue #13)
+- macOS: Detect if notifications are disabled after app updates (issue #13)
+  - Uses a bundled Swift helper to check notification authorization status
+  - Prompts users to enable notifications if they're turned off
+  - Includes "Don't ask again" checkbox for users who intentionally disabled notifications
+  - Only shown once per update, not on every launch
+
+### Fixed
+- Snapcraft builds failing due to undefined CRAFT_ARCH variable
+  - Now uses CRAFT_ARCH_BUILD_FOR with fallback to SNAPCRAFT_TARGET_ARCH
+- macOS dock icon appearing larger than other app icons (issue #15)
+  - Icon now matches Apple's design guidelines with ~8.5% transparent margin
+  - Allows macOS to properly render shadows around the icon
+  - Based on analysis of Apple's Messages.app icon structure
+
 ## [0.9.8] - 2026-01-06
 
 ### Fixed

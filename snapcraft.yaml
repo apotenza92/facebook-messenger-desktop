@@ -59,7 +59,8 @@ parts:
       npm run build
       
       # Download Electron binary for target architecture
-      ARCH="$CRAFT_ARCH"
+      # Use CRAFT_ARCH_BUILD_FOR (snapcraft 7.x+) or SNAPCRAFT_TARGET_ARCH as fallback
+      ARCH="${CRAFT_ARCH_BUILD_FOR:-${SNAPCRAFT_TARGET_ARCH:-amd64}}"
       if [ "$ARCH" = "amd64" ]; then
         ELECTRON_ARCH="x64"
       elif [ "$ARCH" = "arm64" ]; then

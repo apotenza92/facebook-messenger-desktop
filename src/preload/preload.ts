@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('clear-badge');
   },
   
+  // Incoming call - bring window to foreground
+  incomingCall: () => {
+    console.log('[Preload] Sending incoming-call signal');
+    ipcRenderer.send('incoming-call');
+  },
+  
   // Notification actions
   onNotificationAction: (callback: (action: string, data: any) => void) => {
     ipcRenderer.on('notification-action-handler', (event, action, data) => {
@@ -142,6 +148,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
           console.log(`[Preload Bridge] Received badge update from page context: ${count}`);
           ipcRenderer.send('update-unread-count', count);
         }
+      } else if (event.data.type === 'electron-incoming-call') {
+        // Handle incoming call detection from page context
+        console.log('[Preload Bridge] Incoming call detected - signaling main process');
+        ipcRenderer.send('incoming-call');
       }
     }
   });
@@ -645,6 +655,7 @@ declare global {
       }) => void;
       updateUnreadCount: (count: number) => void;
       clearBadge: () => void;
+      incomingCall: () => void;
       onNotificationAction: (callback: (action: string, data: any) => void) => void;
       testNotification: () => void;
     };
