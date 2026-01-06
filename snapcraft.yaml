@@ -90,26 +90,30 @@ parts:
       cp package.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
       
       # Create launcher script
-      cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'LAUNCHER_EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-export TMPDIR="${XDG_RUNTIME_DIR:-/tmp}"
-exec ./electron/electron dist/main/main.js "$@"
-LAUNCHER_EOF
+      cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'EOF'
+      #!/bin/bash
+      cd "$(dirname "$0")"
+      export TMPDIR="${XDG_RUNTIME_DIR:-/tmp}"
+      exec ./electron/electron dist/main/main.js "$@"
+      EOF
+      # Remove leading spaces from launcher script
+      sed -i 's/^      //' $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop
       chmod +x $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop
       
       # Create desktop file in the standard location
       mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
-      cat > $SNAPCRAFT_PART_INSTALL/usr/share/applications/facebook-messenger-desktop.desktop << 'DESKTOP_EOF'
-[Desktop Entry]
-Name=Messenger
-Comment=Unofficial desktop client for Facebook Messenger
-Exec=facebook-messenger-desktop
-Icon=\${SNAP}/meta/gui/icon.png
-Type=Application
-Categories=Network;InstantMessaging;Chat;
-StartupWMClass=Messenger
-DESKTOP_EOF
+      cat > $SNAPCRAFT_PART_INSTALL/usr/share/applications/facebook-messenger-desktop.desktop << 'EOF'
+      [Desktop Entry]
+      Name=Messenger
+      Comment=Unofficial desktop client for Facebook Messenger
+      Exec=facebook-messenger-desktop
+      Icon=${SNAP}/meta/gui/icon.png
+      Type=Application
+      Categories=Network;InstantMessaging;Chat;
+      StartupWMClass=Messenger
+      EOF
+      # Remove leading spaces from desktop file
+      sed -i 's/^      //' $SNAPCRAFT_PART_INSTALL/usr/share/applications/facebook-messenger-desktop.desktop
       
       # Copy snap icon to meta/gui for snap store
       mkdir -p $SNAPCRAFT_PART_INSTALL/meta/gui
