@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1] - 2026-01-06
+
+### Fixed
+- Snapcraft builds failing due to YAML indentation issues in heredocs
+- Desktop file not being generated correctly for Snap packages
+- First successful ARM64 Snap build
+- Flatpak icon not displaying (Icon name mismatch between desktop entry and installed icons)
+- Added note to uninstall dialog about package manager uninstall for Flatpak/Snap/apt/dnf users
+
 ## [1.0.0] - 2026-01-06
 
 ### Fixed
