@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.1] - 2026-01-06
+## [1.0.2] - 2026-01-06
 
 ### Fixed
 - Snapcraft builds failing due to YAML indentation issues in heredocs
