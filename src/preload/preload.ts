@@ -455,6 +455,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
           });
         }
 
+        // Check if a conversation is muted (same logic as notifications-inject.ts)
+        // Messenger shows a "bell with slash" SVG icon for muted conversations
+        const isConversationMuted = (conversationEl: Element): boolean => {
+          // PRIMARY DETECTION: Look for the mute bell icon SVG path
+          // This path represents the "bell with slash" icon shown next to muted conversations
+          const paths = Array.from(conversationEl.querySelectorAll('svg path'));
+          for (const path of paths) {
+            const d = path.getAttribute('d') || '';
+            // Check for the specific mute icon path pattern
+            // The mute bell SVG path starts with "M9.244 24.99" and contains "L26.867 7.366"
+            if (d.startsWith('M9.244 24.99') || d.includes('L26.867 7.366')) {
+              return true;
+            }
+          }
+
+          // FALLBACK: Check aria-label/text indicators
+          const textContent = conversationEl.textContent || '';
+          const ariaLabel = conversationEl.getAttribute('aria-label') || '';
+          const lowered = ariaLabel.toLowerCase();
+          if (
+            lowered.includes('muted') ||
+            lowered.includes('notifications are off') ||
+            lowered.includes('notifications off') ||
+            textContent.includes('Notifications are off')
+          ) {
+            return true;
+          }
+
+          return false;
+        };
+
         // Count unread conversations using the same logic as notifications-inject.ts
         let unreadCount = 0;
         const seenHrefs = new Set<string>();
@@ -488,6 +519,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
             return false;
           })();
+
+          // Skip muted conversations - they shouldn't count toward unread badge (issue #14)
+          if (isUnread && isConversationMuted(conversationEl)) {
+            return; // Skip this conversation
+          }
 
           if (isUnread) {
             // Try to get a unique identifier for this conversation to avoid double-counting

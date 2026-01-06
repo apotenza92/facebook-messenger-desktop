@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.8] - 2026-01-06
+
+### Fixed
+- Muted conversations no longer trigger notifications or count toward badge (issue #14)
+  - Native notifications now check muted status before sending
+  - Badge count excludes muted conversations
+  - Detects muted status via the "bell with slash" icon in sidebar
+
 ## [0.9.7] - 2026-01-06
 
 ### Changed
@@ -9,14 +17,18 @@
   - Center node is now prominent, outer nodes are 65% the size of center
   - Reduced icon scale from 80% to 72% for macOS Big Sur/Sequoia compatibility
   - Icons now have proper padding for system shadow rendering
+- Simplified Linux build workflow
+  - Removed redundant ARM64 Flatpak job (cross-compilation in main Linux job handles it)
+  - Renamed build jobs for clarity: "Build Linux" now builds all x64 and ARM64 packages
+
+## [0.9.6] - 2026-01-06
+
+### Changed
 - All Snap builds now handled by Snapcraft's "Build from GitHub" service
   - Removed electron-builder snap target from GitHub Actions
   - Removed update-snapstore job from release workflow
   - Snapcraft automatically builds and publishes both amd64 and arm64 snaps
   - Added .launchpad.yaml for auto-release to stable channel
-- Simplified Linux build workflow
-  - Removed redundant ARM64 Flatpak job (cross-compilation in main Linux job handles it)
-  - Renamed build jobs for clarity: "Build Linux" now builds all x64 and ARM64 packages
 
 ### Fixed
 - Fixed Flatpak repository deployment to GitHub Pages
