@@ -19,7 +19,7 @@ fi
 # This ensures the app icon appears in the applications menu
 ICONS_SRC="/opt/Messenger/resources/app/assets/icons/linux"
 ICONS_DST="/usr/share/icons/hicolor"
-APP_ICON="facebook-messenger-desktop.png"
+APP_ICON="com.facebook.messenger.desktop.png"
 
 if [ -d "$ICONS_SRC" ]; then
     # Install each icon size explicitly to avoid shell variable syntax issues

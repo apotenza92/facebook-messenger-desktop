@@ -132,7 +132,7 @@
         "Comment": "Unofficial desktop client for Facebook Messenger",
         "Categories": "Network;InstantMessaging;Chat;",
         "StartupWMClass": "Messenger",
-        "Icon": "facebook-messenger-desktop"
+        "Icon": "com.facebook.messenger.desktop"
       }
     },
     "appImage": {

@@ -2178,7 +2178,7 @@ async function handleUninstallRequest(): Promise<void> {
     confirmed = await showLinuxConfirmDialog({
       title: 'Uninstall Messenger',
       message: 'Uninstall Messenger from this device?',
-      detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
+      detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).\n\nNote: If you installed via Flatpak, Snap, apt, or dnf, you may also need to uninstall using that package manager.',
     });
   } else {
     // Use native dialog on macOS/Windows where it's fast
