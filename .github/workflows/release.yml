@@ -335,9 +335,10 @@ jobs:
 
       - name: Wait for Snapcraft builds to complete
         run: |
-          echo "Waiting 25 minutes for Snapcraft builds to complete..."
+          echo "Waiting 45 minutes for Snapcraft builds to complete..."
+          echo "(Queue time can be 10-30 min + build time 15-25 min)"
           echo "Builds are running at: https://snapcraft.io/facebook-messenger-desktop/builds"
-          sleep 1500  # 25 minutes
+          sleep 2700  # 45 minutes
 
       - name: Promote to stable channel
         env:
