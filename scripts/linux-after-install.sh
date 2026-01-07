@@ -42,6 +42,15 @@ if [ -d "$ICONS_SRC" ]; then
     [ -f "$ICONS_SRC/512x512.png" ] && mkdir -p "$ICONS_DST/512x512/apps" && cp "$ICONS_SRC/512x512.png" "$ICONS_DST/512x512/apps/$APP_ICON" 2>/dev/null || true
 fi
 
+# Fix Categories field in desktop file (electron-builder may only set it to "Network;")
+# GNOME Applications menu requires proper categories to display the app
+DESKTOP_FILE="/usr/share/applications/facebook-messenger-desktop.desktop"
+if [ -f "$DESKTOP_FILE" ]; then
+    # Use sed to replace Categories line with the correct value
+    # This ensures the app appears in GNOME's Applications menu
+    sed -i 's/^Categories=.*/Categories=Network;InstantMessaging;Chat;/' "$DESKTOP_FILE" 2>/dev/null || true
+fi
+
 # Update desktop database to register the .desktop file
 if command -v update-desktop-database &> /dev/null; then
     update-desktop-database /usr/share/applications 2>/dev/null || true

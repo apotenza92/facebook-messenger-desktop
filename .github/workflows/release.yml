@@ -340,18 +340,34 @@ jobs:
           echo "Monitoring Snapcraft builds..."
           echo "Builds page: https://snapcraft.io/facebook-messenger-desktop/builds"
           
-          # Get current edge revisions before new builds complete
-          get_edge_revs() {
-            snapcraft status facebook-messenger-desktop 2>/dev/null | grep -E "latest/edge" | awk '{print $2, $3}' | sort
+          # Function to get revision for a specific arch from edge channel
+          # Uses snapcraft status and parses the table format
+          get_edge_rev() {
+            local arch=$1
+            # snapcraft status output format varies, so we use a more robust approach
+            # Get the full status, find edge line, extract revision number
+            snapcraft status facebook-messenger-desktop 2>/dev/null | \
+              grep -E "edge\s+" | \
+              grep -E "\s${arch}\s" | \
+              grep -oE '\s[0-9]+\s' | \
+              tr -d ' ' | \
+              head -1
           }
           
-          INITIAL_REVS=$(get_edge_revs)
-          echo "Current edge revisions:"
-          echo "$INITIAL_REVS"
+          # Get initial revisions to detect when new builds complete
+          INITIAL_AMD64=$(get_edge_rev "amd64")
+          INITIAL_ARM64=$(get_edge_rev "arm64")
+          echo "Current edge revisions: amd64=$INITIAL_AMD64, arm64=$INITIAL_ARM64"
           
-          # Poll every 2 minutes for up to 60 minutes
-          MAX_ATTEMPTS=30
+          # Show full status for debugging
+          echo ""
+          echo "Full snapcraft status:"
+          snapcraft status facebook-messenger-desktop || true
+          
+          # Poll every 2 minutes for up to 90 minutes (Launchpad builds can be slow)
+          MAX_ATTEMPTS=45
           ATTEMPT=0
+          NEW_BUILDS_DETECTED=false
           
           echo ""
           echo "Waiting for new builds to appear in edge channel..."
@@ -360,20 +376,23 @@ jobs:
             ATTEMPT=$((ATTEMPT + 1))
             echo "Check $ATTEMPT/$MAX_ATTEMPTS ($(date +%H:%M:%S))"
             
-            CURRENT_REVS=$(get_edge_revs)
+            CURRENT_AMD64=$(get_edge_rev "amd64")
+            CURRENT_ARM64=$(get_edge_rev "arm64")
             
-            # Check if revisions changed (new builds completed)
-            if [ "$CURRENT_REVS" != "$INITIAL_REVS" ]; then
+            # Check if either revision changed
+            if [ "$CURRENT_AMD64" != "$INITIAL_AMD64" ] || [ "$CURRENT_ARM64" != "$INITIAL_ARM64" ]; then
               echo ""
               echo "✅ New builds detected!"
-              echo "New edge revisions:"
-              echo "$CURRENT_REVS"
+              echo "New edge revisions: amd64=$CURRENT_AMD64, arm64=$CURRENT_ARM64"
+              NEW_BUILDS_DETECTED=true
               break
             fi
             
             if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
               echo ""
-              echo "⏰ Timeout after 60 minutes. Proceeding with current revisions..."
+              echo "⏰ Timeout after 90 minutes."
+              echo "⚠️ No new builds detected. Manual promotion may be required."
+              echo "Visit: https://snapcraft.io/facebook-messenger-desktop/releases"
               break
             fi
             
@@ -381,35 +400,59 @@ jobs:
           done
           
           echo ""
-          echo "Promoting to stable channel..."
+          echo "Current snapcraft status:"
           snapcraft status facebook-messenger-desktop
           
-          # Get revision numbers for each architecture from edge
-          AMD64_REV=$(snapcraft status facebook-messenger-desktop 2>/dev/null | grep -E "latest/edge.*amd64" | awk '{print $3}' | head -1)
-          ARM64_REV=$(snapcraft status facebook-messenger-desktop 2>/dev/null | grep -E "latest/edge.*arm64" | awk '{print $3}' | head -1)
+          # Get final revision numbers
+          AMD64_REV=$(get_edge_rev "amd64")
+          ARM64_REV=$(get_edge_rev "arm64")
           
-          echo "Found amd64 revision: $AMD64_REV"
-          echo "Found arm64 revision: $ARM64_REV"
+          echo ""
+          echo "Revisions to promote: amd64=$AMD64_REV, arm64=$ARM64_REV"
+          
+          # Track promotion success
+          PROMOTE_SUCCESS=true
           
           # Promote amd64 to stable
           if [ -n "$AMD64_REV" ] && [ "$AMD64_REV" != "-" ]; then
             echo "Promoting amd64 revision $AMD64_REV to stable..."
-            snapcraft release facebook-messenger-desktop "$AMD64_REV" stable
+            if snapcraft release facebook-messenger-desktop "$AMD64_REV" stable; then
+              echo "✅ amd64 promoted successfully"
+            else
+              echo "❌ Failed to promote amd64"
+              PROMOTE_SUCCESS=false
+            fi
           else
-            echo "Warning: No amd64 revision found in edge channel"
+            echo "⚠️ Warning: No amd64 revision found in edge channel"
+            PROMOTE_SUCCESS=false
           fi
           
           # Promote arm64 to stable
           if [ -n "$ARM64_REV" ] && [ "$ARM64_REV" != "-" ]; then
             echo "Promoting arm64 revision $ARM64_REV to stable..."
-            snapcraft release facebook-messenger-desktop "$ARM64_REV" stable
+            if snapcraft release facebook-messenger-desktop "$ARM64_REV" stable; then
+              echo "✅ arm64 promoted successfully"
+            else
+              echo "❌ Failed to promote arm64"
+              PROMOTE_SUCCESS=false
+            fi
           else
-            echo "Warning: No arm64 revision found in edge channel"
+            echo "⚠️ Warning: No arm64 revision found in edge channel"
+            PROMOTE_SUCCESS=false
           fi
           
           echo ""
-          echo "✅ Snap promotion complete!"
+          echo "Final snapcraft status:"
           snapcraft status facebook-messenger-desktop
+          
+          if [ "$PROMOTE_SUCCESS" = true ]; then
+            echo ""
+            echo "✅ Snap promotion complete!"
+          else
+            echo ""
+            echo "⚠️ Snap promotion had issues. Please check manually:"
+            echo "https://snapcraft.io/facebook-messenger-desktop/releases"
+          fi
 
   update-flatpak-repo:
     name: Update Flatpak Repo

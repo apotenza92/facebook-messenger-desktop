@@ -1423,7 +1423,7 @@ type PackageManagerInfo = {
 // Cache file for install source detection (detected once on first run, never changes)
 const INSTALL_SOURCE_CACHE_FILE = 'install-source.json';
 
-type InstallSource = 'homebrew' | 'winget' | 'deb' | 'rpm' | 'snap' | 'flatpak' | 'direct';
+type InstallSource = 'homebrew' | 'winget' | 'deb' | 'rpm' | 'snap' | 'flatpak' | 'appimage' | 'direct';
 
 function getInstallSourceCachePath(): string {
   return path.join(app.getPath('userData'), INSTALL_SOURCE_CACHE_FILE);
@@ -1498,13 +1498,16 @@ async function detectAndCacheInstallSource(): Promise<void> {
       writeInstallSourceCache(newSource);
       console.log('[InstallSource] Detected:', newSource);
     } else if (process.platform === 'linux') {
-      // Check for containerized installs first (snap/flatpak), then system packages (deb/rpm)
+      // Check for containerized installs first (snap/flatpak), then AppImage, then system packages (deb/rpm)
       if (detectSnapInstall()) {
         writeInstallSourceCache('snap');
         console.log('[InstallSource] Detected: snap');
       } else if (detectFlatpakInstall()) {
         writeInstallSourceCache('flatpak');
         console.log('[InstallSource] Detected: flatpak');
+      } else if (detectAppImageInstall()) {
+        writeInstallSourceCache('appimage');
+        console.log('[InstallSource] Detected: appimage');
       } else {
         // Check for .deb (Debian/Ubuntu), then .rpm (Fedora/RHEL)
         const deb = await detectDebInstall();
@@ -1518,7 +1521,7 @@ async function detectAndCacheInstallSource(): Promise<void> {
             console.log('[InstallSource] Detected: rpm');
           } else {
             writeInstallSourceCache('direct');
-            console.log('[InstallSource] Detected: direct (AppImage or manual)');
+            console.log('[InstallSource] Detected: direct (manual installation)');
           }
         }
       }
@@ -1715,6 +1718,20 @@ function detectFlatpakInstall(): boolean {
   return false;
 }
 
+function detectAppImageInstall(): boolean {
+  // AppImage sets the APPIMAGE environment variable to the full path of the .AppImage file
+  if (process.platform !== 'linux') {
+    return false;
+  }
+  
+  if (process.env.APPIMAGE) {
+    console.log('[InstallSource] Detected AppImage installation via APPIMAGE env:', process.env.APPIMAGE);
+    return true;
+  }
+  
+  return false;
+}
+
 function detectPackageManagerFromCache(): PackageManagerInfo | null {
   // Read from cache (instant) instead of running slow detection commands
   const cached = readInstallSourceCache();
@@ -1784,6 +1801,23 @@ function detectPackageManagerFromCache(): PackageManagerInfo | null {
     };
   }
   
+  if (source === 'appimage' && process.platform === 'linux') {
+    // AppImage requires the APPIMAGE env var to know the file path
+    const appImagePath = process.env.APPIMAGE;
+    if (appImagePath) {
+      console.log('[Uninstall] Using cached AppImage detection, path:', appImagePath);
+      return {
+        name: 'AppImage',
+        detected: true,
+        // The uninstall command will delete the AppImage file itself
+        uninstallCommand: ['/usr/bin/pkexec', '/bin/rm', '-f', appImagePath],
+      };
+    } else {
+      console.log('[Uninstall] AppImage cached but APPIMAGE env var not set - falling back to cleanup only');
+      return null;
+    }
+  }
+  
   return null;
 }
 
@@ -1809,34 +1843,12 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
       ? `/usr/bin/apt remove -y ${LINUX_PACKAGE_NAME}`
       : `/usr/bin/dnf remove -y ${LINUX_PACKAGE_NAME}`;
     
-    // Build cleanup script using zenity/kdialog for password prompt
-    // This is more reliable than pkexec which requires a polkit authentication agent
+    // Use pkexec for authentication - this shows the system's native authentication dialog
+    // pkexec requires a polkit authentication agent, which all modern desktop environments provide
     const cleanupScript = `
-      UNINSTALL_EXIT=1
-      
-      # Method 1: Try zenity for password prompt (GNOME/GTK desktops)
-      if command -v zenity >/dev/null 2>&1; then
-        PASSWORD=$(zenity --password --title="Authentication Required" --text="Enter password to uninstall Messenger:" 2>/dev/null)
-        if [ -n "$PASSWORD" ]; then
-          echo "$PASSWORD" | sudo -S ${pmCmd} 2>/dev/null
-          UNINSTALL_EXIT=$?
-        fi
-      fi
-      
-      # Method 2: Try kdialog for password prompt (KDE desktops)
-      if [ $UNINSTALL_EXIT -ne 0 ] && command -v kdialog >/dev/null 2>&1; then
-        PASSWORD=$(kdialog --password "Enter password to uninstall Messenger:" 2>/dev/null)
-        if [ -n "$PASSWORD" ]; then
-          echo "$PASSWORD" | sudo -S ${pmCmd} 2>/dev/null
-          UNINSTALL_EXIT=$?
-        fi
-      fi
-      
-      # Method 3: Fall back to pkexec (if polkit agent is running)
-      if [ $UNINSTALL_EXIT -ne 0 ] && command -v pkexec >/dev/null 2>&1; then
-        /usr/bin/pkexec /bin/sh -c "${pmCmd}" 2>/dev/null
-        UNINSTALL_EXIT=$?
-      fi
+      # Run package manager uninstall with pkexec for authentication
+      /usr/bin/pkexec /bin/sh -c "${pmCmd}"
+      UNINSTALL_EXIT=$?
       
       # Only proceed with cleanup if uninstall succeeded
       if [ $UNINSTALL_EXIT -eq 0 ]; then
@@ -1844,9 +1856,9 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
         # Wait for package manager to finish
         sleep 1
         
-        # Purge config files too (for deb packages)
+        # Purge config files too (for deb packages) - needs auth again
         if command -v dpkg >/dev/null 2>&1; then
-          echo "$PASSWORD" | sudo -S dpkg --purge ${LINUX_PACKAGE_NAME} 2>/dev/null || true
+          /usr/bin/pkexec /usr/bin/dpkg --purge ${LINUX_PACKAGE_NAME} 2>/dev/null || true
         fi
         
         # Remove user-specific desktop entries that might persist
@@ -1894,7 +1906,7 @@ function runPackageManagerUninstall(pm: PackageManagerInfo): void {
       fi
     `.trim();
     
-    // Pass graphical environment variables
+    // Pass graphical environment variables for pkexec dialog
     const env = {
       ...process.env,
       DISPLAY: process.env.DISPLAY || ':0',
@@ -2051,148 +2063,259 @@ rm -f "${scriptPath}"
 function scheduleFlatpakUninstall(): void {
   // Flatpak apps run in a sandbox and may have issues uninstalling themselves while running.
   // We schedule the uninstall to run AFTER the app exits by spawning a detached process.
+  // Use pkexec for authentication to support both user and system installs.
   const homeDir = process.env.HOME || '';
   
-  // This script runs outside the Flatpak sandbox after the app quits
-  const uninstallScript = `
-    #!/bin/sh
-    # Wait for the Messenger flatpak to fully exit
-    sleep 2
-    
-    # Wait for any messenger processes to terminate
-    while pgrep -f "${FLATPAK_APP_ID}" > /dev/null 2>&1; do
-      sleep 1
-    done
-    
-    # Additional wait to ensure flatpak recognizes the app is closed
-    sleep 1
-    
-    # Run flatpak uninstall (no sudo needed for user installs, may prompt for system installs)
-    /usr/bin/flatpak uninstall -y ${FLATPAK_APP_ID}
-    UNINSTALL_EXIT=$?
-    
-    # Only proceed with cleanup if uninstall succeeded
-    if [ $UNINSTALL_EXIT -eq 0 ]; then
-      sleep 1
-      
-      # Remove user-specific desktop entries that might persist
-      rm -f "${homeDir}/.local/share/applications/${FLATPAK_APP_ID}.desktop" 2>/dev/null
-      rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
-      rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
-      
-      # Clear pop-launcher cache (for Pop!_OS COSMIC)
-      rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
-      rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
-      
-      # Clear COSMIC app cache
-      rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
-      
-      # Update user desktop database
-      if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
-      fi
-      
-      # Refresh icon caches
-      if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-        gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
-      fi
-      
-      # Force desktop environment to reload application list
-      if command -v dbus-send >/dev/null 2>&1; then
-        dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
-      fi
-      
-      touch "${homeDir}/.local/share/applications" 2>/dev/null || true
-    fi
-  `.trim();
+  // Write the uninstall script to a temp file so systemd-run can execute it
+  const scriptPath = path.join('/tmp', `messenger-flatpak-uninstall-${Date.now()}.sh`);
   
-  console.log('[Uninstall] Scheduling Flatpak uninstall to run after app exits');
+  const uninstallScript = `#!/bin/sh
+# Wait for the Messenger flatpak to fully exit
+sleep 3
+
+# Wait for any messenger processes to terminate (with timeout)
+WAIT_COUNT=0
+while pgrep -f "${FLATPAK_APP_ID}" > /dev/null 2>&1; do
+  sleep 1
+  WAIT_COUNT=$((WAIT_COUNT + 1))
+  if [ $WAIT_COUNT -gt 30 ]; then
+    break
+  fi
+done
+
+# Additional wait to ensure flatpak recognizes the app is closed
+sleep 2
+
+# Run flatpak uninstall with pkexec for authentication
+# This shows the system's native authentication dialog
+/usr/bin/pkexec /usr/bin/flatpak uninstall -y ${FLATPAK_APP_ID}
+UNINSTALL_EXIT=$?
+
+# Only proceed with cleanup if uninstall succeeded
+if [ $UNINSTALL_EXIT -eq 0 ]; then
+  sleep 2
   
-  // Spawn detached process that will outlive the app
-  const child = spawn('/usr/bin/sh', ['-c', uninstallScript], {
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      // Ensure we're using system paths
-      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    },
-  });
-  child.unref();
+  # Remove user-specific desktop entries that might persist
+  rm -f "${homeDir}/.local/share/applications/${FLATPAK_APP_ID}.desktop" 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
+  
+  # Clear pop-launcher cache (for Pop!_OS COSMIC)
+  rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
+  rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
+  
+  # Clear COSMIC app cache
+  rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
+  
+  # Update user desktop database
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
+  fi
+  
+  # Refresh icon caches
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
+  fi
+  
+  # Force desktop environment to reload application list
+  if command -v dbus-send >/dev/null 2>&1; then
+    dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
+  fi
+  
+  touch "${homeDir}/.local/share/applications" 2>/dev/null || true
+fi
+
+# Clean up this script
+rm -f "${scriptPath}"
+`;
+
+  try {
+    // Write script to temp location (accessible outside flatpak sandbox)
+    fs.writeFileSync(scriptPath, uninstallScript, { mode: 0o755 });
+    console.log('[Uninstall] Wrote uninstall script to:', scriptPath);
+    
+    // Use systemd-run to schedule execution outside the Flatpak's sandbox
+    // This ensures the process survives when the Flatpak app exits
+    // --user: Run in user session (no root needed to start)
+    // --scope: Run in a new scope that persists after we exit
+    // --collect: Clean up the scope after the script finishes
+    const child = spawn('/usr/bin/systemd-run', [
+      '--user',
+      '--scope',
+      '--collect',
+      '--description=Messenger Uninstaller',
+      '/bin/sh', scriptPath,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        // Minimal env outside flatpak
+        HOME: homeDir,
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        DISPLAY: process.env.DISPLAY || ':0',
+        XAUTHORITY: process.env.XAUTHORITY || `${homeDir}/.Xauthority`,
+        XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() || 1000}`,
+        DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '',
+      },
+    });
+    child.unref();
+    console.log('[Uninstall] Scheduled Flatpak uninstall via systemd-run');
+  } catch (error) {
+    console.error('[Uninstall] Failed to schedule flatpak uninstall:', error);
+    // Fallback: try direct spawn (might not work but better than nothing)
+    const child = spawn('/usr/bin/sh', ['-c', `sleep 3 && /usr/bin/pkexec /usr/bin/flatpak uninstall -y ${FLATPAK_APP_ID}`], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        HOME: homeDir,
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        DISPLAY: process.env.DISPLAY || ':0',
+      },
+    });
+    child.unref();
+    console.log('[Uninstall] Fallback: scheduled flatpak uninstall via direct spawn');
+  }
 }
 
-// Show confirmation dialog using native Linux tools (zenity/kdialog) to bypass slow xdg-desktop-portal
-// These tools are commonly pre-installed and match the user's desktop theme
-async function showLinuxConfirmDialog(options: {
-  title: string;
-  message: string;
-  detail?: string;
-}): Promise<boolean> {
-  const fullMessage = options.detail 
-    ? `${options.message}\n\n${options.detail}`
-    : options.message;
+function scheduleAppImageUninstall(): void {
+  // AppImage files are self-contained executables that the user downloads.
+  // We schedule the deletion to run AFTER the app exits.
+  // The APPIMAGE environment variable contains the full path to the .AppImage file.
+  const homeDir = process.env.HOME || '';
+  const appImagePath = process.env.APPIMAGE;
   
-  // Try zenity first (GTK, common on GNOME/Ubuntu), then kdialog (KDE)
-  const zenityCmd = `zenity --question --title="${options.title}" --text="${fullMessage.replace(/"/g, '\\"')}" --ok-label="Uninstall" --cancel-label="Cancel" 2>/dev/null`;
-  const kdialogCmd = `kdialog --warningyesno "${fullMessage.replace(/"/g, '\\"')}" --title "${options.title}" --yes-label "Uninstall" --no-label "Cancel" 2>/dev/null`;
+  if (!appImagePath) {
+    console.log('[Uninstall] APPIMAGE env var not set - cannot delete AppImage file');
+    return;
+  }
   
-  return new Promise((resolve) => {
-    // Try zenity first
-    exec(zenityCmd, (error) => {
-      if (error && error.code === 127) {
-        // zenity not found, try kdialog
-        exec(kdialogCmd, (error2) => {
-          if (error2 && error2.code === 127) {
-            // Neither found, fall back to Electron dialog (may be slow on Snap)
-            console.log('[Dialog] Neither zenity nor kdialog found, falling back to Electron dialog');
-            dialog.showMessageBox({
-              type: 'warning',
-              buttons: ['Uninstall', 'Cancel'],
-              defaultId: 0,
-              cancelId: 1,
-              title: options.title,
-              message: options.message,
-              detail: options.detail,
-            }).then(({ response }) => resolve(response === 0));
-          } else {
-            // kdialog found - exit code 0 = Yes, 1 = No
-            resolve(!error2);
-          }
-        });
-      } else {
-        // zenity found - exit code 0 = OK, 1 = Cancel
-        resolve(!error);
-      }
+  // Write the uninstall script to a temp file
+  const scriptPath = path.join('/tmp', `messenger-appimage-uninstall-${Date.now()}.sh`);
+  
+  const uninstallScript = `#!/bin/sh
+# Wait for the Messenger AppImage to fully exit
+sleep 3
+
+# Wait for any messenger processes to terminate (with timeout)
+WAIT_COUNT=0
+while pgrep -f "${LINUX_PACKAGE_NAME}" > /dev/null 2>&1; do
+  sleep 1
+  WAIT_COUNT=$((WAIT_COUNT + 1))
+  if [ $WAIT_COUNT -gt 30 ]; then
+    break
+  fi
+done
+
+# Additional wait to ensure the file handle is released
+sleep 2
+
+# Delete the AppImage file with pkexec for authentication
+# This shows the system's native authentication dialog
+/usr/bin/pkexec /bin/rm -f "${appImagePath}"
+UNINSTALL_EXIT=$?
+
+# Only proceed with cleanup if deletion succeeded
+if [ $UNINSTALL_EXIT -eq 0 ]; then
+  echo "AppImage deleted successfully"
+  sleep 1
+  
+  # Remove user-specific desktop entries that might persist
+  rm -f "${homeDir}/.local/share/applications/${LINUX_PACKAGE_NAME}.desktop" 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/Messenger.desktop" 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/messenger.desktop" 2>/dev/null
+  rm -f "${homeDir}/.local/share/applications/appimagekit"*"messenger"*.desktop 2>/dev/null
+  
+  # Remove user icons if they exist
+  rm -f "${homeDir}/.local/share/icons/hicolor/"*"/apps/${LINUX_PACKAGE_NAME}.png" 2>/dev/null
+  rm -f "${homeDir}/.local/share/icons/hicolor/"*"/apps/messenger.png" 2>/dev/null
+  
+  # Clear pop-launcher cache (for Pop!_OS COSMIC)
+  rm -rf "${homeDir}/.cache/pop-launcher/" 2>/dev/null || true
+  rm -rf "${homeDir}/.local/share/pop-launcher/" 2>/dev/null || true
+  
+  # Clear COSMIC app cache
+  rm -rf "${homeDir}/.cache/cosmic"* 2>/dev/null || true
+  
+  # Update user desktop database
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "${homeDir}/.local/share/applications" 2>/dev/null || true
+  fi
+  
+  # Refresh icon caches
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "${homeDir}/.local/share/icons/hicolor" 2>/dev/null || true
+  fi
+  
+  # Force desktop environment to reload application list
+  if command -v dbus-send >/dev/null 2>&1; then
+    dbus-send --type=signal --dest=org.gnome.Shell /org/gnome/Shell org.gnome.Shell.AppLaunchContext 2>/dev/null || true
+  fi
+  
+  touch "${homeDir}/.local/share/applications" 2>/dev/null || true
+else
+  echo "Failed to delete AppImage (user may have cancelled authentication)"
+fi
+
+# Clean up this script
+rm -f "${scriptPath}"
+`;
+
+  try {
+    // Write script to temp location
+    fs.writeFileSync(scriptPath, uninstallScript, { mode: 0o755 });
+    console.log('[Uninstall] Wrote AppImage uninstall script to:', scriptPath);
+    
+    // Use systemd-run to schedule execution that survives app exit
+    const child = spawn('/usr/bin/systemd-run', [
+      '--user',
+      '--scope',
+      '--collect',
+      '--description=Messenger Uninstaller',
+      '/bin/sh', scriptPath,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        HOME: homeDir,
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        DISPLAY: process.env.DISPLAY || ':0',
+        XAUTHORITY: process.env.XAUTHORITY || `${homeDir}/.Xauthority`,
+        XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() || 1000}`,
+        DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || '',
+      },
     });
-  });
+    child.unref();
+    console.log('[Uninstall] Scheduled AppImage uninstall via systemd-run');
+  } catch (error) {
+    console.error('[Uninstall] Failed to schedule AppImage uninstall:', error);
+    // Fallback: try direct spawn
+    const child = spawn('/usr/bin/sh', ['-c', `sleep 3 && /usr/bin/pkexec /bin/rm -f "${appImagePath}"`], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        HOME: homeDir,
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        DISPLAY: process.env.DISPLAY || ':0',
+      },
+    });
+    child.unref();
+    console.log('[Uninstall] Fallback: scheduled AppImage uninstall via direct spawn');
+  }
 }
 
 async function handleUninstallRequest(): Promise<void> {
   // Show confirmation dialog IMMEDIATELY - don't do any detection before this
-  let confirmed: boolean;
-  
-  if (process.platform === 'linux') {
-    // On Linux (especially Snap), Electron's native dialog goes through xdg-desktop-portal
-    // which can be extremely slow (20+ seconds). Use zenity/kdialog instead which are fast
-    // and match the user's desktop theme.
-    confirmed = await showLinuxConfirmDialog({
-      title: 'Uninstall Messenger',
-      message: 'Uninstall Messenger from this device?',
-      detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).\n\nNote: If you installed via Flatpak, Snap, apt, or dnf, you may also need to uninstall using that package manager.',
-    });
-  } else {
-    // Use native dialog on macOS/Windows where it's fast
-    const { response } = await dialog.showMessageBox({
-      type: 'warning',
-      buttons: ['Uninstall', 'Cancel'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'Uninstall Messenger',
-      message: 'Uninstall Messenger from this device?',
-      detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
-    });
-    confirmed = response === 0;
-  }
+  // Use Electron's native dialog on all platforms - it shows the system's standard dialog
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Uninstall', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Uninstall Messenger',
+    message: 'Uninstall Messenger from this device?',
+    detail: 'This will quit Messenger and remove all app data (settings, cache, and logs).',
+  });
+  const confirmed = response === 0;
 
   if (!confirmed) {
     return;
@@ -2208,8 +2331,8 @@ async function handleUninstallRequest(): Promise<void> {
   const targets = uninstallTargets().map((t) => t.path);
   scheduleExternalCleanup(targets);
 
-  // Special handling for Snap/Flatpak: must quit app FIRST, then run uninstall
-  // These run in sandboxes that prevent uninstalling from within
+  // Special handling for Snap/Flatpak/AppImage: must quit app FIRST, then run uninstall
+  // These run in sandboxes or are self-contained and need special handling
   if (packageManager?.name === 'Snap') {
     console.log('[Uninstall] Snap detected - scheduling uninstall after app quits');
     scheduleSnapUninstall();
@@ -2220,6 +2343,13 @@ async function handleUninstallRequest(): Promise<void> {
   if (packageManager?.name === 'Flatpak') {
     console.log('[Uninstall] Flatpak detected - scheduling uninstall after app quits');
     scheduleFlatpakUninstall();
+    app.quit();
+    return;
+  }
+  
+  if (packageManager?.name === 'AppImage') {
+    console.log('[Uninstall] AppImage detected - scheduling uninstall after app quits');
+    scheduleAppImageUninstall();
     app.quit();
     return;
   }

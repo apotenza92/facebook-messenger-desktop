@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.4] - 2026-01-07
+
+### Changed
+- Linux uninstall now uses Electron's native dialog instead of zenity/kdialog
+- All Linux package types now use pkexec for authentication during uninstall
+  - deb: apt remove with pkexec
+  - rpm: dnf remove with pkexec
+  - Snap: snap remove with pkexec
+  - Flatpak: flatpak uninstall with pkexec (previously had no auth)
+  - AppImage: Deletes the .AppImage file with pkexec
+
+### Added
+- AppImage uninstall support
+  - Detects AppImage installations via APPIMAGE environment variable
+  - Deletes the .AppImage file and cleans up desktop entries/icons
+  - Uses systemd-run to survive app exit, with fallback to direct spawn
+
 ## [1.0.3] - 2026-01-07
 
 ### Changed
