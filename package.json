@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -78,7 +78,8 @@
       "artifactName": "Messenger-macos-${arch}.${ext}",
       "extendInfo": {
         "NSCameraUsageDescription": "Messenger needs access to your camera for video calls.",
-        "NSMicrophoneUsageDescription": "Messenger needs access to your microphone for audio and video calls."
+        "NSMicrophoneUsageDescription": "Messenger needs access to your microphone for audio and video calls.",
+        "NSScreenCaptureUsageDescription": "Messenger needs access to screen recording to share your screen during calls."
       }
     },
     "win": {

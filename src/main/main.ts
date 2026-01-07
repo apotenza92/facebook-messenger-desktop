@@ -1,4 +1,4 @@
-import { app, BrowserWindow, BrowserView, ipcMain, Notification, Menu, nativeImage, screen, dialog, systemPreferences, Tray, shell, nativeTheme } from 'electron';
+import { app, BrowserWindow, BrowserView, ipcMain, Notification, Menu, nativeImage, screen, dialog, systemPreferences, Tray, shell, nativeTheme, desktopCapturer } from 'electron';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import * as https from 'https';
@@ -21,6 +21,39 @@ if (process.platform === 'linux' && process.env.APPIMAGE && !process.env.MESSENG
   });
   child.unref();
   process.exit(0);
+}
+
+// On Linux: Apply XWayland preference if set (for screen sharing compatibility)
+// This must happen before the app is ready
+if (process.platform === 'linux' && !process.env.MESSENGER_XWAYLAND_CHECKED) {
+  // Mark that we've checked to prevent infinite restart loop
+  process.env.MESSENGER_XWAYLAND_CHECKED = '1';
+  
+  // Check if user prefers XWayland mode
+  const userDataPath = app.getPath('userData');
+  const xwaylandPrefFile = path.join(userDataPath, 'xwayland-preference.json');
+  
+  try {
+    if (fs.existsSync(xwaylandPrefFile)) {
+      const data = JSON.parse(fs.readFileSync(xwaylandPrefFile, 'utf8'));
+      const shouldUseXWayland = data.useXWayland === true;
+      const currentlyUsingXWayland = process.env.ELECTRON_OZONE_PLATFORM_HINT === 'x11';
+      
+      // Restart if preference doesn't match current mode
+      if (shouldUseXWayland && !currentlyUsingXWayland) {
+        console.log('[XWayland] User prefers XWayland mode, restarting...');
+        const child = spawn(process.execPath, process.argv.slice(1), {
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env, ELECTRON_OZONE_PLATFORM_HINT: 'x11', MESSENGER_XWAYLAND_CHECKED: '1' }
+        });
+        child.unref();
+        process.exit(0);
+      }
+    }
+  } catch (e) {
+    // Ignore errors, just continue with default mode
+  }
 }
 
 const resetFlag =
@@ -100,6 +133,74 @@ const movePromptFile = path.join(app.getPath('userData'), 'move-to-applications-
 const notificationPermissionFile = path.join(app.getPath('userData'), 'notification-permission-requested.json');
 const snapHelpShownFile = path.join(app.getPath('userData'), 'snap-help-shown.json');
 const iconThemeFile = path.join(app.getPath('userData'), 'icon-theme.json');
+const xwaylandPreferenceFile = path.join(app.getPath('userData'), 'xwayland-preference.json');
+
+// XWayland preference for Linux Wayland users (for screen sharing compatibility)
+let useXWayland = false;
+
+function loadXWaylandPreference(): boolean {
+  try {
+    if (fs.existsSync(xwaylandPreferenceFile)) {
+      const data = JSON.parse(fs.readFileSync(xwaylandPreferenceFile, 'utf8'));
+      return data.useXWayland === true;
+    }
+  } catch (e) {
+    console.warn('[XWayland] Failed to load preference:', e);
+  }
+  return false;
+}
+
+function saveXWaylandPreference(value: boolean): void {
+  try {
+    fs.writeFileSync(xwaylandPreferenceFile, JSON.stringify({ useXWayland: value }));
+    console.log('[XWayland] Preference saved:', value);
+  } catch (e) {
+    console.error('[XWayland] Failed to save preference:', e);
+  }
+}
+
+function isRunningOnWayland(): boolean {
+  if (process.platform !== 'linux') return false;
+  // Check if we're running on native Wayland (not XWayland)
+  const waylandDisplay = process.env.WAYLAND_DISPLAY;
+  const xdgSessionType = process.env.XDG_SESSION_TYPE;
+  const electronOzone = process.env.ELECTRON_OZONE_PLATFORM_HINT;
+  
+  // If we forced X11 mode, we're on XWayland
+  if (electronOzone === 'x11') return false;
+  
+  // Check for Wayland session
+  return xdgSessionType === 'wayland' || !!waylandDisplay;
+}
+
+function isRunningXWaylandMode(): boolean {
+  // Check if we explicitly set X11 mode via env var
+  return process.env.ELECTRON_OZONE_PLATFORM_HINT === 'x11';
+}
+
+function restartWithXWaylandMode(useX11: boolean): void {
+  saveXWaylandPreference(useX11);
+  
+  // Restart the app with the appropriate environment
+  const args = process.argv.slice(1);
+  const options: { env: NodeJS.ProcessEnv; detached: boolean; stdio: 'ignore' } = {
+    env: { ...process.env },
+    detached: true,
+    stdio: 'ignore',
+  };
+  
+  if (useX11) {
+    options.env.ELECTRON_OZONE_PLATFORM_HINT = 'x11';
+    console.log('[XWayland] Restarting with XWayland mode...');
+  } else {
+    delete options.env.ELECTRON_OZONE_PLATFORM_HINT;
+    console.log('[XWayland] Restarting with native Wayland mode...');
+  }
+  
+  const child = spawn(process.execPath, args, options);
+  child.unref();
+  app.quit();
+}
 
 // Icon theme: 'light', 'dark', or 'system' (default)
 // 'system' mode: Auto-switches between our light/dark icons based on OS dark mode
@@ -741,6 +842,92 @@ function createWindow(source: string = 'unknown'): void {
       return hasPermission;
     });
 
+    // Set up screen sharing handler for getDisplayMedia() calls
+    // This is required for the "Share Screen" button to work during calls
+    contentView.webContents.session.setDisplayMediaRequestHandler(async (request, callback) => {
+      console.log('[Screen Share] Display media request received');
+      
+      // On native Wayland, screen sharing has limited support - offer to switch to XWayland
+      if (isRunningOnWayland() && !isRunningXWaylandMode()) {
+        const result = await dialog.showMessageBox(mainWindow!, {
+          type: 'warning',
+          title: 'Screen Sharing on Wayland',
+          message: 'Screen sharing may not work reliably on native Wayland.',
+          detail: 'For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?',
+          buttons: ['Restart with XWayland', 'Try Anyway', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2,
+        });
+        
+        if (result.response === 0) {
+          // User chose to restart with XWayland
+          restartWithXWaylandMode(true);
+          callback({});
+          return;
+        } else if (result.response === 2) {
+          // User cancelled
+          callback({});
+          return;
+        }
+        // User chose "Try Anyway" - continue with screen sharing
+      }
+      
+      try {
+        // Get available screen/window sources
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 150, height: 150 },
+          fetchWindowIcons: true,
+        });
+        
+        console.log(`[Screen Share] Found ${sources.length} sources`);
+        
+        if (sources.length === 0) {
+          console.log('[Screen Share] No sources available');
+          callback({});
+          return;
+        }
+        
+        // If only one screen and no windows, auto-select it
+        const screens = sources.filter(s => s.id.startsWith('screen:'));
+        if (screens.length === 1 && sources.length === 1) {
+          console.log('[Screen Share] Auto-selecting single screen:', screens[0].name);
+          callback({ video: screens[0] });
+          return;
+        }
+        
+        // Show a picker dialog for the user to choose
+        // Build choices array with source names
+        const choices = sources.map((source, index) => {
+          const icon = source.id.startsWith('screen:') ? '🖥️' : '🪟';
+          return `${icon} ${source.name}`;
+        });
+        
+        // Use Electron's dialog to let user pick
+        const result = await dialog.showMessageBox(mainWindow!, {
+          type: 'question',
+          title: 'Share Screen',
+          message: 'Choose what to share:',
+          detail: 'Select a screen or window to share during your call.',
+          buttons: [...choices, 'Cancel'],
+          defaultId: 0,
+          cancelId: choices.length,
+        });
+        
+        if (result.response < sources.length) {
+          const selectedSource = sources[result.response];
+          console.log('[Screen Share] User selected:', selectedSource.name);
+          callback({ video: selectedSource });
+        } else {
+          console.log('[Screen Share] User cancelled');
+          callback({});
+        }
+      } catch (error) {
+        console.error('[Screen Share] Error getting sources:', error);
+        callback({});
+      }
+    });
+
     // Load messenger.com in content view
     contentView.webContents.loadURL('https://www.messenger.com');
 
@@ -851,6 +1038,85 @@ function createWindow(source: string = 'unknown'): void {
         const hasPermission = isAllowed && allowedPermissions.includes(permission);
         console.log(`[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? 'allowed' : 'denied'}`);
         return hasPermission;
+      });
+      
+      // Set up screen sharing handler for child windows (call windows)
+      childWindow.webContents.session.setDisplayMediaRequestHandler(async (request, callback) => {
+        console.log('[Screen Share] Display media request received (child window)');
+        
+        // On native Wayland, screen sharing has limited support - offer to switch to XWayland
+        if (isRunningOnWayland() && !isRunningXWaylandMode()) {
+          const result = await dialog.showMessageBox(childWindow, {
+            type: 'warning',
+            title: 'Screen Sharing on Wayland',
+            message: 'Screen sharing may not work reliably on native Wayland.',
+            detail: 'For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?',
+            buttons: ['Restart with XWayland', 'Try Anyway', 'Cancel'],
+            defaultId: 0,
+            cancelId: 2,
+          });
+          
+          if (result.response === 0) {
+            restartWithXWaylandMode(true);
+            callback({});
+            return;
+          } else if (result.response === 2) {
+            callback({});
+            return;
+          }
+        }
+        
+        try {
+          const sources = await desktopCapturer.getSources({
+            types: ['screen', 'window'],
+            thumbnailSize: { width: 150, height: 150 },
+            fetchWindowIcons: true,
+          });
+          
+          console.log(`[Screen Share] Found ${sources.length} sources (child window)`);
+          
+          if (sources.length === 0) {
+            console.log('[Screen Share] No sources available');
+            callback({});
+            return;
+          }
+          
+          // If only one screen and no windows, auto-select it
+          const screens = sources.filter(s => s.id.startsWith('screen:'));
+          if (screens.length === 1 && sources.length === 1) {
+            console.log('[Screen Share] Auto-selecting single screen:', screens[0].name);
+            callback({ video: screens[0] });
+            return;
+          }
+          
+          // Show picker dialog
+          const choices = sources.map((source) => {
+            const icon = source.id.startsWith('screen:') ? '🖥️' : '🪟';
+            return `${icon} ${source.name}`;
+          });
+          
+          const result = await dialog.showMessageBox(childWindow, {
+            type: 'question',
+            title: 'Share Screen',
+            message: 'Choose what to share:',
+            detail: 'Select a screen or window to share during your call.',
+            buttons: [...choices, 'Cancel'],
+            defaultId: 0,
+            cancelId: choices.length,
+          });
+          
+          if (result.response < sources.length) {
+            const selectedSource = sources[result.response];
+            console.log('[Screen Share] User selected:', selectedSource.name);
+            callback({ video: selectedSource });
+          } else {
+            console.log('[Screen Share] User cancelled');
+            callback({});
+          }
+        } catch (error) {
+          console.error('[Screen Share] Error getting sources:', error);
+          callback({});
+        }
       });
       
       // Log when child window loads
@@ -1069,6 +1335,85 @@ function createWindow(source: string = 'unknown'): void {
         const hasPermission = isAllowed && allowedPermissions.includes(permission);
         console.log(`[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? 'allowed' : 'denied'}`);
         return hasPermission;
+      });
+      
+      // Set up screen sharing handler for child windows (call windows)
+      childWindow.webContents.session.setDisplayMediaRequestHandler(async (request, callback) => {
+        console.log('[Screen Share] Display media request received (child window)');
+        
+        // On native Wayland, screen sharing has limited support - offer to switch to XWayland
+        if (isRunningOnWayland() && !isRunningXWaylandMode()) {
+          const result = await dialog.showMessageBox(childWindow, {
+            type: 'warning',
+            title: 'Screen Sharing on Wayland',
+            message: 'Screen sharing may not work reliably on native Wayland.',
+            detail: 'For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?',
+            buttons: ['Restart with XWayland', 'Try Anyway', 'Cancel'],
+            defaultId: 0,
+            cancelId: 2,
+          });
+          
+          if (result.response === 0) {
+            restartWithXWaylandMode(true);
+            callback({});
+            return;
+          } else if (result.response === 2) {
+            callback({});
+            return;
+          }
+        }
+        
+        try {
+          const sources = await desktopCapturer.getSources({
+            types: ['screen', 'window'],
+            thumbnailSize: { width: 150, height: 150 },
+            fetchWindowIcons: true,
+          });
+          
+          console.log(`[Screen Share] Found ${sources.length} sources (child window)`);
+          
+          if (sources.length === 0) {
+            console.log('[Screen Share] No sources available');
+            callback({});
+            return;
+          }
+          
+          // If only one screen and no windows, auto-select it
+          const screens = sources.filter(s => s.id.startsWith('screen:'));
+          if (screens.length === 1 && sources.length === 1) {
+            console.log('[Screen Share] Auto-selecting single screen:', screens[0].name);
+            callback({ video: screens[0] });
+            return;
+          }
+          
+          // Show picker dialog
+          const choices = sources.map((source) => {
+            const icon = source.id.startsWith('screen:') ? '🖥️' : '🪟';
+            return `${icon} ${source.name}`;
+          });
+          
+          const result = await dialog.showMessageBox(childWindow, {
+            type: 'question',
+            title: 'Share Screen',
+            message: 'Choose what to share:',
+            detail: 'Select a screen or window to share during your call.',
+            buttons: [...choices, 'Cancel'],
+            defaultId: 0,
+            cancelId: choices.length,
+          });
+          
+          if (result.response < sources.length) {
+            const selectedSource = sources[result.response];
+            console.log('[Screen Share] User selected:', selectedSource.name);
+            callback({ video: selectedSource });
+          } else {
+            console.log('[Screen Share] User cancelled');
+            callback({});
+          }
+        } catch (error) {
+          console.error('[Screen Share] Error getting sources:', error);
+          callback({});
+        }
       });
       
       // Log when child window loads
@@ -2466,6 +2811,35 @@ function createApplicationMenu(): void {
     },
   };
 
+  // XWayland mode toggle for Linux Wayland users (for screen sharing compatibility)
+  const xwaylandMenuItem: Electron.MenuItemConstructorOptions | null = process.platform === 'linux' ? {
+    label: isRunningXWaylandMode() ? 'Use Native Wayland Mode…' : 'Use XWayland Mode (for Screen Sharing)…',
+    click: async () => {
+      const currentlyXWayland = isRunningXWaylandMode();
+      const title = currentlyXWayland ? 'Switch to Native Wayland' : 'Switch to XWayland Mode';
+      const message = currentlyXWayland 
+        ? 'Switch back to native Wayland mode?' 
+        : 'Switch to XWayland mode for better screen sharing?';
+      const detail = currentlyXWayland
+        ? 'Native Wayland provides better display scaling and touch support, but screen sharing may not work reliably.\n\nThe app will restart to apply this change.'
+        : 'XWayland mode provides better compatibility for screen sharing during calls.\n\nTrade-offs:\n• Screen sharing will work reliably\n• Display scaling may be slightly blurry on HiDPI screens\n• Some Wayland-specific features may be limited\n\nThe app will restart to apply this change.';
+      
+      const result = await dialog.showMessageBox(mainWindow!, {
+        type: 'question',
+        title,
+        message,
+        detail,
+        buttons: ['Restart Now', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      
+      if (result.response === 0) {
+        restartWithXWaylandMode(!currentlyXWayland);
+      }
+    },
+  } : null;
+
   // Icon theme submenu - allows switching between light/dark/system icons
   const iconThemeSubmenu: Electron.MenuItemConstructorOptions = {
     label: 'Icon Appearance',
@@ -2657,6 +3031,8 @@ function createApplicationMenu(): void {
         viewOnGitHubMenuItem,
         checkUpdatesMenuItem,
         notificationSettingsMenuItem,
+        // XWayland mode option for Linux users (for screen sharing compatibility)
+        ...(xwaylandMenuItem ? [{ type: 'separator' as const }, xwaylandMenuItem] : []),
         { type: 'separator' },
         uninstallMenuItem,
         { type: 'separator' },

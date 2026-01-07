@@ -10,12 +10,31 @@
   - Snap: snap remove with pkexec
   - Flatpak: flatpak uninstall with pkexec (previously had no auth)
   - AppImage: Deletes the .AppImage file with pkexec
+- Snap auto-promotion timeout increased from 60 to 90 minutes (Launchpad builds can be slow)
+- Snap promotion workflow now shows detailed status and error reporting
 
 ### Added
 - AppImage uninstall support
   - Detects AppImage installations via APPIMAGE environment variable
   - Deletes the .AppImage file and cleans up desktop entries/icons
   - Uses systemd-run to survive app exit, with fallback to direct spawn
+- Screen sharing support during calls (issue #19)
+  - Adds setDisplayMediaRequestHandler for getDisplayMedia() calls
+  - Shows a picker dialog to choose which screen or window to share
+  - Auto-selects if only one screen is available
+  - Includes macOS screen recording permission prompt
+- Linux: XWayland mode toggle for screen sharing compatibility
+  - Help menu option to switch between native Wayland and XWayland modes
+  - When screen sharing on native Wayland, prompts user to switch to XWayland
+  - Preference is saved and persists across restarts
+  - XWayland provides reliable screen sharing at cost of some Wayland features
+
+### Fixed
+- Deb/RPM: App not appearing in GNOME Applications menu
+  - electron-builder was generating incomplete Categories field
+  - Post-install script now fixes Categories to include InstantMessaging and Chat
+- Snap: Desktop file and icon now properly included in snap/gui/ directory
+  - Fixes app not appearing in application menu after snap install
 
 ## [1.0.3] - 2026-01-07
 
