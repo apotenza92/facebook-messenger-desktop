@@ -12,8 +12,11 @@ const electron = require('electron');
 process.env.ELECTRON_APP_NAME = 'Messenger';
 process.env.ELECTRON_APP_PATH = path.join(__dirname, '..');
 
-// Spawn Electron with our app
-const electronProcess = spawn(electron, [path.join(__dirname, '..')], {
+// Get any extra arguments passed after `npm start --`
+const extraArgs = process.argv.slice(2);
+
+// Spawn Electron with our app and any extra arguments
+const electronProcess = spawn(electron, [path.join(__dirname, '..'), ...extraArgs], {
   stdio: 'inherit',
   env: {
     ...process.env,

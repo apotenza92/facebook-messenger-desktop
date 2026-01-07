@@ -15,10 +15,10 @@
 - **Disclaimers**: Required notices stating unofficial/community package, not affiliated with Meta Platforms, Inc.
 
 ### Impermissible Submissions Compliance
-**Not a Simple Web Wrapper**: Provides substantial native functionality:
+**Provides Substantial Native Functionality**: This is not a simple web view; it provides native OS integrations:
 
-| Feature | Simple Wrapper | This App |
-|---------|---------------|----------|
+| Feature | Standard Web/PWA | This App |
+|---------|------------------|----------|
 | Native Notifications | Broken in PWA | Full native system |
 | System Tray | Not possible | Full integration |
 | Badge Counts | Not in PWA | All platforms |
@@ -80,7 +80,7 @@ An unofficial desktop client for Facebook Messenger with substantial native OS i
 
 **Trademark**: Generic app name "Messenger" with required disclaimers. App ID avoids trademarked terms. Icon uses descriptive branding elements with explicit disclaimers.
 
-**Impermissible Submissions**: Not a simple web wrapper. Provides substantial native integration across 8 feature categories. Critical functionality (working notifications, badges) impossible in PWA.
+**Impermissible Submissions**: Provides substantial native integration across 8 feature categories. Critical functionality (working notifications, badges) impossible in PWA.
 
 **Technical**: Builds from source, uses 24.08 runtime, correct permissions, supports both architectures.
 

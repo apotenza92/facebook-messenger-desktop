@@ -7,6 +7,7 @@
     "clean": "node scripts/clean.js",
     "build": "npm run clean && tsc && tsc -p src/preload/tsconfig.json",
     "start": "npm run build && node scripts/dev.js",
+    "start:reset": "npm run build && node scripts/dev.js --reset-window",
     "generate-icons": "node scripts/generate-icons.js",
     "dist": "npm run build && electron-builder --publish=never",
     "dist:mac": "npm run build && electron-builder --mac --arm64 --x64 --publish=never",

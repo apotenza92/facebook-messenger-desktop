@@ -202,6 +202,620 @@ function restartWithXWaylandMode(useX11: boolean): void {
   app.quit();
 }
 
+
+// Custom login page CSS - matches docs/index.html style
+const LOGIN_PAGE_CSS = `
+  /* Prevent scrolling - lock viewport */
+  html, body {
+    overflow: hidden !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+  }
+  
+  /* Hide everything we don't need */
+  header, nav, [role="navigation"], footer, [role="contentinfo"] {
+    display: none !important;
+  }
+  
+  /* Hide any secondary main content (footer area) */
+  main + main, main ~ main {
+    display: none !important;
+  }
+  
+  /* Hide headings and subtitles */
+  h1:not(.md-title), h2, p:not(form p):not(.md-subtitle):not(.md-trademark) {
+    display: none !important;
+  }
+  
+  /* Hide all links outside the form */
+  body > a, body > div > a {
+    display: none !important;
+  }
+  
+  /* Hide ALL images except our icon */
+  img:not(.md-icon):not(#md-app-icon), picture, video {
+    display: none !important;
+  }
+  
+  /* Our icon image styling - multiple selectors for maximum specificity */
+  img.md-icon,
+  #md-app-icon,
+  #md-header img,
+  #md-wrapper img.md-icon {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 72px !important;
+    height: 72px !important;
+    min-width: 72px !important;
+    min-height: 72px !important;
+    max-width: 72px !important;
+    max-height: 72px !important;
+    margin: 0 auto 12px auto !important;
+    border-radius: 16px !important;
+    position: relative !important;
+    z-index: 9999 !important;
+    transform: none !important;
+    clip: auto !important;
+    overflow: visible !important;
+  }
+  
+  /* Hide all main elements to prevent layout issues */
+  main {
+    display: contents !important;
+  }
+  
+  /* Clean centered layout */
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 100vh !important;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 50%, #f8f9fa 100%) !important;
+    overflow-x: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  }
+  
+  /* Wrapper for centering content */
+  #md-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 100vh !important;
+    padding: 1.5rem !important;
+    box-sizing: border-box !important;
+  }
+  
+  @media (prefers-color-scheme: dark) {
+    body {
+      background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0f0f23 100%) !important;
+    }
+  }
+  
+  /* Our custom header - with proper spacing */
+  #md-header {
+    text-align: center;
+    margin-bottom: 1.25rem;
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  #md-header .md-icon {
+    width: 72px !important;
+    height: 72px !important;
+    margin-bottom: 0.75rem !important;
+    border-radius: 20px !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+  
+  #md-header .md-title {
+    font-size: 1.65rem !important;
+    font-weight: 600 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    color: #1a1a1a !important;
+    margin: 0 0 0.6rem 0 !important;
+    display: block !important;
+  }
+  
+  #md-header .md-subtitle {
+    font-size: 0.9rem !important;
+    font-weight: 400 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    color: #666 !important;
+    line-height: 1.4 !important;
+    max-width: 380px !important;
+    margin: 0 0 0.75rem 0 !important;
+    display: block !important;
+  }
+  
+  #md-header .md-trademark {
+    font-size: 0.7rem !important;
+    font-weight: 400 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    color: #888 !important;
+    line-height: 1.4 !important;
+    max-width: 380px !important;
+    margin: 0 0 0.75rem 0 !important;
+    display: block !important;
+  }
+  
+  #md-header .md-github {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0.35rem !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    color: #0084ff !important;
+    text-decoration: none !important;
+    transition: opacity 0.2s ease !important;
+  }
+  
+  #md-header .md-github:hover {
+    opacity: 0.8 !important;
+  }
+  
+  #md-header .md-github svg {
+    width: 16px !important;
+    height: 16px !important;
+    fill: currentColor !important;
+  }
+  
+  @media (prefers-color-scheme: dark) {
+    #md-header .md-title {
+      color: #ffffff !important;
+    }
+    #md-header .md-subtitle {
+      color: #888 !important;
+    }
+    #md-header .md-trademark {
+      color: #666 !important;
+    }
+  }
+  
+  /* Hide Facebook's original form completely */
+  form {
+    position: absolute !important;
+    left: -9999px !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  
+  /* Our custom form styling */
+  #md-login-form {
+    background: white;
+    padding: 24px;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0, 0, 0, 0.1);
+    max-width: 360px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  #md-login-form input[type="text"],
+  #md-login-form input[type="password"] {
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid #dddfe2;
+    border-radius: 8px;
+    font-size: 16px;
+    box-sizing: border-box;
+    background: #f5f6f7;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  
+  #md-login-form input[type="text"]:focus,
+  #md-login-form input[type="password"]:focus {
+    border-color: #0084ff;
+    outline: none;
+    background: white;
+  }
+  
+  #md-login-form input::placeholder {
+    color: #8a8d91;
+  }
+  
+  #md-login-form button {
+    background: #0084ff;
+    color: white;
+    border: none;
+    border-radius: 24px;
+    padding: 12px 24px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    margin-top: 4px;
+  }
+  
+  #md-login-form button:hover {
+    background: #0073e6;
+  }
+  
+  #md-login-form button:active {
+    background: #0062cc;
+  }
+  
+  #md-login-form .md-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  
+  #md-login-form .md-checkbox-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: #0084ff;
+  }
+  
+  #md-login-form .md-checkbox-row label {
+    font-size: 14px;
+    color: #65676b;
+    cursor: pointer;
+    user-select: none;
+  }
+  
+  @media (prefers-color-scheme: dark) {
+    #md-login-form {
+      background: #242526;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3), 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    
+    #md-login-form input[type="text"],
+    #md-login-form input[type="password"] {
+      background: #3a3b3c;
+      border-color: #3a3b3c;
+      color: #e4e6eb;
+    }
+    
+    #md-login-form input[type="text"]:focus,
+    #md-login-form input[type="password"]:focus {
+      background: #4a4b4c;
+      border-color: #0084ff;
+    }
+    
+    #md-login-form input::placeholder {
+      color: #8a8d91;
+    }
+    
+    #md-login-form .md-checkbox-row label {
+      color: #b0b3b8;
+    }
+  }
+`;
+
+// JavaScript to inject the header with branding (icon embedded as base64)
+// Also moves the form directly after the header
+const LOGIN_PAGE_HEADER_JS = `
+  (function() {
+    // Only inject once
+    if (document.getElementById('md-wrapper')) return;
+    
+    // Hide all existing body children (Facebook's UI) but keep form accessible
+    Array.from(document.body.children).forEach(child => {
+      if (child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE') {
+        child.style.cssText = 'position: absolute !important; left: -9999px !important; opacity: 0 !important;';
+      }
+    });
+    
+    // Create wrapper for centering
+    const wrapper = document.createElement('div');
+    wrapper.id = 'md-wrapper';
+    
+    // Create header
+    const header = document.createElement('div');
+    header.id = 'md-header';
+    
+    // Icon (SVG embedded - actual app icon with white rounded rect background for crisp rendering at any size)
+    const iconImg = document.createElement('img');
+    iconImg.className = 'md-icon';
+    iconImg.src = "data:image/svg+xml,%3Csvg viewBox='0 0 1000 1000' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='1000' height='1000' rx='200' fill='%23ffffff'/%3E%3Cg transform='translate(55,50) scale(0.89)'%3E%3Cpath d='M1000 486c0 279-218 485-500 485-51 0-99-7-145-19-9-3-18-2-27 2l-99 44c-26 11-55-7-56-35l-3-89c0-11-5-21-13-28C60 758 0 632 0 486 0 207 219 1 501 1c282 0 499 206 499 485z' fill='%230866ff'/%3E%3Cg stroke='%23fff' stroke-width='15' stroke-linecap='round'%3E%3Cline x1='500' y1='130' x2='840' y2='295'/%3E%3Cline x1='840' y1='295' x2='840' y2='665'/%3E%3Cline x1='840' y1='665' x2='500' y2='830'/%3E%3Cline x1='500' y1='830' x2='160' y2='665'/%3E%3Cline x1='160' y1='665' x2='160' y2='295'/%3E%3Cline x1='160' y1='295' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='840' y2='295'/%3E%3Cline x1='500' y1='480' x2='840' y2='665'/%3E%3Cline x1='500' y1='480' x2='500' y2='830'/%3E%3Cline x1='500' y1='480' x2='160' y2='665'/%3E%3Cline x1='500' y1='480' x2='160' y2='295'/%3E%3C/g%3E%3Ccircle cx='500' cy='480' r='90' fill='%23fff'/%3E%3Ccircle cx='500' cy='130' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='295' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='500' cy='830' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='295' r='58' fill='%23fff'/%3E%3C/g%3E%3C/svg%3E";
+    iconImg.alt = 'Messenger Desktop';
+    header.appendChild(iconImg);
+    
+    // Title
+    const title = document.createElement('h1');
+    title.className = 'md-title';
+    title.textContent = 'Messenger Desktop';
+    header.appendChild(title);
+    
+    // Subtitle
+    const subtitle = document.createElement('p');
+    subtitle.className = 'md-subtitle';
+    subtitle.textContent = 'An unofficial, open-source desktop application for Facebook Messenger.';
+    header.appendChild(subtitle);
+    
+    // Trademark
+    const trademark = document.createElement('p');
+    trademark.className = 'md-trademark';
+    trademark.textContent = 'This project is not affiliated with, endorsed by, or connected to Meta Platforms, Inc. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc.';
+    header.appendChild(trademark);
+    
+    // GitHub link
+    const githubLink = document.createElement('a');
+    githubLink.className = 'md-github';
+    githubLink.href = 'https://github.com/apotenza92/facebook-messenger-desktop';
+    githubLink.target = '_blank';
+    githubLink.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg> View on GitHub';
+    header.appendChild(githubLink);
+    
+    wrapper.appendChild(header);
+    
+    // Create our custom login form
+    const customForm = document.createElement('div');
+    customForm.id = 'md-login-form';
+    
+    const emailInput = document.createElement('input');
+    emailInput.type = 'text';
+    emailInput.id = 'md-email';
+    emailInput.placeholder = 'Email address or phone number';
+    emailInput.autocomplete = 'username';
+    customForm.appendChild(emailInput);
+    
+    const passwordInput = document.createElement('input');
+    passwordInput.type = 'password';
+    passwordInput.id = 'md-password';
+    passwordInput.placeholder = 'Password';
+    passwordInput.autocomplete = 'current-password';
+    customForm.appendChild(passwordInput);
+    
+    const loginBtn = document.createElement('button');
+    loginBtn.type = 'button';
+    loginBtn.id = 'md-login-btn';
+    loginBtn.textContent = 'Log In';
+    customForm.appendChild(loginBtn);
+    
+    const checkboxRow = document.createElement('div');
+    checkboxRow.className = 'md-checkbox-row';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = 'md-keep-signed-in';
+    checkboxRow.appendChild(checkbox);
+    
+    const checkboxLabel = document.createElement('label');
+    checkboxLabel.htmlFor = 'md-keep-signed-in';
+    checkboxLabel.textContent = 'Keep me signed in';
+    checkboxRow.appendChild(checkboxLabel);
+    
+    customForm.appendChild(checkboxRow);
+    wrapper.appendChild(customForm);
+    
+    document.body.insertBefore(wrapper, document.body.firstChild);
+    
+    // Handle login submission
+    function submitLogin() {
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      const keepSignedIn = checkbox.checked;
+      
+      if (!email || !password) {
+        if (!email) emailInput.style.borderColor = '#f44336';
+        if (!password) passwordInput.style.borderColor = '#f44336';
+        return;
+      }
+      
+      // Find Facebook's login form specifically (it has id="login_form")
+      const fbForm = document.querySelector('form#login_form') || document.querySelector('form');
+      if (!fbForm) {
+        console.error('[LoginPage] Could not find Facebook form');
+        alert('Login error: Could not find login form. Please reload the page.');
+        return;
+      }
+      
+      console.log('[LoginPage] Found form:', fbForm.id || 'no id');
+      
+      // Find Facebook's inputs using their specific names
+      const fbEmailInput = fbForm.querySelector('input[name="email"]') || 
+                          fbForm.querySelector('input[type="text"]');
+      const fbPasswordInput = fbForm.querySelector('input[name="pass"]') || 
+                             fbForm.querySelector('input[type="password"]');
+      const fbCheckbox = fbForm.querySelector('input[name="persistent"]') ||
+                        fbForm.querySelector('input[type="checkbox"]');
+      
+      console.log('[LoginPage] Found inputs - email:', !!fbEmailInput, 'password:', !!fbPasswordInput);
+      
+      if (fbEmailInput && fbPasswordInput) {
+        // Fill in Facebook's form
+        fbEmailInput.value = email;
+        fbPasswordInput.value = password;
+        
+        // Dispatch events so React recognizes the values
+        ['input', 'change', 'blur'].forEach(eventType => {
+          fbEmailInput.dispatchEvent(new Event(eventType, { bubbles: true }));
+          fbPasswordInput.dispatchEvent(new Event(eventType, { bubbles: true }));
+        });
+        
+        // Handle checkbox
+        if (fbCheckbox && keepSignedIn !== fbCheckbox.checked) {
+          fbCheckbox.click();
+        }
+        
+        // Click Facebook's login button - use specific selectors
+        setTimeout(() => {
+          // The login button has id="loginbutton" and name="login"
+          const fbLoginBtn = fbForm.querySelector('#loginbutton') ||
+                            fbForm.querySelector('button[name="login"]') ||
+                            fbForm.querySelector('button[type="submit"]');
+          if (fbLoginBtn) {
+            console.log('[LoginPage] Clicking Facebook login button:', fbLoginBtn.id || fbLoginBtn.name || fbLoginBtn.textContent);
+            fbLoginBtn.click();
+          } else {
+            console.log('[LoginPage] No button found, submitting form directly');
+            fbForm.submit();
+          }
+        }, 100);
+      } else {
+        console.error('[LoginPage] Could not find Facebook form inputs');
+        alert('Login error: Could not find form inputs. Please reload the page.');
+      }
+    }
+    
+    loginBtn.addEventListener('click', submitLogin);
+    
+    // Enter key handling
+    emailInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') passwordInput.focus();
+    });
+    passwordInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitLogin();
+    });
+    
+    // Clear error styling on input
+    emailInput.addEventListener('input', () => emailInput.style.borderColor = '');
+    passwordInput.addEventListener('input', () => passwordInput.style.borderColor = '');
+    
+    console.log('[LoginPage] Custom login form created');
+  })();
+`;
+
+function getLoginPageCSS(): string {
+  return LOGIN_PAGE_CSS;
+}
+
+// Check if URL is a login/unauthenticated page (show disclaimer banner)
+function isLoginPage(url: string): boolean {
+  // Show custom login form on messenger.com/login/ page
+  const isMessengerDomain = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com');
+  if (!isMessengerDomain) return false;
+  
+  // If URL has /t/ (conversation thread), user is logged in
+  // If URL has /e2ee/t/ (encrypted thread), user is logged in
+  const hasConversationPath = url.includes('/t/') || url.includes('/e2ee/');
+  if (hasConversationPath) return false;
+  
+  // Only show custom login form on the dedicated login page
+  // The URL should be exactly /login/ or /login (with optional query params)
+  const urlObj = new URL(url);
+  const isLoginPath = urlObj.pathname === '/login/' || urlObj.pathname === '/login';
+  
+  return isLoginPath;
+}
+
+// Check if we're on a Facebook verification/checkpoint page (2FA, security check, etc.)
+function isVerificationPage(url: string): boolean {
+  const isMessengerDomain = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com');
+  const isFacebookDomain = url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com');
+  
+  if (!isMessengerDomain && !isFacebookDomain) return false;
+  
+  // These are security/verification pages where we should show a banner
+  return url.includes('/checkpoint') || 
+         url.includes('/recover') ||
+         url.includes('/challenge') ||
+         url.includes('/two_step_verification') ||
+         url.includes('/login/identify') ||
+         url.includes('/login/device-based');
+}
+
+// CSS for the verification page banner (shown during 2FA, security checks, etc.)
+// Generate verification banner CSS with platform-specific offset
+function getVerificationBannerCSS(): string {
+  // macOS has hybrid title bar overlay, other platforms don't
+  const topOffset = process.platform === 'darwin' ? '16px' : '0px';
+  const bodyPadding = process.platform === 'darwin' ? '85px' : '70px';
+  
+  return `
+  #md-verification-banner {
+    position: fixed;
+    top: ${topOffset};
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #0084ff 0%, #0066cc 100%);
+    color: #ffffff;
+    padding: 12px 24px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    z-index: 999999;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  }
+  #md-verification-banner .md-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  #md-verification-banner .md-content {
+    text-align: left;
+  }
+  #md-verification-banner a {
+    color: #ffffff;
+    text-decoration: underline;
+    font-weight: 500;
+  }
+  #md-verification-banner a:hover {
+    opacity: 0.9;
+  }
+  #md-verification-banner .md-app-name {
+    font-weight: 700;
+    font-size: 15px;
+    display: block;
+  }
+  #md-verification-banner .md-subtitle {
+    font-size: 12px;
+    opacity: 0.9;
+    margin-top: 2px;
+    display: block;
+  }
+  /* Add top padding to page content so banner doesn't overlap */
+  body {
+    padding-top: ${bodyPadding} !important;
+  }
+`;
+}
+
+const VERIFICATION_BANNER_JS = `
+  (function() {
+    if (document.getElementById('md-verification-banner')) return;
+    
+    const banner = document.createElement('div');
+    banner.id = 'md-verification-banner';
+    banner.innerHTML = \`
+      <img class="md-icon" src="data:image/svg+xml,%3Csvg viewBox='0 0 1000 1000' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='1000' height='1000' rx='200' fill='%23ffffff'/%3E%3Cg transform='translate(55,50) scale(0.89)'%3E%3Cpath d='M1000 486c0 279-218 485-500 485-51 0-99-7-145-19-9-3-18-2-27 2l-99 44c-26 11-55-7-56-35l-3-89c0-11-5-21-13-28C60 758 0 632 0 486 0 207 219 1 501 1c282 0 499 206 499 485z' fill='%230866ff'/%3E%3Cg stroke='%23fff' stroke-width='15' stroke-linecap='round'%3E%3Cline x1='500' y1='130' x2='840' y2='295'/%3E%3Cline x1='840' y1='295' x2='840' y2='665'/%3E%3Cline x1='840' y1='665' x2='500' y2='830'/%3E%3Cline x1='500' y1='830' x2='160' y2='665'/%3E%3Cline x1='160' y1='665' x2='160' y2='295'/%3E%3Cline x1='160' y1='295' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='840' y2='295'/%3E%3Cline x1='500' y1='480' x2='840' y2='665'/%3E%3Cline x1='500' y1='480' x2='500' y2='830'/%3E%3Cline x1='500' y1='480' x2='160' y2='665'/%3E%3Cline x1='500' y1='480' x2='160' y2='295'/%3E%3C/g%3E%3Ccircle cx='500' cy='480' r='90' fill='%23fff'/%3E%3Ccircle cx='500' cy='130' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='295' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='500' cy='830' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='295' r='58' fill='%23fff'/%3E%3C/g%3E%3C/svg%3E" alt="Messenger Desktop" />
+      <div class="md-content">
+        <span class="md-app-name">You're signing in to Messenger Desktop</span>
+        <span class="md-subtitle">
+          Complete the verification below to continue. This is an unofficial, open-source app — not affiliated with Meta.
+        </span>
+      </div>
+    \`;
+    document.body.appendChild(banner);
+    console.log('[VerificationBanner] Banner added to verification page');
+  })();
+`;
+
+// Inject simplified login page CSS (hides most elements, keeps login form + disclaimer)
+// Also injects a banner on verification pages
+async function injectLoginPageCSS(webContents: Electron.WebContents): Promise<void> {
+  try {
+    const url = webContents.getURL();
+    if (isLoginPage(url)) {
+      await webContents.insertCSS(getLoginPageCSS());
+      await webContents.executeJavaScript(LOGIN_PAGE_HEADER_JS);
+      console.log('[LoginPage] Custom login page styling injected');
+    } else if (isVerificationPage(url)) {
+      await webContents.insertCSS(getVerificationBannerCSS());
+      await webContents.executeJavaScript(VERIFICATION_BANNER_JS);
+      console.log('[VerificationPage] Banner injected on verification page');
+    }
+  } catch (e) {
+    console.warn('[LoginPage] Failed to inject styling:', e);
+  }
+}
+
 // Icon theme: 'light', 'dark', or 'system' (default)
 // 'system' mode: Auto-switches between our light/dark icons based on OS dark mode
 // This ensures our dark icon (with white interior) is shown instead of system's
@@ -928,8 +1542,8 @@ function createWindow(source: string = 'unknown'): void {
       }
     });
 
-    // Load messenger.com in content view
-    contentView.webContents.loadURL('https://www.messenger.com');
+    // Load messenger.com/login/ directly - simpler login page with just the form
+    contentView.webContents.loadURL('https://www.messenger.com/login/');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
     // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
@@ -1132,6 +1746,14 @@ function createWindow(source: string = 'unknown'): void {
 
     // Inject notification override script after page loads
     contentView.webContents.on('did-finish-load', async () => {
+      const currentUrl = contentView?.webContents.getURL() || '';
+      console.log('[ContentView] Page loaded:', currentUrl);
+      
+      // Inject custom login page CSS on login pages
+      if (contentView) {
+        await injectLoginPageCSS(contentView.webContents);
+      }
+      
       try {
         await contentView?.webContents.executeJavaScript(`
           (function() {
@@ -1156,6 +1778,21 @@ function createWindow(source: string = 'unknown'): void {
         }
       } catch (error) {
         console.error('[Main Process] Failed to inject notification script:', error);
+      }
+    });
+    
+    // Handle navigation events to inject disclaimer on page changes
+    contentView.webContents.on('did-navigate', async (event, url) => {
+      console.log('[ContentView] Navigated to:', url);
+      if (contentView && url.startsWith('https://')) {
+        await injectLoginPageCSS(contentView.webContents);
+      }
+    });
+    
+    contentView.webContents.on('did-navigate-in-page', async (event, url) => {
+      // In-page navigation (SPA-style) - re-check if we're on login page
+      if (contentView && url.startsWith('https://')) {
+        await injectLoginPageCSS(contentView.webContents);
       }
     });
 
@@ -1226,7 +1863,8 @@ function createWindow(source: string = 'unknown'): void {
       return hasPermission;
     });
 
-    mainWindow.loadURL('https://www.messenger.com');
+    // Load messenger.com/login/ directly - simpler login page with just the form
+    mainWindow.loadURL('https://www.messenger.com/login/');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
     // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
@@ -1433,6 +2071,14 @@ function createWindow(source: string = 'unknown'): void {
     });
 
     mainWindow.webContents.on('did-finish-load', async () => {
+      const currentUrl = mainWindow?.webContents.getURL() || '';
+      console.log('[MainWindow] Page loaded:', currentUrl);
+      
+      // Inject custom login page CSS on login pages
+      if (mainWindow) {
+        await injectLoginPageCSS(mainWindow.webContents);
+      }
+      
       try {
         await mainWindow?.webContents.executeJavaScript(`
           (function() {
@@ -1457,6 +2103,21 @@ function createWindow(source: string = 'unknown'): void {
         }
       } catch (error) {
         console.error('[Main Process] Failed to inject notification script:', error);
+      }
+    });
+    
+    // Handle navigation events to inject disclaimer on page changes
+    mainWindow.webContents.on('did-navigate', async (event, url) => {
+      console.log('[MainWindow] Navigated to:', url);
+      if (mainWindow && url.startsWith('https://')) {
+        await injectLoginPageCSS(mainWindow.webContents);
+      }
+    });
+    
+    mainWindow.webContents.on('did-navigate-in-page', async (event, url) => {
+      // In-page navigation (SPA-style) - re-check if we're on login page
+      if (mainWindow && url.startsWith('https://')) {
+        await injectLoginPageCSS(mainWindow.webContents);
       }
     });
 

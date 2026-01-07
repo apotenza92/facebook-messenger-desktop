@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.5] - 2026-01-08
+
+### Changed
+- Login page now uses messenger.com/login/ (simpler, cleaner form structure)
+- Custom branded login page with Messenger Desktop header, icon, and disclaimer
+- Login page icon now uses high-resolution SVG for crisp rendering at any size
+
+### Added
+- Verification page banner for 2FA and security checkpoint pages
+  - Shows "You're signing in to Messenger Desktop" with app icon
+  - Explains user is completing Facebook verification
+  - Includes disclaimer about unofficial app status
+  - Platform-specific positioning (accounts for macOS title bar overlay)
+
 ## [1.0.4] - 2026-01-07
 
 ### Changed
