@@ -98,7 +98,7 @@
     .mac-homebrew-section {
       margin-top: 0;
       width: 100%;
-      max-width: 500px;
+      max-width: 380px;
     }
     
     .selection-flow {
@@ -308,7 +308,7 @@
     
     .linux-command-section {
       width: 100%;
-      max-width: 600px;
+      max-width: 380px;
     }
     
     .linux-format-note {
@@ -422,7 +422,7 @@
       font-size: 0.85rem;
       color: var(--text);
       position: relative;
-      max-width: 500px;
+      max-width: 380px;
       margin: 0 auto;
     }
     
@@ -527,6 +527,126 @@
     
     .downloading .spinner { display: block; }
     .downloading .download-icon { display: none; }
+    
+    /* Hide connector lines */
+    .connector-svg {
+      display: none;
+    }
+    
+    /* Mobile Responsiveness */
+    @media (max-width: 640px) {
+      .container {
+        padding: 1.5rem 1rem;
+      }
+      
+      h1 {
+        font-size: 1.4rem;
+      }
+      
+      .icon {
+        width: 72px;
+        height: 72px;
+        margin-bottom: 1rem;
+      }
+      
+      /* Consistent button styles for all toggles */
+      .platform-btn,
+      .arch-btn,
+      .format-btn {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.75rem;
+      }
+      
+      .linux-format-toggle {
+        overflow-x: auto;
+        justify-content: flex-start;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 0.25rem;
+      }
+      
+      .format-command {
+        max-width: calc(100vw - 2rem);
+      }
+      
+      .format-command code {
+        font-size: 0.75rem;
+      }
+      
+      .linux-command-section,
+      .mac-homebrew-section {
+        max-width: calc(100vw - 2rem);
+        overflow: hidden;
+      }
+      
+      .copy-btn {
+        padding: 0.25rem 0.5rem;
+      }
+      
+      .mac-homebrew-section {
+        max-width: 100%;
+      }
+      
+      .linux-command-section {
+        max-width: 100%;
+      }
+      
+      .download-btn {
+        padding: 0.5rem 1rem;
+        font-size: 0.85rem;
+      }
+      
+      .version-info {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.5rem;
+      }
+      
+      .header-meta {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .container {
+        padding: 1rem 0.75rem;
+      }
+      
+      h1 {
+        font-size: 1.25rem;
+      }
+      
+      .icon {
+        width: 64px;
+        height: 64px;
+      }
+      
+      .platform-btn {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.8rem;
+      }
+      
+      .format-btn {
+        font-size: 0.7rem;
+        padding: 0.4rem 0.6rem;
+      }
+      
+      .format-command code {
+        font-size: 0.65rem;
+      }
+      
+      .command-label {
+        font-size: 0.75rem;
+      }
+      
+      .linux-formats {
+        gap: 1.5rem;
+      }
+      
+      .linux-format-content {
+        gap: 1.5rem;
+      }
+    }
   </style>
 </head>
 <body>
