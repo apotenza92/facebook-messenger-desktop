@@ -44,5 +44,5 @@ sudo snap install facebook-messenger-desktop
 #### Flatpak
 
 ```bash
-flatpak remote-add --if-not-exists --user messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop
+wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop
 ```
