@@ -3504,17 +3504,39 @@ async function handleUninstallRequest(): Promise<void> {
   }
   
   if (packageManager?.name === 'Flatpak') {
-    console.log('[Uninstall] Flatpak detected - showing manual uninstall instructions');
-    // Flatpak apps run in a sandbox and cannot run host commands like systemd-run or flatpak uninstall.
-    // Instead of crashing, show the user the command to run manually.
+    console.log('[Uninstall] Flatpak detected - attempting uninstall via flatpak-spawn');
     const flatpakAppId = process.env.FLATPAK_ID || FLATPAK_APP_ID;
-    await dialog.showMessageBox({
-      type: 'info',
-      title: 'Uninstall Flatpak',
-      message: 'To complete uninstallation, run this command in your terminal:',
-      detail: `flatpak uninstall ${flatpakAppId}\n\nThe app will now close.`,
-      buttons: ['OK'],
-    });
+    
+    // Use flatpak-spawn --host to run commands on the host system from within the sandbox
+    // This allows us to run pkexec for authentication and flatpak uninstall
+    try {
+      // Minimize window to give space for the auth dialog
+      mainWindow?.minimize();
+      
+      // Use flatpak-spawn to run the uninstall on the host after a delay (so app can quit first)
+      const child = spawn('/usr/bin/flatpak-spawn', [
+        '--host',
+        '/bin/sh', '-c',
+        `sleep 2 && /usr/bin/pkexec /usr/bin/flatpak uninstall --user -y ${flatpakAppId} && rm -rf ~/.var/app/${flatpakAppId}`
+      ], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      
+      console.log('[Uninstall] Scheduled Flatpak uninstall via flatpak-spawn');
+    } catch (error) {
+      console.error('[Uninstall] flatpak-spawn failed, showing manual instructions:', error);
+      // Fallback to manual instructions if flatpak-spawn isn't available
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Uninstall Flatpak',
+        message: 'To complete uninstallation, run this command in your terminal:',
+        detail: `flatpak uninstall --user ${flatpakAppId}\n\nThe app will now close.`,
+        buttons: ['OK'],
+      });
+    }
+    
     app.quit();
     return;
   }
