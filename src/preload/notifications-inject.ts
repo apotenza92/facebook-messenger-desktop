@@ -206,6 +206,37 @@
   // CONVERSATION EXTRACTION
   // ============================================================================
 
+  // Extract the relative timestamp from a conversation element (e.g., "5m", "2h", "3d", "1w")
+  // Returns null if no timestamp is found (meaning message just arrived)
+  const extractTimestamp = (conversationEl: Element): string | null => {
+    const textElements = conversationEl.querySelectorAll(selectors.conversationText);
+    for (const el of Array.from(textElements)) {
+      const text = el.textContent?.trim() || '';
+      // Match relative timestamps: 1m, 5m, 2h, 3d, 1w, etc.
+      if (/^\d+[mhdw]$/.test(text)) {
+        return text;
+      }
+      // Also check for "Just now" or "now" text
+      if (/^just now$/i.test(text) || text.toLowerCase() === 'now') {
+        return 'now';
+      }
+    }
+    return null;
+  };
+
+  // Check if a message is fresh enough to warrant a notification
+  // Only messages with NO timestamp (brand new) or "now"/"just now" should trigger notifications
+  // This prevents notifications for old messages that appear when scrolling or after app restart
+  const isMessageFresh = (conversationEl: Element): boolean => {
+    const timestamp = extractTimestamp(conversationEl);
+    // Only notify if no timestamp (brand new) or "now"/"just now"
+    const isFresh = timestamp === null || timestamp === 'now';
+    if (!isFresh) {
+      log('Message not fresh - has timestamp', { timestamp });
+    }
+    return isFresh;
+  };
+
   // Check if a conversation element has an unread indicator
   const isConversationUnread = (conversationEl: Element): boolean => {
     // PRIMARY CHECK: Look for "Unread message:" text in the conversation
@@ -442,6 +473,13 @@
               isMuted = true;
               log('Native notification for muted conversation - skipping', { title });
             }
+
+            // CRITICAL: Check if message is fresh (no timestamp = just arrived)
+            // This is the primary fix for issue #13 - only notify for messages that JUST arrived
+            if (foundRow && !isMessageFresh(foundRow)) {
+              log('Native notification for old message - skipping (has timestamp)', { title });
+              return;
+            }
           }
           
           // Skip notification for muted conversations
@@ -589,6 +627,17 @@
 
         // Skip muted conversations
         if (isConversationMuted(conversationRow)) {
+          continue;
+        }
+
+        // CRITICAL: Skip if message is not fresh (has a timestamp like "5m", "2h", "3d", "1w")
+        // This is the primary fix for issue #13 - only notify for messages that JUST arrived
+        // Old messages that appear when scrolling or after app restart will have timestamps
+        if (!isMessageFresh(conversationRow)) {
+          log('Skipping notification - message has timestamp, not brand new', {
+            title: info.title,
+            href: info.href,
+          });
           continue;
         }
 

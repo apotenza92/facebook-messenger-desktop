@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.7-beta.1] - 2026-01-08
+
+### Fixed
+- Duplicate notifications for old messages no longer appear (issue #13)
+  - Only messages that JUST arrived (no visible timestamp) will trigger notifications
+  - Old unread messages that appear when scrolling or after app restart are now ignored
+  - Detects Messenger's relative timestamps (e.g., "5m", "2h", "3d", "1w") to identify old messages
+
 ## [1.0.6] - 2026-01-08
 
 ### Added
