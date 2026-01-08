@@ -3504,8 +3504,17 @@ async function handleUninstallRequest(): Promise<void> {
   }
   
   if (packageManager?.name === 'Flatpak') {
-    console.log('[Uninstall] Flatpak detected - scheduling uninstall after app quits');
-    scheduleFlatpakUninstall();
+    console.log('[Uninstall] Flatpak detected - showing manual uninstall instructions');
+    // Flatpak apps run in a sandbox and cannot run host commands like systemd-run or flatpak uninstall.
+    // Instead of crashing, show the user the command to run manually.
+    const flatpakAppId = process.env.FLATPAK_ID || FLATPAK_APP_ID;
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'Uninstall Flatpak',
+      message: 'To complete uninstallation, run this command in your terminal:',
+      detail: `flatpak uninstall ${flatpakAppId}\n\nThe app will now close.`,
+      buttons: ['OK'],
+    });
     app.quit();
     return;
   }
