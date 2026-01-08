@@ -3859,7 +3859,17 @@ function createApplicationMenu(): void {
         click: () => { testNotification(); },
       },
       { type: 'separator' },
-      { role: 'toggleDevTools' as const },
+      {
+        label: 'Toggle Developer Tools',
+        accelerator: 'Alt+Command+I',
+        click: () => {
+          // Open DevTools on contentView (where Messenger runs) on macOS
+          const target = process.platform === 'darwin' && contentView 
+            ? contentView.webContents 
+            : mainWindow?.webContents;
+          target?.toggleDevTools();
+        },
+      },
       { role: 'forceReload' as const },
     ],
   };
@@ -3932,7 +3942,16 @@ function createApplicationMenu(): void {
       submenu: [
         { role: 'reload' as const },
         { role: 'forceReload' as const },
-        { role: 'toggleDevTools' as const },
+        {
+          label: 'Toggle Developer Tools',
+          accelerator: 'Alt+Command+I',
+          click: () => {
+            const target = process.platform === 'darwin' && contentView 
+              ? contentView.webContents 
+              : mainWindow?.webContents;
+            target?.toggleDevTools();
+          },
+        },
         { type: 'separator' },
         { role: 'resetZoom' as const },
         { role: 'zoomIn' as const },

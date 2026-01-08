@@ -157,6 +157,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
   });
 })();
 
+// Media viewer CSS adjustment for macOS title bar
+// Pushes media viewer controls down to be fully below the custom title bar overlay
+(function setupMediaViewerCSSAdjustment() {
+  if (process.platform !== 'darwin') return; // Only needed on macOS
+  
+  const TOP_OFFSET = 16;
+  const style = document.createElement('style');
+  style.id = 'messenger-media-viewer-fix';
+  style.textContent = `
+    /* Push media viewer top controls down */
+    /* Close button is a direct div, download/share are wrapped in spans */
+    [aria-label="Close"][role="button"],
+    span:has([aria-label="Download media attachment"]),
+    span:has([aria-label="Forward media attachment"]) {
+      transform: translateY(${TOP_OFFSET}px) !important;
+    }
+  `;
+  
+  // Inject when DOM is ready
+  const inject = () => {
+    if (!document.getElementById('messenger-media-viewer-fix')) {
+      document.head.appendChild(style);
+      console.log('[Preload] Media viewer CSS fix injected');
+    }
+  };
+  
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', inject);
+  } else {
+    inject();
+  }
+})();
+
 // Legacy Notification override (kept as fallback, but main injection happens after page load)
 // This must happen immediately and be non-configurable to prevent messenger.com from overriding it
 (function() {

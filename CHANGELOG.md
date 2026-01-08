@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.7-beta.3] - 2026-01-08
+
+### Fixed
+- macOS: Media viewer controls no longer obscured by title bar (issue #21)
+  - Close, download, and forward buttons now fully visible when viewing photos/videos
+  - Injects CSS to push controls below the custom title bar overlay
+
 ## [1.0.7-beta.2] - 2026-01-08
 
 ### Changed
