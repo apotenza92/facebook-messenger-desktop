@@ -1,12 +1,4 @@
-// Debug: write to file since console might not work in Flatpak
-const debugFs = require('fs');
-const debugPath = require('path');
-const debugFile = debugPath.join(process.env.HOME || '/tmp', 'messenger-debug.log');
-debugFs.writeFileSync(debugFile, `[${new Date().toISOString()}] main.ts loading...\n`);
-
 import { app, BrowserWindow, BrowserView, ipcMain, Notification, Menu, nativeImage, screen, dialog, systemPreferences, Tray, shell, nativeTheme, desktopCapturer } from 'electron';
-
-debugFs.appendFileSync(debugFile, `[${new Date().toISOString()}] electron imported\n`);
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import * as https from 'https';
@@ -877,9 +869,7 @@ let currentIconTheme: IconTheme = 'system';
 
 // Request single instance lock early (before app.whenReady) to prevent race conditions
 // on Linux/Windows where multiple instances might start before lock is checked
-debugFs.appendFileSync(debugFile, `[${new Date().toISOString()}] About to request single instance lock\n`);
 const gotTheLock = app.requestSingleInstanceLock();
-debugFs.appendFileSync(debugFile, `[${new Date().toISOString()}] Lock acquired: ${gotTheLock}\n`);
 console.log(`[SingleInstance] Lock acquired: ${gotTheLock}`);
 if (!gotTheLock) {
   // Another instance is already running - quit immediately
