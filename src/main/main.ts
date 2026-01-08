@@ -3605,12 +3605,31 @@ function createApplicationMenu(): void {
       // Use checkForUpdates() instead of checkForUpdatesAndNotify() to use our custom update window
       autoUpdater.checkForUpdates().catch((err: unknown) => {
         console.warn('[AutoUpdater] manual check failed', err);
-        dialog.showMessageBox({
-          type: 'warning',
-          title: 'Update check failed',
-          message: 'Could not check for updates. Please try again later.',
-          buttons: ['OK'],
-        }).catch(() => {});
+        
+        // Check if this is a "no versions found" error, which means we're on the latest
+        // This can happen when on a beta version with no newer releases available
+        const errMsg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+        const isNoVersionsError = errMsg.includes('no published versions') || 
+                                   errMsg.includes('cannot find latest') ||
+                                   errMsg.includes('cannot find channel');
+        
+        if (isNoVersionsError) {
+          // Treat as "up to date" rather than an error
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'No Updates Available',
+            message: "You're up to date!",
+            detail: 'Messenger is running the latest version.',
+            buttons: ['OK'],
+          }).catch(() => {});
+        } else {
+          dialog.showMessageBox({
+            type: 'warning',
+            title: 'Update check failed',
+            message: 'Could not check for updates. Please try again later.',
+            buttons: ['OK'],
+          }).catch(() => {});
+        }
       }).finally(() => {
         manualUpdateCheckInProgress = false;
       });

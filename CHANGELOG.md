@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.7-beta.5] - 2026-01-08
+
+### Fixed
+- Update check no longer shows "Update check failed" when already on the latest version
+  - Beta users especially affected when no newer releases available
+  - Now correctly shows "You're up to date!" in these cases
+
 ## [1.0.7-beta.4] - 2026-01-08
 
 ### Added
