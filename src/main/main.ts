@@ -4860,42 +4860,62 @@ async function getChangelogForUpdate(currentVersion: string, newVersion: string,
     console.log(`[Changelog] Fetching changelog for update ${currentVersion} -> ${newVersion} (beta: ${includeBeta})`);
     const markdown = await fetchChangelogFromGitHub();
     const entries = parseChangelog(markdown);
-    
+
     // Filter entries between current and new version
     const relevantEntries = entries.filter(entry => {
       // Must be newer than current version and <= new version
       const isNewer = compareVersions(entry.version, currentVersion) > 0;
       const isNotBeyondNew = compareVersions(entry.version, newVersion) <= 0;
-      
+
       // Filter by beta preference
       const matchesBetaPreference = includeBeta || !entry.isBeta;
-      
+
       return isNewer && isNotBeyondNew && matchesBetaPreference;
     });
-    
+
     if (relevantEntries.length === 0) {
       return '';
     }
-    
+
     // Format entries for display (simplified, no markdown headers)
-    const formatted = relevantEntries.map(entry => {
+    // Limit to prevent dialog from being too tall (max ~800 chars or 3 entries)
+    const MAX_CHANGELOG_LENGTH = 800;
+    const MAX_ENTRIES = 3;
+    const entriesToShow = relevantEntries.slice(0, MAX_ENTRIES);
+    const hasMore = relevantEntries.length > MAX_ENTRIES;
+
+    const formatted = entriesToShow.map(entry => {
       // Convert markdown content to plain text for dialog
       let content = entry.content;
-      
+
       // Remove ### headers but keep the text
       content = content.replace(/^### (.+)$/gm, '$1:');
-      
+
       // Remove leading dashes from list items, keep indentation info
       content = content.replace(/^- /gm, '• ');
       content = content.replace(/^  - /gm, '  ◦ ');
-      
+
       // Remove issue references like "(issue #21)" for cleaner display
       content = content.replace(/\s*\(issue #\d+\)/g, '');
-      
+
       return `v${entry.version}:\n${content}`;
     }).join('\n\n');
-    
-    return formatted;
+
+    // Truncate if still too long
+    let result = formatted;
+    if (result.length > MAX_CHANGELOG_LENGTH) {
+      result = result.substring(0, MAX_CHANGELOG_LENGTH).trim();
+      // Try to cut at a line boundary
+      const lastNewline = result.lastIndexOf('\n');
+      if (lastNewline > MAX_CHANGELOG_LENGTH * 0.7) {
+        result = result.substring(0, lastNewline);
+      }
+      result += '\n...';
+    } else if (hasMore) {
+      result += `\n\n...and ${relevantEntries.length - MAX_ENTRIES} more version(s)`;
+    }
+
+    return result;
   } catch (err) {
     console.warn('[Changelog] Failed to fetch changelog:', err);
     return '';

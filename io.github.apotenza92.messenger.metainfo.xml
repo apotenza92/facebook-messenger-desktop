@@ -6,7 +6,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <developer id="io.github.apotenza92">
-    <name>Anthony Potenza</name>
+    <name>Alex Potenza</name>
   </developer>
   <description>
     <p>This is a community package and is not officially supported by Meta Platforms, Inc.</p>
@@ -30,7 +30,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>Messenger Desktop main window</caption>
-      <image>https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main/docs/screenshots/main-window.png</image>
+      <image>https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/v1.0.7/docs/screenshots/main-window.png</image>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1">
