@@ -49,11 +49,11 @@ trap cleanup EXIT
 # Install dependencies
 echo -e "${YELLOW}[1/5] Installing dependencies...${NC}"
 if command -v dnf &> /dev/null; then
-  sudo dnf install -y flatpak flatpak-builder appstream git 2>/dev/null || true
+  sudo dnf install -y flatpak flatpak-builder appstream git curl 2>/dev/null || true
 elif command -v apt &> /dev/null; then
-  sudo apt update && sudo apt install -y flatpak flatpak-builder appstream git 2>/dev/null || true
+  sudo apt update && sudo apt install -y flatpak flatpak-builder appstream git curl 2>/dev/null || true
 elif command -v pacman &> /dev/null; then
-  sudo pacman -Sy --noconfirm flatpak flatpak-builder appstream git 2>/dev/null || true
+  sudo pacman -Sy --noconfirm flatpak flatpak-builder appstream git curl 2>/dev/null || true
 fi
 flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 echo -e "${GREEN}✓ Done${NC}"
@@ -75,15 +75,33 @@ fi
 echo -e "${GREEN}✓ Done${NC}"
 echo ""
 
-# Update SHA256 if needed and build
+# Update placeholders and build
 echo -e "${YELLOW}[4/5] Building Flatpak...${NC}"
-if grep -q "REPLACE_WITH_SHA256" "$MANIFEST"; then
-  LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.9.1")
-  SHA256=$(curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/archive/refs/tags/${LATEST_TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
-  echo -e "${BLUE}  SHA256: $SHA256${NC}"
-  sed -i "s|REPLACE_WITH_SHA256|$SHA256|g" "$MANIFEST"
-  sed -i "s|v0.9.1|${LATEST_TAG}|g" "$MANIFEST"
+
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.9.1")
+COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+# Fetch SHA256 for AppImages if placeholders exist
+if grep -q "REPLACE_WITH" "$MANIFEST"; then
+  echo -e "${BLUE}  Fetching SHA256 hashes for AppImages...${NC}"
+  
+  X64_URL="https://github.com/apotenza92/facebook-messenger-desktop/releases/download/${LATEST_TAG}/facebook-messenger-desktop-x86_64.AppImage"
+  ARM64_URL="https://github.com/apotenza92/facebook-messenger-desktop/releases/download/${LATEST_TAG}/facebook-messenger-desktop-arm64.AppImage"
+  
+  X64_SHA=$(curl -sL "$X64_URL" | sha256sum | cut -d' ' -f1)
+  ARM64_SHA=$(curl -sL "$ARM64_URL" | sha256sum | cut -d' ' -f1)
+  
+  echo -e "${BLUE}  x86_64:  $X64_SHA${NC}"
+  echo -e "${BLUE}  aarch64: $ARM64_SHA${NC}"
+  
+  # Update manifest
+  sed -i "s|REPLACE_WITH_X64_SHA256|$X64_SHA|g" "$MANIFEST"
+  sed -i "s|REPLACE_WITH_ARM64_SHA256|$ARM64_SHA|g" "$MANIFEST"
+  sed -i "s|REPLACE_WITH_COMMIT|$COMMIT|g" "$MANIFEST"
+  sed -i "s|tag: v0.9.1|tag: ${LATEST_TAG}|g" "$MANIFEST"
+  sed -i "s|/v0.9.1/|/${LATEST_TAG}/|g" "$MANIFEST"
 fi
+
 rm -rf build-dir .flatpak-builder 2>/dev/null || true
 flatpak-builder --user --install --force-clean build-dir "$MANIFEST"
 echo -e "${GREEN}✓ Build successful${NC}"

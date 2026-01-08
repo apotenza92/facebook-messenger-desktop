@@ -17,45 +17,50 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-download
-  # For webcam/video calls
   - --device=all
 
 modules:
   - name: facebook-messenger-desktop
     buildsystem: simple
     build-commands:
-      # Install Node.js dependencies
-      - npm ci
-      # Build TypeScript
-      - npm run build
-      # Generate icons (if needed)
-      - npm run generate-icons || true
-      # Create app directory structure
-      - mkdir -p /app/extra/facebook-messenger-desktop
-      # Copy built files
-      - cp -r dist /app/extra/facebook-messenger-desktop/
-      - cp -r assets /app/extra/facebook-messenger-desktop/
-      - cp package.json /app/extra/facebook-messenger-desktop/
-      # Install license file (required by Flathub)
-      - install -Dm644 LICENSE ${FLATPAK_DEST}/share/licenses/io.github.apotenza92.messenger/LICENSE
-      # Create launcher script
-      - install -Dm755 facebook-messenger-desktop /app/bin/facebook-messenger-desktop
-      # Install desktop integration files (must be from upstream source)
+      # Extract the AppImage
+      - chmod +x facebook-messenger-desktop.AppImage
+      - ./facebook-messenger-desktop.AppImage --appimage-extract
+      # Install the extracted app
+      - mkdir -p /app/messenger
+      - cp -r squashfs-root/* /app/messenger/
+      # Create launcher script using zypak for sandbox compatibility
+      - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
+      # Install desktop file and metainfo from upstream repo
       - install -Dm644 io.github.apotenza92.messenger.desktop /app/share/applications/io.github.apotenza92.messenger.desktop
       - install -Dm644 io.github.apotenza92.messenger.metainfo.xml /app/share/metainfo/io.github.apotenza92.messenger.metainfo.xml
-      # Install icons (from assets/icons/linux in source)
-      - install -Dm644 assets/icons/linux/256x256.png /app/share/icons/hicolor/256x256/apps/io.github.apotenza92.messenger.png
-      - install -Dm644 assets/icons/linux/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.apotenza92.messenger.png
-      - install -Dm644 assets/icons/linux/64x64.png /app/share/icons/hicolor/64x64/apps/io.github.apotenza92.messenger.png
+      # Install icons
+      - install -Dm644 squashfs-root/usr/share/icons/hicolor/256x256/apps/facebook-messenger-desktop.png /app/share/icons/hicolor/256x256/apps/io.github.apotenza92.messenger.png
+      - install -Dm644 squashfs-root/usr/share/icons/hicolor/128x128/apps/facebook-messenger-desktop.png /app/share/icons/hicolor/128x128/apps/io.github.apotenza92.messenger.png
+      - install -Dm644 squashfs-root/usr/share/icons/hicolor/64x64/apps/facebook-messenger-desktop.png /app/share/icons/hicolor/64x64/apps/io.github.apotenza92.messenger.png
+      # Install license
+      - install -Dm644 squashfs-root/LICENSE* /app/share/licenses/io.github.apotenza92.messenger/LICENSE || install -Dm644 LICENSE /app/share/licenses/io.github.apotenza92.messenger/LICENSE
     sources:
-      - type: archive
-        url: https://github.com/apotenza92/facebook-messenger-desktop/archive/refs/tags/v0.9.1.tar.gz
-        sha256: REPLACE_WITH_SHA256
+      # x86_64 AppImage
+      - type: file
+        only-arches: [x86_64]
+        url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v0.9.1/facebook-messenger-desktop-x86_64.AppImage
+        sha256: REPLACE_WITH_X64_SHA256
+        dest-filename: facebook-messenger-desktop.AppImage
+      # aarch64 AppImage  
+      - type: file
+        only-arches: [aarch64]
+        url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v0.9.1/facebook-messenger-desktop-arm64.AppImage
+        sha256: REPLACE_WITH_ARM64_SHA256
+        dest-filename: facebook-messenger-desktop.AppImage
+      # Desktop and metainfo files from repo
+      - type: git
+        url: https://github.com/apotenza92/facebook-messenger-desktop.git
+        tag: v0.9.1
+        commit: REPLACE_WITH_COMMIT
+      # Launcher script
       - type: script
-        dest-filename: facebook-messenger-desktop
+        dest-filename: launcher.sh
         commands:
           - export TMPDIR="$XDG_RUNTIME_DIR/app/$FLATPAK_ID"
-          - export APP_DIR="/app/extra/facebook-messenger-desktop"
-          - cd "$APP_DIR"
-          - exec zypak-wrapper /app/bin/org.electronjs.Electron2.BaseApp/dist/electron "$APP_DIR/dist/main/main.js" "$@"
-
+          - exec zypak-wrapper /app/messenger/facebook-messenger-desktop "$@"
