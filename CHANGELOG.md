@@ -32,6 +32,56 @@
   - Now excludes the currently-viewed conversation from unread count when window is focused
   - Added responsive badge updates when user interacts (clicks, types) in a conversation
 
+## [1.0.7-beta.6] - 2026-01-09
+
+### Fixed
+- Notification badge now clears when actively viewing a conversation (issue #22)
+  - Previously, badge wouldn't update until switching to another chat
+  - Now excludes the currently-viewed conversation from unread count when window is focused
+  - Added responsive badge updates when user interacts (clicks, types) in a conversation
+
+## [1.0.7-beta.5] - 2026-01-08
+
+### Added
+- Update dialogs now show changelog of what's new in the update
+  - Fetches changelog from GitHub when update is available
+  - Beta users see both stable and beta entries
+  - Stable users see only stable release entries
+
+### Fixed
+- Update check no longer shows "Update check failed" when already on the latest version
+  - Beta users especially affected when no newer releases available
+  - Now correctly shows "You're up to date!" in these cases
+
+## [1.0.7-beta.4] - 2026-01-08
+
+### Added
+- Develop menu now available to beta testers
+  - Access via menu bar on all platforms
+  - Includes testing tools: Update workflow, Notification, Taskbar shortcut fix (Windows)
+
+## [1.0.7-beta.3] - 2026-01-08
+
+### Fixed
+- macOS: Media viewer controls no longer obscured by title bar (issue #21)
+  - Close, download, and forward buttons now fully visible when viewing photos/videos
+  - Injects CSS to push controls below the custom title bar overlay
+
+## [1.0.7-beta.2] - 2026-01-08
+
+### Changed
+- Joining beta program now automatically checks for beta updates
+  - Previously showed a message telling users to manually check
+  - Now immediately checks and notifies if a beta update is available
+
+## [1.0.7-beta.1] - 2026-01-08
+
+### Fixed
+- Duplicate notifications for old messages no longer appear (issue #13)
+  - Only messages that JUST arrived (no visible timestamp) will trigger notifications
+  - Old unread messages that appear when scrolling or after app restart are now ignored
+  - Detects Messenger's relative timestamps (e.g., "5m", "2h", "3d", "1w") to identify old messages
+
 ## [1.0.6] - 2026-01-08
 
 ### Added
