@@ -17,10 +17,12 @@ finish-args:
   - --share=network
   - --device=dri
   - --device=all
+  - --filesystem=/tmp
+  - --filesystem=xdg-download
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Flatpak
-  - --filesystem=xdg-download
+  - --system-talk-name=org.freedesktop.UPower
 
 build-options:
   append-path: /usr/lib/sdk/node20/bin
