@@ -72,5 +72,5 @@ modules:
         commands:
           - export TMPDIR="${XDG_RUNTIME_DIR}/app/${FLATPAK_ID}"
           - cd /app/lib/messenger
-          - 'PLATFORM_FLAGS=""; [ -n "$WAYLAND_DISPLAY" ] && PLATFORM_FLAGS="--enable-features=UseOzonePlatform,WaylandWindowDecorations --ozone-platform=wayland"'
-          - 'exec zypak-wrapper /app/lib/electron/electron /app/lib/messenger/dist/main/main.js $PLATFORM_FLAGS "$@"'
+          - 'PLATFORM_FLAGS="--no-sandbox"; [ -n "$WAYLAND_DISPLAY" ] && PLATFORM_FLAGS="$PLATFORM_FLAGS --enable-features=UseOzonePlatform,WaylandWindowDecorations --ozone-platform=wayland"'
+          - 'exec /app/lib/electron/electron /app/lib/messenger/dist/main/main.js $PLATFORM_FLAGS "$@"'
