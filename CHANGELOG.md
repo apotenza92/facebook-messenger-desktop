@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.7-beta.6] - 2026-01-09
+
+### Fixed
+- Notification badge now clears when actively viewing a conversation (issue #22)
+  - Previously, badge wouldn't update until switching to another chat
+  - Now excludes the currently-viewed conversation from unread count when window is focused
+  - Added responsive badge updates when user interacts (clicks, types) in a conversation
+
 ## [1.0.7-beta.5] - 2026-01-08
 
 ### Added

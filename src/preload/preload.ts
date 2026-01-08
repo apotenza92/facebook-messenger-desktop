@@ -462,6 +462,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // This catches manually marked unread chats and is a fallback if title doesn't change
     function countUnreadConversations(): number {
       try {
+        // Helper to check if we're currently viewing a conversation
+        // Used to exclude the active conversation from unread count (issue #22)
+        const getCurrentConversationPath = (): string | null => {
+          const path = window.location.pathname;
+          // Messenger conversation URLs: /t/THREAD_ID or /e2ee/t/THREAD_ID
+          if (path.startsWith('/t/') || path.startsWith('/e2ee/t/')) {
+            return path.split(/[?#]/)[0].replace(/\/+$/, ''); // Normalize
+          }
+          return null;
+        };
+
+        const isWindowFocused = (): boolean => {
+          return document.hasFocus() && document.visibilityState === 'visible';
+        };
+
+        const currentConversationPath = getCurrentConversationPath();
+        const windowFocused = isWindowFocused();
+
         // Find conversation rows - use the same selectors as notifications-inject.ts
         // Messenger uses [role="row"] for conversation rows
         const conversationSelectors = [
@@ -573,6 +591,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
             const link = conversationEl.querySelector('a[href*="/t/"]');
             if (link) {
               const href = (link as HTMLAnchorElement).href;
+              
+              // Issue #22: Skip counting the currently viewed conversation as unread
+              // when the window is focused - the user is actively reading it
+              if (windowFocused && currentConversationPath) {
+                try {
+                  const conversationPath = new URL(href).pathname.split(/[?#]/)[0].replace(/\/+$/, '');
+                  if (conversationPath === currentConversationPath) {
+                    // This is the conversation the user is currently viewing
+                    // Don't count it as unread since they're actively looking at it
+                    return; // Skip this conversation
+                  }
+                } catch {
+                  // URL parsing failed, continue with counting
+                }
+              }
+              
               if (!seenHrefs.has(href)) {
                 seenHrefs.add(href);
                 unreadCount++;
@@ -657,6 +691,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
+
+    // Issue #22: More responsive badge updates when user is active in a conversation
+    // When user interacts (clicks, types), trigger a badge recount after a short delay
+    // This catches cases where Messenger marks a message as read after user interaction
+    let activityTimeout: number | null = null;
+    const handleUserActivity = () => {
+      // Only trigger if we're in a conversation (URL contains /t/)
+      const path = window.location.pathname;
+      if (!path.includes('/t/')) return;
+      
+      // Debounce activity-based recounts to avoid spam
+      if (activityTimeout !== null) {
+        clearTimeout(activityTimeout);
+      }
+      activityTimeout = window.setTimeout(() => {
+        debouncedCountUnread();
+        activityTimeout = null;
+      }, 500); // Wait 500ms after activity stops before recounting
+    };
+
+    // Listen for user interaction events that indicate they're reading/responding
+    document.addEventListener('click', handleUserActivity, { passive: true });
+    document.addEventListener('keydown', handleUserActivity, { passive: true });
   }
 
   // Wait for DOM to be ready, then wait a bit more for electronAPI to be available
