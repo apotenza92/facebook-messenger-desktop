@@ -32,6 +32,8 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications
   # System tray (KDE/others)
   - --talk-name=org.kde.StatusNotifierWatcher
+  # Allow flatpak-spawn for in-app uninstall
+  - --talk-name=org.freedesktop.Flatpak
   # File downloads
   - --filesystem=xdg-download
   # Temp files (needed for Electron)
