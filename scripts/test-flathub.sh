@@ -165,7 +165,7 @@ modules:
         commands:
           - export TMPDIR="\${XDG_RUNTIME_DIR}/app/\${FLATPAK_ID}"
           - cd /app/lib/messenger
-          - exec zypak-wrapper /app/lib/electron/electron /app/lib/messenger/dist/main/main.js "\$@"
+          - exec zypak-wrapper /app/lib/electron/electron /app/lib/messenger/dist/main/main.js --ozone-platform-hint=auto "\$@"
 MANIFEST_EOF
 
 echo -e "${GREEN}✓ Done${NC}\n"
