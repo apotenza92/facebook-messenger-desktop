@@ -141,7 +141,12 @@ When ready to publish a new version:
    - Format: `## [X.Y.Z] - YYYY-MM-DD`
    - Never use bold (`**text**`) in changelog entries - keep it plain text
 
-2. Run `npm version` to bump version AND create an **annotated** git tag:
+2. Commit with proper issue references in the commit message:
+   - Use `fixes #21` or `closes #21` to auto-close issues and create "mentioned in commit" links
+   - Do NOT use `(#21)` in parentheses - GitHub may not recognize it
+   - Example: `fix(macOS): media viewer controls obscured - fixes #21`
+
+3. Run `npm version` to bump version AND create an **annotated** git tag:
    ```bash
    npm version patch   # 0.6.4 → 0.6.5 (bug fixes)
    npm version minor   # 0.6.4 → 0.7.0 (new features)
