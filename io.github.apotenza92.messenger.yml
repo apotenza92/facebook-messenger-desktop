@@ -71,7 +71,6 @@ modules:
         dest-filename: launcher.sh
         commands:
           - export TMPDIR="${XDG_RUNTIME_DIR}/app/${FLATPAK_ID}"
-          - echo "Launcher starting..."
-          - echo "DISPLAY=$DISPLAY WAYLAND=$WAYLAND_DISPLAY"
           - cd /app/lib/messenger
-          - exec zypak-wrapper /app/lib/electron/electron /app/lib/messenger/dist/main/main.js "$@"
+          - 'PLATFORM_FLAGS=""; [ -n "$WAYLAND_DISPLAY" ] && PLATFORM_FLAGS="--enable-features=UseOzonePlatform,WaylandWindowDecorations --ozone-platform=wayland"'
+          - 'exec zypak-wrapper /app/lib/electron/electron /app/lib/messenger/dist/main/main.js $PLATFORM_FLAGS "$@"'
