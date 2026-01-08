@@ -42,9 +42,6 @@ modules:
       - mkdir -p /app/lib/messenger
       - cp -r dist assets package.json /app/lib/messenger/
       - cp -r node_modules /app/lib/messenger/
-      - mkdir -p /app/lib/electron
-      - cp -r electron/* /app/lib/electron/
-      - chmod +x /app/lib/electron/electron
       - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
       - install -Dm644 io.github.apotenza92.messenger.desktop /app/share/applications/io.github.apotenza92.messenger.desktop
       - install -Dm644 io.github.apotenza92.messenger.metainfo.xml /app/share/metainfo/io.github.apotenza92.messenger.metainfo.xml
@@ -56,21 +53,10 @@ modules:
       - type: git
         url: https://github.com/apotenza92/facebook-messenger-desktop
         branch: main
-      - type: archive
-        only-arches: [x86_64]
-        url: https://github.com/electron/electron/releases/download/v28.0.0/electron-v28.0.0-linux-x64.zip
-        sha256: d66b6774b886bd57519d49b9eb8e6e745b523519414a8819f67aa19f76e2b53c
-        dest: electron
-      - type: archive
-        only-arches: [aarch64]
-        url: https://github.com/electron/electron/releases/download/v28.0.0/electron-v28.0.0-linux-arm64.zip
-        sha256: 32f9f7592359cf8b341946b41d758466533bd7a2bc0dc316072a3a1af4b92d84
-        dest: electron
       - generated-sources.json
       - type: script
         dest-filename: launcher.sh
         commands:
           - export TMPDIR="${XDG_RUNTIME_DIR}/app/${FLATPAK_ID}"
           - cd /app/lib/messenger
-          - 'PLATFORM_FLAGS="--no-sandbox"; [ -n "$WAYLAND_DISPLAY" ] && PLATFORM_FLAGS="$PLATFORM_FLAGS --enable-features=UseOzonePlatform,WaylandWindowDecorations --ozone-platform=wayland"'
-          - 'exec /app/lib/electron/electron /app/lib/messenger/dist/main/main.js $PLATFORM_FLAGS "$@"'
+          - exec zypak-wrapper /app/extra/electron/electron /app/lib/messenger/dist/main/main.js "$@"
