@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.6] - 2026-01-08
+
+### Added
+- Beta program for early access to new features and bug fixes
+  - Join via Messenger menu (macOS) or Help menu (Windows/Linux)
+  - "Check for Updates" becomes "Check for Beta Updates" when enrolled
+  - Leave anytime from the same menu
+  - Snap/Flatpak users shown instructions to switch to direct download for beta access
+
 ## [1.0.5] - 2026-01-08
 
 ### Changed

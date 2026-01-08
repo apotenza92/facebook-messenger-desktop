@@ -134,9 +134,39 @@ const notificationPermissionFile = path.join(app.getPath('userData'), 'notificat
 const snapHelpShownFile = path.join(app.getPath('userData'), 'snap-help-shown.json');
 const iconThemeFile = path.join(app.getPath('userData'), 'icon-theme.json');
 const xwaylandPreferenceFile = path.join(app.getPath('userData'), 'xwayland-preference.json');
+const betaOptInFile = path.join(app.getPath('userData'), 'beta-opt-in.json');
 
 // XWayland preference for Linux Wayland users (for screen sharing compatibility)
 let useXWayland = false;
+
+// Beta program opt-in state
+let betaOptedIn = false;
+
+function loadBetaOptIn(): boolean {
+  try {
+    if (fs.existsSync(betaOptInFile)) {
+      const data = JSON.parse(fs.readFileSync(betaOptInFile, 'utf8'));
+      return data.betaOptIn === true;
+    }
+  } catch (e) {
+    console.warn('[Beta] Failed to load beta opt-in preference:', e);
+  }
+  return false;
+}
+
+function saveBetaOptIn(optIn: boolean): void {
+  try {
+    fs.writeFileSync(betaOptInFile, JSON.stringify({ betaOptIn: optIn }));
+    betaOptedIn = optIn;
+    console.log('[Beta] Saved beta opt-in preference:', optIn);
+  } catch (e) {
+    console.warn('[Beta] Failed to save beta opt-in preference:', e);
+  }
+}
+
+function isBetaOptedIn(): boolean {
+  return betaOptedIn;
+}
 
 function loadXWaylandPreference(): boolean {
   try {
@@ -3535,8 +3565,11 @@ function createApplicationMenu(): void {
 
   const isSnap = detectSnapInstall();
   const isFlatpak = detectFlatpakInstall();
+  const isBeta = isBetaOptedIn();
+  
+  // Check for Updates label changes based on beta status
   const checkUpdatesMenuItem: Electron.MenuItemConstructorOptions = {
-    label: 'Check for Updates…',
+    label: isBeta ? 'Check for Beta Updates…' : 'Check for Updates…',
     enabled: !isDev,
     click: () => {
       if (isDev) {
@@ -3581,6 +3614,98 @@ function createApplicationMenu(): void {
       }).finally(() => {
         manualUpdateCheckInProgress = false;
       });
+    },
+  };
+
+  // Beta Program menu item - Join or Leave based on current status
+  const betaProgramMenuItem: Electron.MenuItemConstructorOptions = {
+    label: isBeta ? 'Leave Beta Program…' : 'Join Beta Program…',
+    enabled: !isDev,
+    click: async () => {
+      if (isDev) {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Development Mode',
+          message: 'Beta program is not available in development mode.',
+          buttons: ['OK'],
+        }).catch(() => {});
+        return;
+      }
+
+      // Snap/Flatpak users can't use beta - electron-updater doesn't work for them
+      if (isSnap || isFlatpak) {
+        const packageType = isSnap ? 'Snap' : 'Flatpak';
+        const result = await dialog.showMessageBox({
+          type: 'info',
+          title: 'Beta Not Available',
+          message: `Beta updates are not available for ${packageType} installations.`,
+          detail: `${packageType} uses its own update system which doesn't support beta channels.\n\nTo join the beta program, you'll need to:\n1. Download the AppImage, .deb, or .rpm from GitHub\n2. Uninstall this ${packageType} version\n3. Install the downloaded package\n4. Join the beta program from the new install`,
+          buttons: ['View Downloads', `Uninstall ${packageType}…`, 'Cancel'],
+          defaultId: 2,
+          cancelId: 2,
+        });
+
+        if (result.response === 0) {
+          // Open GitHub releases page
+          shell.openExternal('https://github.com/apotenza92/facebook-messenger-desktop/releases');
+        } else if (result.response === 1) {
+          // Trigger uninstall
+          void handleUninstallRequest();
+        }
+        return;
+      }
+
+      if (isBeta) {
+        // Leave beta program
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          title: 'Leave Beta Program',
+          message: 'Leave the beta program?',
+          detail: 'You\'ll only receive stable releases. Your current version will continue to work until the next stable update.',
+          buttons: ['Leave Beta', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+        });
+
+        if (result.response === 0) {
+          saveBetaOptIn(false);
+          autoUpdater.allowPrerelease = false;
+          // Rebuild menu to update labels
+          createApplicationMenu();
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'Left Beta Program',
+            message: 'You\'ve left the beta program.',
+            detail: 'You\'ll now only receive stable updates.',
+            buttons: ['OK'],
+          }).catch(() => {});
+        }
+      } else {
+        // Join beta program
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          title: 'Join Beta Program',
+          message: 'Join the beta program?',
+          detail: 'You\'ll receive early access to new features and bug fixes, but beta versions may be less stable.\n\nYou can leave anytime from the menu.',
+          buttons: ['Join Beta', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+        });
+
+        if (result.response === 0) {
+          saveBetaOptIn(true);
+          autoUpdater.allowPrerelease = true;
+          // Rebuild menu to update labels
+          createApplicationMenu();
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'Joined Beta Program',
+            message: 'Welcome to the beta program!',
+            detail: 'You\'ll now receive beta updates. Use "Check for Beta Updates" to see if any are available.',
+            buttons: ['OK'],
+          }).catch(() => {});
+        }
+      }
     },
   };
 
@@ -3744,6 +3869,7 @@ function createApplicationMenu(): void {
           { type: 'separator' },
           viewOnGitHubMenuItem,
           checkUpdatesMenuItem,
+          betaProgramMenuItem,
           notificationSettingsMenuItem,
           iconThemeSubmenu,
           { type: 'separator' },
@@ -3816,6 +3942,7 @@ function createApplicationMenu(): void {
       submenu: [
         viewOnGitHubMenuItem,
         checkUpdatesMenuItem,
+        betaProgramMenuItem,
         notificationSettingsMenuItem,
         // XWayland mode option for Linux users (for screen sharing compatibility)
         ...(xwaylandMenuItem ? [{ type: 'separator' as const }, xwaylandMenuItem] : []),
@@ -5102,7 +5229,10 @@ function setupAutoUpdater(): void {
   try {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.allowPrerelease = isBetaOptedIn();
     autoUpdater.logger = console;
+    
+    console.log('[AutoUpdater] Beta opt-in:', isBetaOptedIn() ? 'enabled' : 'disabled');
 
     autoUpdater.on('update-available', (info) => {
       const version = info?.version || 'unknown';
@@ -5170,6 +5300,10 @@ app.whenReady().then(async () => {
     credits: `An unofficial, third-party desktop app for Facebook Messenger\n\nNot affiliated with Facebook, Inc. or Meta Platforms, Inc.\n\nGitHub: ${GITHUB_REPO_URL}`,
     website: GITHUB_REPO_URL,
   });
+
+  // Load beta opt-in preference
+  betaOptedIn = loadBetaOptIn();
+  console.log('[Beta] Loaded beta opt-in preference:', betaOptedIn);
 
   // Auto-updater setup (skip in dev mode, Snap, and Flatpak - they use their own update mechanisms)
   if (isDev) {
