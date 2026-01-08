@@ -51,11 +51,8 @@ modules:
       - cp -r dist /app/lib/messenger/
       - cp -r assets /app/lib/messenger/
       - cp package.json /app/lib/messenger/
-      # Copy runtime dependencies
-      - mkdir -p /app/lib/messenger/node_modules
-      - cp -r node_modules/electron-updater /app/lib/messenger/node_modules/ || true
-      - cp -r node_modules/lazy-val /app/lib/messenger/node_modules/ || true
-      - cp -r node_modules/semver /app/lib/messenger/node_modules/ || true
+      # Copy runtime dependencies (electron-updater + all transitive deps)
+      - cp -r node_modules /app/lib/messenger/
       # Install Electron binary
       - mkdir -p /app/lib/electron
       - cp -r electron/* /app/lib/electron/

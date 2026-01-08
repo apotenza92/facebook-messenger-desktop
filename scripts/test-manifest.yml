@@ -41,8 +41,8 @@ modules:
       # Install app
       - mkdir -p /app/lib/messenger
       - cp -r dist assets package.json /app/lib/messenger/
-      - mkdir -p /app/lib/messenger/node_modules
-      - cp -r node_modules/electron-updater node_modules/lazy-val node_modules/semver /app/lib/messenger/node_modules/ 2>/dev/null || true
+      # Copy all production node_modules (electron-updater + dependencies)
+      - cp -r node_modules /app/lib/messenger/
       # Install Electron
       - mkdir -p /app/lib/electron
       - unzip -q electron.zip -d /app/lib/electron
