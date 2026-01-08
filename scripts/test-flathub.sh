@@ -165,6 +165,7 @@ modules:
       - cp -r node_modules/electron-updater /app/lib/messenger/node_modules/ || true
       - cp -r node_modules/lazy-val /app/lib/messenger/node_modules/ || true
       - cp -r node_modules/semver /app/lib/messenger/node_modules/ || true
+      - cp -r node_modules/electron /app/lib/messenger/node_modules/
       - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
       - install -Dm644 io.github.apotenza92.messenger.desktop /app/share/applications/io.github.apotenza92.messenger.desktop
       - install -Dm644 io.github.apotenza92.messenger.metainfo.xml /app/share/metainfo/io.github.apotenza92.messenger.metainfo.xml
@@ -182,7 +183,7 @@ modules:
         dest-filename: launcher.sh
         commands:
           - export TMPDIR="\${XDG_RUNTIME_DIR}/app/\${FLATPAK_ID}"
-          - exec zypak-wrapper /app/main/facebook-messenger-desktop "\$@"
+          - exec zypak-wrapper /app/lib/messenger/node_modules/electron/dist/electron /app/lib/messenger/dist/main/main.js "\$@"
 MANIFEST_EOF
 
 echo -e "${BLUE}  Running flatpak-builder...${NC}"
