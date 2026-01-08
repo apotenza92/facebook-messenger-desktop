@@ -1,7 +1,3 @@
-# Flathub Manifest - Source Build
-# Builds from source per Flathub requirements
-# Downloads Electron separately since npm postinstall doesn't work in offline builds
-
 app-id: io.github.apotenza92.messenger
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
@@ -20,12 +16,11 @@ finish-args:
   - --socket=pulseaudio
   - --share=network
   - --device=dri
+  - --device=all
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Flatpak
   - --filesystem=xdg-download
-  # For webcam/video calls
-  - --device=all
 
 build-options:
   append-path: /usr/lib/sdk/node20/bin
@@ -42,56 +37,40 @@ modules:
         npm_config_cache: /run/build/facebook-messenger-desktop/flatpak-node/npm-cache
         npm_config_offline: 'true'
     build-commands:
-      # Install dependencies offline
       - npm ci --offline --ignore-scripts
-      # Build TypeScript
       - npx tsc
       - npx tsc -p src/preload/tsconfig.json
-      # Install app
       - mkdir -p /app/lib/messenger
-      - cp -r dist /app/lib/messenger/
-      - cp -r assets /app/lib/messenger/
-      - cp package.json /app/lib/messenger/
-      # Copy runtime dependencies (electron-updater + all transitive deps)
+      - cp -r dist assets package.json /app/lib/messenger/
       - cp -r node_modules /app/lib/messenger/
-      # Install Electron binary
       - mkdir -p /app/lib/electron
       - cp -r electron/* /app/lib/electron/
       - chmod +x /app/lib/electron/electron
-      # Launcher
       - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
-      # Desktop integration
       - install -Dm644 io.github.apotenza92.messenger.desktop /app/share/applications/io.github.apotenza92.messenger.desktop
       - install -Dm644 io.github.apotenza92.messenger.metainfo.xml /app/share/metainfo/io.github.apotenza92.messenger.metainfo.xml
-      # Icons
       - install -Dm644 assets/icons/linux/256x256.png /app/share/icons/hicolor/256x256/apps/io.github.apotenza92.messenger.png
       - install -Dm644 assets/icons/linux/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.apotenza92.messenger.png
       - install -Dm644 assets/icons/linux/64x64.png /app/share/icons/hicolor/64x64/apps/io.github.apotenza92.messenger.png
-      # License (required by Flathub)
       - install -Dm644 LICENSE /app/share/licenses/io.github.apotenza92.messenger/LICENSE
     sources:
-      # Source code archive
+      - type: git
+        url: https://github.com/apotenza92/facebook-messenger-desktop
+        tag: v1.0.6
+        x-checker-data:
+          type: git
+          tag-pattern: ^v([\d.]+)$
       - type: archive
-        url: https://github.com/apotenza92/facebook-messenger-desktop/archive/refs/tags/v0.9.1.tar.gz
-        sha256: REPLACE_WITH_SOURCE_SHA256
-        strip-components: 1
-      # Electron binary (x86_64)
-      - type: archive
-        only-arches:
-          - x86_64
+        only-arches: [x86_64]
         url: https://github.com/electron/electron/releases/download/v28.0.0/electron-v28.0.0-linux-x64.zip
         sha256: d66b6774b886bd57519d49b9eb8e6e745b523519414a8819f67aa19f76e2b53c
         dest: electron
-      # Electron binary (aarch64)
       - type: archive
-        only-arches:
-          - aarch64
+        only-arches: [aarch64]
         url: https://github.com/electron/electron/releases/download/v28.0.0/electron-v28.0.0-linux-arm64.zip
         sha256: 32f9f7592359cf8b341946b41d758466533bd7a2bc0dc316072a3a1af4b92d84
         dest: electron
-      # npm dependencies (generate with: flatpak-node-generator npm package-lock.json)
       - generated-sources.json
-      # Launcher script
       - type: script
         dest-filename: launcher.sh
         commands:

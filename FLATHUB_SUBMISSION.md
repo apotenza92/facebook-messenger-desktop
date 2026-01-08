@@ -1,63 +1,81 @@
 # Flathub Submission: io.github.apotenza92.messenger
 
-Repository: https://github.com/apotenza92/facebook-messenger-desktop  
-License: MIT  
-Author: Alex Potenza (upstream maintainer)
+**Repository:** https://github.com/apotenza92/facebook-messenger-desktop  
+**License:** MIT  
+**Author:** Alex Potenza (upstream maintainer)
 
 ---
 
-## Native Functionality
+## Requirements Reference
 
-Features with no Web API equivalent:
+This submission aims to meet all requirements documented at:
+- **Flathub Requirements:** https://docs.flathub.org/docs/for-app-authors/requirements
+- **Previous PR (reference):** https://github.com/flathub/flathub/pull/7476
 
-| Feature | Implementation |
-|---------|----------------|
-| System Tray | Full tray with context menu, background operation — no Web API exists |
-| macOS Dock Bounce | `app.dock.bounce('critical')` on incoming call — no Web API exists |
-| Automatic Window Focus on Call | `win.show()` + `win.focus()` without user interaction — browsers restrict focus stealing |
+---
 
-Features that work in Chrome/Edge PWAs but not Safari:
-- Badges: This app uses native APIs (`app.dock.setBadge()`, `setOverlayIcon()`) that work regardless of browser
+## Submission Checklist
 
-Additional features:
-- Notifications: Custom implementation with mute detection and duplicate filtering
-- Screen sharing on Linux Wayland: XWayland mode toggle for compatibility
-- Native downloads: Intercepts Facebook CDN URLs, downloads directly to ~/Downloads
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Build from source | ✅ | TypeScript compiled during build |
+| Runtime 24.08 | ✅ | Not EOL |
+| Socket: wayland + fallback-x11 | ✅ | Not both x11 and wayland |
+| Desktop/metainfo upstream | ✅ | In this repo, not in PR |
+| Screenshot URL immutable | ✅ | Uses versioned tag URL |
+| Both architectures | ✅ | x86_64 and aarch64 |
+| License file installed | ✅ | To /app/share/licenses/ |
+| Unofficial disclaimer | ✅ | First `<p>` in metainfo |
+| App ID uses code hosting | ✅ | `io.github.apotenza92.messenger` |
+
+---
+
+## Test Build
+
+```bash
+# Install dependencies
+flatpak install --user flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 \
+  org.freedesktop.Sdk.Extension.node20//24.08 org.electronjs.Electron2.BaseApp//24.08
+
+# Generate npm sources (required for offline build)
+pip install flatpak-node-generator
+flatpak-node-generator npm package-lock.json -o generated-sources.json
+
+# Build and install
+flatpak-builder --user --install --force-clean build-dir io.github.apotenza92.messenger.yml
+
+# Run
+flatpak run io.github.apotenza92.messenger
+```
+
+---
+
+## Files for Flathub PR
+
+Only submit to flathub/flathub repo:
+1. `io.github.apotenza92.messenger.yml` - the manifest
+2. `generated-sources.json` - npm dependencies for offline build
+
+**Do NOT submit** (these are in upstream repo):
+- `io.github.apotenza92.messenger.desktop`
+- `io.github.apotenza92.messenger.metainfo.xml`
+
+---
+
+## Native Functionality (Why not a PWA)
+
+| Feature | Why Native |
+|---------|------------|
+| System Tray | Background operation with context menu — no Web API |
+| Dock Badge | Native badge count on macOS/Windows — works in all browsers |
+| Auto-focus on Call | Focus window on incoming call — browsers block this |
+| Notifications | Custom filtering, mute detection — beyond Web Notification API |
 
 ---
 
 ## Trademark Compliance
 
-- App ID: `io.github.apotenza92.messenger` — uses code hosting prefix, no trademarked terms
-- App Name: "Messenger" — generic term, with required disclaimer in description
-- Icon: Custom design (isometric cube/graph in speech bubble), distinct from Meta's branding
-- Disclaimer: First paragraph of metainfo description states this is a community package not officially supported by Meta Platforms, Inc.
-
----
-
-## Technical Compliance
-
-| Requirement | Status |
-|-------------|--------|
-| Build from source | ✅ TypeScript compilation from `src/` |
-| Runtime 24.08 | ✅ |
-| Socket: wayland + fallback-x11 | ✅ |
-| Desktop/metainfo upstream | ✅ In repo |
-| Screenshot URL immutable | ✅ Uses release tag URL |
-| aarch64 support | ✅ Both architectures |
-| Video demonstration | ✅ Will provide |
-
----
-
-## Submission Files
-
-Only the manifest (`io.github.apotenza92.messenger.yml`) goes in the PR. Desktop file and metainfo are in the upstream repo.
-
----
-
-## Test Commands
-
-```bash
-flatpak-builder --user --install --force-clean build-dir io.github.apotenza92.messenger.yml
-flatpak run io.github.apotenza92.messenger
-```
+- **App ID:** `io.github.apotenza92.messenger` — code hosting prefix
+- **App Name:** "Messenger" — generic term
+- **Icon:** Custom design, distinct from Meta branding
+- **Disclaimer:** First paragraph states "community package, not officially supported by Meta"

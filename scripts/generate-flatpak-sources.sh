@@ -16,6 +16,5 @@ flatpak-node-generator npm package-lock.json -o generated-sources.json
 echo "✓ Generated generated-sources.json"
 echo ""
 echo "Next steps:"
-echo "  1. git add generated-sources.json"
-echo "  2. Commit and push"
-echo "  3. Run: ./scripts/test-flathub.sh"
+echo "  1. Test build: flatpak-builder --user --install --force-clean build-dir io.github.apotenza92.messenger.yml"
+echo "  2. Run app: flatpak run io.github.apotenza92.messenger"
