@@ -12,7 +12,7 @@ sdk-extensions:
   - org.freedesktop.Sdk.Extension.node20
 base: org.electronjs.Electron2.BaseApp
 base-version: '24.08'
-command: messenger
+command: facebook-messenger-desktop
 separate-locales: false
 
 finish-args:
@@ -67,7 +67,7 @@ modules:
       - cp -r electron/* /app/lib/electron/
       - chmod +x /app/lib/electron/electron
       # Install launcher
-      - install -Dm755 launcher.sh /app/bin/messenger
+      - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
       # Install desktop integration
       - install -Dm644 io.github.apotenza92.messenger.desktop /app/share/applications/io.github.apotenza92.messenger.desktop
       - install -Dm644 io.github.apotenza92.messenger.metainfo.xml /app/share/metainfo/io.github.apotenza92.messenger.metainfo.xml
