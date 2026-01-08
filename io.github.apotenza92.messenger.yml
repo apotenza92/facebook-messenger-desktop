@@ -64,13 +64,18 @@ modules:
       # Install app
       - mkdir -p /app/lib/messenger
       - cp -r dist assets package.json node_modules /app/lib/messenger/
+      # Debug: Check what flatpak-builder extracted
+      - ls -la electron/
+      - ls -la electron/resources/ || echo "NO RESOURCES IN SOURCE"
       # Install Electron (preserve directory structure including resources/)
       - mkdir -p /app/lib/electron
       - cp -a electron/. /app/lib/electron/
       - chmod +x /app/lib/electron/electron
-      # Debug: show what we have
-      - ls -la /app/lib/electron/
-      - ls -la /app/lib/electron/resources/ || echo "NO RESOURCES DIR"
+      # Ensure resources directory exists (archive may flatten it)
+      - mkdir -p /app/lib/electron/resources
+      - test -f /app/lib/electron/default_app.asar && mv /app/lib/electron/default_app.asar /app/lib/electron/resources/ || true
+      # Verify
+      - ls -la /app/lib/electron/resources/
       # Install launcher
       - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
       # Install desktop integration
