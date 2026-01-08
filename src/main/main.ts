@@ -11,13 +11,6 @@ import { BadgeManager } from './badge-manager';
 import { BackgroundService } from './background-service';
 import { autoUpdater } from 'electron-updater';
 
-// DEBUG: Write to file immediately to check if JS is loading
-const debugLogPath = '/tmp/messenger-debug.log';
-fs.writeFileSync(debugLogPath, `[${new Date().toISOString()}] main.ts loading...\n`);
-fs.appendFileSync(debugLogPath, `Platform: ${process.platform}, Arch: ${process.arch}\n`);
-fs.appendFileSync(debugLogPath, `FLATPAK_ID: ${process.env.FLATPAK_ID}\n`);
-fs.appendFileSync(debugLogPath, `argv: ${process.argv.join(' ')}\n`);
-
 // On Linux AppImage: fork and detach from terminal so the command returns immediately
 // This must happen before single instance lock is acquired
 if (process.platform === 'linux' && process.env.APPIMAGE && !process.env.MESSENGER_FORKED) {
