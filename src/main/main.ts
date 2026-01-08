@@ -3389,16 +3389,46 @@ async function handleUninstallRequest(): Promise<void> {
   }
   
   if (packageManager?.name === 'Flatpak') {
-    console.log('[Uninstall] Flatpak detected - showing manual instructions');
+    console.log('[Uninstall] Flatpak detected - attempting uninstall via flatpak-spawn');
     const flatpakAppId = process.env.FLATPAK_ID || FLATPAK_APP_ID;
 
-    await dialog.showMessageBox({
-      type: 'info',
+    const result = await dialog.showMessageBox({
+      type: 'question',
       title: 'Uninstall Messenger',
-      message: 'To uninstall, run this command in your terminal:',
-      detail: `flatpak uninstall --user ${flatpakAppId}\n\nTo also remove app data:\nrm -rf ~/.var/app/${flatpakAppId}`,
-      buttons: ['OK'],
+      message: 'Are you sure you want to uninstall Messenger?',
+      detail: 'This will remove the application. Your data in ~/.var/app can be removed manually if desired.',
+      buttons: ['Uninstall', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
     });
+
+    if (result.response === 1) {
+      return; // User cancelled
+    }
+
+    try {
+      // Use flatpak-spawn to run uninstall on the host system
+      // The app will be killed when flatpak uninstalls it
+      const child = spawn('/usr/bin/flatpak-spawn', [
+        '--host',
+        'flatpak', 'uninstall', '--user', '-y', flatpakAppId
+      ], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      console.log('[Uninstall] Spawned flatpak uninstall via flatpak-spawn');
+    } catch (error) {
+      console.error('[Uninstall] flatpak-spawn failed:', error);
+      // Fallback to manual instructions
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Uninstall Messenger',
+        message: 'To complete uninstallation, run this command in your terminal:',
+        detail: `flatpak uninstall --user ${flatpakAppId}`,
+        buttons: ['OK'],
+      });
+    }
 
     app.quit();
     return;
