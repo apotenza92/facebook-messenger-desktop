@@ -20,11 +20,8 @@ echo ""
 
 APP_ID="io.github.apotenza92.messenger"
 MANIFEST="${APP_ID}.yml"
-METAINFO="${APP_ID}.metainfo.xml"
-DESKTOP="${APP_ID}.desktop"
 RUNTIME_VERSION="24.08"
 REPO="https://github.com/apotenza92/facebook-messenger-desktop"
-REPO_RAW="https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main"
 
 CLEANUP_DIR="/tmp/flathub-test-$$"
 mkdir -p "$CLEANUP_DIR"
@@ -38,44 +35,50 @@ trap cleanup EXIT
 # Install dependencies
 echo -e "${YELLOW}[1/6] Installing dependencies...${NC}"
 if command -v dnf &> /dev/null; then
-  sudo dnf install -y flatpak flatpak-builder appstream curl git python3-pip 2>/dev/null || true
+  sudo dnf install -y flatpak flatpak-builder appstream curl git python3-pip </dev/null 2>/dev/null || true
 elif command -v apt &> /dev/null; then
-  sudo apt update && sudo apt install -y flatpak flatpak-builder appstream curl git python3-pip 2>/dev/null || true
+  sudo apt update </dev/null && sudo apt install -y flatpak flatpak-builder appstream curl git python3-pip </dev/null 2>/dev/null || true
 elif command -v pacman &> /dev/null; then
-  sudo pacman -Sy --noconfirm flatpak flatpak-builder appstream curl git python3-pip 2>/dev/null || true
+  sudo pacman -Sy --noconfirm flatpak flatpak-builder appstream curl git python3-pip </dev/null 2>/dev/null || true
 fi
-flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo </dev/null 2>/dev/null || true
 echo -e "${GREEN}✓ Done${NC}"
 echo ""
 
 # Install runtimes
 echo -e "${YELLOW}[2/6] Installing Flatpak runtimes...${NC}"
-flatpak install --user -y flathub org.freedesktop.Platform//${RUNTIME_VERSION} 2>/dev/null || true
-flatpak install --user -y flathub org.freedesktop.Sdk//${RUNTIME_VERSION} 2>/dev/null || true
-flatpak install --user -y flathub org.freedesktop.Sdk.Extension.node20//${RUNTIME_VERSION} 2>/dev/null || true
-flatpak install --user -y flathub org.electronjs.Electron2.BaseApp//${RUNTIME_VERSION} 2>/dev/null || true
+flatpak install --user -y flathub org.freedesktop.Platform//${RUNTIME_VERSION} </dev/null 2>/dev/null || true
+flatpak install --user -y flathub org.freedesktop.Sdk//${RUNTIME_VERSION} </dev/null 2>/dev/null || true
+flatpak install --user -y flathub org.freedesktop.Sdk.Extension.node20//${RUNTIME_VERSION} </dev/null 2>/dev/null || true
+flatpak install --user -y flathub org.electronjs.Electron2.BaseApp//${RUNTIME_VERSION} </dev/null 2>/dev/null || true
 echo -e "${GREEN}✓ Done${NC}"
 echo ""
 
-# Clone repo (shallow)
-echo -e "${YELLOW}[3/6] Cloning source (shallow)...${NC}"
-git clone --depth 1 "$REPO" repo
+# Download only what we need (not the full 200MB repo)
+echo -e "${YELLOW}[3/6] Downloading source files...${NC}"
+LATEST_TAG=$(curl -sL "https://api.github.com/repos/apotenza92/facebook-messenger-desktop/releases/latest" </dev/null | grep '"tag_name"' | cut -d'"' -f4)
+[ -z "$LATEST_TAG" ] && LATEST_TAG="main"
+echo -e "${BLUE}  Version: $LATEST_TAG${NC}"
+
+# Download source tarball (much smaller than git clone)
+curl -sL "${REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz" </dev/null | tar xz
+mv facebook-messenger-desktop-* repo
 cd repo
 echo -e "${GREEN}✓ Done${NC}"
 echo ""
 
-# Generate npm sources if not present
+# Generate npm sources
 echo -e "${YELLOW}[4/6] Generating npm sources...${NC}"
 if [ ! -f "generated-sources.json" ]; then
-  pip3 install --user flatpak-node-generator 2>/dev/null || pip install --user flatpak-node-generator 2>/dev/null || true
+  pip3 install --user flatpak-node-generator </dev/null 2>/dev/null || pip install --user flatpak-node-generator </dev/null 2>/dev/null || true
   export PATH="$HOME/.local/bin:$PATH"
   
   if command -v flatpak-node-generator &> /dev/null; then
-    flatpak-node-generator npm package-lock.json -o generated-sources.json
+    flatpak-node-generator npm package-lock.json -o generated-sources.json </dev/null
     echo -e "${GREEN}✓ Generated${NC}"
   else
     echo -e "${RED}✗ flatpak-node-generator not found${NC}"
-    echo -e "${YELLOW}  Install manually: pip install flatpak-node-generator${NC}"
+    echo -e "${YELLOW}  Install: pip install flatpak-node-generator${NC}"
     exit 1
   fi
 else
@@ -83,25 +86,17 @@ else
 fi
 echo ""
 
-# Update manifest with SHA256
+# Build
 echo -e "${YELLOW}[5/6] Building Flatpak...${NC}"
-LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "main")
 SOURCE_URL="${REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz"
-
-# For main branch, use different URL format
-if [ "$LATEST_TAG" = "main" ]; then
-  SOURCE_URL="${REPO}/archive/refs/heads/main.tar.gz"
-fi
-
-echo -e "${BLUE}  Source: $LATEST_TAG${NC}"
-SOURCE_SHA=$(curl -sL "$SOURCE_URL" | sha256sum | cut -d' ' -f1)
+SOURCE_SHA=$(curl -sL "$SOURCE_URL" </dev/null | sha256sum | cut -d' ' -f1)
 echo -e "${BLUE}  SHA256: ${SOURCE_SHA:0:16}...${NC}"
 
 sed -i "s|REPLACE_WITH_SOURCE_SHA256|$SOURCE_SHA|g" "$MANIFEST"
 sed -i "s|v0.9.1|${LATEST_TAG}|g" "$MANIFEST"
 
 echo -e "${BLUE}  Running flatpak-builder...${NC}"
-flatpak-builder --user --install --force-clean build-dir "$MANIFEST"
+flatpak-builder --user --install --force-clean build-dir "$MANIFEST" </dev/null
 
 SIZE=$(du -sh build-dir 2>/dev/null | cut -f1)
 echo -e "${GREEN}✓ Build successful (${SIZE})${NC}"
@@ -109,7 +104,7 @@ echo ""
 
 # Run
 echo -e "${YELLOW}[6/6] Launching app...${NC}"
-flatpak run "$APP_ID" || true
+flatpak run "$APP_ID" </dev/null || true
 
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
