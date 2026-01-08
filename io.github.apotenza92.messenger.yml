@@ -36,6 +36,10 @@ finish-args:
   - --filesystem=xdg-download
   # Temp files (needed for Electron)
   - --filesystem=/tmp
+  # System D-Bus socket (Electron needs this)
+  - --filesystem=/run/dbus:ro
+  # System bus access
+  - --system-talk-name=org.freedesktop.UPower
 
 build-options:
   append-path: /usr/lib/sdk/node20/bin
