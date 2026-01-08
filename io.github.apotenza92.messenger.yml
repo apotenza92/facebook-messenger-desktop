@@ -100,4 +100,4 @@ modules:
         dest-filename: launcher.sh
         commands:
           - export TMPDIR="$XDG_RUNTIME_DIR/app/$FLATPAK_ID"
-          - /app/lib/electron/electron --no-sandbox --ozone-platform=wayland /app/lib/messenger/dist/main/main.js "$@"
+          - /app/lib/electron/electron --no-sandbox --enable-features=UseOzonePlatform --ozone-platform-hint=auto /app/lib/messenger/dist/main/main.js "$@"
