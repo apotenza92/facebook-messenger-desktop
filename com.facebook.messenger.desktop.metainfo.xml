@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.facebook.messenger.desktop</id>
+  <name>Messenger</name>
+  <summary>Unofficial desktop client for Facebook Messenger</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.apotenza92">
+    <name>Anthony Potenza</name>
+  </developer>
+  <description>
+    <p>This is a community package and is not officially supported by Meta Platforms, Inc.</p>
+    <p>
+      A native desktop application that wraps messenger.com, providing OS integrations
+      for a seamless messaging experience.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Native desktop notifications</li>
+      <li>Badge count on dock/taskbar</li>
+      <li>System tray integration</li>
+      <li>Keyboard shortcuts</li>
+      <li>Auto-launch on startup</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.facebook.messenger.desktop.desktop</launchable>
+  <url type="homepage">https://github.com/apotenza92/facebook-messenger-desktop</url>
+  <url type="bugtracker">https://github.com/apotenza92/facebook-messenger-desktop/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Messenger Desktop main window</caption>
+      <image>https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main/docs/screenshots/main-window.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-audio">intense</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="0.9.1" date="2026-01-08"/>
+  </releases>
+</component>

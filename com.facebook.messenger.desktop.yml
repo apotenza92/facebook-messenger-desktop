@@ -45,9 +45,12 @@ modules:
       - type: file
         path: com.facebook.messenger.desktop.metainfo.xml
       - type: file
-        path: icons/icon-256.png
+        path: assets/icons/icon-256.png
+        dest-filename: icon-256.png
       - type: file
-        path: icons/icon-128.png
+        path: assets/icons/icon-128.png
+        dest-filename: icon-128.png
       - type: file
-        path: icons/icon-64.png
+        path: assets/icons/icon-64.png
+        dest-filename: icon-64.png
 
