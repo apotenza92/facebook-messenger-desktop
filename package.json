@@ -62,14 +62,8 @@
     },
     "files": [
       "dist/**/*",
-      "assets/icons/icon.icns",
-      "assets/icons/icon.ico",
-      "assets/icons/linux/**/*",
-      "assets/tray/**/*",
-      "!assets/icons/dark/**/*",
-      "!assets/icons/dmg-icon*",
-      "!assets/icons/*.iconset/**/*",
-      "!assets/icons/ico-rounded/**/*"
+      "assets/icons/**/*",
+      "assets/tray/**/*"
     ],
     "asar": true,
     "compression": "maximum",

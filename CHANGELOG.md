@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.8] - 2026-01-09
+
+### Fixed
+- macOS: Icon theme switching now works again (issue #23)
+  - Dark icons were accidentally excluded from builds in v1.0.7
+  - "Match System", "Light Icon", and "Dark Icon" options now properly switch the dock icon
+  - Tahoe glass/clear effects still work in "Match System" mode
+- Update dialog changelog section no longer overflows the screen (issue #23)
+  - Limits changelog to 3 most recent versions
+  - Truncates very long changelogs with "..." indicator
+  - Dialog is now always visible and buttons are accessible
+
 ## [1.0.7] - 2026-01-09
 
 ### Added
