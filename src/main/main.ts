@@ -61,7 +61,9 @@ if (process.platform === 'linux' && !process.env.MESSENGER_XWAYLAND_CHECKED && !
 const resetFlag =
   process.argv.includes('--reset-window') ||
   process.argv.includes('--reset'); // legacy
-const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
+// Flatpak runs electron with path to main.js, so app.isPackaged is false
+// But FLATPAK_ID being set means we're in a production Flatpak environment
+const isDev = (!app.isPackaged && !process.env.FLATPAK_ID) || process.env.NODE_ENV === 'development';
 
 const appStartTime = Date.now();
 console.log(`[App] Starting at ${appStartTime} on ${process.platform} ${process.arch}`);
