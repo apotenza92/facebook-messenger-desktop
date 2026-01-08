@@ -50,6 +50,8 @@ modules:
   - name: messenger
     buildsystem: simple
     build-options:
+      # Disable stripping - it corrupts Electron binaries
+      no-debuginfo: true
       env:
         XDG_CACHE_HOME: /run/build/messenger/flatpak-node/cache
         npm_config_cache: /run/build/messenger/flatpak-node/npm-cache
