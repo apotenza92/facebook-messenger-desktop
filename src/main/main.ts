@@ -3888,24 +3888,44 @@ function createApplicationMenu(): void {
           const exePath = process.execPath.replace(/\\/g, '\\\\');
           const instDir = path.dirname(process.execPath).replace(/\\/g, '\\\\');
           
-          // Simple PowerShell script to check and update shortcuts
+          // Diagnostic PowerShell script to check shortcuts
           const script = `
 $exePath = "${exePath}"
 $instDir = "${instDir}"
 $shell = New-Object -ComObject WScript.Shell
-$results = @{ taskbar = 0; startMenu = 0; found = @() }
+$results = @{ 
+    taskbarUpdated = 0
+    startMenuUpdated = 0
+    taskbarPath = ""
+    taskbarExists = $false
+    allTaskbarShortcuts = @()
+    messengerShortcuts = @()
+}
 
-# Check taskbar
+# Check taskbar folder
 $taskbar = "$env:APPDATA\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar"
-Get-ChildItem $taskbar -Filter "*.lnk" -ErrorAction SilentlyContinue | ForEach-Object {
-    $lnk = $shell.CreateShortcut($_.FullName)
-    $results.found += @{ name = $_.Name; target = $lnk.TargetPath; location = "taskbar" }
-    if ($lnk.TargetPath -like "*Messenger*") {
-        $lnk.TargetPath = $exePath
-        $lnk.WorkingDirectory = $instDir
-        $lnk.IconLocation = "$exePath,0"
-        $lnk.Save()
-        $results.taskbar++
+$results.taskbarPath = $taskbar
+$results.taskbarExists = Test-Path $taskbar
+
+if ($results.taskbarExists) {
+    # List ALL shortcuts in taskbar (for debugging)
+    Get-ChildItem $taskbar -Filter "*.lnk" -ErrorAction SilentlyContinue | ForEach-Object {
+        $lnk = $shell.CreateShortcut($_.FullName)
+        $results.allTaskbarShortcuts += "$($_.Name) -> $($lnk.TargetPath)"
+        
+        # Check if this is a Messenger shortcut
+        if ($lnk.TargetPath -like "*Messenger*" -or $lnk.TargetPath -like "*messenger*") {
+            $results.messengerShortcuts += @{ 
+                name = $_.Name
+                target = $lnk.TargetPath 
+                location = "taskbar"
+            }
+            $lnk.TargetPath = $exePath
+            $lnk.WorkingDirectory = $instDir
+            $lnk.IconLocation = "$exePath,0"
+            $lnk.Save()
+            $results.taskbarUpdated++
+        }
     }
 }
 
@@ -3913,13 +3933,17 @@ Get-ChildItem $taskbar -Filter "*.lnk" -ErrorAction SilentlyContinue | ForEach-O
 $startMenu = "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs"
 Get-ChildItem $startMenu -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
     $lnk = $shell.CreateShortcut($_.FullName)
-    if ($lnk.TargetPath -like "*Messenger*") {
-        $results.found += @{ name = $_.Name; target = $lnk.TargetPath; location = "startmenu" }
+    if ($lnk.TargetPath -like "*Messenger*" -or $lnk.TargetPath -like "*messenger*") {
+        $results.messengerShortcuts += @{ 
+            name = $_.Name
+            target = $lnk.TargetPath 
+            location = "startmenu"
+        }
         $lnk.TargetPath = $exePath
         $lnk.WorkingDirectory = $instDir
         $lnk.IconLocation = "$exePath,0"
         $lnk.Save()
-        $results.startMenu++
+        $results.startMenuUpdated++
     }
 }
 
@@ -3933,22 +3957,45 @@ $results | ConvertTo-Json -Depth 3
               { timeout: 30000 }
             );
             
-            let results = { taskbar: 0, startMenu: 0, found: [] as Array<{name: string; target: string; location: string}> };
+            console.log('[Test] Raw output:', stdout);
+            
+            let results = { 
+              taskbarUpdated: 0, 
+              startMenuUpdated: 0, 
+              taskbarPath: '',
+              taskbarExists: false,
+              allTaskbarShortcuts: [] as string[],
+              messengerShortcuts: [] as Array<{name: string; target: string; location: string}>
+            };
             try {
               results = JSON.parse(stdout.trim());
-            } catch {
-              console.log('[Test] Raw output:', stdout);
+            } catch (e) {
+              console.log('[Test] JSON parse error:', e);
             }
             
-            const foundList = results.found?.map((f: {name: string; target: string; location: string}) => 
-              `• ${f.name} (${f.location})\n  Target: ${f.target}`
+            const allShortcuts = results.allTaskbarShortcuts?.join('\n') || 'None';
+            const messengerList = results.messengerShortcuts?.map((f: {name: string; target: string; location: string}) => 
+              `• ${f.name} (${f.location})\n  ${f.target}`
             ).join('\n') || 'None found';
             
             await dialog.showMessageBox({
               type: 'info',
               title: 'Taskbar Shortcut Fix Results',
-              message: 'Shortcut scan completed',
-              detail: `Updated shortcuts:\n• Taskbar: ${results.taskbar}\n• Start Menu: ${results.startMenu}\n\nShortcuts found:\n${foundList}\n\nCurrent exe: ${process.execPath}`,
+              message: 'Diagnostic Results',
+              detail: [
+                `Taskbar folder: ${results.taskbarPath}`,
+                `Folder exists: ${results.taskbarExists}`,
+                ``,
+                `All taskbar shortcuts:`,
+                allShortcuts,
+                ``,
+                `Messenger shortcuts found: ${results.messengerShortcuts?.length || 0}`,
+                messengerList,
+                ``,
+                `Updated: ${results.taskbarUpdated} taskbar, ${results.startMenuUpdated} start menu`,
+                ``,
+                `Current exe: ${process.execPath}`
+              ].join('\n'),
               buttons: ['OK'],
             });
           } catch (err) {
@@ -4726,6 +4773,173 @@ function formatBytes(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+// Changelog fetching and parsing for update dialogs
+interface ChangelogEntry {
+  version: string;
+  date: string;
+  content: string;
+  isBeta: boolean;
+}
+
+function fetchChangelogFromGitHub(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = 'https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main/CHANGELOG.md';
+    
+    https.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        // Follow redirect
+        const redirectUrl = res.headers.location;
+        if (redirectUrl) {
+          https.get(redirectUrl, (redirectRes) => {
+            let data = '';
+            redirectRes.on('data', chunk => data += chunk);
+            redirectRes.on('end', () => resolve(data));
+            redirectRes.on('error', reject);
+          }).on('error', reject);
+        } else {
+          reject(new Error('Redirect without location'));
+        }
+        return;
+      }
+      
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
+      
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+function parseChangelog(markdown: string): ChangelogEntry[] {
+  const entries: ChangelogEntry[] = [];
+  const lines = markdown.split('\n');
+  
+  let currentEntry: ChangelogEntry | null = null;
+  let contentLines: string[] = [];
+  
+  for (const line of lines) {
+    // Match version headers like "## [1.0.7-beta.5] - 2026-01-08"
+    const versionMatch = line.match(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})/);
+    
+    if (versionMatch) {
+      // Save previous entry
+      if (currentEntry) {
+        currentEntry.content = contentLines.join('\n').trim();
+        entries.push(currentEntry);
+      }
+      
+      // Start new entry
+      const version = versionMatch[1];
+      currentEntry = {
+        version,
+        date: versionMatch[2],
+        content: '',
+        isBeta: version.includes('-beta') || version.includes('-alpha') || version.includes('-rc'),
+      };
+      contentLines = [];
+    } else if (currentEntry && line.trim()) {
+      // Add content line (skip empty lines at start)
+      if (contentLines.length > 0 || line.trim()) {
+        contentLines.push(line);
+      }
+    }
+  }
+  
+  // Don't forget the last entry
+  if (currentEntry) {
+    currentEntry.content = contentLines.join('\n').trim();
+    entries.push(currentEntry);
+  }
+  
+  return entries;
+}
+
+// Compare semantic versions (returns -1 if a < b, 0 if equal, 1 if a > b)
+function compareVersions(a: string, b: string): number {
+  // Handle beta/prerelease versions: 1.0.7-beta.5 -> [1, 0, 7, -1, 5]
+  const parseVersion = (v: string): number[] => {
+    const [main, prerelease] = v.split('-');
+    const parts = main.split('.').map(Number);
+    
+    if (prerelease) {
+      // Prerelease versions are "less than" their release version
+      // e.g., 1.0.7-beta.5 < 1.0.7
+      parts.push(-1); // Marker for prerelease
+      const prereleaseNum = prerelease.match(/\d+$/);
+      parts.push(prereleaseNum ? parseInt(prereleaseNum[0], 10) : 0);
+    } else {
+      parts.push(0); // Release version
+      parts.push(0);
+    }
+    
+    return parts;
+  };
+  
+  const aParts = parseVersion(a);
+  const bParts = parseVersion(b);
+  
+  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+    const aVal = aParts[i] || 0;
+    const bVal = bParts[i] || 0;
+    if (aVal < bVal) return -1;
+    if (aVal > bVal) return 1;
+  }
+  
+  return 0;
+}
+
+async function getChangelogForUpdate(currentVersion: string, newVersion: string, includeBeta: boolean): Promise<string> {
+  try {
+    console.log(`[Changelog] Fetching changelog for update ${currentVersion} -> ${newVersion} (beta: ${includeBeta})`);
+    const markdown = await fetchChangelogFromGitHub();
+    const entries = parseChangelog(markdown);
+    
+    // Filter entries between current and new version
+    const relevantEntries = entries.filter(entry => {
+      // Must be newer than current version and <= new version
+      const isNewer = compareVersions(entry.version, currentVersion) > 0;
+      const isNotBeyondNew = compareVersions(entry.version, newVersion) <= 0;
+      
+      // Filter by beta preference
+      const matchesBetaPreference = includeBeta || !entry.isBeta;
+      
+      return isNewer && isNotBeyondNew && matchesBetaPreference;
+    });
+    
+    if (relevantEntries.length === 0) {
+      return '';
+    }
+    
+    // Format entries for display (simplified, no markdown headers)
+    const formatted = relevantEntries.map(entry => {
+      // Convert markdown content to plain text for dialog
+      let content = entry.content;
+      
+      // Remove ### headers but keep the text
+      content = content.replace(/^### (.+)$/gm, '$1:');
+      
+      // Remove leading dashes from list items, keep indentation info
+      content = content.replace(/^- /gm, '• ');
+      content = content.replace(/^  - /gm, '  ◦ ');
+      
+      // Remove issue references like "(issue #21)" for cleaner display
+      content = content.replace(/\s*\(issue #\d+\)/g, '');
+      
+      return `v${entry.version}:\n${content}`;
+    }).join('\n\n');
+    
+    return formatted;
+  } catch (err) {
+    console.warn('[Changelog] Failed to fetch changelog:', err);
+    return '';
+  }
+}
+
 // GitHub repo URL for about dialog
 const GITHUB_REPO_URL = 'https://github.com/apotenza92/facebook-messenger-desktop';
 
@@ -5031,6 +5245,12 @@ async function installLinuxPackage(filePath: string, packageType: 'deb' | 'rpm')
 }
 
 async function showUpdateAvailableDialog(version: string): Promise<void> {
+  // Fetch changelog for the update (beta users see beta entries, stable users see stable only)
+  const currentVersion = app.getVersion();
+  const includeBeta = isBetaOptedIn();
+  const changelog = await getChangelogForUpdate(currentVersion, version, includeBeta);
+  const changelogSection = changelog ? `\n\nWhat's new:\n${changelog}` : '';
+  
   // On Linux, electron-updater only supports AppImage for auto-updates.
   // For deb/rpm, we download and install the package directly.
   // For snap/flatpak, they have their own update mechanisms.
@@ -5049,7 +5269,7 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
         type: 'info',
         title: 'Update Available',
         message: `A new version of Messenger is available`,
-        detail: `Version ${version} is available.\n\nThe update will be downloaded and installed using ${packageManagerName}. You'll be prompted for your password to authorize the installation.`,
+        detail: `Version ${version} is available.${changelogSection}\n\nThe update will be downloaded and installed using ${packageManagerName}. You'll be prompted for your password to authorize the installation.`,
         buttons: ['Download and Install', 'Later'],
         defaultId: 0,
         cancelId: 1,
@@ -5159,12 +5379,12 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
         type: 'info',
         title: 'Update Available',
         message: `A new version of Messenger is available`,
-        detail: `Version ${version} is available.\n\nYou installed Messenger via ${packageManagerName}. Please update using your package manager.\n\n${updateInstructions}`,
+        detail: `Version ${version} is available.${changelogSection}\n\nYou installed Messenger via ${packageManagerName}. Please update using your package manager.\n\n${updateInstructions}`,
         buttons: ['Open Download Page', 'Later'],
         defaultId: 0,
         cancelId: 1,
       });
-      
+
       if (result.response === 0) {
         shell.openExternal('https://apotenza92.github.io/facebook-messenger-desktop/').catch((err) => {
           console.error('[AutoUpdater] Failed to open download page:', err);
@@ -5183,7 +5403,7 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
       type: 'info',
       title: 'Update Available',
       message: `A new version of Messenger is available`,
-      detail: `Version ${version} is available. The installer will be downloaded to your Downloads folder.\n\n⚠️ Windows Security Note:\nIf Windows SmartScreen appears, click "More info" → "Run anyway".\nIf the installer won't run, right-click the file → Properties → check "Unblock" → OK.`,
+      detail: `Version ${version} is available.${changelogSection}\n\n⚠️ Windows Security Note:\nIf Windows SmartScreen appears, click "More info" → "Run anyway".\nIf the installer won't run, right-click the file → Properties → check "Unblock" → OK.`,
       buttons: ['Download and Install', 'Later'],
       defaultId: 0,
       cancelId: 1,
@@ -5268,7 +5488,7 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
     type: 'info',
     title: 'Update Available',
     message: `A new version of Messenger is available`,
-    detail: `Version ${version} is ready to download. Would you like to download it now?`,
+    detail: `Version ${version} is ready to download.${changelogSection}\n\nWould you like to download it now?`,
     buttons: ['Download Now', 'Later'],
     defaultId: 0,
     cancelId: 1,

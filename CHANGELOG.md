@@ -1,6 +1,20 @@
 # Changelog
 
+## [1.0.7-beta.6] - 2026-01-08
+
+### Changed
+- Windows: Improved taskbar shortcut fix diagnostic
+  - Now shows actual taskbar folder path and whether it exists
+  - Lists ALL shortcuts in taskbar folder (not just Messenger)
+  - Helps debug why shortcuts aren't being found
+
 ## [1.0.7-beta.5] - 2026-01-08
+
+### Added
+- Update dialogs now show changelog of what's new in the update
+  - Fetches changelog from GitHub when update is available
+  - Beta users see both stable and beta entries
+  - Stable users see only stable release entries
 
 ### Fixed
 - Update check no longer shows "Update check failed" when already on the latest version
