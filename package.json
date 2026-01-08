@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "1.0.7-beta.5",
+  "version": "1.0.7-beta.6",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -63,7 +63,7 @@
     "files": [
       "dist/**/*",
       "assets/icons/icon.icns",
-      "assets/icons/icon.ico", 
+      "assets/icons/icon.ico",
       "assets/icons/linux/**/*",
       "assets/tray/**/*",
       "!assets/icons/dark/**/*",
