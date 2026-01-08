@@ -1045,11 +1045,13 @@ function scheduleWindowsUninstaller(): void {
   // VBS script that waits for the app to exit, then runs the uninstaller elevated
   // Using ShellExecute with "runas" verb triggers UAC properly
   // Note: VBS doesn't need backslash escaping, but we need to escape quotes by doubling them
+  // IMPORTANT: Use _?=<path> to prevent NSIS from copying itself to temp (which can cause issues)
+  // Don't use /S (silent) so user can see any errors
   const vbsContent = `
 Set WshShell = CreateObject("WScript.Shell")
 WScript.Sleep 2000
 Set objShell = CreateObject("Shell.Application")
-objShell.ShellExecute "${uninstallerPath.replace(/"/g, '""')}", "/S", "", "runas", 1
+objShell.ShellExecute "${uninstallerPath.replace(/"/g, '""')}", "_?=${installDir.replace(/"/g, '""')}", "", "runas", 1
 `;
 
   try {
