@@ -1,12 +1,9 @@
 #!/bin/bash
 # Flathub Submission Test Script
-# Based on https://docs.flathub.org/docs/for-app-authors/requirements
+# Based on https://docs.flathub.org/docs/for-app-authors/requirements (2025/2026)
 #
 # Run from anywhere:
 #   curl -sSL https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/main/scripts/test-flathub.sh | bash
-#
-# Or from cloned repo:
-#   ./scripts/test-flathub.sh
 
 set -e
 
@@ -34,17 +31,16 @@ if [ -f "$MANIFEST" ] && [ -f "$METAINFO" ]; then
   WORK_DIR=$(pwd)
   CLEANUP_DIR=""
 else
-  echo -e "${BLUE}Downloading files (~10KB total)...${NC}"
+  echo -e "${BLUE}Downloading files...${NC}"
   CLEANUP_DIR="/tmp/flathub-test-$$"
   WORK_DIR="$CLEANUP_DIR"
   mkdir -p "$WORK_DIR"
   cd "$WORK_DIR"
-  
-  # Download only the 3 files we need
   curl -sSLO "$REPO_RAW/$MANIFEST"
   curl -sSLO "$REPO_RAW/$METAINFO"
   curl -sSLO "$REPO_RAW/$DESKTOP"
-  
+  # Try to get generated-sources.json if it exists
+  curl -sSLO "$REPO_RAW/generated-sources.json" 2>/dev/null || true
   echo -e "${GREEN}✓ Done${NC}"
 fi
 echo ""
@@ -53,6 +49,17 @@ cleanup() {
   [ -n "$CLEANUP_DIR" ] && rm -rf "$CLEANUP_DIR"
 }
 trap cleanup EXIT
+
+# Check if source build is possible (generated-sources.json exists)
+if [ -f "generated-sources.json" ]; then
+  BUILD_MODE="source"
+  echo -e "${GREEN}✓ Source build mode (recommended for Flathub)${NC}"
+else
+  BUILD_MODE="appimage"
+  echo -e "${YELLOW}⚠ AppImage mode (for testing only)${NC}"
+  echo -e "${YELLOW}  For Flathub submission, run: ./scripts/generate-flatpak-sources.sh${NC}"
+fi
+echo ""
 
 # Install dependencies
 echo -e "${YELLOW}[1/5] Installing dependencies...${NC}"
@@ -72,6 +79,9 @@ echo -e "${YELLOW}[2/5] Installing Flatpak runtimes...${NC}"
 flatpak install --user -y flathub org.freedesktop.Platform//${RUNTIME_VERSION} 2>/dev/null || true
 flatpak install --user -y flathub org.freedesktop.Sdk//${RUNTIME_VERSION} 2>/dev/null || true
 flatpak install --user -y flathub org.electronjs.Electron2.BaseApp//${RUNTIME_VERSION} 2>/dev/null || true
+if [ "$BUILD_MODE" = "source" ]; then
+  flatpak install --user -y flathub org.freedesktop.Sdk.Extension.node20//${RUNTIME_VERSION} 2>/dev/null || true
+fi
 echo -e "${GREEN}✓ Done${NC}"
 echo ""
 
@@ -83,57 +93,117 @@ fi
 echo -e "${GREEN}✓ Done${NC}"
 echo ""
 
-# Update placeholders and build
-echo -e "${YELLOW}[4/5] Building Flatpak...${NC}"
+# Prepare manifest
+echo -e "${YELLOW}[4/5] Building Flatpak ($BUILD_MODE mode)...${NC}"
 
-# Get latest release tag
 LATEST_TAG=$(curl -sL "https://api.github.com/repos/apotenza92/facebook-messenger-desktop/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
 [ -z "$LATEST_TAG" ] && LATEST_TAG="v0.9.1"
 echo -e "${BLUE}  Release: $LATEST_TAG${NC}"
 
-if grep -q "REPLACE_WITH" "$MANIFEST"; then
-  echo -e "${BLUE}  Fetching SHA256 hashes...${NC}"
-  
-  # AppImage URLs
+if [ "$BUILD_MODE" = "appimage" ]; then
+  # Create AppImage-based manifest for testing
+  cat > "$MANIFEST" << 'MANIFEST_EOF'
+app-id: io.github.apotenza92.messenger
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '24.08'
+command: facebook-messenger-desktop
+separate-locales: false
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --share=network
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-download
+  - --device=all
+modules:
+  - name: facebook-messenger-desktop
+    buildsystem: simple
+    build-commands:
+      - chmod +x facebook-messenger-desktop.AppImage
+      - ./facebook-messenger-desktop.AppImage --appimage-extract
+      - mkdir -p /app/messenger
+      - cp -r squashfs-root/* /app/messenger/
+      - install -Dm755 launcher.sh /app/bin/facebook-messenger-desktop
+      - install -Dm644 io.github.apotenza92.messenger.desktop /app/share/applications/io.github.apotenza92.messenger.desktop
+      - install -Dm644 io.github.apotenza92.messenger.metainfo.xml /app/share/metainfo/io.github.apotenza92.messenger.metainfo.xml
+      - install -Dm644 squashfs-root/usr/share/icons/hicolor/256x256/apps/facebook-messenger-desktop.png /app/share/icons/hicolor/256x256/apps/io.github.apotenza92.messenger.png
+      - install -Dm644 squashfs-root/usr/share/icons/hicolor/128x128/apps/facebook-messenger-desktop.png /app/share/icons/hicolor/128x128/apps/io.github.apotenza92.messenger.png  
+      - install -Dm644 squashfs-root/usr/share/icons/hicolor/64x64/apps/facebook-messenger-desktop.png /app/share/icons/hicolor/64x64/apps/io.github.apotenza92.messenger.png
+    sources:
+      - type: file
+        only-arches: [x86_64]
+        url: APPIMAGE_X64_URL
+        sha256: APPIMAGE_X64_SHA
+        dest-filename: facebook-messenger-desktop.AppImage
+      - type: file
+        only-arches: [aarch64]
+        url: APPIMAGE_ARM64_URL
+        sha256: APPIMAGE_ARM64_SHA
+        dest-filename: facebook-messenger-desktop.AppImage
+      - type: file
+        path: io.github.apotenza92.messenger.desktop
+      - type: file
+        path: io.github.apotenza92.messenger.metainfo.xml
+      - type: script
+        dest-filename: launcher.sh
+        commands:
+          - export TMPDIR="${XDG_RUNTIME_DIR}/app/${FLATPAK_ID}"
+          - exec zypak-wrapper /app/messenger/facebook-messenger-desktop "$@"
+MANIFEST_EOF
+
+  # Fill in URLs and hashes
   X64_URL="https://github.com/apotenza92/facebook-messenger-desktop/releases/download/${LATEST_TAG}/facebook-messenger-desktop-x86_64.AppImage"
   ARM64_URL="https://github.com/apotenza92/facebook-messenger-desktop/releases/download/${LATEST_TAG}/facebook-messenger-desktop-arm64.AppImage"
-  DESKTOP_URL="https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/${LATEST_TAG}/${DESKTOP}"
-  METAINFO_URL="https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/${LATEST_TAG}/${METAINFO}"
   
-  # Fetch hashes
+  echo -e "${BLUE}  Fetching SHA256 hashes...${NC}"
   X64_SHA=$(curl -sL "$X64_URL" | sha256sum | cut -d' ' -f1)
   ARM64_SHA=$(curl -sL "$ARM64_URL" | sha256sum | cut -d' ' -f1)
-  DESKTOP_SHA=$(curl -sL "$DESKTOP_URL" | sha256sum | cut -d' ' -f1)
-  METAINFO_SHA=$(curl -sL "$METAINFO_URL" | sha256sum | cut -d' ' -f1)
   
-  echo -e "${BLUE}  x86_64 AppImage: ${X64_SHA:0:12}...${NC}"
-  echo -e "${BLUE}  arm64 AppImage:  ${ARM64_SHA:0:12}...${NC}"
-  echo -e "${BLUE}  Desktop file:    ${DESKTOP_SHA:0:12}...${NC}"
-  echo -e "${BLUE}  Metainfo file:   ${METAINFO_SHA:0:12}...${NC}"
+  sed -i "s|APPIMAGE_X64_URL|$X64_URL|g" "$MANIFEST"
+  sed -i "s|APPIMAGE_ARM64_URL|$ARM64_URL|g" "$MANIFEST"
+  sed -i "s|APPIMAGE_X64_SHA|$X64_SHA|g" "$MANIFEST"
+  sed -i "s|APPIMAGE_ARM64_SHA|$ARM64_SHA|g" "$MANIFEST"
   
-  # Update manifest
-  sed -i "s|REPLACE_WITH_X64_SHA256|$X64_SHA|g" "$MANIFEST"
-  sed -i "s|REPLACE_WITH_ARM64_SHA256|$ARM64_SHA|g" "$MANIFEST"
-  sed -i "s|REPLACE_WITH_DESKTOP_SHA256|$DESKTOP_SHA|g" "$MANIFEST"
-  sed -i "s|REPLACE_WITH_METAINFO_SHA256|$METAINFO_SHA|g" "$MANIFEST"
-  sed -i "s|/v[0-9.]*[-a-z0-9]*/|/${LATEST_TAG}/|g" "$MANIFEST"
+else
+  # Source build - update placeholders
+  SOURCE_URL="https://github.com/apotenza92/facebook-messenger-desktop/archive/refs/tags/${LATEST_TAG}.tar.gz"
+  SOURCE_SHA=$(curl -sL "$SOURCE_URL" | sha256sum | cut -d' ' -f1)
+  sed -i "s|REPLACE_WITH_SOURCE_SHA256|$SOURCE_SHA|g" "$MANIFEST"
+  sed -i "s|v0.9.1|${LATEST_TAG}|g" "$MANIFEST"
 fi
 
 echo -e "${BLUE}  Running flatpak-builder...${NC}"
 rm -rf build-dir .flatpak-builder 2>/dev/null || true
 flatpak-builder --user --install --force-clean build-dir "$MANIFEST"
 
-# Show final size
 SIZE=$(du -sh build-dir 2>/dev/null | cut -f1)
 echo -e "${GREEN}✓ Build successful (${SIZE})${NC}"
 echo ""
 
 # Run
-echo -e "${YELLOW}[5/5] Launching app (close window when done)...${NC}"
+echo -e "${YELLOW}[5/5] Launching app...${NC}"
 flatpak run "$APP_ID" || true
 
 echo ""
-echo -e "${GREEN}✓ Flathub test complete!${NC}"
+echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  ✓ Test complete!                                         ║${NC}"
+echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "Run again:  flatpak run $APP_ID"
-echo -e "Uninstall:  flatpak uninstall --user $APP_ID"
+echo -e "Run again:  ${BLUE}flatpak run $APP_ID${NC}"
+echo -e "Uninstall:  ${BLUE}flatpak uninstall --user $APP_ID${NC}"
+
+if [ "$BUILD_MODE" = "appimage" ]; then
+  echo ""
+  echo -e "${YELLOW}Note: This was a test build using AppImage.${NC}"
+  echo -e "${YELLOW}For Flathub submission, generate source build:${NC}"
+  echo -e "  ${BLUE}pip install flatpak-node-generator${NC}"
+  echo -e "  ${BLUE}flatpak-node-generator npm package-lock.json${NC}"
+  echo -e "  ${BLUE}git add generated-sources.json && git commit && git push${NC}"
+fi
