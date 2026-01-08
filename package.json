@@ -62,8 +62,17 @@
     },
     "files": [
       "dist/**/*",
-      "assets/**/*"
+      "assets/icons/icon.icns",
+      "assets/icons/icon.ico", 
+      "assets/icons/linux/**/*",
+      "assets/tray/**/*",
+      "!assets/icons/dark/**/*",
+      "!assets/icons/dmg-icon*",
+      "!assets/icons/*.iconset/**/*",
+      "!assets/icons/ico-rounded/**/*"
     ],
+    "asar": true,
+    "compression": "maximum",
     "asarUnpack": [
       "assets/icons/linux/**/*"
     ],
@@ -96,7 +105,9 @@
       "differentialPackage": false,
       "shortcutName": "Messenger",
       "deleteAppDataOnUninstall": true,
-      "include": "scripts/uninstaller.nsh"
+      "include": "scripts/uninstaller.nsh",
+      "installerIcon": "assets/icons/icon.ico",
+      "uninstallerIcon": "assets/icons/icon.ico"
     },
     "linux": {
       "target": [
@@ -116,13 +127,6 @@
         },
         {
           "target": "rpm",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "flatpak",
           "arch": [
             "x64",
             "arm64"
@@ -154,23 +158,6 @@
       "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
       "afterInstall": "scripts/linux-after-install.sh",
       "afterRemove": "scripts/linux-after-remove.sh"
-    },
-    "flatpak": {
-      "runtime": "org.freedesktop.Platform",
-      "runtimeVersion": "23.08",
-      "sdk": "org.freedesktop.Sdk",
-      "artifactName": "facebook-messenger-desktop-${arch}.${ext}",
-      "finishArgs": [
-        "--share=ipc",
-        "--socket=x11",
-        "--socket=wayland",
-        "--socket=pulseaudio",
-        "--share=network",
-        "--device=dri",
-        "--device=all",
-        "--talk-name=org.freedesktop.Notifications",
-        "--filesystem=xdg-download"
-      ]
     }
   }
 }
