@@ -12,37 +12,3 @@ This is an unofficial, third-party desktop application for Facebook Messenger.
 This project exists because the original Facebook Desktop Messenger app was deprecated.
 
 This project is not affiliated with, endorsed by, or connected to Facebook, Inc. or Meta Platforms, Inc. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc. This is an independent, open-source project created in good faith to provide a desktop client for the Messenger web service.
-
-## Package Managers
-
-### macOS
-
-#### Homebrew
-
-```bash
-brew install --cask apotenza92/tap/facebook-messenger-desktop
-```
-
----
-
-### Windows
-
-#### WinGet
-
-Pending approval.
-
----
-
-### Linux
-
-#### Snap Store
-
-```bash
-sudo snap install facebook-messenger-desktop
-```
-
-#### Flatpak
-
-```bash
-wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop
-```
