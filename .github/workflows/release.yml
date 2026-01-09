@@ -517,15 +517,15 @@ jobs:
           echo "Available flatpak files:"
           find artifacts/linux -name "*.flatpak" -type f || echo "No flatpak files found"
           
-          # Import x64 flatpak (electron-builder uses 'x64' in filename)
-          X64_FLATPAK=$(find artifacts/linux -name "*x64*.flatpak" -type f | head -1)
+          # Import x64 flatpak (electron-builder uses 'x86_64' in flatpak filename)
+          X64_FLATPAK=$(find artifacts/linux -name "*x86_64*.flatpak" -type f | head -1)
           if [ -n "$X64_FLATPAK" ]; then
             echo "Importing x64 flatpak: $X64_FLATPAK"
             flatpak build-import-bundle "$REPO_PATH" "$X64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
           fi
           
-          # Import ARM64 flatpak (electron-builder uses 'arm64' in filename)
-          ARM64_FLATPAK=$(find artifacts/linux -name "*arm64*.flatpak" -type f | head -1)
+          # Import ARM64 flatpak (electron-builder uses 'aarch64' in flatpak filename)
+          ARM64_FLATPAK=$(find artifacts/linux -name "*aarch64*.flatpak" -type f | head -1)
           if [ -n "$ARM64_FLATPAK" ]; then
             echo "Importing ARM64 flatpak: $ARM64_FLATPAK"
             flatpak build-import-bundle "$REPO_PATH" "$ARM64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
