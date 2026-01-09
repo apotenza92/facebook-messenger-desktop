@@ -308,7 +308,8 @@ jobs:
     name: Update WinGet
     needs: release
     runs-on: windows-latest
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
+    if: false  # Disabled - no winget package yet
+    # Original condition: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
     continue-on-error: true  # Don't fail the workflow if winget update fails
     
     steps:
