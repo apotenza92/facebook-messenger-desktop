@@ -5716,6 +5716,9 @@ function setupAutoUpdater(): void {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.allowPrerelease = isBetaOptedIn();
+    // Always use 'latest' channel so beta users also see stable updates
+    // (allowPrerelease controls whether beta versions are considered)
+    autoUpdater.channel = 'latest';
     autoUpdater.logger = console;
     
     console.log('[AutoUpdater] Beta opt-in:', isBetaOptedIn() ? 'enabled' : 'disabled');
