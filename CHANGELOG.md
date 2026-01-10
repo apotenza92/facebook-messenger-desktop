@@ -3,16 +3,32 @@
 ## [1.1.2] - 2026-01-10
 
 ### Fixed
-- Windows 11: Pinned taskbar shortcuts no longer break after updates (issue #25)
-  - Root cause: WScript.Shell cannot set System.AppUserModel.ID property required by Windows 11
-  - Fix: Now uses Windows Shell API via .NET interop to properly set AppUserModelId on shortcuts
-  - This ensures Windows 11 maintains the association between the pinned icon and the app
+- Windows 11: Pinned taskbar shortcuts no longer break after updates
 - Beta program: Users now receive stable updates in addition to beta releases
-  - Previously, beta users would only see newer beta versions, missing stable releases
-  - Now beta users receive whichever version is newest, whether beta or stable
 
 ### Added
 - Develop menu: "Test Taskbar Fix (Simulate Update)" for testing on Windows
+
+## [1.1.2-beta.2] - 2026-01-10
+
+### Fixed
+- Beta users now receive stable updates (issue #24)
+  - Previously, beta users would only see newer beta versions, missing stable releases
+  - Now beta users receive whichever version is newest, whether beta or stable
+
+## [1.1.2-beta.1] - 2026-01-10
+
+### Fixed
+- Windows 11: Pinned taskbar shortcuts no longer break after updates
+  - Root cause: WScript.Shell cannot set System.AppUserModel.ID property required by Windows 11
+  - Fix: Now uses Windows Shell API via .NET interop to properly set AppUserModelId on shortcuts
+  - This ensures Windows 11 maintains the association between the pinned icon and the app
+
+### Added
+- Develop menu: "Test Taskbar Fix (Simulate Update)" for beta testers on Windows
+  - Runs the same shortcut fix logic that executes during actual updates
+  - Shows detailed results of which shortcuts were found and updated
+  - Offers to quit the app so you can test clicking the pinned taskbar icon
 
 ## [1.1.1] - 2026-01-10
 
