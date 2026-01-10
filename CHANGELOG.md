@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.2-beta.1] - 2026-01-10
+
+### Fixed
+- Windows 11: Pinned taskbar shortcuts no longer break after updates (issue #25)
+  - Root cause: WScript.Shell cannot set System.AppUserModel.ID property required by Windows 11
+  - Fix: Now uses Windows Shell API via .NET interop to properly set AppUserModelId on shortcuts
+  - This ensures Windows 11 maintains the association between the pinned icon and the app
+
+### Added
+- Develop menu: "Test Taskbar Fix (Simulate Update)" for beta testers on Windows
+  - Runs the same shortcut fix logic that executes during actual updates
+  - Shows detailed results of which shortcuts were found and updated
+  - Allows testing the fix without performing a real update
+
 ## [1.1.1] - 2026-01-10
 
 ### Fixed
