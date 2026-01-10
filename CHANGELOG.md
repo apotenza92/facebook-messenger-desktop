@@ -12,7 +12,7 @@
 - Develop menu: "Test Taskbar Fix (Simulate Update)" for beta testers on Windows
   - Runs the same shortcut fix logic that executes during actual updates
   - Shows detailed results of which shortcuts were found and updated
-  - Allows testing the fix without performing a real update
+  - Offers to quit the app so you can test clicking the pinned taskbar icon
 
 ## [1.1.1] - 2026-01-10
 

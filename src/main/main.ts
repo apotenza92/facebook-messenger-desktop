@@ -4115,7 +4115,8 @@ $results | ConvertTo-Json -Depth 4 -Compress
             const statusIcon = results.failed === 0 && results.updated > 0 ? '✓' : 
                               results.updated === 0 ? '⚠' : '✗';
             
-            await dialog.showMessageBox({
+            // Show results and offer to quit for testing
+            const resultDialog = await dialog.showMessageBox({
               type: results.failed === 0 ? 'info' : 'warning',
               title: 'Taskbar Fix Test Results',
               message: `${statusIcon} Windows ${results.windowsVersion}`,
@@ -4131,11 +4132,20 @@ $results | ConvertTo-Json -Depth 4 -Compress
                 '',
                 results.error ? `Error: ${results.error}` : '',
                 '',
-                results.updated > 0 ? 'Now test your pinned taskbar icon!' : 
-                  'No shortcuts to update. Try pinning the app to taskbar first.',
+                results.updated > 0 
+                  ? 'Quit the app now to test clicking your pinned taskbar icon.' 
+                  : 'No shortcuts to update. Try pinning the app to taskbar first.',
               ].filter(Boolean).join('\n'),
-              buttons: ['OK'],
+              buttons: results.updated > 0 ? ['Quit to Test', 'Stay Open'] : ['OK'],
+              defaultId: 0,
+              cancelId: results.updated > 0 ? 1 : 0,
             });
+            
+            // If user chose to quit, exit the app so they can test clicking the pinned icon
+            if (results.updated > 0 && resultDialog.response === 0) {
+              console.log('[Test] User chose to quit for taskbar testing');
+              app.quit();
+            }
           } catch (err) {
             console.error('[Test] Taskbar fix error:', err);
             await dialog.showMessageBox({
