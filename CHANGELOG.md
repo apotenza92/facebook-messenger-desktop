@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1] - 2026-01-10
+
+### Fixed
+- Facebook Marketplace links now open in system browser (issue #24)
+  - Clicking "view more items", "view seller profile", or other Marketplace links in chats now opens them externally
+  - The app is signed into Messenger but not Facebook, so Marketplace pages don't work in-app
+  - Also redirects other non-Messenger Facebook URLs to system browser while preserving login flow
+
 ## [1.1.0] - 2026-01-09
 
 ### Summary

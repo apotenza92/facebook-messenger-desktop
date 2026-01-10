@@ -763,6 +763,33 @@ function isVerificationPage(url: string): boolean {
          url.includes('/login/device-based');
 }
 
+// Check if URL should be allowed to navigate within the app
+// Returns true for messenger.com and Facebook auth/verification pages
+// Used by will-navigate handlers to open external URLs (Marketplace, profiles) in system browser
+function shouldAllowInternalNavigation(url: string): boolean {
+  // Marketplace URLs should open in system browser (issue #24)
+  // User is signed into Messenger but not Facebook, so Marketplace doesn't work in-app
+  if (url.includes('/marketplace')) {
+    return false;
+  }
+  
+  const isMessengerUrl = url.startsWith('https://www.messenger.com') || 
+                         url.startsWith('https://messenger.com');
+  if (isMessengerUrl) return true;
+  
+  const isFacebookUrl = url.startsWith('https://www.facebook.com') || 
+                        url.startsWith('https://facebook.com');
+  if (!isFacebookUrl) return false;
+  
+  // Allow Facebook auth/login/verification pages (needed for login flow)
+  const authPaths = [
+    '/login', '/checkpoint', '/recover', '/challenge',
+    '/two_step_verification', '/dialog/oauth', '/v2.0/dialog',
+    '/auth/', '/oauth/'
+  ];
+  return authPaths.some(path => url.includes(path));
+}
+
 // CSS for the verification page banner (shown during 2FA, security checks, etc.)
 // Generate verification banner CSS with platform-specific offset
 function getVerificationBannerCSS(): string {
@@ -1886,6 +1913,19 @@ function createWindow(source: string = 'unknown'): void {
       }
     });
     
+    // Intercept navigation to open external URLs (Marketplace, profiles, etc.) in system browser
+    // This fixes issue #24 - Marketplace chat links were opening inside the app
+    contentView.webContents.on('will-navigate', (event, url) => {
+      console.log('[ContentView] will-navigate:', url);
+      if (!shouldAllowInternalNavigation(url)) {
+        console.log('[ContentView] Opening external URL in browser:', url);
+        event.preventDefault();
+        shell.openExternal(url).catch((err) => {
+          console.error('[External Link] Failed to open URL:', url, err);
+        });
+      }
+    });
+    
     // Handle navigation events to inject disclaimer on page changes
     contentView.webContents.on('did-navigate', async (event, url) => {
       console.log('[ContentView] Navigated to:', url);
@@ -2264,6 +2304,19 @@ function createWindow(source: string = 'unknown'): void {
         }
       } catch (error) {
         console.error('[Main Process] Failed to inject notification script:', error);
+      }
+    });
+    
+    // Intercept navigation to open external URLs (Marketplace, profiles, etc.) in system browser
+    // This fixes issue #24 - Marketplace chat links were opening inside the app
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      console.log('[MainWindow] will-navigate:', url);
+      if (!shouldAllowInternalNavigation(url)) {
+        console.log('[MainWindow] Opening external URL in browser:', url);
+        event.preventDefault();
+        shell.openExternal(url).catch((err) => {
+          console.error('[External Link] Failed to open URL:', url, err);
+        });
       }
     });
     
