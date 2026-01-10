@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2-beta.2] - 2026-01-10
+
+### Fixed
+- Beta users now receive stable updates (issue #24)
+  - Previously, beta users would only see newer beta versions, missing stable releases
+  - Now beta users receive whichever version is newest, whether beta or stable
+
 ## [1.1.2-beta.1] - 2026-01-10
 
 ### Fixed

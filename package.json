@@ -50,6 +50,7 @@
     "appId": "com.facebook.messenger.desktop",
     "productName": "Messenger",
     "afterPack": "./scripts/after-pack.js",
+    "generateUpdatesFilesForAllChannels": true,
     "publish": [
       {
         "provider": "github",
