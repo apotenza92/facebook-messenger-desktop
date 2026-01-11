@@ -790,6 +790,125 @@ function shouldAllowInternalNavigation(url: string): boolean {
   return authPaths.some(path => url.includes(path));
 }
 
+// Generate offline page HTML with retry button (issue #25)
+// Shown when app starts without internet connection
+function getOfflinePageHTML(errorDescription: string): string {
+  const topPadding = process.platform === 'darwin' ? '40px' : '20px';
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Messenger - Offline</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #0084ff 0%, #0099ff 100%);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: ${topPadding} 20px 20px;
+            -webkit-app-region: drag;
+          }
+          .container {
+            text-align: center;
+            max-width: 400px;
+            -webkit-app-region: no-drag;
+          }
+          .icon {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 24px;
+            opacity: 0.9;
+          }
+          h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 12px;
+          }
+          p {
+            font-size: 16px;
+            opacity: 0.9;
+            margin-bottom: 24px;
+            line-height: 1.5;
+          }
+          .error-detail {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-bottom: 24px;
+            font-family: monospace;
+          }
+          button {
+            background: white;
+            color: #0084ff;
+            border: none;
+            padding: 12px 32px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 24px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+          }
+          button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+          }
+          button:active {
+            transform: scale(0.98);
+          }
+          .auto-retry {
+            margin-top: 16px;
+            font-size: 14px;
+            opacity: 0.8;
+          }
+          .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.58 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/>
+          </svg>
+          <h1>No Internet Connection</h1>
+          <p>Unable to connect to Messenger. Please check your internet connection and try again.</p>
+          <p class="error-detail">${errorDescription}</p>
+          <button onclick="window.location.reload()">Retry</button>
+          <p class="auto-retry"><span class="spinner"></span>Auto-retrying in <span id="countdown">10</span>s...</p>
+        </div>
+        <script>
+          let countdown = 10;
+          const countdownEl = document.getElementById('countdown');
+          const timer = setInterval(() => {
+            countdown--;
+            countdownEl.textContent = countdown;
+            if (countdown <= 0) {
+              clearInterval(timer);
+              window.location.reload();
+            }
+          }, 1000);
+        </script>
+      </body>
+    </html>
+  `;
+}
+
 // CSS for the verification page banner (shown during 2FA, security checks, etc.)
 // Generate verification banner CSS with platform-specific offset
 function getVerificationBannerCSS(): string {
@@ -1945,6 +2064,30 @@ function createWindow(source: string = 'unknown'): void {
     contentView.webContents.on('console-message', (event, level, message, line, sourceId) => {
       console.log(`[Content View Console ${level}]`, message, `(${sourceId}:${line})`);
     });
+
+    // Handle load failures (issue #25) - show offline page when network is unavailable
+    contentView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Only handle main frame errors, ignore subframe errors (e.g., failed ad loads)
+      if (!isMainFrame) return;
+      
+      console.log(`[ContentView] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`);
+      
+      // Network-related error codes that warrant showing offline page
+      // -2: ERR_FAILED, -3: ERR_ABORTED, -6: ERR_FILE_NOT_FOUND
+      // -7: ERR_TIMED_OUT, -15: ERR_SOCKET_NOT_CONNECTED
+      // -21: ERR_NETWORK_CHANGED, -100: ERR_CONNECTION_CLOSED
+      // -101: ERR_CONNECTION_RESET, -102: ERR_CONNECTION_REFUSED
+      // -104: ERR_CONNECTION_FAILED, -105: ERR_NAME_NOT_RESOLVED
+      // -106: ERR_INTERNET_DISCONNECTED, -109: ERR_ADDRESS_UNREACHABLE
+      // -118: ERR_CONNECTION_TIMED_OUT, -130: ERR_PROXY_CONNECTION_FAILED
+      const networkErrorCodes = [-2, -3, -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118, -130];
+      
+      if (networkErrorCodes.includes(errorCode)) {
+        console.log('[ContentView] Network error detected, showing offline page');
+        const offlineHTML = getOfflinePageHTML(errorDescription);
+        contentView?.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}`);
+      }
+    });
     
     // Update title bar overlay when page title changes (e.g., "(5) Messenger" for unread counts)
     contentView.webContents.on('page-title-updated', (event, title) => {
@@ -2269,6 +2412,23 @@ function createWindow(source: string = 'unknown'): void {
     // Log console messages from main window
     mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
       console.log(`[Main Window Console ${level}]`, message, `(${sourceId}:${line})`);
+    });
+
+    // Handle load failures (issue #25) - show offline page when network is unavailable
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Only handle main frame errors, ignore subframe errors (e.g., failed ad loads)
+      if (!isMainFrame) return;
+      
+      console.log(`[MainWindow] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`);
+      
+      // Network-related error codes that warrant showing offline page
+      const networkErrorCodes = [-2, -3, -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118, -130];
+      
+      if (networkErrorCodes.includes(errorCode)) {
+        console.log('[MainWindow] Network error detected, showing offline page');
+        const offlineHTML = getOfflinePageHTML(errorDescription);
+        mainWindow?.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}`);
+      }
     });
 
     mainWindow.webContents.on('did-finish-load', async () => {
@@ -4205,7 +4365,42 @@ $results | ConvertTo-Json -Depth 4 -Compress
         ],
       },
       { role: 'editMenu' as const },
-      { role: 'viewMenu' as const },
+      {
+        label: 'View',
+        submenu: [
+          {
+            label: 'Reload',
+            accelerator: 'CmdOrCtrl+R',
+            click: () => {
+              // Target contentView on macOS (where Messenger runs), mainWindow on other platforms
+              const target = contentView?.webContents ?? mainWindow?.webContents;
+              target?.reload();
+            },
+          },
+          {
+            label: 'Force Reload',
+            accelerator: 'CmdOrCtrl+Shift+R',
+            click: () => {
+              const target = contentView?.webContents ?? mainWindow?.webContents;
+              target?.reloadIgnoringCache();
+            },
+          },
+          {
+            label: 'Toggle Developer Tools',
+            accelerator: 'Alt+Command+I',
+            click: () => {
+              const target = contentView?.webContents ?? mainWindow?.webContents;
+              target?.toggleDevTools();
+            },
+          },
+          { type: 'separator' },
+          { role: 'resetZoom' as const },
+          { role: 'zoomIn' as const },
+          { role: 'zoomOut' as const },
+          { type: 'separator' },
+          { role: 'togglefullscreen' as const },
+        ],
+      },
       { role: 'windowMenu' as const },
       // Include Develop menu in dev mode or for beta testers
       ...(isDev || isBetaOptedIn() ? [developMenu] : []),
@@ -4240,15 +4435,28 @@ $results | ConvertTo-Json -Depth 4 -Compress
     {
       label: 'View',
       submenu: [
-        { role: 'reload' as const },
-        { role: 'forceReload' as const },
+        {
+          label: 'Reload',
+          accelerator: 'CmdOrCtrl+R',
+          click: () => {
+            // Target contentView on macOS (where Messenger runs), mainWindow on other platforms
+            const target = contentView?.webContents ?? mainWindow?.webContents;
+            target?.reload();
+          },
+        },
+        {
+          label: 'Force Reload',
+          accelerator: 'CmdOrCtrl+Shift+R',
+          click: () => {
+            const target = contentView?.webContents ?? mainWindow?.webContents;
+            target?.reloadIgnoringCache();
+          },
+        },
         {
           label: 'Toggle Developer Tools',
-          accelerator: 'Alt+Command+I',
+          accelerator: 'Alt+CmdOrCtrl+I',
           click: () => {
-            const target = process.platform === 'darwin' && contentView 
-              ? contentView.webContents 
-              : mainWindow?.webContents;
+            const target = contentView?.webContents ?? mainWindow?.webContents;
             target?.toggleDevTools();
           },
         },

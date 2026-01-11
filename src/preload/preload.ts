@@ -714,6 +714,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Listen for user interaction events that indicate they're reading/responding
     document.addEventListener('click', handleUserActivity, { passive: true });
     document.addEventListener('keydown', handleUserActivity, { passive: true });
+
+    // Issue #27: Periodic recheck to catch cross-device read status changes
+    // When messages are read on another device, the local DOM doesn't update automatically
+    // This interval rechecks the DOM every 30 seconds to catch stale badge counts
+    setInterval(() => {
+      console.log('[BadgeMonitor] Periodic recheck triggered');
+      debouncedCountUnread();
+    }, 30000); // Recheck every 30 seconds
   }
 
   // Wait for DOM to be ready, then wait a bit more for electronAPI to be available
