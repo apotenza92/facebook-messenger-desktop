@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.3] - 2026-01-12
+
+### Fixed
+- View menu: Reload and Force Reload now work correctly (issue #26)
+  - On macOS, reload was targeting the wrong webContents (empty title bar window instead of Messenger content)
+  - Cmd+R / Ctrl+R and Cmd+Shift+R / Ctrl+Shift+R now properly reload the Messenger page
+- Badge counter: Added periodic recheck every 30 seconds (issue #27)
+  - Catches cases where messages are read on another device
+  - The local DOM doesn't update automatically, but periodic rechecks sync the badge count
+
+### Added
+- Offline detection with auto-retry (issue #25)
+  - When app starts without internet (e.g., at login before network is ready), shows a friendly offline page
+  - Includes manual Retry button and automatic retry countdown (10 seconds)
+  - No more blank windows when launching without network connectivity
+
 ## [1.1.2] - 2026-01-10
 
 ### Fixed
