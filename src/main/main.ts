@@ -3743,8 +3743,8 @@ function createApplicationMenu(): void {
         return;
       }
       manualUpdateCheckInProgress = true;
-      // Use checkForUpdates() instead of checkForUpdatesAndNotify() to use our custom update window
-      autoUpdater.checkForUpdates().catch((err: unknown) => {
+      // Use smartCheckForUpdates() to properly handle beta users seeing stable updates
+      smartCheckForUpdates().catch((err: unknown) => {
         console.warn('[AutoUpdater] manual check failed', err);
         
         // Check if this is a "no versions found" error, which means we're on the latest
@@ -3829,7 +3829,6 @@ function createApplicationMenu(): void {
 
         if (result.response === 0) {
           saveBetaOptIn(false);
-          autoUpdater.allowPrerelease = false;
           // Rebuild menu to update labels
           createApplicationMenu();
           dialog.showMessageBox({
@@ -3854,18 +3853,17 @@ function createApplicationMenu(): void {
 
         if (result.response === 0) {
           saveBetaOptIn(true);
-          autoUpdater.allowPrerelease = true;
           // Rebuild menu to update labels
           createApplicationMenu();
           dialog.showMessageBox({
             type: 'info',
             title: 'Joined Beta Program',
             message: 'Welcome to the beta program!',
-            detail: 'You\'ll now receive beta updates. Checking for beta updates now…',
+            detail: 'You\'ll now receive beta updates. Checking for updates now…',
             buttons: ['OK'],
           }).catch(() => {});
-          // Automatically check for beta updates after joining
-          autoUpdater.checkForUpdates().catch((err: unknown) => {
+          // Automatically check for updates after joining (uses smart check that picks highest version)
+          smartCheckForUpdates().catch((err: unknown) => {
             console.warn('[AutoUpdater] Beta update check failed:', err);
           });
         }
@@ -5289,6 +5287,116 @@ async function getChangelogForUpdate(currentVersion: string, newVersion: string,
 // GitHub repo URL for about dialog
 const GITHUB_REPO_URL = 'https://github.com/apotenza92/facebook-messenger-desktop';
 
+// GitHub releases URL for fetching update channel yml files
+const GITHUB_RELEASES_BASE = 'https://github.com/apotenza92/FacebookMessengerDesktop/releases';
+
+// Fetch version from a channel's yml file
+async function fetchChannelVersion(channel: 'latest' | 'beta'): Promise<string | null> {
+  return new Promise((resolve) => {
+    const ymlUrl = `${GITHUB_RELEASES_BASE}/latest/download/${channel}.yml`;
+    
+    https.get(ymlUrl, { headers: { 'User-Agent': 'electron-updater' } }, (res) => {
+      // Handle redirects
+      if (res.statusCode === 302 || res.statusCode === 301) {
+        const redirectUrl = res.headers.location;
+        if (redirectUrl) {
+          https.get(redirectUrl, { headers: { 'User-Agent': 'electron-updater' } }, (redirectRes) => {
+            if (redirectRes.statusCode !== 200) {
+              console.log(`[AutoUpdater] ${channel}.yml not found (${redirectRes.statusCode})`);
+              resolve(null);
+              return;
+            }
+            let data = '';
+            redirectRes.on('data', (chunk) => { data += chunk; });
+            redirectRes.on('end', () => {
+              // Parse version from yml (format: "version: X.Y.Z" or "version: X.Y.Z-beta.N")
+              const match = data.match(/^version:\s*(.+)$/m);
+              if (match) {
+                console.log(`[AutoUpdater] ${channel} channel version: ${match[1]}`);
+                resolve(match[1].trim());
+              } else {
+                resolve(null);
+              }
+            });
+          }).on('error', () => resolve(null));
+          return;
+        }
+      }
+      
+      if (res.statusCode !== 200) {
+        console.log(`[AutoUpdater] ${channel}.yml not found (${res.statusCode})`);
+        resolve(null);
+        return;
+      }
+      
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        const match = data.match(/^version:\s*(.+)$/m);
+        if (match) {
+          console.log(`[AutoUpdater] ${channel} channel version: ${match[1]}`);
+          resolve(match[1].trim());
+        } else {
+          resolve(null);
+        }
+      });
+    }).on('error', () => resolve(null));
+  });
+}
+
+// Smart update check for beta users - checks both channels and picks the higher version
+async function smartCheckForUpdates(): Promise<void> {
+  const isBeta = isBetaOptedIn();
+  
+  if (!isBeta) {
+    // Stable users: just check latest channel
+    console.log('[AutoUpdater] Stable user, checking latest channel only');
+    autoUpdater.channel = 'latest';
+    autoUpdater.allowPrerelease = false;
+    await autoUpdater.checkForUpdates();
+    return;
+  }
+  
+  // Beta users: check both channels and pick the higher version
+  console.log('[AutoUpdater] Beta user, checking both channels...');
+  
+  try {
+    const [stableVersion, betaVersion] = await Promise.all([
+      fetchChannelVersion('latest'),
+      fetchChannelVersion('beta')
+    ]);
+    
+    console.log(`[AutoUpdater] Stable version: ${stableVersion || 'none'}, Beta version: ${betaVersion || 'none'}`);
+    
+    // Determine which channel has the higher version
+    let useChannel: 'latest' | 'beta' = 'latest';
+    
+    if (stableVersion && betaVersion) {
+      // Both channels have versions - compare them
+      const comparison = compareVersions(betaVersion, stableVersion);
+      useChannel = comparison > 0 ? 'beta' : 'latest';
+      console.log(`[AutoUpdater] Beta ${comparison > 0 ? '>' : comparison < 0 ? '<' : '='} Stable, using ${useChannel} channel`);
+    } else if (betaVersion && !stableVersion) {
+      useChannel = 'beta';
+    } else {
+      useChannel = 'latest';
+    }
+    
+    // Set the channel and check for updates
+    // Important: Set allowPrerelease = false so electron-updater respects our channel choice
+    autoUpdater.channel = useChannel;
+    autoUpdater.allowPrerelease = false;
+    
+    console.log(`[AutoUpdater] Checking ${useChannel} channel for updates`);
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    console.warn('[AutoUpdater] Smart check failed, falling back to latest channel:', err);
+    autoUpdater.channel = 'latest';
+    autoUpdater.allowPrerelease = false;
+    await autoUpdater.checkForUpdates();
+  }
+}
+
 function openGitHubPage(): void {
   shell.openExternal(GITHUB_REPO_URL).catch((err) => {
     console.error('[GitHub] Failed to open URL:', err);
@@ -5923,10 +6031,6 @@ function setupAutoUpdater(): void {
   try {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = isBetaOptedIn();
-    // Always use 'latest' channel so beta users also see stable updates
-    // (allowPrerelease controls whether beta versions are considered)
-    autoUpdater.channel = 'latest';
     autoUpdater.logger = console;
     
     console.log('[AutoUpdater] Beta opt-in:', isBetaOptedIn() ? 'enabled' : 'disabled');
@@ -5940,12 +6044,12 @@ function setupAutoUpdater(): void {
     autoUpdater.on('download-progress', (progress) => {
       const percent = Math.round(progress.percent);
       const speedKB = Math.round(progress.bytesPerSecond / 1024);
-      const speedDisplay = speedKB > 1024 
-        ? `${(speedKB / 1024).toFixed(1)} MB/s` 
+      const speedDisplay = speedKB > 1024
+        ? `${(speedKB / 1024).toFixed(1)} MB/s`
         : `${speedKB} KB/s`;
       const downloaded = formatBytes(progress.transferred);
       const total = formatBytes(progress.total);
-      
+
       console.log(`[AutoUpdater] Download progress: ${percent}% (${speedDisplay})`);
       updateDownloadProgress(percent, speedDisplay, downloaded, total);
     });
@@ -5977,7 +6081,9 @@ function setupAutoUpdater(): void {
       hideDownloadProgress();
     });
 
-    autoUpdater.checkForUpdates().catch((err: unknown) => {
+    // Use smart check that handles beta channel properly
+    // (checks both latest and beta channels for beta users, picks the higher version)
+    smartCheckForUpdates().catch((err: unknown) => {
       console.warn('[AutoUpdater] check failed', err);
     });
   } catch (e) {

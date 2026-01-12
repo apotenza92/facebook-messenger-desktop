@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.4] - 2026-01-12
+
+### Fixed
+- Beta channel: Users now correctly see stable updates when they are newer (issue #28)
+  - Previously, beta users on v1.1.2 would not see v1.1.3 stable update
+  - Root cause: electron-updater ignores channel setting when allowPrerelease is enabled
+  - Fix: Smart update check now fetches both channels and picks the higher version
+
 ## [1.1.3] - 2026-01-12
 
 ### Fixed
