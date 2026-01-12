@@ -120,7 +120,8 @@ const defaultWindowState: WindowState = {
 };
 
 // Set app name early and explicitly pin userData/log paths so they don't default to the package name
-const APP_DIR_NAME = 'Messenger';
+// Use separate folder for dev mode so it doesn't interfere with production installs
+const APP_DIR_NAME = isDev ? 'Messenger-Dev' : 'Messenger';
 app.setName(APP_DIR_NAME);
 
 // Set AppUserModelId for Windows taskbar icon and grouping (must be set before app is ready)
@@ -237,201 +238,98 @@ function restartWithXWaylandMode(useX11: boolean): void {
 }
 
 
-// Custom login page CSS - matches docs/index.html style
-const LOGIN_PAGE_CSS = `
-  /* Prevent scrolling - lock viewport */
-  html, body {
-    overflow: hidden !important;
-    height: 100vh !important;
-    max-height: 100vh !important;
-  }
-  
-  /* Hide everything we don't need */
-  header, nav, [role="navigation"], footer, [role="contentinfo"] {
-    display: none !important;
-  }
-  
-  /* Hide any secondary main content (footer area) */
-  main + main, main ~ main {
-    display: none !important;
-  }
-  
-  /* Hide headings and subtitles */
-  h1:not(.md-title), h2, p:not(form p):not(.md-subtitle):not(.md-trademark) {
-    display: none !important;
-  }
-  
-  /* Hide all links outside the form */
-  body > a, body > div > a {
-    display: none !important;
-  }
-  
-  /* Hide ALL images except our icon */
-  img:not(.md-icon):not(#md-app-icon), picture, video {
-    display: none !important;
-  }
-  
-  /* Our icon image styling - multiple selectors for maximum specificity */
-  img.md-icon,
-  #md-app-icon,
-  #md-header img,
-  #md-wrapper img.md-icon {
-    display: block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    width: 72px !important;
-    height: 72px !important;
-    min-width: 72px !important;
-    min-height: 72px !important;
-    max-width: 72px !important;
-    max-height: 72px !important;
-    margin: 0 auto 12px auto !important;
-    border-radius: 16px !important;
-    position: relative !important;
-    z-index: 9999 !important;
-    transform: none !important;
-    clip: auto !important;
-    overflow: visible !important;
-  }
-  
-  /* Hide all main elements to prevent layout issues */
-  main {
-    display: contents !important;
-  }
-  
-  /* Clean centered layout */
-  body {
-    margin: 0 !important;
-    padding: 0 !important;
-    min-height: 100vh !important;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 50%, #f8f9fa 100%) !important;
-    overflow-x: hidden;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-  }
-  
-  /* Wrapper for centering content */
-  #md-wrapper {
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: center !important;
-    justify-content: center !important;
-    min-height: 100vh !important;
-    padding: 1.5rem !important;
-    box-sizing: border-box !important;
-  }
-  
-  @media (prefers-color-scheme: dark) {
-    body {
-      background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0f0f23 100%) !important;
-    }
-  }
-  
-  /* Our custom header - with proper spacing */
-  #md-header {
-    text-align: center;
-    margin-bottom: 1.25rem;
-    display: flex !important;
-    flex-direction: column;
-    align-items: center;
-  }
-  
-  #md-header .md-icon {
-    width: 72px !important;
-    height: 72px !important;
-    margin-bottom: 0.75rem !important;
-    border-radius: 20px !important;
-    display: block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-  }
-  
-  #md-header .md-title {
-    font-size: 1.65rem !important;
-    font-weight: 600 !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-    color: #1a1a1a !important;
-    margin: 0 0 0.6rem 0 !important;
-    display: block !important;
-  }
-  
-  #md-header .md-subtitle {
-    font-size: 0.9rem !important;
-    font-weight: 400 !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-    color: #666 !important;
-    line-height: 1.4 !important;
-    max-width: 380px !important;
-    margin: 0 0 0.75rem 0 !important;
-    display: block !important;
-  }
-  
-  #md-header .md-trademark {
-    font-size: 0.7rem !important;
-    font-weight: 400 !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-    color: #888 !important;
-    line-height: 1.4 !important;
-    max-width: 380px !important;
-    margin: 0 0 0.75rem 0 !important;
-    display: block !important;
-  }
-  
-  #md-header .md-github {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 0.35rem !important;
-    font-size: 0.8rem !important;
-    font-weight: 500 !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-    color: #0084ff !important;
-    text-decoration: none !important;
-    transition: opacity 0.2s ease !important;
-  }
-  
-  #md-header .md-github:hover {
-    opacity: 0.8 !important;
-  }
-  
-  #md-header .md-github svg {
-    width: 16px !important;
-    height: 16px !important;
-    fill: currentColor !important;
-  }
-  
-  @media (prefers-color-scheme: dark) {
-    #md-header .md-title {
-      color: #ffffff !important;
-    }
-    #md-header .md-subtitle {
-      color: #888 !important;
-    }
-    #md-header .md-trademark {
-      color: #666 !important;
-    }
-  }
-  
-  /* Hide Facebook's original form completely */
-  form {
-    position: absolute !important;
-    left: -9999px !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-  
-  /* Our custom form styling */
-  #md-login-form {
-    background: white;
-    padding: 24px;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0, 0, 0, 0.1);
-    max-width: 360px;
-    width: 100%;
+// Login/verification banner CSS - shared styling for consistency
+// Shows disclaimer banner at top without modifying Facebook's login form
+function getAppBannerCSS(bannerId: string): string {
+  // macOS has hybrid title bar overlay, other platforms don't
+  const topOffset = process.platform === 'darwin' ? '16px' : '0px';
+  const bodyPadding = process.platform === 'darwin' ? '85px' : '70px';
+
+  return `
+  #${bannerId} {
+    position: fixed;
+    top: ${topOffset};
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #0084ff 0%, #0066cc 100%);
+    color: #ffffff;
+    padding: 12px 24px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
     display: flex;
-    flex-direction: column;
-    gap: 16px;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    z-index: 999999;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
   }
-  
+  #${bannerId} .md-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  #${bannerId} .md-content {
+    text-align: left;
+  }
+  #${bannerId} a {
+    color: #ffffff;
+    text-decoration: underline;
+    font-weight: 500;
+  }
+  #${bannerId} a:hover {
+    opacity: 0.9;
+  }
+  #${bannerId} .md-app-name {
+    font-weight: 700;
+    font-size: 15px;
+    display: block;
+  }
+  #${bannerId} .md-subtitle {
+    font-size: 12px;
+    opacity: 0.9;
+    margin-top: 2px;
+    display: block;
+  }
+  /* Add top padding to page content so banner doesn't overlap */
+  body {
+    padding-top: ${bodyPadding} !important;
+  }
+  `;
+}
+
+function getLoginBannerCSS(): string {
+  return getAppBannerCSS('md-login-banner');
+}
+
+// App icon SVG (URL-encoded) - shared between login and verification banners
+const APP_ICON_SVG = "data:image/svg+xml,%3Csvg viewBox='0 0 1000 1000' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='1000' height='1000' rx='200' fill='%23ffffff'/%3E%3Cg transform='translate(55,50) scale(0.89)'%3E%3Cpath d='M1000 486c0 279-218 485-500 485-51 0-99-7-145-19-9-3-18-2-27 2l-99 44c-26 11-55-7-56-35l-3-89c0-11-5-21-13-28C60 758 0 632 0 486 0 207 219 1 501 1c282 0 499 206 499 485z' fill='%230866ff'/%3E%3Cg stroke='%23fff' stroke-width='15' stroke-linecap='round'%3E%3Cline x1='500' y1='130' x2='840' y2='295'/%3E%3Cline x1='840' y1='295' x2='840' y2='665'/%3E%3Cline x1='840' y1='665' x2='500' y2='830'/%3E%3Cline x1='500' y1='830' x2='160' y2='665'/%3E%3Cline x1='160' y1='665' x2='160' y2='295'/%3E%3Cline x1='160' y1='295' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='840' y2='295'/%3E%3Cline x1='500' y1='480' x2='840' y2='665'/%3E%3Cline x1='500' y1='480' x2='500' y2='830'/%3E%3Cline x1='500' y1='480' x2='160' y2='665'/%3E%3Cline x1='500' y1='480' x2='160' y2='295'/%3E%3C/g%3E%3Ccircle cx='500' cy='480' r='90' fill='%23fff'/%3E%3Ccircle cx='500' cy='130' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='295' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='500' cy='830' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='295' r='58' fill='%23fff'/%3E%3C/g%3E%3C/svg%3E";
+
+const LOGIN_BANNER_JS = `
+  (function() {
+    if (document.getElementById('md-login-banner')) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'md-login-banner';
+    banner.innerHTML = \`
+      <img class="md-icon" src="${APP_ICON_SVG}" alt="Messenger Desktop">
+      <div class="md-content">
+        <span class="md-app-name">You're signing in to Messenger Desktop</span>
+        <span class="md-subtitle">
+          This is an unofficial, open-source app — not affiliated with Meta. <a href="https://github.com/apotenza92/facebook-messenger-desktop" target="_blank">View on GitHub</a>
+        </span>
+      </div>
+    \`;
+    document.body.insertBefore(banner, document.body.firstChild);
+    console.log('[LoginBanner] Banner added to login page');
+  })();
+`;
+
+// Legacy custom login form CSS - DEPRECATED (was breaking Facebook's login flow)
+// The old custom form hid Facebook's native form and replaced it with our own,
+// which bypassed CSRF tokens and broke login. Now we just show a banner.
+const LOGIN_PAGE_CSS_DEPRECATED = `
+  /* This CSS is no longer used - it hid Facebook's form which broke login */
   #md-login-form input[type="text"],
   #md-login-form input[type="password"] {
     width: 100%;
@@ -712,26 +610,34 @@ const LOGIN_PAGE_HEADER_JS = `
   })();
 `;
 
-function getLoginPageCSS(): string {
-  return LOGIN_PAGE_CSS;
-}
-
 // Check if URL is a login/unauthenticated page (show disclaimer banner)
 function isLoginPage(url: string): boolean {
-  // Show custom login form on messenger.com/login/ page
+  const urlObj = new URL(url);
+  
+  // Check Facebook login page (primary login flow)
+  const isFacebookDomain = url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com');
+  if (isFacebookDomain) {
+    const isFacebookLoginPath = urlObj.pathname === '/login' ||
+                                 urlObj.pathname === '/login/' ||
+                                 urlObj.pathname === '/';
+    return isFacebookLoginPath;
+  }
+  
+  // Check Messenger login page (fallback)
   const isMessengerDomain = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com');
   if (!isMessengerDomain) return false;
-  
+
   // If URL has /t/ (conversation thread), user is logged in
   // If URL has /e2ee/t/ (encrypted thread), user is logged in
   const hasConversationPath = url.includes('/t/') || url.includes('/e2ee/');
   if (hasConversationPath) return false;
-  
-  // Only show custom login form on the dedicated login page
-  // The URL should be exactly /login/ or /login (with optional query params)
-  const urlObj = new URL(url);
-  const isLoginPath = urlObj.pathname === '/login/' || urlObj.pathname === '/login';
-  
+
+  // Show banner on any unauthenticated page (login, root, etc.)
+  // The pathname will be /, /login, /login/, or similar
+  const isLoginPath = urlObj.pathname === '/' ||
+                      urlObj.pathname === '/login/' ||
+                      urlObj.pathname === '/login';
+
   return isLoginPath;
 }
 
@@ -777,17 +683,37 @@ function shouldAllowInternalNavigation(url: string): boolean {
                          url.startsWith('https://messenger.com');
   if (isMessengerUrl) return true;
   
-  const isFacebookUrl = url.startsWith('https://www.facebook.com') || 
-                        url.startsWith('https://facebook.com');
+  // Allow all Facebook domains for auth flow (includes m.facebook.com, mobile auth, etc.)
+  const facebookDomains = [
+    'https://www.facebook.com',
+    'https://facebook.com',
+    'https://m.facebook.com',
+    'https://web.facebook.com',
+    'https://touch.facebook.com',
+    'https://mbasic.facebook.com'
+  ];
+  
+  const isFacebookUrl = facebookDomains.some(domain => url.startsWith(domain));
   if (!isFacebookUrl) return false;
   
   // Allow Facebook auth/login/verification pages (needed for login flow)
   const authPaths = [
     '/login', '/checkpoint', '/recover', '/challenge',
     '/two_step_verification', '/dialog/oauth', '/v2.0/dialog',
-    '/auth/', '/oauth/'
+    '/auth/', '/oauth/', '/cookie/', '/consent/', '/ajax/',
+    '/api/', '/rti/', '/security/',
+    // Trust/device verification paths
+    '/trust', '/device', '/save-device', '/remember_browser',
+    '/confirmemail', '/confirmphone', '/code_gen',
+    // Additional auth-related paths
+    '/help/', '/settings', '/privacy'
   ];
-  return authPaths.some(path => url.includes(path));
+  
+  // Also allow Facebook homepage (user lands here after login, we'll redirect to Messenger)
+  const urlObj = new URL(url);
+  const isHomePage = urlObj.pathname === '/' || urlObj.pathname === '';
+  
+  return isHomePage || authPaths.some(path => url.includes(path));
 }
 
 // Generate offline page HTML with retry button (issue #25)
@@ -912,61 +838,7 @@ function getOfflinePageHTML(errorDescription: string): string {
 // CSS for the verification page banner (shown during 2FA, security checks, etc.)
 // Generate verification banner CSS with platform-specific offset
 function getVerificationBannerCSS(): string {
-  // macOS has hybrid title bar overlay, other platforms don't
-  const topOffset = process.platform === 'darwin' ? '16px' : '0px';
-  const bodyPadding = process.platform === 'darwin' ? '85px' : '70px';
-  
-  return `
-  #md-verification-banner {
-    position: fixed;
-    top: ${topOffset};
-    left: 0;
-    right: 0;
-    background: linear-gradient(135deg, #0084ff 0%, #0066cc 100%);
-    color: #ffffff;
-    padding: 12px 24px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
-    z-index: 999999;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  }
-  #md-verification-banner .md-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-    flex-shrink: 0;
-  }
-  #md-verification-banner .md-content {
-    text-align: left;
-  }
-  #md-verification-banner a {
-    color: #ffffff;
-    text-decoration: underline;
-    font-weight: 500;
-  }
-  #md-verification-banner a:hover {
-    opacity: 0.9;
-  }
-  #md-verification-banner .md-app-name {
-    font-weight: 700;
-    font-size: 15px;
-    display: block;
-  }
-  #md-verification-banner .md-subtitle {
-    font-size: 12px;
-    opacity: 0.9;
-    margin-top: 2px;
-    display: block;
-  }
-  /* Add top padding to page content so banner doesn't overlap */
-  body {
-    padding-top: ${bodyPadding} !important;
-  }
-`;
+  return getAppBannerCSS('md-verification-banner');
 }
 
 const VERIFICATION_BANNER_JS = `
@@ -976,7 +848,7 @@ const VERIFICATION_BANNER_JS = `
     const banner = document.createElement('div');
     banner.id = 'md-verification-banner';
     banner.innerHTML = \`
-      <img class="md-icon" src="data:image/svg+xml,%3Csvg viewBox='0 0 1000 1000' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='1000' height='1000' rx='200' fill='%23ffffff'/%3E%3Cg transform='translate(55,50) scale(0.89)'%3E%3Cpath d='M1000 486c0 279-218 485-500 485-51 0-99-7-145-19-9-3-18-2-27 2l-99 44c-26 11-55-7-56-35l-3-89c0-11-5-21-13-28C60 758 0 632 0 486 0 207 219 1 501 1c282 0 499 206 499 485z' fill='%230866ff'/%3E%3Cg stroke='%23fff' stroke-width='15' stroke-linecap='round'%3E%3Cline x1='500' y1='130' x2='840' y2='295'/%3E%3Cline x1='840' y1='295' x2='840' y2='665'/%3E%3Cline x1='840' y1='665' x2='500' y2='830'/%3E%3Cline x1='500' y1='830' x2='160' y2='665'/%3E%3Cline x1='160' y1='665' x2='160' y2='295'/%3E%3Cline x1='160' y1='295' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='500' y2='130'/%3E%3Cline x1='500' y1='480' x2='840' y2='295'/%3E%3Cline x1='500' y1='480' x2='840' y2='665'/%3E%3Cline x1='500' y1='480' x2='500' y2='830'/%3E%3Cline x1='500' y1='480' x2='160' y2='665'/%3E%3Cline x1='500' y1='480' x2='160' y2='295'/%3E%3C/g%3E%3Ccircle cx='500' cy='480' r='90' fill='%23fff'/%3E%3Ccircle cx='500' cy='130' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='295' r='58' fill='%23fff'/%3E%3Ccircle cx='840' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='500' cy='830' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='665' r='58' fill='%23fff'/%3E%3Ccircle cx='160' cy='295' r='58' fill='%23fff'/%3E%3C/g%3E%3C/svg%3E" alt="Messenger Desktop" />
+      <img class="md-icon" src="${APP_ICON_SVG}" alt="Messenger Desktop">
       <div class="md-content">
         <span class="md-app-name">You're signing in to Messenger Desktop</span>
         <span class="md-subtitle">
@@ -991,17 +863,59 @@ const VERIFICATION_BANNER_JS = `
 
 // Inject simplified login page CSS (hides most elements, keeps login form + disclaimer)
 // Also injects a banner on verification pages
+
+// Check if this is any Facebook page (for showing consistent banner during login flow)
+function isFacebookIntermediatePage(url: string): boolean {
+  const isFacebookDomain = url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com');
+  if (!isFacebookDomain) return false;
+  
+  // Don't show on login or verification pages (they have their own banners)
+  if (isLoginPage(url) || isVerificationPage(url)) return false;
+  
+  return true;
+}
+
+// Consistent banner for all Facebook intermediate pages (trust device, continue to messenger, etc.)
+const FACEBOOK_BANNER_JS = `
+  (function() {
+    if (document.getElementById('md-facebook-banner')) return;
+    
+    const banner = document.createElement('div');
+    banner.id = 'md-facebook-banner';
+    banner.innerHTML = \`
+      <img class="md-icon" src="${APP_ICON_SVG}" alt="Messenger Desktop">
+      <div class="md-content">
+        <span class="md-app-name">You're signing in to Messenger Desktop</span>
+        <span class="md-subtitle">
+          This is an unofficial, open-source app — not affiliated with Meta. <a href="https://github.com/apotenza92/facebook-messenger-desktop" target="_blank">View on GitHub</a>
+        </span>
+      </div>
+    \`;
+    document.body.insertBefore(banner, document.body.firstChild);
+    console.log('[FacebookBanner] Banner added');
+  })();
+`;
+
+function getFacebookBannerCSS(): string {
+  return getAppBannerCSS('md-facebook-banner');
+}
+
 async function injectLoginPageCSS(webContents: Electron.WebContents): Promise<void> {
   try {
     const url = webContents.getURL();
+    
     if (isLoginPage(url)) {
-      await webContents.insertCSS(getLoginPageCSS());
-      await webContents.executeJavaScript(LOGIN_PAGE_HEADER_JS);
-      console.log('[LoginPage] Custom login page styling injected');
+      await webContents.insertCSS(getLoginBannerCSS());
+      await webContents.executeJavaScript(LOGIN_BANNER_JS);
+      console.log('[LoginPage] Banner injected');
     } else if (isVerificationPage(url)) {
       await webContents.insertCSS(getVerificationBannerCSS());
       await webContents.executeJavaScript(VERIFICATION_BANNER_JS);
-      console.log('[VerificationPage] Banner injected on verification page');
+      console.log('[VerificationPage] Banner injected');
+    } else if (isFacebookIntermediatePage(url)) {
+      await webContents.insertCSS(getFacebookBannerCSS());
+      await webContents.executeJavaScript(FACEBOOK_BANNER_JS);
+      console.log('[FacebookPage] Banner injected');
     }
   } catch (e) {
     console.warn('[LoginPage] Failed to inject styling:', e);
@@ -1786,8 +1700,15 @@ function createWindow(source: string = 'unknown'): void {
       });
     });
 
-    // Load messenger.com/login/ directly - simpler login page with just the form
-    contentView.webContents.loadURL('https://www.messenger.com/login/');
+    // Set Safari macOS user agent - Facebook may be blocking Chrome/Electron
+    // Using Safari UA since it's the native macOS browser
+    const userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
+    contentView.webContents.session.setUserAgent(userAgent);
+    console.log('[UserAgent] Set to:', userAgent);
+
+    // Load Facebook login with redirect to Messenger after auth
+    // This provides a more robust login flow than messenger.com's limited login page
+    contentView.webContents.loadURL('https://www.facebook.com/login?next=https%3A%2F%2Fwww.messenger.com%2F');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
     // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
@@ -2036,18 +1957,35 @@ function createWindow(source: string = 'unknown'): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     contentView.webContents.on('will-navigate', (event, url) => {
       console.log('[ContentView] will-navigate:', url);
-      if (!shouldAllowInternalNavigation(url)) {
-        console.log('[ContentView] Opening external URL in browser:', url);
+      const allowed = shouldAllowInternalNavigation(url);
+      console.log('[ContentView] Navigation allowed:', allowed, 'URL:', url);
+      if (!allowed) {
+        console.log('[ContentView] BLOCKING navigation and opening external:', url);
         event.preventDefault();
         shell.openExternal(url).catch((err) => {
           console.error('[External Link] Failed to open URL:', url, err);
         });
+      } else {
+        console.log('[ContentView] ALLOWING navigation to:', url);
       }
     });
     
     // Handle navigation events to inject disclaimer on page changes
     contentView.webContents.on('did-navigate', async (event, url) => {
       console.log('[ContentView] Navigated to:', url);
+      
+      // After Facebook login completes, redirect to Messenger
+      // Detect Facebook homepage (logged in) and redirect
+      if (url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com')) {
+        const urlObj = new URL(url);
+        const isLoggedInHomepage = urlObj.pathname === '/' && !url.includes('login');
+        if (isLoggedInHomepage) {
+          console.log('[ContentView] Facebook login complete, redirecting to Messenger...');
+          contentView?.webContents.loadURL('https://www.messenger.com/');
+          return;
+        }
+      }
+      
       if (contentView && url.startsWith('https://')) {
         await injectLoginPageCSS(contentView.webContents);
       }
@@ -2200,8 +2138,17 @@ function createWindow(source: string = 'unknown'): void {
       });
     });
 
-    // Load messenger.com/login/ directly - simpler login page with just the form
-    mainWindow.loadURL('https://www.messenger.com/login/');
+    // Set Edge/Firefox user agent - Facebook may be blocking Chrome/Electron
+    const chromeVersion = process.versions.chrome;
+    const userAgent = process.platform === 'win32'
+      ? `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36 Edg/${chromeVersion}`
+      : `Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0`;
+    mainWindow.webContents.session.setUserAgent(userAgent);
+    console.log('[UserAgent] Set to:', userAgent);
+
+    // Load Facebook login with redirect to Messenger after auth
+    // This provides a more robust login flow than messenger.com's limited login page
+    mainWindow.loadURL('https://www.facebook.com/login?next=https%3A%2F%2Fwww.messenger.com%2F');
 
     // Handle new window requests (target="_blank" links, window.open, etc.)
     // Allow Messenger pop-up windows (for calls) but open external URLs in system browser
@@ -2483,6 +2430,19 @@ function createWindow(source: string = 'unknown'): void {
     // Handle navigation events to inject disclaimer on page changes
     mainWindow.webContents.on('did-navigate', async (event, url) => {
       console.log('[MainWindow] Navigated to:', url);
+      
+      // After Facebook login completes, redirect to Messenger
+      // Detect Facebook homepage (logged in) and redirect
+      if (url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com')) {
+        const urlObj = new URL(url);
+        const isLoggedInHomepage = urlObj.pathname === '/' && !url.includes('login');
+        if (isLoggedInHomepage) {
+          console.log('[MainWindow] Facebook login complete, redirecting to Messenger...');
+          mainWindow?.loadURL('https://www.messenger.com/');
+          return;
+        }
+      }
+      
       if (mainWindow && url.startsWith('https://')) {
         await injectLoginPageCSS(mainWindow.webContents);
       }

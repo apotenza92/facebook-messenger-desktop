@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.5] - 2026-01-12
+
+### Changed
+- Login flow now uses facebook.com instead of messenger.com
+  - Messenger.com's login has issues with "approve from another device" verification
+  - Facebook.com provides a more robust and complete authentication flow
+  - After login, automatically redirects to Messenger
+- Consistent banner shown throughout entire login/verification flow
+
 ## [1.1.4] - 2026-01-12
 
 ### Fixed
