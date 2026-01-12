@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.6] - 2026-01-12
+
+### Fixed
+- Login flow: App now checks if user is already logged in before showing login page (issue #29)
+  - Previously always showed login page even if user was already authenticated
+  - Now tries loading messenger.com first, only shows login page if authentication is required
+  - Improved redirect detection after Facebook login to ensure proper redirect to messenger.com
+  - Handles both full page navigation and SPA-style navigation
+- macOS: Spellcheck now enabled (issue #30)
+  - Previously disabled on macOS, now works correctly
+  - Both webpage-based and native spellcheck now functional
+
 ## [1.1.5] - 2026-01-12
 
 ### Changed
