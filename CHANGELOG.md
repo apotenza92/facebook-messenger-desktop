@@ -2,11 +2,6 @@
 
 ## [1.1.8-beta.1] - 2026-01-13
 
-### Fixed
-- TypeScript compilation error in menu creation code
-
-## [1.1.8-beta.0] - 2026-01-13
-
 ### Added
 - Auto-hide menu bar with hover, Alt, and F10 toggle (issue #31)
   - Menu bar is hidden by default on Windows/Linux
@@ -14,6 +9,9 @@
   - Alt key temporarily shows menu bar while held (Electron default behavior)
   - F10 key or View menu item toggles permanent visibility
   - Menu bar state persists correctly between temporary and permanent visibility
+
+### Fixed
+- TypeScript compilation error in menu creation code
 
 ## [1.1.7] - 2026-01-13
 
