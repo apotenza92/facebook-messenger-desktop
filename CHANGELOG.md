@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.7] - 2026-01-13
+
+### Fixed
+- False "No Internet Connection" message during login
+  - Error codes -2 (ERR_FAILED) and -3 (ERR_ABORTED) were too broad and caused false positives
+  - Now only genuine network errors trigger the offline page
+- Users stuck on facebook.com when reopening app
+  - App was prematurely setting login flow state on startup
+  - Now properly redirects from facebook.com to messenger.com after session validation
+
+### Added
+- Reset & Logout menu item for users to clear all session data
+  - Accessible from Messenger menu (macOS) or Help menu (Windows/Linux)
+  - Clears all cookies, cache, and local storage
+  - Returns user to login screen without reinstalling the app
+  - Equivalent to `npm run start:reset` but for production users
+
 ## [1.1.6] - 2026-01-12
 
 ### Fixed

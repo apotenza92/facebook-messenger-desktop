@@ -621,11 +621,12 @@ function isLoginPage(url: string): boolean {
   const urlObj = new URL(url);
   
   // Check Facebook login page (primary login flow)
+  // Note: Do NOT treat facebook.com homepage (/) as a login page
+  // After successful login, users land on facebook.com/ which should redirect to messenger
   const isFacebookDomain = url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com');
   if (isFacebookDomain) {
     const isFacebookLoginPath = urlObj.pathname === '/login' ||
-                                 urlObj.pathname === '/login/' ||
-                                 urlObj.pathname === '/';
+                                 urlObj.pathname === '/login/';
     return isFacebookLoginPath;
   }
   
@@ -663,16 +664,29 @@ function isFacebookMediaUrl(url: string): boolean {
 function isVerificationPage(url: string): boolean {
   const isMessengerDomain = url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com');
   const isFacebookDomain = url.startsWith('https://www.facebook.com') || url.startsWith('https://facebook.com');
-  
+
   if (!isMessengerDomain && !isFacebookDomain) return false;
-  
+
   // These are security/verification pages where we should show a banner
-  return url.includes('/checkpoint') || 
+  return url.includes('/checkpoint') ||
          url.includes('/recover') ||
          url.includes('/challenge') ||
          url.includes('/two_step_verification') ||
          url.includes('/login/identify') ||
          url.includes('/login/device-based');
+}
+
+// Check if messenger session cookies are established
+// Returns true if c_user or xs cookies exist for messenger.com domain
+async function hasMessengerSession(session: Electron.Session): Promise<boolean> {
+  try {
+    const cookies = await session.cookies.get({ url: 'https://messenger.com' });
+    const hasSessionCookie = cookies.some(c => c.name === 'c_user' || c.name === 'xs');
+    return hasSessionCookie;
+  } catch (err) {
+    console.warn('[Session Check] Failed to check cookies:', err);
+    return false;
+  }
 }
 
 // Check if URL should be allowed to navigate within the app
@@ -1947,7 +1961,8 @@ function createWindow(source: string = 'unknown'): void {
         if (hasSessionCookie) {
           // User likely logged in, try messenger.com
           console.log('[ContentView] Session cookies found, loading messenger.com...');
-          loginFlowActive = true; // Assume they're in a valid session
+          // Don't set loginFlowActive here - let did-finish-load handle it
+          // This allows proper facebook.com → messenger.com redirect on startup
           contentView?.webContents.loadURL('https://www.messenger.com/');
         } else {
           // No session, show custom login page directly (no flash)
@@ -2344,14 +2359,14 @@ function createWindow(source: string = 'unknown'): void {
       console.log(`[ContentView] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`);
       
       // Network-related error codes that warrant showing offline page
-      // -2: ERR_FAILED, -3: ERR_ABORTED, -6: ERR_FILE_NOT_FOUND
-      // -7: ERR_TIMED_OUT, -15: ERR_SOCKET_NOT_CONNECTED
+      // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
+      // -6: ERR_FILE_NOT_FOUND, -7: ERR_TIMED_OUT, -15: ERR_SOCKET_NOT_CONNECTED
       // -21: ERR_NETWORK_CHANGED, -100: ERR_CONNECTION_CLOSED
       // -101: ERR_CONNECTION_RESET, -102: ERR_CONNECTION_REFUSED
       // -104: ERR_CONNECTION_FAILED, -105: ERR_NAME_NOT_RESOLVED
       // -106: ERR_INTERNET_DISCONNECTED, -109: ERR_ADDRESS_UNREACHABLE
       // -118: ERR_CONNECTION_TIMED_OUT, -130: ERR_PROXY_CONNECTION_FAILED
-      const networkErrorCodes = [-2, -3, -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118, -130];
+      const networkErrorCodes = [-6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118, -130];
       
       if (networkErrorCodes.includes(errorCode)) {
         console.log('[ContentView] Network error detected, showing offline page');
@@ -2503,7 +2518,8 @@ function createWindow(source: string = 'unknown'): void {
         if (hasSessionCookie) {
           // User likely logged in, try messenger.com
           console.log('[MainWindow] Session cookies found, loading messenger.com...');
-          loginFlowActive = true; // Assume they're in a valid session
+          // Don't set loginFlowActive here - let did-finish-load handle it
+          // This allows proper facebook.com → messenger.com redirect on startup
           mainWindow?.loadURL('https://www.messenger.com/');
         } else {
           // No session, show custom login page directly (no flash)
@@ -2745,9 +2761,10 @@ function createWindow(source: string = 'unknown'): void {
       if (!isMainFrame) return;
       
       console.log(`[MainWindow] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`);
-      
+
       // Network-related error codes that warrant showing offline page
-      const networkErrorCodes = [-2, -3, -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118, -130];
+      // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
+      const networkErrorCodes = [-6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118, -130];
       
       if (networkErrorCodes.includes(errorCode)) {
         console.log('[MainWindow] Network error detected, showing offline page');
@@ -4098,8 +4115,79 @@ async function handleUninstallRequest(): Promise<void> {
   app.quit();
 }
 
+/**
+ * Handle user request to reset/logout from the app
+ * Clears all session data and reloads to show login page
+ */
+async function handleResetAndLogout(): Promise<void> {
+  const result = await dialog.showMessageBox({
+    type: 'question',
+    title: 'Reset & Logout',
+    message: 'Are you sure you want to reset and logout?',
+    detail: 'This will:\n• Clear all session cookies and login data\n• Clear cache and local storage\n• Return you to the login screen\n\nYou\'ll need to login again.',
+    buttons: ['Reset & Logout', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+
+  if (result.response === 0) {
+    try {
+      console.log('[Reset] User requested reset and logout');
+
+      // Reset login flow state
+      loginFlowActive = false;
+      hasTriedMessengerOnce = false;
+
+      // Get the session from the active webContents
+      const isMac = process.platform === 'darwin';
+      const session = isMac && contentView
+        ? contentView.webContents.session
+        : mainWindow?.webContents.session;
+
+      if (session) {
+        // Clear all cookies
+        await session.clearStorageData({
+          storages: ['cookies', 'localstorage', 'websql', 'indexdb', 'cachestorage', 'serviceworkers']
+        });
+
+        // Clear cache
+        await session.clearCache();
+
+        console.log('[Reset] Cleared all session data');
+      }
+
+      // Reload the app to show login page
+      if (isMac && contentView) {
+        contentView.webContents.loadURL(getCustomLoginPageURL());
+      } else if (mainWindow) {
+        mainWindow.loadURL(getCustomLoginPageURL());
+      }
+
+      // Show the main window if it was hidden
+      showMainWindow('reset-logout');
+
+      console.log('[Reset] Reset complete, showing login page');
+    } catch (err) {
+      console.error('[Reset] Error during reset:', err);
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'Reset Failed',
+        message: 'Failed to reset the app. Please try restarting Messenger.',
+        buttons: ['OK'],
+      }).catch(() => {});
+    }
+  }
+}
+
 // IPC Handlers
 function createApplicationMenu(): void {
+  const resetAndLogoutMenuItem: Electron.MenuItemConstructorOptions = {
+    label: 'Reset & Logout…',
+    click: () => {
+      void handleResetAndLogout();
+    },
+  };
+
   const uninstallMenuItem: Electron.MenuItemConstructorOptions = {
     label: 'Uninstall Messenger…',
     click: () => {
@@ -4754,6 +4842,7 @@ $results | ConvertTo-Json -Depth 4 -Compress
           { role: 'hideOthers' as const },
           { role: 'unhide' as const },
           { type: 'separator' },
+          resetAndLogoutMenuItem,
           uninstallMenuItem,
           { type: 'separator' },
           { role: 'quit' as const },
@@ -4879,6 +4968,7 @@ $results | ConvertTo-Json -Depth 4 -Compress
         // XWayland mode option for Linux users (for screen sharing compatibility)
         ...(xwaylandMenuItem ? [{ type: 'separator' as const }, xwaylandMenuItem] : []),
         { type: 'separator' },
+        resetAndLogoutMenuItem,
         uninstallMenuItem,
         { type: 'separator' },
         { role: 'about' as const },
