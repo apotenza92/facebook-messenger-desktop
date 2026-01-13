@@ -13,6 +13,10 @@
   - 3 attempts with 1s, 2s, 4s delays for network resilience
   - Better handling of temporary network issues
   - User-friendly error dialogs instead of silent failures
+- Comprehensive AI assistant instructions and release policies
+  - Single .ai-instructions.md file for AI models to follow
+  - Detailed release process documentation
+  - Playwright test suite for update checker scenarios
 
 ### Fixed
 - Microphone not released after audio calls end (issue #33)
