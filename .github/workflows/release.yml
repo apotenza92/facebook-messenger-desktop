@@ -192,7 +192,9 @@ jobs:
           fi
 
           # Extract section for this version (between ## [VERSION] and next ##)
-          awk -v ver="$VERSION" '
+          # Escape special regex characters in version string
+          ESCAPED_VER=$(echo "$VERSION" | sed 's/\./\\./g; s/-/\\-/g')
+          awk -v ver="$ESCAPED_VER" '
             /^## \[v?/ { if (found) exit; if ($0 ~ "\\[v?" ver "\\]") found=1; next }
             found { print }
           ' CHANGELOG.md > "$NOTES" || true
