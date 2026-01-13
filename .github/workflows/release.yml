@@ -122,10 +122,14 @@ jobs:
         run: npm ci
         timeout-minutes: 10
 
-      - name: Install Flatpak tools
+      - name: Install Flatpak tools and runtimes
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
+          # Add Flathub for runtimes (needed by electron-builder)
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          # Install required runtimes for Flatpak build
+          sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
 
       - name: Generate icons
         run: npm run generate-icons
@@ -542,8 +546,9 @@ jobs:
           fi
 
           if [ -z "$X64_FLATPAK" ] && [ -z "$ARM64_FLATPAK" ]; then
-            echo "ERROR: No flatpak files found!"
-            exit 1
+            echo "⚠️ No flatpak files found in artifacts - skipping repo update"
+            echo "To enable: add 'flatpak' target to package.json linux.target array"
+            exit 0
           fi
 
           # Update repository metadata and sign

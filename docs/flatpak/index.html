@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facebook Messenger Desktop - Flatpak Repository</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+    code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+    pre { background: #f4f4f4; padding: 1rem; border-radius: 5px; overflow-x: auto; }
+    h1 { color: #0084ff; }
+  </style>
+</head>
+<body>
+  <h1>Facebook Messenger Desktop - Flatpak</h1>
+  <p>This is a self-hosted Flatpak repository for Facebook Messenger Desktop.</p>
+  
+  <h2>Installation</h2>
+  <pre><code># Add the repository
+flatpak remote-add --if-not-exists messenger-desktop https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo --gpg-import=https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg
+
+# Install the app
+flatpak install messenger-desktop io.github.apotenza92.messenger</code></pre>
+
+  <h2>Updates</h2>
+  <pre><code>flatpak update io.github.apotenza92.messenger</code></pre>
+
+  <h2>Source</h2>
+  <p>View the source code on <a href="https://github.com/apotenza92/facebook-messenger-desktop">GitHub</a>.</p>
+</body>
+</html>
