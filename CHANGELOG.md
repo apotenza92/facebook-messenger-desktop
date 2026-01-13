@@ -3,6 +3,12 @@
 ## [1.1.8-beta.2] - 2026-01-13
 
 ### Fixed
+- Beta/stable channel auto-update system improvements
+  - Automatic YML file generation for both latest and beta channels across all platforms
+  - Fixed promise error handling with proper rejection and 30-second timeout
+  - Added retry logic with exponential backoff (3 attempts: 1s, 2s, 4s delays)
+  - User-friendly error dialogs instead of silent failures
+  - Network failures now show clear error messages to users
 - Windows 11 taskbar shortcuts breaking after auto-updates
   - Auto-updates now run the shortcut fix script before restart
   - Ensures AppUserModelId property is maintained on taskbar pins
@@ -10,7 +16,19 @@
   - Test feature available in Develop menu for Windows users
 
 ### Added
-- Standalone PowerShell script for Windows shortcut maintenance
+- Channel YML generator script (scripts/generate-channel-yml.js)
+  - Automatically copies latest*.yml to beta*.yml for all platforms
+  - Integrated into GitHub Actions workflow after builds
+- Retry logic for channel version fetching (fetchChannelVersionWithRetry)
+  - Exponential backoff for network resilience
+  - Better handling of temporary network issues
+- Standalone PowerShell script for Windows shortcut maintenance (scripts/fix-windows-shortcuts.ps1)
+  - Uses .NET COM interop to access Windows Shell APIs
+  - Updates AppUserModelId property on all Messenger shortcuts
+  - Scans taskbar, Start Menu, and Desktop locations
+- runWindowsShortcutFix() function for auto-update integration
+  - Executes during update-downloaded event
+  - Includes detailed result parsing and error handling
 - Improved test diagnostics for Windows taskbar fix
 
 ## [1.1.8-beta.1] - 2026-01-13
