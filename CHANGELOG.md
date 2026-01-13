@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.8-beta.1] - 2026-01-13
+
+### Fixed
+- TypeScript compilation error in menu creation code
+
 ## [1.1.8-beta.0] - 2026-01-13
 
 ### Added
