@@ -56,13 +56,10 @@ platforms.forEach(({ source, targets }) => {
 
 console.log(`[YML Generator] Complete! Generated ${filesGenerated} files, skipped ${filesSkipped}`);
 
-// Verify critical files exist
-const criticalFiles = ['latest.yml', 'beta.yml'];
-const missingFiles = criticalFiles.filter(f => !fs.existsSync(path.join('release', f)));
-
-if (missingFiles.length > 0) {
-  console.error(`[YML Generator] ❌ ERROR: Critical files missing: ${missingFiles.join(', ')}`);
+// Verify that at least some channel files were generated
+if (filesGenerated === 0) {
+  console.error(`[YML Generator] ❌ ERROR: No channel files were generated. Ensure electron-builder output exists in release/`);
   process.exit(1);
 }
 
-console.log(`[YML Generator] ✓ All critical channel files present`);
+console.log(`[YML Generator] ✓ Successfully generated channel files for current platform`);
