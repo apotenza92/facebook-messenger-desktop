@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.8-beta.0] - 2026-01-13
+
+### Added
+- Auto-hide menu bar with hover, Alt, and F10 toggle (issue #31)
+  - Menu bar is hidden by default on Windows/Linux
+  - Hovering near top of window (3px zone) temporarily shows menu bar
+  - Alt key temporarily shows menu bar while held (Electron default behavior)
+  - F10 key or View menu item toggles permanent visibility
+  - Menu bar state persists correctly between temporary and permanent visibility
+
 ## [1.1.7] - 2026-01-13
 
 ### Fixed

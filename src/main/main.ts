@@ -105,7 +105,10 @@ let isCreatingWindow = false; // Guard against race conditions during window cre
 let lastShowWindowTime = 0; // Debounce for showMainWindow to prevent double window on Linux
 let appReady = false; // Flag to indicate app is fully initialized (window created)
 let pendingShowWindow = false; // Queue second-instance events that arrive before app is ready
+let menuBarPermanentlyVisible = false; // Track if menu bar was toggled to be permanently visible
+let menuBarHoverTimeout: NodeJS.Timeout | null = null; // Timeout for hiding menu bar after mouse leaves
 const overlayHeight = 32;
+const MENU_BAR_HOVER_ZONE = 3; // Pixels from top of window to trigger menu bar show (conventional: 2-5px)
 
 // Login flow state tracking - prevents redirect loops during authentication
 // Once user starts login, we don't redirect back to custom login page until they explicitly log out
@@ -1676,9 +1679,9 @@ function createWindow(source: string = 'unknown'): void {
           backgroundColor: colors.background,
         }
       : {
-          // Windows/Linux: use standard frame with visible menu bar
+          // Windows/Linux: use standard frame with auto-hide menu bar (Alt temporarily shows, F10 toggles, hover shows)
           frame: true,
-          autoHideMenuBar: false,
+          autoHideMenuBar: true,
         }),
     webPreferences: {
       // On macOS, main window doesn't load web content (we use BrowserView)
@@ -2971,6 +2974,16 @@ function createWindow(source: string = 'unknown'): void {
     });
   }
 
+  // On Windows/Linux, set up menu bar hover behavior
+  // Menu bar is hidden by default, shows on hover near top, Alt temporarily shows, F10 toggles
+  if (!isMac && mainWindow) {
+    // Initialize menu bar as hidden (autoHideMenuBar: true handles this, but ensure it's hidden)
+    mainWindow.setMenuBarVisibility(false);
+    menuBarPermanentlyVisible = false;
+    
+    console.log('[Menu Bar] Menu bar hidden by default (hover near top, Alt, or F10 to show)');
+  }
+
   // Window creation complete
   console.log(`[CreateWindow] Complete at ${Date.now()}, setting isCreatingWindow=false`);
   isCreatingWindow = false;
@@ -4179,6 +4192,63 @@ async function handleResetAndLogout(): Promise<void> {
   }
 }
 
+// Toggle menu bar visibility (Windows/Linux only)
+function toggleMenuBarVisibility(): void {
+  if (process.platform === 'darwin' || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  
+  const isVisible = mainWindow.isMenuBarVisible();
+  const newVisibility = !isVisible;
+  mainWindow.setMenuBarVisibility(newVisibility);
+  menuBarPermanentlyVisible = newVisibility;
+  console.log(`[Menu Bar] Toggled menu bar visibility to: ${newVisibility}`);
+  
+  // Clear any hover timeout since user explicitly toggled
+  if (menuBarHoverTimeout) {
+    clearTimeout(menuBarHoverTimeout);
+    menuBarHoverTimeout = null;
+  }
+  
+  // Rebuild menu to update the label
+  createApplicationMenu();
+}
+
+// Show menu bar temporarily on hover (Windows/Linux only)
+function showMenuBarOnHover(): void {
+  if (process.platform === 'darwin' || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  
+  // Only show if menu bar is not permanently visible
+  if (!menuBarPermanentlyVisible) {
+    mainWindow.setMenuBarVisibility(true);
+    
+    // Clear any existing timeout
+    if (menuBarHoverTimeout) {
+      clearTimeout(menuBarHoverTimeout);
+    }
+  }
+}
+
+// Hide menu bar after mouse leaves hover zone (Windows/Linux only)
+function hideMenuBarAfterHover(): void {
+  if (process.platform === 'darwin' || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  
+  // Only hide if menu bar is not permanently visible
+  if (!menuBarPermanentlyVisible) {
+    // Add a small delay before hiding to prevent flickering
+    menuBarHoverTimeout = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !menuBarPermanentlyVisible) {
+        mainWindow.setMenuBarVisibility(false);
+      }
+      menuBarHoverTimeout = null;
+    }, 300); // 300ms delay before hiding
+  }
+}
+
 // IPC Handlers
 function createApplicationMenu(): void {
   const resetAndLogoutMenuItem: Electron.MenuItemConstructorOptions = {
@@ -4950,6 +5020,21 @@ $results | ConvertTo-Json -Depth 4 -Compress
             target?.toggleDevTools();
           },
         },
+        // Menu bar toggle (Windows/Linux only - macOS uses global menu bar)
+        ...(process.platform !== 'darwin'
+          ? [
+              { type: 'separator' as const },
+              {
+                label: mainWindow && !mainWindow.isDestroyed() && mainWindow.isMenuBarVisible()
+                  ? 'Hide Menu Bar'
+                  : 'Show Menu Bar',
+                accelerator: 'F10',
+                click: () => {
+                  toggleMenuBarVisibility();
+                },
+              },
+            ]
+          : []),
         { type: 'separator' },
         { role: 'resetZoom' as const },
         { role: 'zoomIn' as const },
@@ -5032,6 +5117,21 @@ function setupIpcHandlers(): void {
       }
     }
   });
+
+  // Handle mouse position updates for menu bar hover (Windows/Linux only)
+  if (process.platform !== 'darwin') {
+    ipcMain.on('mouse-position', (event, y: number) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      
+      const inHoverZone = y <= MENU_BAR_HOVER_ZONE;
+      
+      if (inHoverZone) {
+        showMenuBarOnHover();
+      } else {
+        hideMenuBarAfterHover();
+      }
+    });
+  }
 
   // Handle notification click (emitted by notification handler)
   // This is handled directly in the notification handler's click event

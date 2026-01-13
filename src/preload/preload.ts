@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testNotification: () => {
     ipcRenderer.send('test-notification');
   },
+  
+  // Menu bar hover tracking
+  sendMousePosition: (y: number) => {
+    ipcRenderer.send('mouse-position', y);
+  },
 });
 
 // Listen for notification events from the injected script
@@ -156,6 +161,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   });
 })();
+
+// Track mouse position for menu bar hover (Windows/Linux only)
+if (process.platform !== 'darwin') {
+  let lastSentY = -1;
+  const HOVER_ZONE = 3; // Pixels from top (conventional: 2-5px)
+  
+  function setupMouseTracking() {
+    document.addEventListener('mousemove', (event: MouseEvent) => {
+      const y = event.clientY;
+      
+      // Only send if mouse is in hover zone or just left it (to avoid spam)
+      const inHoverZone = y <= HOVER_ZONE;
+      const wasInHoverZone = lastSentY <= HOVER_ZONE;
+      
+      if (inHoverZone !== wasInHoverZone || (inHoverZone && y !== lastSentY)) {
+        lastSentY = y;
+        if (window.electronAPI && window.electronAPI.sendMousePosition) {
+          window.electronAPI.sendMousePosition(y);
+        }
+      }
+    });
+  }
+  
+  // Set up mouse tracking when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupMouseTracking);
+  } else {
+    setupMouseTracking();
+  }
+}
 
 // Media viewer CSS adjustment for macOS title bar
 // Pushes media viewer controls down to be fully below the custom title bar overlay
@@ -751,6 +786,7 @@ declare global {
         tag?: string;
         silent?: boolean;
       }) => void;
+      sendMousePosition: (y: number) => void;
       updateUnreadCount: (count: number) => void;
       clearBadge: () => void;
       incomingCall: () => void;
