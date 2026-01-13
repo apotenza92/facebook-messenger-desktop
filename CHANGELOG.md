@@ -2,21 +2,6 @@
 
 ## [1.1.9] - 2026-01-13
 
-### Fixed
-- Microphone not released after audio calls end (issue #33)
-  - Microphone now properly stops when call windows close
-  - Works for both user-initiated and remote-initiated hang-ups
-  - Added MediaStream tracking and cleanup via preload script
-  - Prevents orange microphone indicator from staying active on macOS
-  - Also handles video tracks and screen sharing cleanup
-- Update checker failing when beta channel is unavailable
-  - Fixed Promise.all rejection when one channel fails to fetch
-  - Now gracefully handles cases where beta channel doesn't exist
-  - Returns null instead of throwing error, allowing fallback to available channel
-  - Prevents "Failed to fetch version information from both channels" error for beta users
-
-## [1.1.8] - 2026-01-13
-
 ### Added
 - Auto-hide menu bar with hover, Alt, and F10 toggle (issue #31)
   - Menu bar is hidden by default on Windows/Linux
@@ -30,6 +15,17 @@
   - User-friendly error dialogs instead of silent failures
 
 ### Fixed
+- Microphone not released after audio calls end (issue #33)
+  - Microphone now properly stops when call windows close
+  - Works for both user-initiated and remote-initiated hang-ups
+  - Added MediaStream tracking and cleanup via preload script
+  - Prevents orange microphone indicator from staying active on macOS
+  - Also handles video tracks and screen sharing cleanup
+- Update checker failing when beta channel is unavailable
+  - Fixed Promise.all rejection when one channel fails to fetch
+  - Now gracefully handles cases where beta channel doesn't exist
+  - Returns null instead of throwing error, allowing fallback to available channel
+  - Prevents "Failed to fetch version information from both channels" error for beta users
 - Beta/stable channel auto-update system improvements
   - Automatic YML file generation for both latest and beta channels across all platforms
   - Fixed promise error handling with proper rejection and 30-second timeout
