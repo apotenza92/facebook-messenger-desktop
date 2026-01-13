@@ -720,94 +720,6 @@
                 </a>
             </div>
 
-            <div
-                class="beta-section"
-                style="
-                    margin-top: 1rem;
-                    padding: 0.75rem;
-                    background: rgba(245, 158, 11, 0.1);
-                    border: 1px solid rgba(245, 158, 11, 0.3);
-                    border-radius: 8px;
-                    max-width: 500px;
-                    margin-left: auto;
-                    margin-right: auto;
-                "
-            >
-                <div
-                    style="
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        gap: 0.5rem;
-                        margin-bottom: 0.5rem;
-                    "
-                >
-                    <svg
-                        viewBox="0 0 24 24"
-                        fill="#f59e0b"
-                        style="width: 18px; height: 18px"
-                    >
-                        <path
-                            d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                        />
-                    </svg>
-                    <span
-                        style="
-                            font-weight: 600;
-                            color: #f59e0b;
-                            font-size: 0.9rem;
-                        "
-                        >Beta Channel Available</span
-                    >
-                </div>
-                <p
-                    style="
-                        font-size: 0.75rem;
-                        color: var(--text-muted);
-                        margin-bottom: 0.5rem;
-                        line-height: 1.4;
-                    "
-                >
-                    Get early access to new features and bug fixes. Download the
-                    latest beta release:
-                </p>
-                <div
-                    style="
-                        display: flex;
-                        gap: 0.5rem;
-                        justify-content: center;
-                        align-items: center;
-                    "
-                >
-                    <a
-                        href="#"
-                        id="beta-badge"
-                        class="version-badge"
-                        style="
-                            background: rgba(245, 158, 11, 0.15);
-                            color: #f59e0b;
-                            text-decoration: none;
-                        "
-                        title="View beta release notes"
-                        >...</a
-                    >
-                    <a
-                        href="?channel=beta"
-                        style="
-                            color: #f59e0b;
-                            font-size: 0.8rem;
-                            font-weight: 500;
-                            text-decoration: none;
-                            border-bottom: 1px solid transparent;
-                            transition: border-color 0.2s;
-                        "
-                        onmouseover="this.style.borderColor = '#f59e0b'"
-                        onmouseout="this.style.borderColor = 'transparent'"
-                        >Download Beta →</a
-                    >
-                </div>
-            </div>
-
             <div class="selection-flow" id="selection-flow">
                 <svg class="connector-svg" id="connector-svg"></svg>
 
@@ -971,11 +883,107 @@
                 </div>
             </div>
 
+            <div
+                class="beta-section"
+                style="
+                    margin-top: 2.5rem;
+                    padding: 1rem 1.25rem;
+                    background: rgba(245, 158, 11, 0.08);
+                    border: 1px solid rgba(245, 158, 11, 0.25);
+                    border-radius: 10px;
+                    max-width: 420px;
+                    margin-left: auto;
+                    margin-right: auto;
+                "
+            >
+                <div
+                    style="
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 0.5rem;
+                        margin-bottom: 0.75rem;
+                    "
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="#f59e0b"
+                        style="width: 16px; height: 16px"
+                    >
+                        <path
+                            d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+                        />
+                    </svg>
+                    <span
+                        style="
+                            font-weight: 600;
+                            color: #f59e0b;
+                            font-size: 0.85rem;
+                        "
+                        >Beta Channel</span
+                    >
+                </div>
+                <p
+                    style="
+                        font-size: 0.8rem;
+                        color: var(--text-muted);
+                        margin-bottom: 0.75rem;
+                        line-height: 1.5;
+                        text-align: center;
+                    "
+                >
+                    Get early access to new features and bug fixes.
+                </p>
+                <div
+                    style="
+                        display: flex;
+                        gap: 0.75rem;
+                        justify-content: center;
+                        align-items: center;
+                    "
+                >
+                    <a
+                        href="#"
+                        id="beta-badge"
+                        class="version-badge"
+                        style="
+                            background: rgba(245, 158, 11, 0.15);
+                            color: #f59e0b;
+                            text-decoration: none;
+                        "
+                        title="View beta release notes"
+                        >...</a
+                    >
+                    <a
+                        href="?channel=beta"
+                        style="
+                            color: #f59e0b;
+                            font-size: 0.8rem;
+                            font-weight: 500;
+                            text-decoration: none;
+                            padding: 0.4rem 0.75rem;
+                            border: 1px solid rgba(245, 158, 11, 0.4);
+                            border-radius: 6px;
+                            transition: all 0.2s;
+                        "
+                        onmouseover="
+                            this.style.background = 'rgba(245, 158, 11, 0.1)';
+                            this.style.borderColor = '#f59e0b';
+                        "
+                        onmouseout="
+                            this.style.background = 'transparent';
+                            this.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+                        "
+                        >Download Beta</a
+                    >
+                </div>
+            </div>
+
             <p
                 style="
                     font-size: 0.7rem;
                     color: var(--text-subtle);
-                    margin-top: 1.5rem;
+                    margin-top: 2rem;
                     max-width: 500px;
                     margin-left: auto;
                     margin-right: auto;
