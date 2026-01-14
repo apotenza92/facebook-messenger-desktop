@@ -458,6 +458,55 @@
                 text-align: center;
             }
 
+            .linux-command-section,
+            .mac-homebrew-section {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0;
+            }
+
+            .command-box {
+                background: #0084ff;
+                border-radius: 8px;
+                overflow: hidden;
+                max-width: 380px;
+                width: 100%;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .command-box:hover {
+                opacity: 0.9;
+            }
+
+            .linux-command-section .command-label,
+            .mac-homebrew-section .command-label {
+                color: white;
+                padding: 0.6rem 1.25rem;
+                text-align: center;
+                margin: 0;
+                font-size: 0.9rem;
+                font-weight: 500;
+            }
+
+            .linux-command-section .format-command,
+            .mac-homebrew-section .format-command {
+                border-radius: 0;
+                background: transparent;
+                padding: 0.75rem 1.25rem;
+                margin: 0;
+                max-width: none;
+                width: 100%;
+                gap: 1rem;
+            }
+
+            body.beta-mode .command-box {
+                background: #ff6b00;
+            }
+
             .format-item {
                 background: var(--code-bg);
                 border: 1px solid var(--border);
@@ -556,8 +605,13 @@
             }
 
             .copy-btn svg {
-                width: 18px;
-                height: 18px;
+                width: 16px;
+                height: 16px;
+            }
+
+            .copy-btn span {
+                font-size: 0.8rem;
+                font-weight: 500;
             }
 
             .copy-btn.copied {
@@ -969,31 +1023,34 @@
                         <span id="btn-text">Download</span>
                     </a>
                     <div
-                        class="mac-homebrew-section"
-                        id="mac-homebrew-section"
-                        style="display: none"
-                    >
-                        <div class="command-label" id="mac-homebrew-label">
-                            Or install via Homebrew:
-                        </div>
-                        <div class="format-command">
-                            <code id="mac-homebrew-code"
-                                >brew install --cask
-                                apotenza92/tap/facebook-messenger-desktop</code
-                            >
-                            <button
-                                class="copy-btn"
-                                id="mac-homebrew-copy"
-                                title="Copy command"
-                            >
-                                <svg viewBox="0 0 24 24" fill="currentColor">
-                                    <path
-                                        d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
-                                    />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
+                         class="mac-homebrew-section"
+                         id="mac-homebrew-section"
+                         style="display: none"
+                     >
+                         <div class="command-box" id="mac-homebrew-box">
+                             <div class="command-label" id="mac-homebrew-label">
+                                 Or install via Homebrew:
+                             </div>
+                             <div class="format-command">
+                                 <code id="mac-homebrew-code"
+                                     >brew install --cask
+                                     apotenza92/tap/facebook-messenger-desktop</code
+                                 >
+                                 <button
+                                     class="copy-btn"
+                                     id="mac-homebrew-copy"
+                                     title="Copy command"
+                                 >
+                                     <svg viewBox="0 0 24 24" fill="currentColor">
+                                         <path
+                                             d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                                         />
+                                     </svg>
+                                     <span>Copy</span>
+                                 </button>
+                             </div>
+                         </div>
+                     </div>
                     <div class="beta-notice" id="beta-notice-main">
                        <strong>Beta Version:</strong> You are downloading a pre-release version. Beta builds may contain bugs or incomplete features.
                     </div>
@@ -1045,33 +1102,36 @@
                             <span id="linux-btn-text">Download AppImage</span>
                         </a>
                         <div class="linux-command-section">
-                            <div class="command-label" id="linux-command-label">
-                                Or download and run AppImage via terminal:
-                            </div>
-                            <div class="format-command">
-                                <code id="linux-command-code"
-                                    >wget -qO
-                                    facebook-messenger-desktop-x86_64.AppImage
-                                    https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage
-                                    && chmod +x
-                                    facebook-messenger-desktop-x86_64.AppImage
-                                    &&
-                                    ./facebook-messenger-desktop-x86_64.AppImage</code
-                                >
-                                <button
-                                    class="copy-btn"
-                                    title="Copy command"
-                                    id="linux-copy-btn"
-                                >
-                                    <svg
-                                        viewBox="0 0 24 24"
-                                        fill="currentColor"
+                            <div class="command-box" id="linux-command-box">
+                                <div class="command-label" id="linux-command-label">
+                                    Or download and run AppImage via terminal:
+                                </div>
+                                <div class="format-command">
+                                    <code id="linux-command-code"
+                                        >wget -qO
+                                        facebook-messenger-desktop-x86_64.AppImage
+                                        https://github.com/apotenza92/facebook-messenger-desktop/releases/latest/download/facebook-messenger-desktop-x86_64.AppImage
+                                        && chmod +x
+                                        facebook-messenger-desktop-x86_64.AppImage
+                                        &&
+                                        ./facebook-messenger-desktop-x86_64.AppImage</code
                                     >
-                                        <path
-                                            d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
-                                        />
-                                    </svg>
-                                </button>
+                                    <button
+                                        class="copy-btn"
+                                        title="Copy command"
+                                        id="linux-copy-btn"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                        >
+                                            <path
+                                                d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                                            />
+                                        </svg>
+                                        <span>Copy</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                         <div
@@ -1311,10 +1371,10 @@
                                  path3.setAttribute("class", "connector-path");
                                  svg.appendChild(path3);
 
-                                 // Draw path from download button to linux command section if visible
-                                 const commandSection = document.querySelector(".linux-command-section");
-                                 if (commandSection && commandSection.style.display !== "none") {
-                                     const cmdRect = commandSection.getBoundingClientRect();
+                                 // Draw path from download button to linux command box if visible
+                                 const commandBox = document.getElementById("linux-command-box");
+                                 if (commandBox && commandBox.offsetParent !== null) {
+                                     const cmdRect = commandBox.getBoundingClientRect();
                                      const cmdCenterX = cmdRect.left + cmdRect.width / 2 - flowRect.left;
                                      const cmdTopY = cmdRect.top - flowRect.top;
 
@@ -1335,10 +1395,10 @@
                                      svg.appendChild(pathCmd);
                                  }
                              } else {
-                                 // No download button (e.g., Flatpak) - draw from format directly to command section
-                                 const commandSection = document.querySelector(".linux-command-section");
-                                 if (commandSection && commandSection.style.display !== "none") {
-                                     const cmdRect = commandSection.getBoundingClientRect();
+                                 // No download button (e.g., Flatpak) - draw from format directly to command box
+                                 const commandBox = document.getElementById("linux-command-box");
+                                 if (commandBox && commandBox.offsetParent !== null) {
+                                     const cmdRect = commandBox.getBoundingClientRect();
                                      const cmdCenterX = cmdRect.left + cmdRect.width / 2 - flowRect.left;
                                      const cmdTopY = cmdRect.top - flowRect.top;
 
@@ -1425,29 +1485,29 @@
                             path2.setAttribute("class", "connector-path");
                             svg.appendChild(path2);
 
-                            // Draw path from download button to homebrew section if visible
-                            const homebrewSection = document.getElementById("mac-homebrew-section");
-                            if (homebrewSection && homebrewSection.style.display !== "none") {
-                                const brewRect = homebrewSection.getBoundingClientRect();
-                                const brewCenterX = brewRect.left + brewRect.width / 2 - flowRect.left;
-                                const brewTopY = brewRect.top - flowRect.top;
+                            // Draw path from download button to homebrew command box if visible
+                             const homebrewBox = document.getElementById("mac-homebrew-box");
+                             if (homebrewBox && homebrewBox.offsetParent !== null) {
+                                 const brewRect = homebrewBox.getBoundingClientRect();
+                                 const brewCenterX = brewRect.left + brewRect.width / 2 - flowRect.left;
+                                 const brewTopY = brewRect.top - flowRect.top;
 
-                                const pathBrew = document.createElementNS(
-                                    "http://www.w3.org/2000/svg",
-                                    "path",
-                                );
-                                pathBrew.setAttribute(
-                                    "d",
-                                    createCurvedPath(
-                                        dlCenterX,
-                                        dlBottomY,
-                                        brewCenterX,
-                                        brewTopY,
-                                    ),
-                                );
-                                pathBrew.setAttribute("class", "connector-path");
-                                svg.appendChild(pathBrew);
-                            }
+                                 const pathBrew = document.createElementNS(
+                                     "http://www.w3.org/2000/svg",
+                                     "path",
+                                 );
+                                 pathBrew.setAttribute(
+                                     "d",
+                                     createCurvedPath(
+                                         dlCenterX,
+                                         dlBottomY,
+                                         brewCenterX,
+                                         brewTopY,
+                                     ),
+                                 );
+                                 pathBrew.setAttribute("class", "connector-path");
+                                 svg.appendChild(pathBrew);
+                             }
                         }
                     }
                 }
@@ -1752,11 +1812,19 @@
                      downloadBtn.style.display = "none";
                      commandSection.style.display = "none";
                      formatNote.style.display = "block";
-                     formatNote.innerHTML = `<div>${formatData.note}</div><button id="switch-to-stable-btn" style="margin-top: 0.5rem; padding: 0.3rem 0.75rem; font-size: 0.7rem; background: #0084ff; color: white; border: none; border-radius: 6px; cursor: pointer;">Switch to Stable</button>`;
+                     formatNote.innerHTML = `<div style="margin-bottom: 0.6rem;">${formatData.note}</div><button id="switch-to-stable-btn" style="display: inline-flex; align-items: center; gap: 0.5rem; background: #0084ff; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 0.8rem; transition: all 0.2s ease;" onmouseover="this.style.background='#0073e6'" onmouseout="this.style.background='#0084ff'">Switch to Stable</button>`;
                      // Add event listener for the switch button
                      const switchBtn = document.getElementById("switch-to-stable-btn");
                      if (switchBtn) {
-                         switchBtn.addEventListener("click", () => switchChannel("stable"));
+                         switchBtn.addEventListener("click", () => {
+                             currentChannel = "stable";
+                             updateChannelDisplay();
+                             // Re-select platform to refresh with stable builds
+                             if (currentPlatform) {
+                                 selectPlatform(currentPlatform);
+                             }
+                             setTimeout(updateConnectors, 0);
+                         });
                      }
                 } else {
                     formatNote.style.display = "none";
@@ -2315,40 +2383,40 @@
                      });
                  });
 
-                // Linux copy button
-                document
-                    .getElementById("linux-copy-btn")
-                    .addEventListener("click", () => {
-                        const code =
-                            document.getElementById(
-                                "linux-command-code",
-                            ).textContent;
-                        navigator.clipboard.writeText(code);
-                        const copyBtn =
-                            document.getElementById("linux-copy-btn");
-                        copyBtn.innerHTML =
-                            '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
-                        setTimeout(() => {
-                            copyBtn.innerHTML =
-                                '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
-                        }, 2000);
-                    });
+                // Linux command box - click to copy
+                 document
+                     .getElementById("linux-command-box")
+                     .addEventListener("click", () => {
+                         const code =
+                             document.getElementById(
+                                 "linux-command-code",
+                             ).textContent;
+                         navigator.clipboard.writeText(code);
+                         const copyBtn =
+                             document.getElementById("linux-copy-btn");
+                         copyBtn.innerHTML =
+                             '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+                         setTimeout(() => {
+                             copyBtn.innerHTML =
+                                 '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+                         }, 2000);
+                     });
 
-                // macOS Homebrew copy button - copies the currently displayed command
-                document
-                    .getElementById("mac-homebrew-copy")
-                    .addEventListener("click", () => {
-                        const code = document.getElementById("mac-homebrew-code").textContent;
-                        navigator.clipboard.writeText(code);
-                        const copyBtn =
-                            document.getElementById("mac-homebrew-copy");
-                        copyBtn.innerHTML =
-                            '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
-                        setTimeout(() => {
-                            copyBtn.innerHTML =
-                                '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
-                        }, 2000);
-                    });
+                // macOS Homebrew command box - click to copy
+                 document
+                     .getElementById("mac-homebrew-box")
+                     .addEventListener("click", () => {
+                         const code = document.getElementById("mac-homebrew-code").textContent;
+                         navigator.clipboard.writeText(code);
+                         const copyBtn =
+                             document.getElementById("mac-homebrew-copy");
+                         copyBtn.innerHTML =
+                             '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+                         setTimeout(() => {
+                             copyBtn.innerHTML =
+                                 '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+                         }, 2000);
+                     });
 
                 // Windows arch toggle buttons
                 document
