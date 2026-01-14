@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.2.3] - 2026-01-14
+## [1.2.3-beta.1] - 2026-01-14
 
 ### Fixed
 - **All platforms**: Beta users no longer get stable app installed separately when a stable release comes out
