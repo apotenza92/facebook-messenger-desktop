@@ -1620,17 +1620,6 @@
                     resetDownloadUrlsToStable();
                 }
 
-                // Update URL parameter
-                const params = new URLSearchParams(window.location.search);
-                if (currentChannel === "beta") {
-                    params.set("channel", "beta");
-                } else {
-                    params.delete("channel");
-                }
-                const newUrl = params.toString()
-                    ? "?" + params.toString()
-                    : window.location.pathname;
-                window.history.replaceState({}, "", newUrl);
             }
 
             function switchChannel(channel) {
@@ -1942,15 +1931,8 @@
                     }
                 }
 
-                // Don't persist platform in URL - always auto-detect on refresh
-                // Only keep channel param if set
-                const params = new URLSearchParams(window.location.search);
-                params.delete("platform");
-                params.delete("arch");
-                const newUrl = params.toString()
-                    ? "?" + params.toString()
-                    : window.location.pathname;
-                window.history.replaceState({}, "", newUrl);
+                // Keep URL clean - no query params
+                window.history.replaceState({}, "", window.location.pathname);
 
                 setTimeout(updateConnectors, 0);
             }
