@@ -7157,6 +7157,415 @@ async function installLinuxPackage(
   });
 }
 
+// IPC channel name for update dialog responses
+const UPDATE_DIALOG_CHANNEL = "update-dialog-response";
+
+// Register IPC handler for update dialog (will be set up per-dialog)
+let updateDialogResolver: ((result: "download" | "later") => void) | null =
+  null;
+
+ipcMain.on(UPDATE_DIALOG_CHANNEL, (_event, result: "download" | "later") => {
+  if (updateDialogResolver) {
+    updateDialogResolver(result);
+    updateDialogResolver = null;
+  }
+});
+
+async function showCustomUpdateDialog(
+  version: string,
+  changelog: string,
+  platform: "mac" | "windows" | "linux",
+  installInstructions?: string,
+): Promise<"download" | "later"> {
+  const parentWindow = mainWindow;
+  const isDark = nativeTheme.shouldUseDarkColors;
+
+  // Get app icon as base64
+  const iconPath = path.join(__dirname, "../../assets/icons/icon-128.png");
+  let iconBase64 = "";
+  try {
+    const iconBuffer = fs.readFileSync(iconPath);
+    iconBase64 = `data:image/png;base64,${iconBuffer.toString("base64")}`;
+  } catch (e) {
+    console.log("[UpdateDialog] Could not load icon:", e);
+  }
+
+  // Format changelog for HTML display
+  const formatChangelog = (text: string): string => {
+    if (!text) return "";
+
+    // Escape HTML
+    let html = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    // Bold section headers (e.g., "Fixed:", "Added:", "Changed:")
+    html = html.replace(
+      /^(Fixed|Added|Changed|Removed|Security|Deprecated|Breaking):/gim,
+      "<strong>$1:</strong>",
+    );
+
+    // Convert bullet points
+    html = html.replace(/^[-•]\s*/gm, "• ");
+
+    // Convert newlines to HTML
+    html = html
+      .split("\n")
+      .map((line) => {
+        if (line.startsWith("• ")) {
+          return `<div class="bullet">${line}</div>`;
+        }
+        return `<div>${line || "&nbsp;"}</div>`;
+      })
+      .join("");
+
+    return html;
+  };
+
+  const formattedChangelog = formatChangelog(changelog);
+  const hasChangelog = changelog && changelog.trim().length > 0;
+
+  // Calculate window height based on content
+  const baseHeight = 280; // Title, icon, buttons, padding
+  const changelogHeight = hasChangelog ? 180 : 0;
+  const instructionsHeight = installInstructions ? 60 : 0;
+  const windowHeight = Math.min(
+    500,
+    baseHeight + changelogHeight + instructionsHeight,
+  );
+
+  const isMac = platform === "mac";
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    :root {
+      --bg-color: #ffffff;
+      --text-color: #1d1d1f;
+      --text-secondary: #6e6e73;
+      --changelog-bg: #f5f5f7;
+      --changelog-border: #d2d2d7;
+      --button-primary-bg: #0071e3;
+      --button-primary-text: #ffffff;
+      --button-secondary-bg: #e8e8ed;
+      --button-secondary-text: #1d1d1f;
+      --titlebar-bg: #f6f6f6;
+      --titlebar-border: #d1d1d6;
+    }
+    
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #1e1e1e;
+        --text-color: #f5f5f7;
+        --text-secondary: #a1a1a6;
+        --changelog-bg: #2d2d2d;
+        --changelog-border: #424245;
+        --button-primary-bg: #0a84ff;
+        --button-primary-text: #ffffff;
+        --button-secondary-bg: #3a3a3c;
+        --button-secondary-text: #f5f5f7;
+        --titlebar-bg: #2d2d2d;
+        --titlebar-border: #3d3d3d;
+      }
+    }
+    
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg-color);
+      color: var(--text-color);
+      overflow: hidden;
+      user-select: none;
+    }
+    
+    ${
+      isMac
+        ? `
+    .titlebar {
+      height: 28px;
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      padding-left: 12px;
+      background: var(--titlebar-bg);
+      border-bottom: 1px solid var(--titlebar-border);
+    }
+    
+    .traffic-lights {
+      display: flex;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+    
+    .traffic-light {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+    }
+    
+    .traffic-light.close {
+      background: #ff5f57;
+    }
+    
+    .traffic-light.minimize {
+      background: #febc2e;
+      visibility: hidden;
+    }
+    
+    .traffic-light.maximize {
+      background: #28c840;
+      visibility: hidden;
+    }
+    
+    .traffic-light:hover {
+      filter: brightness(0.9);
+    }
+    `
+        : ""
+    }
+    
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: ${isMac ? "calc(100% - 28px)" : "100%"};
+      padding: 24px;
+    }
+    
+    .icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+    }
+    
+    .icon img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    
+    .version {
+      font-size: 14px;
+      color: var(--text-secondary);
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    
+    .changelog-container {
+      flex: 1;
+      min-height: 0;
+      margin-bottom: 16px;
+      display: ${hasChangelog ? "block" : "none"};
+    }
+    
+    .changelog-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .changelog {
+      background: var(--changelog-bg);
+      border: 1px solid var(--changelog-border);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+    
+    .changelog .bullet {
+      padding-left: 8px;
+      text-indent: -8px;
+    }
+    
+    .changelog strong {
+      color: var(--text-color);
+    }
+    
+    .instructions {
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-align: center;
+      margin-bottom: 16px;
+      padding: 8px;
+      background: var(--changelog-bg);
+      border-radius: 6px;
+      display: ${installInstructions ? "block" : "none"};
+    }
+    
+    .buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+    
+    button {
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: filter 0.15s ease;
+    }
+    
+    button:hover {
+      filter: brightness(0.95);
+    }
+    
+    button:active {
+      filter: brightness(0.9);
+    }
+    
+    .btn-primary {
+      background: var(--button-primary-bg);
+      color: var(--button-primary-text);
+    }
+    
+    .btn-secondary {
+      background: var(--button-secondary-bg);
+      color: var(--button-secondary-text);
+    }
+  </style>
+</head>
+<body>
+  ${
+    isMac
+      ? `
+  <div class="titlebar">
+    <div class="traffic-lights">
+      <button class="traffic-light close" onclick="handleLater()"></button>
+      <button class="traffic-light minimize"></button>
+      <button class="traffic-light maximize"></button>
+    </div>
+  </div>
+  `
+      : ""
+  }
+  
+  <div class="container">
+    <div class="icon">
+      ${iconBase64 ? `<img src="${iconBase64}" alt="Messenger">` : ""}
+    </div>
+    
+    <div class="title">Update Available</div>
+    <div class="version">Version ${version} is available</div>
+    
+    <div class="changelog-container">
+      <div class="changelog-label">What's New</div>
+      <div class="changelog">${formattedChangelog}</div>
+    </div>
+    
+    <div class="instructions">${installInstructions || ""}</div>
+    
+    <div class="buttons">
+      <button class="btn-secondary" onclick="handleLater()">Later</button>
+      <button class="btn-primary" onclick="handleDownload()">Download Now</button>
+    </div>
+  </div>
+  
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    function handleDownload() {
+      ipcRenderer.send('${UPDATE_DIALOG_CHANNEL}', 'download');
+    }
+    
+    function handleLater() {
+      ipcRenderer.send('${UPDATE_DIALOG_CHANNEL}', 'later');
+    }
+    
+    // Handle escape key to close
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        handleLater();
+      } else if (e.key === 'Enter') {
+        handleDownload();
+      }
+    });
+  </script>
+</body>
+</html>
+  `;
+
+  return new Promise((resolve) => {
+    const dialogWindow = new BrowserWindow({
+      width: 420,
+      height: windowHeight,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      modal: true,
+      parent: parentWindow || undefined,
+      show: false,
+      frame: !isMac,
+      titleBarStyle: isMac ? "hidden" : "default",
+      backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
+    });
+
+    // Center on parent window
+    if (parentWindow) {
+      const parentBounds = parentWindow.getBounds();
+      const x = Math.round(
+        parentBounds.x + (parentBounds.width - 420) / 2,
+      );
+      const y = Math.round(
+        parentBounds.y + (parentBounds.height - windowHeight) / 2,
+      );
+      dialogWindow.setPosition(x, y);
+    }
+
+    updateDialogResolver = (result) => {
+      dialogWindow.close();
+      resolve(result);
+    };
+
+    dialogWindow.on("closed", () => {
+      if (updateDialogResolver) {
+        updateDialogResolver = null;
+        resolve("later");
+      }
+    });
+
+    dialogWindow.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+    );
+
+    dialogWindow.once("ready-to-show", () => {
+      dialogWindow.show();
+    });
+  });
+}
+
 async function showUpdateAvailableDialog(version: string): Promise<void> {
   // Fetch changelog for the update (beta users see beta entries, stable users see stable only)
   const currentVersion = app.getVersion();
@@ -7166,7 +7575,6 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
     version,
     includeBeta,
   );
-  const changelogSection = changelog ? `\n\nWhat's new:\n${changelog}` : "";
 
   // On Linux, electron-updater only supports AppImage for auto-updates.
   // For deb/rpm, we download and install the package directly.
@@ -7184,17 +7592,15 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
         `[AutoUpdater] Linux ${packageType} install detected, offering direct download`,
       );
 
-      const result = await dialog.showMessageBox({
-        type: "info",
-        title: "Update Available",
-        message: `A new version of Messenger is available`,
-        detail: `Version ${version} is available.${changelogSection}\n\nThe update will be downloaded and installed using ${packageManagerName}. You'll be prompted for your password to authorize the installation.`,
-        buttons: ["Download and Install", "Later"],
-        defaultId: 0,
-        cancelId: 1,
-      });
+      const installInstructions = `The update will be downloaded and installed using ${packageManagerName}. You'll be prompted for your password.`;
+      const result = await showCustomUpdateDialog(
+        version,
+        changelog || "",
+        "linux",
+        installInstructions,
+      );
 
-      if (result.response === 0) {
+      if (result === "download") {
         try {
           // Download the package
           const filePath = await downloadLinuxPackage(version, packageType);
@@ -7316,17 +7722,15 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
         `[AutoUpdater] Linux ${source} install detected, showing manual update instructions`,
       );
 
-      const result = await dialog.showMessageBox({
-        type: "info",
-        title: "Update Available",
-        message: `A new version of Messenger is available`,
-        detail: `Version ${version} is available.${changelogSection}\n\nYou installed Messenger via ${packageManagerName}. Please update using your package manager.\n\n${updateInstructions}`,
-        buttons: ["Open Download Page", "Later"],
-        defaultId: 0,
-        cancelId: 1,
-      });
+      const installInfo = `Installed via ${packageManagerName}.\n${updateInstructions}`;
+      const result = await showCustomUpdateDialog(
+        version,
+        changelog || "",
+        "linux",
+        installInfo,
+      );
 
-      if (result.response === 0) {
+      if (result === "download") {
         shell
           .openExternal(
             "https://apotenza92.github.io/facebook-messenger-desktop/",
@@ -7344,17 +7748,16 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
   // This is a temporary workaround until code signing is set up
   // Without signing, auto-updates get blocked by Windows Application Control
   if (process.platform === "win32") {
-    const result = await dialog.showMessageBox({
-      type: "info",
-      title: "Update Available",
-      message: `A new version of Messenger is available`,
-      detail: `Version ${version} is available.${changelogSection}\n\n⚠️ Windows Security Note:\nIf Windows SmartScreen appears, click "More info" → "Run anyway".\nIf the installer won't run, right-click the file → Properties → check "Unblock" → OK.`,
-      buttons: ["Download and Install", "Later"],
-      defaultId: 0,
-      cancelId: 1,
-    });
+    const windowsInstructions =
+      "⚠️ If SmartScreen appears: click 'More info' → 'Run anyway'";
+    const result = await showCustomUpdateDialog(
+      version,
+      changelog || "",
+      "windows",
+      windowsInstructions,
+    );
 
-    if (result.response === 0) {
+    if (result === "download") {
       console.log("[AutoUpdater] Windows user starting direct download");
 
       try {
@@ -7436,17 +7839,16 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
     return;
   }
 
-  const result = await dialog.showMessageBox({
-    type: "info",
-    title: "Update Available",
-    message: `A new version of Messenger is available`,
-    detail: `Version ${version} is ready to download.${changelogSection}\n\nWould you like to download it now?`,
-    buttons: ["Download Now", "Later"],
-    defaultId: 0,
-    cancelId: 1,
-  });
+  // At this point, we're either on macOS or Linux AppImage
+  const dialogPlatform = process.platform === "darwin" ? "mac" : "linux";
 
-  if (result.response === 0) {
+  const result = await showCustomUpdateDialog(
+    version,
+    changelog || "",
+    dialogPlatform,
+  );
+
+  if (result === "download") {
     console.log("[AutoUpdater] User chose to download");
     pendingUpdateVersion = version;
     showDownloadProgress();

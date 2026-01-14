@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.1-beta.1] - 2026-01-14
+
+### Improved
+- Redesigned update notification dialog
+  - Custom HTML-based dialog with proper styling and fixed height
+  - Scrollable changelog section that doesn't overflow the window
+  - Bold section headers and formatted bullet points
+  - Dark/light theme support
+  - Keyboard shortcuts (Enter to download, Escape to dismiss)
+
 ## [1.2.0] - 2026-01-14
 
 ### Fixed
