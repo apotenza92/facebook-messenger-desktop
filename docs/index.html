@@ -832,7 +832,7 @@
                         id="mac-homebrew-section"
                         style="display: none"
                     >
-                        <div class="command-label">
+                        <div class="command-label" id="mac-homebrew-label">
                             Or install via Homebrew:
                         </div>
                         <div class="format-command">
@@ -1699,11 +1699,15 @@
                     });
                 });
 
-                // Update macOS Homebrew command for beta
+                // Update macOS Homebrew command and label for beta
                 const homebrewCode = document.getElementById("mac-homebrew-code");
+                const homebrewLabel = document.getElementById("mac-homebrew-label");
                 if (homebrewCode) {
                     homebrewCode.textContent =
                         "brew install --cask apotenza92/tap/facebook-messenger-desktop@beta";
+                }
+                if (homebrewLabel) {
+                    homebrewLabel.textContent = "Or install via Homebrew (Beta):";
                 }
 
                 // Re-initialize the current selection to update the UI
@@ -1788,11 +1792,15 @@
                     linuxFormats.arm64.snap.label = "Or install Snap via terminal:";
                 }
 
-                // Reset macOS Homebrew command to stable
+                // Reset macOS Homebrew command and label to stable
                 const homebrewCode = document.getElementById("mac-homebrew-code");
+                const homebrewLabel = document.getElementById("mac-homebrew-label");
                 if (homebrewCode) {
                     homebrewCode.textContent =
                         "brew install --cask apotenza92/tap/facebook-messenger-desktop";
+                }
+                if (homebrewLabel) {
+                    homebrewLabel.textContent = "Or install via Homebrew:";
                 }
             }
 
