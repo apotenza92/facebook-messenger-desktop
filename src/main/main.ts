@@ -6422,9 +6422,10 @@ function showDownloadProgress(): void {
 
   // Show native notification that download is starting
   if (Notification.isSupported()) {
+    const appLabel = isBetaOptedIn() ? "Messenger Beta" : "Messenger";
     const notification = new Notification({
       title: "Downloading Update",
-      body: "Messenger is downloading an update in the background...",
+      body: `${appLabel} is downloading an update in the background...`,
       silent: true,
     });
     notification.show();
@@ -6432,7 +6433,8 @@ function showDownloadProgress(): void {
 
   // Update tray tooltip
   if (tray) {
-    tray.setToolTip("Messenger - Downloading update...");
+    const appLabel = isBetaOptedIn() ? "Messenger Beta" : "Messenger";
+    tray.setToolTip(`${appLabel} - Downloading update...`);
   }
 }
 

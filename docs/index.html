@@ -229,7 +229,8 @@
                 border: 1px solid rgba(255, 107, 0, 0.3);
                 border-radius: 8px;
                 padding: 0.6rem 1rem;
-                margin-top: 1.5rem;
+                margin-top: 0;
+                margin-bottom: 0.8rem;
                 font-size: 0.75rem;
                 color: var(--text-muted);
                 max-width: 400px;
@@ -671,7 +672,11 @@
             /* Mobile Responsiveness */
             @media (max-width: 640px) {
                 .connector-svg {
-                    display: none;
+                    display: block;
+                }
+                
+                .connector-path {
+                    stroke-width: 1.5;
                 }
 
                 .channel-toggle,
@@ -978,9 +983,9 @@
                         </div>
                     </div>
                     <div class="beta-notice" id="beta-notice-main">
-                        <strong>Beta Version:</strong> You are downloading a pre-release version. Beta builds may contain bugs or incomplete features.
+                       <strong>Beta Version:</strong> You are downloading a pre-release version. Beta builds may contain bugs or incomplete features.
                     </div>
-                </div>
+                    </div>
 
                 <div class="linux-formats" id="linux-formats">
                     <div class="linux-arch-toggle">
@@ -1212,6 +1217,7 @@
                                     dlRect.width / 2 -
                                     flowRect.left;
                                 const dlTopY = dlRect.top - flowRect.top;
+                                const dlBottomY = dlRect.bottom - flowRect.top;
 
                                 // Draw path from format to download
                                 const path3 = document.createElementNS(
@@ -1229,6 +1235,30 @@
                                 );
                                 path3.setAttribute("class", "connector-path");
                                 svg.appendChild(path3);
+
+                                // Draw path from download button to linux command section if visible
+                                const commandSection = document.querySelector(".linux-command-section");
+                                if (commandSection && commandSection.style.display !== "none") {
+                                    const cmdRect = commandSection.getBoundingClientRect();
+                                    const cmdCenterX = cmdRect.left + cmdRect.width / 2 - flowRect.left;
+                                    const cmdTopY = cmdRect.top - flowRect.top;
+
+                                    const pathCmd = document.createElementNS(
+                                        "http://www.w3.org/2000/svg",
+                                        "path",
+                                    );
+                                    pathCmd.setAttribute(
+                                        "d",
+                                        createCurvedPath(
+                                            dlCenterX,
+                                            dlBottomY,
+                                            cmdCenterX,
+                                            cmdTopY,
+                                        ),
+                                    );
+                                    pathCmd.setAttribute("class", "connector-path");
+                                    svg.appendChild(pathCmd);
+                                }
                             }
                         }
                     }
@@ -1277,6 +1307,7 @@
                             const dlCenterX =
                                 dlRect.left + dlRect.width / 2 - flowRect.left;
                             const dlTopY = dlRect.top - flowRect.top;
+                            const dlBottomY = dlRect.bottom - flowRect.top;
 
                             // Draw path from arch to download
                             const path2 = document.createElementNS(
@@ -1294,6 +1325,30 @@
                             );
                             path2.setAttribute("class", "connector-path");
                             svg.appendChild(path2);
+
+                            // Draw path from download button to homebrew section if visible
+                            const homebrewSection = document.getElementById("mac-homebrew-section");
+                            if (homebrewSection && homebrewSection.style.display !== "none") {
+                                const brewRect = homebrewSection.getBoundingClientRect();
+                                const brewCenterX = brewRect.left + brewRect.width / 2 - flowRect.left;
+                                const brewTopY = brewRect.top - flowRect.top;
+
+                                const pathBrew = document.createElementNS(
+                                    "http://www.w3.org/2000/svg",
+                                    "path",
+                                );
+                                pathBrew.setAttribute(
+                                    "d",
+                                    createCurvedPath(
+                                        dlCenterX,
+                                        dlBottomY,
+                                        brewCenterX,
+                                        brewTopY,
+                                    ),
+                                );
+                                pathBrew.setAttribute("class", "connector-path");
+                                svg.appendChild(pathBrew);
+                            }
                         }
                     }
                 }

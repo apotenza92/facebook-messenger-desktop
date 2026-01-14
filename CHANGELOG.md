@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.2-beta.6] - 2026-01-14
+
+### Improved
+- **Update notifications**: Download progress notification now specifies "Messenger Beta" for beta users
+  - Notification body and tray tooltip both reflect the app variant being updated
+- **Download page**: Beta Version disclaimer spacing reduced for closer proximity to download and command sections
+- **Download page**: Added animated connectors from download button to terminal commands
+  - macOS: Visual flow from Download → Homebrew installation command
+  - Linux: Visual flow from Download → Terminal installation command
+- **Download page**: Connectors now visible on mobile devices with optimized stroke width
+  - Previously hidden on screens ≤640px, now display with thinner stroke for better mobile UX
+
 ## [1.2.2-beta.5] - 2026-01-14
 
 ### Fixed
