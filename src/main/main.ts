@@ -7303,24 +7303,27 @@ async function showCustomUpdateDialog(
     // Convert **bold** markdown to <strong>
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 
-    // Bold section headers (e.g., "Fixed:", "Added:", "Changed:", "Improved:")
-    html = html.replace(
-      /^(Fixed|Added|Changed|Removed|Security|Deprecated|Breaking|Improved):/gim,
-      "<strong>$1:</strong>",
-    );
-
     // Convert bullet points
     html = html.replace(/^[-•]\s*/gm, "• ");
 
-    // Convert newlines to HTML
+    // Convert newlines to HTML with proper classes
     html = html
       .split("\n")
       .map((line) => {
+        // Section headers (Fixed:, Added:, etc.)
+        const headerMatch = line.match(/^(Fixed|Added|Changed|Removed|Security|Deprecated|Breaking|Improved):/i);
+        if (headerMatch) {
+          return `<div class="section-header"><strong>${headerMatch[1]}:</strong>${line.slice(headerMatch[0].length)}</div>`;
+        }
         if (line.startsWith("• ")) {
           return `<div class="bullet">${line}</div>`;
         }
-        return `<div>${line || "&nbsp;"}</div>`;
+        if (!line.trim()) {
+          return ""; // Skip empty lines, we use CSS margins instead
+        }
+        return `<div>${line}</div>`;
       })
+      .filter(line => line) // Remove empty strings
       .join("");
 
     return html;
@@ -7507,8 +7510,18 @@ async function showCustomUpdateDialog(
     }
     
     .changelog .bullet {
-      padding-left: 8px;
-      text-indent: -8px;
+      padding-left: 12px;
+      text-indent: -12px;
+      margin-bottom: 4px;
+    }
+    
+    .changelog .section-header {
+      margin-top: 10px;
+      margin-bottom: 6px;
+    }
+    
+    .changelog .section-header:first-child {
+      margin-top: 0;
     }
     
     .changelog strong {
