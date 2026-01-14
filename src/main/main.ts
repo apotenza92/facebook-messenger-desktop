@@ -175,10 +175,23 @@ const defaultWindowState: WindowState = {
   height: 750,
 };
 
+// Detect if this is a beta version based on version string
+const appVersion = app.getVersion();
+const isBetaVersion =
+  appVersion.includes("-beta") ||
+  appVersion.includes("-alpha") ||
+  appVersion.includes("-rc");
+
 // Set app name early and explicitly pin userData/log paths so they don't default to the package name
 // Use separate folder for dev mode so it doesn't interfere with production installs
+// Beta versions show "Messenger Beta" in dock/taskbar/about
 const APP_DIR_NAME = isDev ? "Messenger-Dev" : "Messenger";
-app.setName(APP_DIR_NAME);
+const APP_DISPLAY_NAME = isDev
+  ? "Messenger Dev"
+  : isBetaVersion
+    ? "Messenger Beta"
+    : "Messenger";
+app.setName(APP_DISPLAY_NAME);
 
 // Set AppUserModelId for Windows taskbar icon and grouping (must be set before app is ready)
 if (process.platform === "win32") {
@@ -210,19 +223,25 @@ const xwaylandPreferenceFile = path.join(
 // XWayland preference for Linux Wayland users (for screen sharing compatibility)
 let useXWayland = false;
 
+// Clean up legacy beta opt-in file from older versions (pre-1.2.1)
+// The old system used an in-app toggle; now beta is determined by version string
+const legacyBetaOptInFile = path.join(
+  app.getPath("userData"),
+  "beta-opt-in.json",
+);
+try {
+  if (fs.existsSync(legacyBetaOptInFile)) {
+    fs.unlinkSync(legacyBetaOptInFile);
+    console.log("[Beta] Cleaned up legacy beta-opt-in.json file");
+  }
+} catch (e) {
+  // Ignore errors - file might be locked or already deleted
+}
+
 function isBetaOptedIn(): boolean {
   // Beta enrollment is determined by the app version, not a preference file
   // If running a prerelease version, user is on the beta channel
-  const version = app.getVersion();
-  const isBetaVersion =
-    version.includes("-beta") ||
-    version.includes("-alpha") ||
-    version.includes("-rc");
-
-  if (isBetaVersion) {
-    console.log("[Beta] Running prerelease version, beta updates enabled");
-  }
-
+  // Uses module-level isBetaVersion constant
   return isBetaVersion;
 }
 
@@ -1883,7 +1902,7 @@ function createWindow(source: string = "unknown"): void {
     center: !hasPosition,
     minWidth: 725,
     minHeight: 400,
-    title: "Messenger",
+    title: APP_DISPLAY_NAME,
     // Only set custom icon in production - dev mode uses default Electron icon
     icon: isDev ? undefined : getIconPath(),
     // Use native hidden inset style on macOS to remove the separator while keeping drag area/buttons

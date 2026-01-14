@@ -1,44 +1,35 @@
 # Changelog
 
-## [1.2.1-beta.3] - 2026-01-14
-
-### Changed
-- Simplified beta channel system - no more in-app enrollment
-  - Beta is now determined by app version (install beta build = get beta updates)
-  - Removed "Join Beta Program" / "Leave Beta Program" menu items
-  - Cleaner separation between stable and beta tracks
-
-### Added
-- Homebrew beta cask: `brew install --cask apotenza92/tap/facebook-messenger-desktop@beta`
-- Snap beta channel: `snap install facebook-messenger-desktop --beta`
-- Download page now shows correct install commands for each channel
-
-### Fixed  
-- Beta users not receiving beta updates (issue #34)
-  - Worked around electron-updater GitHub provider bug where allowPrerelease doesn't work
-  - Now queries GitHub API directly to find the correct release based on version
-- Snap promotions now go to correct channel (stable for releases, beta for prereleases)
-
-## [1.2.1-beta.2] - 2026-01-14
+## [1.2.1] - 2026-01-14
 
 ### Fixed
 - Beta users not receiving beta updates (issue #34)
-  - Worked around electron-updater GitHub provider bug where allowPrerelease doesn't work
-  - Now queries GitHub API directly to find the correct release based on beta opt-in
-  - Beta users will now properly receive prerelease versions
-- Simplified Snap Store promotion in CI
-  - Uses `snapcraft promote` command instead of 90-minute polling loop
-  - Much faster and more reliable
-
-## [1.2.1-beta.1] - 2026-01-14
+  - Worked around electron-updater GitHub provider bug where `allowPrerelease` doesn't work
+  - Auto-updater now queries GitHub API directly to find the correct release
 
 ### Improved
 - Redesigned update notification dialog
-  - Custom HTML-based dialog with proper styling and fixed height
+  - Custom HTML-based dialog with proper styling and fixed dimensions
   - Scrollable changelog section that doesn't overflow the window
   - Bold section headers and formatted bullet points
-  - Dark/light theme support
-  - Keyboard shortcuts (Enter to download, Escape to dismiss)
+  - Dark/light theme support matching system preference
+  - Keyboard shortcuts: Enter to download, Escape to dismiss
+
+### Changed
+- **Redesigned beta program** - stable and beta are now completely separate app tracks
+  - **Stable users**: Install from the download page, receive stable updates only
+  - **Beta users**: Install the beta version specifically, receive beta updates only
+  - Removed the in-app "Join Beta Program" / "Leave Beta Program" menu toggle
+  - Beta versions clearly display as **"Messenger Beta"** in dock, taskbar, window title
+  - To switch tracks: uninstall current version, install desired track from download page
+  - Legacy beta opt-in preference files are automatically cleaned up on update
+
+### Added
+- **Beta installation options** on download page (toggle Stable/Beta at top):
+  - macOS: `brew install --cask apotenza92/tap/facebook-messenger-desktop@beta`
+  - Linux Snap: `sudo snap install facebook-messenger-desktop --beta`
+  - All platforms: Direct download links for beta builds
+- Download page dynamically updates all links, commands, and labels per channel
 
 ## [1.2.0] - 2026-01-14
 
