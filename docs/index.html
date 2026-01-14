@@ -1799,6 +1799,13 @@
                     commandSection.style.display = "block";
                     commandLabel.textContent = formatData.label;
                     commandCode.textContent = formatData.command;
+                    
+                    // Reset copy button state when switching formats
+                    const copyBtn = document.getElementById("linux-copy-btn");
+                    if (copyBtn) {
+                        copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg><span>Copy</span>';
+                        copyBtn.classList.remove("copied");
+                    }
 
                     if (formatData.noDownload) {
                         downloadBtn.style.display = "none";
@@ -2218,6 +2225,18 @@
                 const macHomebrewSection = document.getElementById(
                     "mac-homebrew-section",
                 );
+
+                // Reset all copy buttons when switching platforms
+                const linuxCopyBtn = document.getElementById("linux-copy-btn");
+                const macCopyBtn = document.getElementById("mac-homebrew-copy");
+                if (linuxCopyBtn) {
+                    linuxCopyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg><span>Copy</span>';
+                    linuxCopyBtn.classList.remove("copied");
+                }
+                if (macCopyBtn) {
+                    macCopyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg><span>Copy</span>';
+                    macCopyBtn.classList.remove("copied");
+                }
 
                 // Update platform toggle button states
                 document
