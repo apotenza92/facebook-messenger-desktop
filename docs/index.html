@@ -507,44 +507,6 @@
                 opacity: 0.5;
             }
 
-            .version-info {
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                font-size: 0.8rem;
-                color: var(--text-muted);
-            }
-
-            .version-info span {
-                display: flex;
-                align-items: center;
-                gap: 0.3rem;
-            }
-
-            .version-badge {
-                background: rgba(0, 132, 255, 0.1);
-                color: #0084ff;
-                padding: 0.2rem 0.5rem;
-                border-radius: 5px;
-                font-weight: 500;
-                font-size: 0.75rem;
-                text-decoration: none;
-                transition: all 0.2s ease;
-            }
-
-            .version-badge:hover {
-                background: rgba(0, 132, 255, 0.2);
-            }
-
-            .version-badge.beta {
-                background: rgba(245, 158, 11, 0.15);
-                color: #f59e0b;
-            }
-
-            .version-badge.beta:hover {
-                background: rgba(245, 158, 11, 0.25);
-            }
-
             .channel-toggle {
                 display: flex;
                 gap: 0;
@@ -580,12 +542,6 @@
             .channel-btn.active.beta-active {
                 background: #f59e0b;
                 border-color: #f59e0b;
-            }
-
-            .version-info svg {
-                width: 12px;
-                height: 12px;
-                opacity: 0.7;
             }
 
             .spinner {
@@ -678,12 +634,6 @@
                     font-size: 0.85rem;
                 }
 
-                .version-info {
-                    flex-wrap: wrap;
-                    justify-content: center;
-                    gap: 0.5rem;
-                }
-
                 .header-meta {
                     flex-wrap: wrap;
                     gap: 0.75rem;
@@ -761,23 +711,6 @@
                         Stable
                     </button>
                     <button class="channel-btn" id="channel-beta">Beta</button>
-                </div>
-                <div class="version-info" id="version-info">
-                    <span>
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path
-                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
-                            />
-                        </svg>
-                        <a
-                            href="#"
-                            class="version-badge"
-                            id="version-badge"
-                            title="View release notes"
-                            >...</a
-                        >
-                    </span>
-                    <span id="release-date"></span>
                 </div>
                 <a
                     href="https://github.com/apotenza92/facebook-messenger-desktop"
@@ -1585,19 +1518,22 @@
                     cachedReleases.stable = releases.find(
                         (r) => !r.prerelease && !r.draft,
                     );
-                    cachedReleases.beta = releases.find(
+                    const latestBeta = releases.find(
                         (r) => r.prerelease && !r.draft,
                     );
 
-                    // Always show the channel toggle so users can access beta channel
-                    // Even if no beta release exists yet, they may want to know about it
-                    document.getElementById("channel-toggle").style.display = "flex";
-                    
-                    // If no beta release exists, use stable release info for beta channel
-                    // This lets users see what they'd get if they chose beta
-                    if (!cachedReleases.beta) {
-                        cachedReleases.beta = cachedReleases.stable;
+                    // Beta channel gets the latest release (beta or stable, whichever is newer)
+                    // This ensures beta users always get the newest version
+                    if (latestBeta && cachedReleases.stable) {
+                        const betaDate = new Date(latestBeta.published_at);
+                        const stableDate = new Date(cachedReleases.stable.published_at);
+                        cachedReleases.beta = betaDate > stableDate ? latestBeta : cachedReleases.stable;
+                    } else {
+                        cachedReleases.beta = latestBeta || cachedReleases.stable;
                     }
+
+                    // Always show the channel toggle
+                    document.getElementById("channel-toggle").style.display = "flex";
 
                     // Update display for current channel
                     updateChannelDisplay();
@@ -1613,8 +1549,6 @@
                     currentChannel === "beta"
                         ? cachedReleases.beta
                         : cachedReleases.stable;
-                const versionBadge = document.getElementById("version-badge");
-                const releaseDateEl = document.getElementById("release-date");
                 const stableBtn = document.getElementById("channel-stable");
                 const betaBtn = document.getElementById("channel-beta");
 
@@ -1622,45 +1556,14 @@
                 if (currentChannel === "beta") {
                     stableBtn.classList.remove("active");
                     betaBtn.classList.add("active", "beta-active");
-                    versionBadge.classList.add("beta");
                     document.body.classList.add("beta-mode");
                 } else {
                     stableBtn.classList.add("active");
                     betaBtn.classList.remove("active", "beta-active");
-                    versionBadge.classList.remove("beta");
                     document.body.classList.remove("beta-mode");
                 }
 
-                if (release) {
-                    versionBadge.textContent = release.tag_name || release.name;
-                    versionBadge.href = release.html_url;
-                    versionBadge.target = "_blank";
-
-                    if (release.published_at) {
-                        const date = new Date(release.published_at);
-                        const formatted = date.toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                        });
-                        
-                        // Check if beta and stable are the same version
-                        const betaEqualsStable = cachedReleases.beta && cachedReleases.stable && 
-                            cachedReleases.beta.tag_name === cachedReleases.stable.tag_name;
-                        const sameVersionNote = (currentChannel === "beta" && betaEqualsStable) 
-                            ? '<span style="opacity: 0.7; font-size: 0.75rem;"> (same as stable)</span>' 
-                            : '';
-                        
-                        releaseDateEl.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM9 10H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2z"/>
-            </svg>
-            ${formatted}${sameVersionNote}
-          `;
-                    }
-                }
-
-                // Update download URLs
+                // Update download URLs based on selected channel's release
                 if (currentChannel === "beta" && cachedReleases.beta) {
                     updateDownloadUrlsForBeta(cachedReleases.beta.tag_name);
                 } else {
