@@ -177,6 +177,22 @@
                 z-index: 1;
             }
 
+            /* Beta mode styling - orange theme */
+            body.beta-mode .platform-btn.active,
+            body.beta-mode .arch-btn.active,
+            body.beta-mode .format-btn.active {
+                background: #f59e0b;
+                border-color: #f59e0b;
+            }
+
+            body.beta-mode .download-btn {
+                background: #f59e0b;
+            }
+
+            body.beta-mode .download-btn:hover {
+                background: #d97706;
+            }
+
             .platform-link.hidden {
                 display: none;
             }
@@ -1463,7 +1479,10 @@
                     } else {
                         downloadBtn.style.display = "flex";
                         downloadBtn.href = formatData.url;
-                        btnText.textContent = formatData.btnText;
+                        // Add Beta suffix to button text if in beta mode
+                        const suffix = getBetaSuffix();
+                        const baseText = formatData.btnText;
+                        btnText.textContent = suffix ? baseText.replace("Download", "Download Beta") : baseText;
                         if (formatData.external) {
                             downloadBtn.target = "_blank";
                         } else {
@@ -1480,16 +1499,17 @@
                 const btnText = document.getElementById("btn-text");
 
                 // Update button states
+                const suffix = getBetaSuffix();
                 if (arch === "arm64") {
                     x64Btn.classList.remove("active");
                     arm64Btn.classList.add("active");
                     btn.href = downloads["windows-arm"].url;
-                    btnText.textContent = `Download ${downloads["windows-arm"].ext} (ARM64)`;
+                    btnText.textContent = `Download${suffix} ${downloads["windows-arm"].ext} (ARM64)`;
                 } else {
                     x64Btn.classList.add("active");
                     arm64Btn.classList.remove("active");
                     btn.href = downloads["windows"].url;
-                    btnText.textContent = `Download ${downloads["windows"].ext} (x64)`;
+                    btnText.textContent = `Download${suffix} ${downloads["windows"].ext} (x64)`;
                 }
 
                 // Update URL parameter
@@ -1512,16 +1532,17 @@
                 const btnText = document.getElementById("btn-text");
 
                 // Update button states
+                const suffix = getBetaSuffix();
                 if (arch === "intel" || arch === "x64") {
                     armBtn.classList.remove("active");
                     intelBtn.classList.add("active");
                     btn.href = downloads["mac-intel"].url;
-                    btnText.textContent = `Download ${downloads["mac-intel"].ext} (Intel)`;
+                    btnText.textContent = `Download${suffix} ${downloads["mac-intel"].ext} (Intel)`;
                 } else {
                     armBtn.classList.add("active");
                     intelBtn.classList.remove("active");
                     btn.href = downloads["mac-arm"].url;
-                    btnText.textContent = `Download ${downloads["mac-arm"].ext} (Apple Silicon)`;
+                    btnText.textContent = `Download${suffix} ${downloads["mac-arm"].ext} (Apple Silicon)`;
                 }
 
                 // Update URL parameter
@@ -1540,6 +1561,11 @@
             // Store release data globally for channel switching
             let cachedReleases = { stable: null, beta: null };
             let currentChannel = "stable";
+
+            // Helper to get beta suffix for download button text
+            function getBetaSuffix() {
+                return currentChannel === "beta" ? " Beta" : "";
+            }
 
             async function fetchReleaseInfo() {
                 try {
@@ -1593,15 +1619,17 @@
                 const stableBtn = document.getElementById("channel-stable");
                 const betaBtn = document.getElementById("channel-beta");
 
-                // Update toggle button states
+                // Update toggle button states and body class for beta styling
                 if (currentChannel === "beta") {
                     stableBtn.classList.remove("active");
                     betaBtn.classList.add("active", "beta-active");
                     versionBadge.classList.add("beta");
+                    document.body.classList.add("beta-mode");
                 } else {
                     stableBtn.classList.add("active");
                     betaBtn.classList.remove("active", "beta-active");
                     versionBadge.classList.remove("beta");
+                    document.body.classList.remove("beta-mode");
                 }
 
                 if (release) {
