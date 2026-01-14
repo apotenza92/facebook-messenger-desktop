@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.1-beta.3] - 2026-01-14
+
+### Changed
+- Simplified beta channel system - no more in-app enrollment
+  - Beta is now determined by app version (install beta build = get beta updates)
+  - Removed "Join Beta Program" / "Leave Beta Program" menu items
+  - Cleaner separation between stable and beta tracks
+
+### Added
+- Homebrew beta cask: `brew install --cask apotenza92/tap/facebook-messenger-desktop@beta`
+- Snap beta channel: `snap install facebook-messenger-desktop --beta`
+- Download page now shows correct install commands for each channel
+
+### Fixed  
+- Beta users not receiving beta updates (issue #34)
+  - Worked around electron-updater GitHub provider bug where allowPrerelease doesn't work
+  - Now queries GitHub API directly to find the correct release based on version
+- Snap promotions now go to correct channel (stable for releases, beta for prereleases)
+
 ## [1.2.1-beta.2] - 2026-01-14
 
 ### Fixed

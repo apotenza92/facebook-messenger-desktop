@@ -325,35 +325,47 @@ jobs:
           token: ${{ secrets.WINGET_TOKEN }}
 
   # Snap builds are handled by Snapcraft's "Build from GitHub" service
-  # This job promotes whatever is currently in edge to stable
-  # Note: Run this AFTER Launchpad builds complete (typically 30-60 min after tag push)
-  promote-snap-to-stable:
-    name: Promote Snap to Stable
+  # This job promotes edge to the appropriate channel based on release type
+  promote-snap:
+    name: Promote Snap
     needs: release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
+    if: startsWith(github.ref, 'refs/tags/v')
     continue-on-error: true # Don't fail the workflow if snap promotion fails
 
     steps:
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic
 
-      - name: Promote edge to stable
+      - name: Determine target channel
+        id: channel
+        run: |
+          if [[ "${{ github.ref }}" == *"alpha"* ]] || [[ "${{ github.ref }}" == *"beta"* ]] || [[ "${{ github.ref }}" == *"rc"* ]]; then
+            echo "target=beta" >> $GITHUB_OUTPUT
+            echo "Target channel: beta (prerelease)"
+          else
+            echo "target=stable" >> $GITHUB_OUTPUT
+            echo "Target channel: stable"
+          fi
+
+      - name: Promote edge to ${{ steps.channel.outputs.target }}
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
           SNAPCRAFT_HAS_TTY: "true" # Workaround for https://github.com/snapcore/snapcraft/issues/4439
         run: |
+          TARGET="${{ steps.channel.outputs.target }}"
+          
           echo "Current snapcraft status:"
           snapcraft status facebook-messenger-desktop || true
           
           echo ""
-          echo "Promoting all architectures from edge to stable..."
+          echo "Promoting all architectures from edge to ${TARGET}..."
           echo "(This promotes whatever is currently in edge - ensure Launchpad builds completed first)"
           
           # Use 'yes' pipe workaround since --yes doesn't work with edge channel
-          if yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable; then
+          if yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel "${TARGET}"; then
             echo ""
-            echo "✅ Snap promotion complete!"
+            echo "✅ Snap promotion to ${TARGET} complete!"
           else
             echo ""
             echo "⚠️ Snap promotion failed. This may happen if:"

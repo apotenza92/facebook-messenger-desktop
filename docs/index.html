@@ -836,7 +836,7 @@
                             Or install via Homebrew:
                         </div>
                         <div class="format-command">
-                            <code
+                            <code id="mac-homebrew-code"
                                 >brew install --cask
                                 apotenza92/tap/facebook-messenger-desktop</code
                             >
@@ -1690,8 +1690,21 @@
                                 `/download/${betaVersion}/`,
                             );
                         }
+                        // Update Snap to use beta channel
+                        if (format === "snap") {
+                            formatData.command =
+                                "sudo snap install facebook-messenger-desktop --beta";
+                            formatData.label = "Install via Snap (Beta)";
+                        }
                     });
                 });
+
+                // Update macOS Homebrew command for beta
+                const homebrewCode = document.getElementById("mac-homebrew-code");
+                if (homebrewCode) {
+                    homebrewCode.textContent =
+                        "brew install --cask apotenza92/tap/facebook-messenger-desktop@beta";
+                }
 
                 // Re-initialize the current selection to update the UI
                 if (currentPlatform) {
@@ -1762,6 +1775,23 @@
                         }
                     });
                 });
+
+                // Reset Snap to stable channel
+                if (linuxFormats.x64 && linuxFormats.x64.snap) {
+                    linuxFormats.x64.snap.command =
+                        "sudo snap install facebook-messenger-desktop";
+                }
+                if (linuxFormats.arm64 && linuxFormats.arm64.snap) {
+                    linuxFormats.arm64.snap.command =
+                        "sudo snap install facebook-messenger-desktop";
+                }
+
+                // Reset macOS Homebrew command to stable
+                const homebrewCode = document.getElementById("mac-homebrew-code");
+                if (homebrewCode) {
+                    homebrewCode.textContent =
+                        "brew install --cask apotenza92/tap/facebook-messenger-desktop";
+                }
             }
 
             function getActualPlatform() {
