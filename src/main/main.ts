@@ -5386,42 +5386,53 @@ function createApplicationMenu(): void {
     label: "Develop",
     submenu: [
       {
-        label: "Test Update Workflow…",
+        label: "Test Windows Update & Shortcut Fix",
+        visible: process.platform === "win32",
         click: async () => {
-          // Simulate the full update workflow
-          const testVersion = "99.0.0";
+          const currentVersion = app.getVersion();
 
-          // Step 1: Show "Update Available" dialog
-          const downloadResult = await dialog.showMessageBox({
+          // Step 1: Explain the test
+          const startResult = await dialog.showMessageBox({
             type: "info",
-            title: "Update Available (Test)",
-            message: "A new version of Messenger is available",
-            detail: `Version ${testVersion} is ready to download. Would you like to download it now?\n\n(This is a test - no actual update will be downloaded)`,
-            buttons: ["Download Now", "Later"],
+            title: "Windows Update Test",
+            message: "Test Post-Update Shortcut Fix",
+            detail: [
+              "This test simulates the FULL update workflow on Windows:",
+              "",
+              "1. Simulate downloading an update (with progress bar)",
+              "2. Mark the app as having a 'previous version'",
+              "3. Restart the app",
+              "4. On restart, the app detects a 'version change'",
+              "5. Shortcut fix runs automatically",
+              "",
+              `Current version: ${currentVersion}`,
+              `Simulated previous version: 0.0.0-test`,
+              "",
+              "After restart, check the console logs and verify:",
+              "- Shortcut fix ran automatically",
+              "- Taskbar icon still works",
+              "",
+              "Make sure you have the app PINNED TO TASKBAR before testing!",
+            ].join("\n"),
+            buttons: ["Start Test", "Cancel"],
             defaultId: 0,
             cancelId: 1,
           });
 
-          if (downloadResult.response !== 0) {
-            console.log("[Test] User chose to update later");
-            return;
-          }
+          if (startResult.response !== 0) return;
 
-          // Step 2: Show download progress (native - taskbar + title + tray + notifications)
-          console.log("[Test] Starting simulated download");
+          // Step 2: Simulate download progress
+          console.log("[Test] Starting simulated update download...");
           showDownloadProgress();
 
           let progress = 0;
-
-          // Simulate download progress
           await new Promise<void>((resolve) => {
             const testInterval = setInterval(() => {
-              progress += Math.random() * 12 + 3;
+              progress += Math.random() * 15 + 5;
               if (progress >= 100) {
                 progress = 100;
                 clearInterval(testInterval);
-                const speed = (1.5 + Math.random() * 2).toFixed(1) + " MB/s";
-                updateDownloadProgress(100, speed, "67.5 MB", "67.5 MB");
+                updateDownloadProgress(100, "2.1 MB/s", "67.5 MB", "67.5 MB");
                 setTimeout(() => {
                   hideDownloadProgress();
                   resolve();
@@ -5429,65 +5440,71 @@ function createApplicationMenu(): void {
               } else {
                 const speed = (1.5 + Math.random() * 2).toFixed(1) + " MB/s";
                 const downloaded = ((progress / 100) * 67.5).toFixed(1) + " MB";
-                updateDownloadProgress(
-                  Math.round(progress),
-                  speed,
-                  downloaded,
-                  "67.5 MB",
-                );
+                updateDownloadProgress(Math.round(progress), speed, downloaded, "67.5 MB");
               }
-            }, 300);
+            }, 200);
           });
 
-          // Step 3: Show "Update Ready" dialog
-          console.log("[Test] Download complete, showing restart dialog");
+          // Step 3: Write a fake "previous version" to trigger shortcut fix on restart
+          try {
+            fs.writeFileSync(
+              lastVersionFile,
+              JSON.stringify({ version: "0.0.0-test" }),
+            );
+            console.log("[Test] Wrote fake previous version to trigger shortcut fix on restart");
+          } catch (err) {
+            console.error("[Test] Failed to write version file:", err);
+          }
+
+          // Step 4: Show restart dialog
           const restartResult = await dialog.showMessageBox({
             type: "info",
             title: "Update Ready (Test)",
-            message: "Update downloaded successfully",
-            detail: `Version ${testVersion} has been downloaded. Restart now to apply the update.\n\n(This is a test - clicking "Restart Now" will restart the app)`,
-            buttons: ["Restart Now", "Later"],
+            message: "Simulated update downloaded",
+            detail: [
+              "The simulated update has been 'downloaded'.",
+              "",
+              "Click 'Restart Now' to restart the app.",
+              "",
+              "On restart, the app will detect a version change and run",
+              "the shortcut fix automatically. Watch the console logs!",
+              "",
+              "After restart, test your pinned taskbar icon:",
+              "1. Quit the app",
+              "2. Click the pinned taskbar icon",
+              "3. Verify it launches correctly (no 'shortcut moved' error)",
+            ].join("\n"),
+            buttons: ["Restart Now", "Cancel"],
             defaultId: 0,
             cancelId: 1,
           });
 
           if (restartResult.response === 0) {
-            console.log("[Test] User chose to restart - relaunching app");
+            console.log("[Test] Restarting app to simulate post-update launch...");
             app.relaunch();
             app.quit();
-          } else {
-            console.log("[Test] User chose to restart later");
           }
         },
       },
       {
-        label: "Test Notification",
-        click: () => {
-          testNotification();
-        },
-      },
-      {
-        label: "Test Taskbar Fix (Simulate Update)",
+        label: "Run Shortcut Fix Now",
         visible: process.platform === "win32",
         click: async () => {
-          // Show initial dialog explaining what this test does
           const confirmResult = await dialog.showMessageBox({
             type: "info",
-            title: "Test Taskbar Fix",
-            message: "Simulate Post-Update Shortcut Fix",
+            title: "Run Shortcut Fix",
+            message: "Run Windows Shortcut Fix",
             detail: [
-              "This test simulates what happens after an app update:",
+              "This will immediately run the shortcut fix script:",
               "",
-              "1. Find all Messenger shortcuts (taskbar, Start Menu, Desktop)",
-              "2. Update them with correct target path",
-              "3. Set AppUserModelId property (key for Windows 11)",
-              "4. Clear Windows icon cache",
+              "- Find all Messenger shortcuts (taskbar, Start Menu, Desktop)",
+              "- Update target paths to current executable",
+              "- Set AppUserModelId property",
+              "- Clear Windows icon cache",
               "",
-              "This uses the EXACT same script that runs during auto-updates.",
-              "",
-              "The test will show detailed results when complete.",
+              `Current executable: ${process.execPath}`,
             ].join("\n"),
-            buttons: ["Run Test", "Cancel"],
+            buttons: ["Run", "Cancel"],
             defaultId: 0,
             cancelId: 1,
           });
@@ -5498,36 +5515,20 @@ function createApplicationMenu(): void {
             console.log("[Test] Running Windows shortcut fix...");
             await runWindowsShortcutFix();
 
-            // Show success dialog
             await dialog.showMessageBox({
               type: "info",
-              title: "Test Complete",
-              message: "Taskbar Fix Test Successful",
-              detail: [
-                "✓ Shortcut fix completed successfully",
-                "",
-                "Check the console logs for detailed results:",
-                "- Number of shortcuts found",
-                "- Number successfully updated",
-                "- Any errors encountered",
-                "",
-                "Now test your pinned taskbar icon to verify it still works.",
-              ].join("\n"),
+              title: "Complete",
+              message: "Shortcut fix completed",
+              detail: "Check the console logs for detailed results.",
               buttons: ["OK"],
             });
           } catch (err) {
-            console.error("[Test] Taskbar fix failed:", err);
+            console.error("[Test] Shortcut fix failed:", err);
             await dialog.showMessageBox({
               type: "error",
-              title: "Test Failed",
-              message: "Taskbar Fix Test Error",
-              detail: [
-                "The shortcut fix test encountered an error:",
-                "",
-                err instanceof Error ? err.message : String(err),
-                "",
-                "Check the console logs for more details.",
-              ].join("\n"),
+              title: "Error",
+              message: "Shortcut fix failed",
+              detail: err instanceof Error ? err.message : String(err),
               buttons: ["OK"],
             });
           }
@@ -5538,7 +5539,6 @@ function createApplicationMenu(): void {
         label: "Toggle Developer Tools",
         accelerator: "Alt+Command+I",
         click: () => {
-          // Open DevTools on contentView (where Messenger runs) on macOS
           const target =
             process.platform === "darwin" && contentView
               ? contentView.webContents
