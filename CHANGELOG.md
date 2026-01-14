@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.2-beta.5] - 2026-01-14
+
+### Fixed
+- **macOS**: Code signing failing due to Linux icon files being included in macOS builds
+  - `asarUnpack` now only applies to Linux builds
+
+### Improved
+- **Build config**: Platform-specific files only included for relevant builds
+  - Windows PowerShell shortcut fix script only bundled in Windows builds
+  - NSIS installer/uninstaller icons now correctly use beta icons for beta builds
+
+### Changed
+- Simplified release process: `./scripts/release.sh` now just validates and pushes tag
+- Removed local macOS build option (CI handles all platforms)
+
 ## [1.2.2-beta.4] - 2026-01-14
 
 ### Improved
