@@ -1,6 +1,6 @@
 name: facebook-messenger-desktop
 base: core22
-version: git
+adopt-info: messenger-app
 summary: Unofficial desktop client for Facebook Messenger
 description: |
   An unofficial, self-contained desktop app for Facebook Messenger.
@@ -54,6 +54,10 @@ parts:
       - unzip
     override-build: |
       set -e
+      
+      # Extract version from package.json and set it for snapcraft
+      VERSION=$(node -p "require('./package.json').version")
+      craftctl set version="$VERSION"
       
       # Install dependencies
       # Skip Electron binary download - we download it manually below for the target arch
