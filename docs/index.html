@@ -193,6 +193,36 @@
                 background: #d97706;
             }
 
+            body.beta-mode .connector-path {
+                stroke: #f59e0b;
+            }
+
+            body.beta-mode .icon {
+                filter: hue-rotate(160deg) saturate(1.2);
+            }
+
+            .beta-notice {
+                display: none;
+                background: rgba(245, 158, 11, 0.15);
+                border: 1px solid rgba(245, 158, 11, 0.3);
+                border-radius: 8px;
+                padding: 0.75rem 1rem;
+                margin-bottom: 1.5rem;
+                font-size: 0.8rem;
+                color: var(--text-muted);
+                max-width: 450px;
+                margin-left: auto;
+                margin-right: auto;
+            }
+
+            body.beta-mode .beta-notice {
+                display: block;
+            }
+
+            .beta-notice strong {
+                color: #f59e0b;
+            }
+
             .platform-link.hidden {
                 display: none;
             }
@@ -700,6 +730,10 @@
             >
                 An unofficial desktop application for Facebook Messenger.
             </p>
+
+            <div class="beta-notice" id="beta-notice">
+                <strong>Beta Version:</strong> You are downloading a pre-release version. Beta builds may contain bugs or incomplete features. Use for testing and feedback purposes.
+            </div>
 
             <div class="header-meta" id="header-meta">
                 <div
