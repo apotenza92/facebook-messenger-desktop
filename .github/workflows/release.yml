@@ -48,9 +48,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
+      - name: Backup stable yml files before beta build
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: |
+          # Save stable yml files before beta build overwrites them
+          mkdir -p release/stable-yml-backup
+          cp release/*.yml release/stable-yml-backup/ || true
+
       - name: Build beta-channel artifacts for stable release (signed/notarized)
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: npm run dist:mac
+        run: |
+          # Run electron-builder directly without npm run build (which cleans the release folder)
+          # The TypeScript was already compiled in the previous step
+          npx electron-builder --config electron-builder.config.js --mac --arm64 --x64 --publish=never
         timeout-minutes: 30
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -58,6 +68,22 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           FORCE_BETA_BUILD: 'true'
+
+      - name: Create beta yml files and restore stable yml files
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: |
+          # The beta build created latest-*.yml files pointing to beta artifacts
+          # Rename them to beta-*.yml so beta apps can find them
+          for f in release/latest*.yml; do
+            if [ -f "$f" ]; then
+              beta_name=$(echo "$f" | sed 's/latest/beta/')
+              cp "$f" "$beta_name"
+              echo "Created $beta_name from $f"
+            fi
+          done
+          # Restore stable yml files (so latest-*.yml points to stable artifacts)
+          cp release/stable-yml-backup/*.yml release/ || true
+          rm -rf release/stable-yml-backup
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -98,12 +124,35 @@ jobs:
         run: npm run dist:win
         timeout-minutes: 30
 
+      - name: Backup stable yml files before beta build
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        shell: pwsh
+        run: |
+          # Save stable yml files before beta build overwrites them
+          New-Item -ItemType Directory -Force -Path release/stable-yml-backup | Out-Null
+          Copy-Item release/*.yml release/stable-yml-backup/ -ErrorAction SilentlyContinue
+
       - name: Build beta-channel artifacts for stable release
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: npm run dist:win
+        run: npx electron-builder --config electron-builder.config.js --win --publish=never
         timeout-minutes: 30
         env:
           FORCE_BETA_BUILD: 'true'
+
+      - name: Create beta yml files and restore stable yml files
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        shell: pwsh
+        run: |
+          # The beta build created latest-*.yml files pointing to beta artifacts
+          # Rename them to beta-*.yml so beta apps can find them
+          Get-ChildItem release/latest*.yml | ForEach-Object {
+            $betaName = $_.Name -replace 'latest', 'beta'
+            Copy-Item $_.FullName "release/$betaName"
+            Write-Host "Created release/$betaName from $($_.Name)"
+          }
+          # Restore stable yml files (so latest-*.yml points to stable artifacts)
+          Copy-Item release/stable-yml-backup/*.yml release/ -Force -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force release/stable-yml-backup -ErrorAction SilentlyContinue
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -154,12 +203,38 @@ jobs:
         run: npm run dist:linux
         timeout-minutes: 60
 
+      - name: Backup stable yml files before beta build
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: |
+          # Save stable yml files before beta build overwrites them
+          mkdir -p release/stable-yml-backup
+          cp release/*.yml release/stable-yml-backup/ || true
+
       - name: Build beta-channel artifacts for stable release
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: npm run dist:linux
+        run: |
+          # Run electron-builder directly without npm run build (which cleans the release folder)
+          # The TypeScript was already compiled in the previous step
+          npx electron-builder --config electron-builder.config.js --linux --publish=never
         timeout-minutes: 60
         env:
           FORCE_BETA_BUILD: 'true'
+
+      - name: Create beta yml files and restore stable yml files
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: |
+          # The beta build created latest-*.yml files pointing to beta artifacts
+          # Rename them to beta-*.yml so beta apps can find them
+          for f in release/latest*.yml; do
+            if [ -f "$f" ]; then
+              beta_name=$(echo "$f" | sed 's/latest/beta/')
+              cp "$f" "$beta_name"
+              echo "Created $beta_name from $f"
+            fi
+          done
+          # Restore stable yml files (so latest-*.yml points to stable artifacts)
+          cp release/stable-yml-backup/*.yml release/ || true
+          rm -rf release/stable-yml-backup
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

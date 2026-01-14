@@ -6917,11 +6917,13 @@ async function checkForUpdates(): Promise<void> {
 
   // Set up autoUpdater to look at the specific release
   // Use setFeedURL to point to a specific release URL pattern
+  // Beta apps use "beta" channel which reads beta-*.yml files (pointing to beta-named artifacts)
+  // Stable apps use default channel which reads latest-*.yml files (pointing to stable artifacts)
   autoUpdater.setFeedURL({
     provider: "github",
     owner: "apotenza92",
     repo: "facebook-messenger-desktop",
-    // This tells electron-updater to consider this specific release
+    channel: isBetaVersion ? "beta" : undefined,
   });
 
   // Force allowPrerelease based on whether target is a prerelease
