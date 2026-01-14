@@ -1,34 +1,53 @@
 #!/bin/bash
 # Post-installation script for Linux deb/rpm packages
 # Creates symlink to /usr/bin, sets up sandbox permissions, installs icons, and updates caches
+# Supports both stable (facebook-messenger-desktop) and beta (facebook-messenger-desktop-beta)
+
+# Detect if this is a beta installation by checking which directory exists
+# Beta installs to /opt/Messenger Beta, stable to /opt/Messenger
+if [ -d "/opt/Messenger Beta" ]; then
+    INSTALL_DIR="/opt/Messenger Beta"
+    EXEC_NAME="facebook-messenger-desktop-beta"
+    APP_ICON="facebook-messenger-desktop-beta.png"
+    DESKTOP_FILE="/usr/share/applications/facebook-messenger-desktop-beta.desktop"
+    ICONS_SRC="/opt/Messenger Beta/resources/app.asar.unpacked/assets/icons/beta/linux"
+    # Fallback for non-asar-unpacked builds
+    if [ ! -d "$ICONS_SRC" ]; then
+        ICONS_SRC="/opt/Messenger Beta/resources/app/assets/icons/beta/linux"
+    fi
+elif [ -d "/opt/Messenger" ]; then
+    INSTALL_DIR="/opt/Messenger"
+    EXEC_NAME="facebook-messenger-desktop"
+    APP_ICON="facebook-messenger-desktop.png"
+    DESKTOP_FILE="/usr/share/applications/facebook-messenger-desktop.desktop"
+    ICONS_SRC="/opt/Messenger/resources/app.asar.unpacked/assets/icons/linux"
+    # Fallback for non-asar-unpacked builds
+    if [ ! -d "$ICONS_SRC" ]; then
+        ICONS_SRC="/opt/Messenger/resources/app/assets/icons/linux"
+    fi
+else
+    echo "Error: Neither /opt/Messenger nor /opt/Messenger Beta found"
+    exit 0
+fi
 
 # Create symlink to /usr/bin so the app is available in PATH
-# This is standard practice for apps installed to /opt/
-if [ -f "/opt/Messenger/facebook-messenger-desktop" ]; then
-    ln -sf "/opt/Messenger/facebook-messenger-desktop" "/usr/bin/facebook-messenger-desktop" 2>/dev/null || true
+if [ -f "$INSTALL_DIR/$EXEC_NAME" ]; then
+    ln -sf "$INSTALL_DIR/$EXEC_NAME" "/usr/bin/$EXEC_NAME" 2>/dev/null || true
 fi
 
 # Fix chrome-sandbox permissions (required for Electron apps on Linux)
 # The sandbox binary must be owned by root with SUID bit set (mode 4755)
-if [ -f "/opt/Messenger/chrome-sandbox" ]; then
-    chown root:root "/opt/Messenger/chrome-sandbox" 2>/dev/null || true
-    chmod 4755 "/opt/Messenger/chrome-sandbox" 2>/dev/null || true
+if [ -f "$INSTALL_DIR/chrome-sandbox" ]; then
+    chown root:root "$INSTALL_DIR/chrome-sandbox" 2>/dev/null || true
+    chmod 4755 "$INSTALL_DIR/chrome-sandbox" 2>/dev/null || true
 fi
 
 # Install icons to hicolor theme (electron-builder may not do this properly)
 # This ensures the app icon appears in the applications menu
-# Icons are unpacked from asar to app.asar.unpacked/ via asarUnpack config
-ICONS_SRC="/opt/Messenger/resources/app.asar.unpacked/assets/icons/linux"
 ICONS_DST="/usr/share/icons/hicolor"
-APP_ICON="facebook-messenger-desktop.png"
-
-# Fallback to old location if not using asar unpack (for backwards compatibility)
-if [ ! -d "$ICONS_SRC" ] && [ -d "/opt/Messenger/resources/app/assets/icons/linux" ]; then
-    ICONS_SRC="/opt/Messenger/resources/app/assets/icons/linux"
-fi
 
 if [ -d "$ICONS_SRC" ]; then
-    # Install each icon size explicitly to avoid shell variable syntax issues
+    # Install each icon size explicitly
     [ -f "$ICONS_SRC/16x16.png" ] && mkdir -p "$ICONS_DST/16x16/apps" && cp "$ICONS_SRC/16x16.png" "$ICONS_DST/16x16/apps/$APP_ICON" 2>/dev/null || true
     [ -f "$ICONS_SRC/22x22.png" ] && mkdir -p "$ICONS_DST/22x22/apps" && cp "$ICONS_SRC/22x22.png" "$ICONS_DST/22x22/apps/$APP_ICON" 2>/dev/null || true
     [ -f "$ICONS_SRC/24x24.png" ] && mkdir -p "$ICONS_DST/24x24/apps" && cp "$ICONS_SRC/24x24.png" "$ICONS_DST/24x24/apps/$APP_ICON" 2>/dev/null || true
@@ -44,10 +63,7 @@ fi
 
 # Fix Categories field in desktop file (electron-builder may only set it to "Network;")
 # GNOME Applications menu requires proper categories to display the app
-DESKTOP_FILE="/usr/share/applications/facebook-messenger-desktop.desktop"
 if [ -f "$DESKTOP_FILE" ]; then
-    # Use sed to replace Categories line with the correct value
-    # This ensures the app appears in GNOME's Applications menu
     sed -i 's/^Categories=.*/Categories=Network;InstantMessaging;Chat;/' "$DESKTOP_FILE" 2>/dev/null || true
 fi
 

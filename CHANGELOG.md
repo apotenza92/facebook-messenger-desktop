@@ -11,6 +11,11 @@
   - Beta uninstall won't kill stable process or remove stable shortcuts (and vice versa)
   - Only removes shortcuts that point to the specific installation being uninstalled
   - Correctly cleans up app data folder (Messenger-Beta vs Messenger)
+- **Linux**: Package scripts now handle beta and stable independently
+  - after-install.sh detects which variant is being installed
+  - after-remove.sh only removes symlinks/icons for the variant being uninstalled
+- **macOS**: In-app uninstall now uses correct bundle ID for beta vs stable
+- **All platforms**: In-app "Logout and Reset" uses correct paths for each variant
 
 ## [1.2.2] - 2026-01-14
 

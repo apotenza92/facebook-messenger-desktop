@@ -1304,7 +1304,10 @@ const uninstallTargets = () => {
       path: path.join(homeDir, "Library", "Caches", APP_DIR_NAME),
     });
     // Clean up all other macOS system directories that may contain app data
-    const bundleId = "com.facebook.messenger.desktop";
+    // Use correct bundle ID based on beta/stable version
+    const bundleId = isBetaVersion
+      ? "com.facebook.messenger.desktop.beta"
+      : "com.facebook.messenger.desktop";
     targets.push({
       label: "Saved app state",
       path: path.join(
@@ -1339,7 +1342,11 @@ const uninstallTargets = () => {
     });
     // Clean up user-specific desktop entries that might have been created
     // These can persist after package removal and leave ghost icons in app menus
-    const linuxPkgName = "facebook-messenger-desktop";
+    // Use correct package name based on beta/stable version
+    const linuxPkgName = isBetaVersion
+      ? "facebook-messenger-desktop-beta"
+      : "facebook-messenger-desktop";
+    const linuxDesktopName = isBetaVersion ? "Messenger Beta" : "Messenger";
     targets.push({
       label: "Desktop entry",
       path: path.join(
@@ -1357,7 +1364,7 @@ const uninstallTargets = () => {
         ".local",
         "share",
         "applications",
-        "Messenger.desktop",
+        `${linuxDesktopName}.desktop`,
       ),
     });
     // User icon directories (in case icons were copied there)
