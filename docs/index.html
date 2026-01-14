@@ -222,8 +222,10 @@
                 background: #e65c00;
             }
 
-            body.beta-mode .command-label {
-                color: #ff6b00;
+            /* Beta mode command labels - keep white inside command boxes (which have orange background) */
+            body.beta-mode .linux-command-section .command-label,
+            body.beta-mode .mac-homebrew-section .command-label {
+                color: white;
             }
 
             .beta-notice {
@@ -616,7 +618,8 @@
             .copy-btn span {
                 font-size: 0.8rem;
                 font-weight: 500;
-                white-space: nowrap;
+                white-space: normal;
+                text-align: left;
                 color: white;
             }
 
@@ -1765,21 +1768,24 @@
                     arm64Btn.classList.remove("active");
                 }
 
-                // Update format button states (some disabled for ARM64)
+                // Update format button states (some disabled for ARM64, but not flatpak in beta - we show switch prompt instead)
                 document.querySelectorAll(".format-btn").forEach((btn) => {
                     const format = btn.getAttribute("data-format");
                     const formatData = linuxFormats[arch][format];
-                    if (formatData && formatData.disabled) {
+                    // Don't disable flatpak in beta mode - we show "switch to stable" prompt instead
+                    const isFlatpakBeta = format === "flatpak" && currentChannel === "beta";
+                    if (formatData && formatData.disabled && !isFlatpakBeta) {
                         btn.classList.add("disabled");
                     } else {
                         btn.classList.remove("disabled");
                     }
                 });
 
-                // If current format is disabled, switch to appimage
+                // If current format is disabled (but not flatpak in beta), switch to appimage
                 const currentFormatData =
                     linuxFormats[arch][currentLinuxFormat];
-                if (currentFormatData && currentFormatData.disabled) {
+                const isFlatpakBeta = currentLinuxFormat === "flatpak" && currentChannel === "beta";
+                if (currentFormatData && currentFormatData.disabled && !isFlatpakBeta) {
                     setLinuxFormat("appimage");
                 } else {
                     updateLinuxFormatDisplay();
@@ -1819,7 +1825,11 @@
                     ".linux-command-section",
                 );
 
-                if (formatData.disabled) {
+                // Check if this is flatpak in beta mode (special case - show switch prompt but keep button active)
+                const isFlatpakBeta = currentLinuxFormat === "flatpak" && currentChannel === "beta" && formatData.disabled;
+                
+                if (isFlatpakBeta) {
+                     // Flatpak in beta mode - show switch to stable prompt
                      downloadBtn.style.display = "none";
                      commandSection.style.display = "none";
                      formatNote.style.display = "block";
@@ -1840,6 +1850,12 @@
                               setLinuxFormat(savedFormat);
                           });
                       }
+                } else if (formatData.disabled) {
+                     // Other disabled formats - hide everything
+                     downloadBtn.style.display = "none";
+                     commandSection.style.display = "none";
+                     formatNote.style.display = "block";
+                     formatNote.textContent = formatData.note || "Not available";
                 } else {
                     formatNote.style.display = "none";
                     commandSection.style.display = "block";
@@ -2194,6 +2210,20 @@
                     linuxFormats.arm64.snap.command =
                         "sudo snap install facebook-messenger-desktop";
                     linuxFormats.arm64.snap.label = "Or install Snap via terminal:";
+                }
+
+                // Reset Flatpak to stable (re-enable and restore original command/label)
+                if (linuxFormats.x64 && linuxFormats.x64.flatpak) {
+                    linuxFormats.x64.flatpak.disabled = false;
+                    linuxFormats.x64.flatpak.label = "Add Flatpak repository and install:";
+                    linuxFormats.x64.flatpak.command =
+                        "wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop";
+                }
+                if (linuxFormats.arm64 && linuxFormats.arm64.flatpak) {
+                    linuxFormats.arm64.flatpak.disabled = false;
+                    linuxFormats.arm64.flatpak.label = "Add Flatpak repository and install:";
+                    linuxFormats.arm64.flatpak.command =
+                        "wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop";
                 }
 
                 // Reset macOS Homebrew command and label to stable
