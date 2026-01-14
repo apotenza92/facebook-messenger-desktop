@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.2.2-beta.3] - 2026-01-14
+
+### Fixed
+- **Windows**: Taskbar shortcut breaking after auto-update ("shortcut has been moved" error)
+  - Shortcut fix now runs AFTER app restarts from new location (not before)
+  - Tracks version in `last-version.json` to detect when update was applied
+  - PowerShell script dynamically detects beta vs stable for correct AUMID
+- **Windows**: Beta installer no longer tries to close stable "Messenger.exe" (and vice versa)
+  - NSIS script now properly handles beta/stable separation
+  - Only updates shortcuts matching the correct app variant
+
+### Improved
+- **Download page**: GitHub icon now properly centered below description
+- **Download page**: Beta notice moved below Stable/Beta toggle
+- **Download page**: Version number displayed below channel toggle (blue for stable, orange for beta)
+- **Download page**: Consistent orange color (#ff6b00) across all beta elements
+- **Update dialogs**: Now show "Messenger Beta" branding when running beta version
+  - "Messenger Beta Update" / "Messenger Beta Update Ready" titles
+  - "Messenger Beta is running the latest version" message
+
+### Changed
+- Dev menu simplified to Windows update testing only
+  - "Test Windows Update & Shortcut Fix": Full workflow simulation with version tracking
+  - "Run Shortcut Fix Now": Immediate shortcut fix execution
+
 ## [1.2.2-beta.2] - 2026-01-14
 
 ### Added
