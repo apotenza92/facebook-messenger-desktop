@@ -5,7 +5,15 @@
 ### Fixed
 - **Windows/Linux**: Menu bar hover detection not working properly
 - **Windows/Linux**: F10 now permanently toggles menu bar visibility (previously would hide again when clicking in the app)
-- **Windows/Linux**: "Hide Menu Bar" / "Show Menu Bar" label was misleading when menu was temporarily shown via Alt key - renamed to "Toggle Menu Bar"
+- **Windows/Linux**: "Hide Menu Bar" / "Show Menu Bar" label now correctly says "Toggle Menu Bar"
+
+### Improved
+- **Download page**: Beta channel now always shows latest version (beta or stable, whichever is newer)
+- **Download page**: Stable/Beta toggle always visible, removed version number display
+- **Download page**: Orange theme applied to all buttons when Beta is selected
+
+### Changed
+- Renamed "Reset & Logout" menu item to "Logout and Reset App" for clarity
 
 ## [1.2.1] - 2026-01-14
 
