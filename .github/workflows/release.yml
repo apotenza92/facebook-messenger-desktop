@@ -48,6 +48,17 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
+      - name: Build beta-channel artifacts for stable release (signed/notarized)
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: npm run dist:mac
+        timeout-minutes: 30
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          FORCE_BETA_BUILD: 'true'
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -86,6 +97,13 @@ jobs:
       - name: Build distributables
         run: npm run dist:win
         timeout-minutes: 30
+
+      - name: Build beta-channel artifacts for stable release
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: npm run dist:win
+        timeout-minutes: 30
+        env:
+          FORCE_BETA_BUILD: 'true'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -135,6 +153,13 @@ jobs:
       - name: Build distributables
         run: npm run dist:linux
         timeout-minutes: 60
+
+      - name: Build beta-channel artifacts for stable release
+        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        run: npm run dist:linux
+        timeout-minutes: 60
+        env:
+          FORCE_BETA_BUILD: 'true'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

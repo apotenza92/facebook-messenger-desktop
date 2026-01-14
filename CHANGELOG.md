@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3] - 2026-01-14
+
+### Fixed
+- **Windows**: Beta users no longer get stable app installed separately when a stable release comes out
+  - Beta channel now receives stable releases through beta-branded installers
+  - Preserves taskbar shortcuts, app ID, and user data when updating from beta to stable
+
 ## [1.2.2] - 2026-01-14
 
 ### Added

@@ -9,7 +9,10 @@ const packageJson = require('./package.json');
 const version = packageJson.version;
 
 // Detect if this is a beta/prerelease version
-const isBeta = version.includes('-beta') || version.includes('-alpha') || version.includes('-rc');
+// FORCE_BETA_BUILD env var allows building beta-branded artifacts for stable versions
+// This is used to create update artifacts for beta channel users when releasing stable versions
+const isBeta = process.env.FORCE_BETA_BUILD === 'true' || 
+  version.includes('-beta') || version.includes('-alpha') || version.includes('-rc');
 
 // Detect target platform from command line args
 const args = process.argv.join(' ');

@@ -6812,12 +6812,14 @@ async function findTargetRelease(
             // Filter out drafts
             const published = releases.filter((r) => !r.draft);
 
-            // Find the best release based on user preference
+            // Find the best release based on user preference and current app type
             let targetRelease = null;
 
             if (includePrereleases) {
-              // Beta users: get the latest release (including prereleases)
-              // Compare versions to find highest
+              // Beta users: get the latest release (stable OR beta, whichever is highest)
+              // This ensures beta users are always on the latest version
+              // The download function will use beta-named artifacts to update the beta
+              // installation in-place (same app ID, shortcuts, user data)
               targetRelease = published.reduce(
                 (best, current) => {
                   if (!best) return current;
@@ -6930,7 +6932,11 @@ function openGitHubPage(): void {
 // Windows direct download function - downloads installer to Downloads folder and runs it
 async function downloadWindowsUpdate(version: string): Promise<void> {
   const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const fileName = `Messenger-windows-${arch}-setup.exe`;
+  // Use the correct artifact name based on whether we're running the beta app
+  // This ensures beta users update through the beta installer (same app ID/shortcuts)
+  // even when updating to a stable version, and stable users use stable installer
+  const appPrefix = isBetaVersion ? "Messenger-Beta" : "Messenger";
+  const fileName = `${appPrefix}-windows-${arch}-setup.exe`;
   const downloadUrl = `https://github.com/apotenza92/FacebookMessengerDesktop/releases/download/v${version}/${fileName}`;
 
   // Get user's Downloads folder
