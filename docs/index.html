@@ -1596,46 +1596,76 @@
 
             function updateDownloadUrlsForBeta(betaVersion) {
                 // Update all download URLs to use beta version instead of 'latest'
+                // Beta builds use different artifact names: Messenger-Beta-* instead of Messenger-*
                 const baseUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/${betaVersion}/`;
 
-                // Update downloads object
+                // Update downloads object - beta uses "Messenger-Beta-*" artifact names
                 downloads["mac-arm"].url =
-                    baseUrl + "Messenger-macos-arm64.zip";
+                    baseUrl + "Messenger-Beta-macos-arm64.zip";
                 downloads["mac-intel"].url =
-                    baseUrl + "Messenger-macos-x64.zip";
+                    baseUrl + "Messenger-Beta-macos-x64.zip";
                 downloads["windows"].url =
-                    baseUrl + "Messenger-windows-x64-setup.exe";
+                    baseUrl + "Messenger-Beta-windows-x64-setup.exe";
                 downloads["windows-arm"].url =
-                    baseUrl + "Messenger-windows-arm64-setup.exe";
+                    baseUrl + "Messenger-Beta-windows-arm64-setup.exe";
+                // Linux beta uses "facebook-messenger-desktop-beta-*" artifact names
                 downloads["linux"].url =
-                    baseUrl + "facebook-messenger-desktop-x86_64.AppImage";
+                    baseUrl + "facebook-messenger-desktop-beta-x86_64.AppImage";
                 downloads["linux-arm"].url =
-                    baseUrl + "facebook-messenger-desktop-arm64.AppImage";
+                    baseUrl + "facebook-messenger-desktop-beta-arm64.AppImage";
 
-                // Update Linux formats
-                Object.keys(linuxFormats).forEach((arch) => {
-                    Object.keys(linuxFormats[arch]).forEach((format) => {
-                        const formatData = linuxFormats[arch][format];
-                        if (formatData.url && !formatData.external) {
-                            formatData.url = formatData.url.replace(
-                                "/latest/download/",
-                                `/download/${betaVersion}/`,
-                            );
-                        }
-                        if (formatData.command) {
-                            formatData.command = formatData.command.replace(
-                                /\/latest\/download\//g,
-                                `/download/${betaVersion}/`,
-                            );
-                        }
-                        // Update Snap to use beta channel
-                        if (format === "snap") {
-                            formatData.command =
-                                "sudo snap install facebook-messenger-desktop --beta";
-                            formatData.label = "Or install Snap via terminal (Beta):";
+                // Update Linux formats with beta artifact names
+                const betaLinuxFormats = {
+                    x64: {
+                        appimage: {
+                            url: baseUrl + "facebook-messenger-desktop-beta-x86_64.AppImage",
+                            command: `wget -qO facebook-messenger-desktop-beta-x86_64.AppImage ${baseUrl}facebook-messenger-desktop-beta-x86_64.AppImage && chmod +x facebook-messenger-desktop-beta-x86_64.AppImage && ./facebook-messenger-desktop-beta-x86_64.AppImage`,
+                        },
+                        deb: {
+                            url: baseUrl + "facebook-messenger-desktop-beta-amd64.deb",
+                            command: `wget -qO facebook-messenger-desktop-beta-amd64.deb ${baseUrl}facebook-messenger-desktop-beta-amd64.deb && sudo apt install ./facebook-messenger-desktop-beta-amd64.deb`,
+                        },
+                        rpm: {
+                            url: baseUrl + "facebook-messenger-desktop-beta-x86_64.rpm",
+                            command: `wget -qO facebook-messenger-desktop-beta-x86_64.rpm ${baseUrl}facebook-messenger-desktop-beta-x86_64.rpm && sudo dnf install ./facebook-messenger-desktop-beta-x86_64.rpm`,
+                        },
+                    },
+                    arm64: {
+                        appimage: {
+                            url: baseUrl + "facebook-messenger-desktop-beta-arm64.AppImage",
+                            command: `wget -qO facebook-messenger-desktop-beta-arm64.AppImage ${baseUrl}facebook-messenger-desktop-beta-arm64.AppImage && chmod +x facebook-messenger-desktop-beta-arm64.AppImage && ./facebook-messenger-desktop-beta-arm64.AppImage`,
+                        },
+                        deb: {
+                            url: baseUrl + "facebook-messenger-desktop-beta-arm64.deb",
+                            command: `wget -qO facebook-messenger-desktop-beta-arm64.deb ${baseUrl}facebook-messenger-desktop-beta-arm64.deb && sudo apt install ./facebook-messenger-desktop-beta-arm64.deb`,
+                        },
+                        rpm: {
+                            url: baseUrl + "facebook-messenger-desktop-beta-aarch64.rpm",
+                            command: `wget -qO facebook-messenger-desktop-beta-aarch64.rpm ${baseUrl}facebook-messenger-desktop-beta-aarch64.rpm && sudo dnf install ./facebook-messenger-desktop-beta-aarch64.rpm`,
+                        },
+                    },
+                };
+
+                Object.keys(betaLinuxFormats).forEach((arch) => {
+                    Object.keys(betaLinuxFormats[arch]).forEach((format) => {
+                        if (linuxFormats[arch] && linuxFormats[arch][format]) {
+                            linuxFormats[arch][format].url = betaLinuxFormats[arch][format].url;
+                            linuxFormats[arch][format].command = betaLinuxFormats[arch][format].command;
                         }
                     });
                 });
+
+                // Update Snap to use beta channel
+                if (linuxFormats.x64 && linuxFormats.x64.snap) {
+                    linuxFormats.x64.snap.command =
+                        "sudo snap install facebook-messenger-desktop --beta";
+                    linuxFormats.x64.snap.label = "Or install Snap via terminal (Beta):";
+                }
+                if (linuxFormats.arm64 && linuxFormats.arm64.snap) {
+                    linuxFormats.arm64.snap.command =
+                        "sudo snap install facebook-messenger-desktop --beta";
+                    linuxFormats.arm64.snap.label = "Or install Snap via terminal (Beta):";
+                }
 
                 // Update macOS Homebrew command and label for beta
                 const homebrewCode = document.getElementById("mac-homebrew-code");
