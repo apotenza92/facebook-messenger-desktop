@@ -348,19 +348,69 @@ jobs:
             echo "Target channel: stable"
           fi
 
+      - name: Extract expected version
+        id: version
+        run: |
+          # Extract version from tag (v1.2.2-beta.1 -> 1.2.2-beta.1)
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Expected Snap version: $VERSION"
+
+      - name: Wait for Launchpad build
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          EXPECTED_VERSION="${{ steps.version.outputs.version }}"
+          MAX_WAIT=30  # 30 minutes max
+          WAIT_INTERVAL=60  # Check every 60 seconds
+          
+          echo "Waiting for Launchpad to build version $EXPECTED_VERSION..."
+          echo "Will check every ${WAIT_INTERVAL}s for up to ${MAX_WAIT} minutes"
+          echo ""
+          
+          for i in $(seq 1 $MAX_WAIT); do
+            echo "Check $i/$MAX_WAIT..."
+            
+            # Get current status and look for expected version in edge channel
+            STATUS=$(snapcraft status facebook-messenger-desktop 2>/dev/null || echo "")
+            
+            if echo "$STATUS" | grep -q "edge.*$EXPECTED_VERSION"; then
+              echo ""
+              echo "✅ Found version $EXPECTED_VERSION in edge channel!"
+              echo ""
+              echo "$STATUS"
+              exit 0
+            fi
+            
+            # Show what's currently in edge
+            EDGE_VERSION=$(echo "$STATUS" | grep "edge" | head -1 || echo "unknown")
+            echo "   Current edge: $EDGE_VERSION"
+            
+            if [ $i -lt $MAX_WAIT ]; then
+              sleep $WAIT_INTERVAL
+            fi
+          done
+          
+          echo ""
+          echo "⚠️ Timeout waiting for version $EXPECTED_VERSION in edge channel"
+          echo "Current status:"
+          snapcraft status facebook-messenger-desktop || true
+          echo ""
+          echo "Will attempt promotion anyway with whatever is in edge..."
+
       - name: Promote edge to ${{ steps.channel.outputs.target }}
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
           SNAPCRAFT_HAS_TTY: "true" # Workaround for https://github.com/snapcore/snapcraft/issues/4439
         run: |
           TARGET="${{ steps.channel.outputs.target }}"
+          EXPECTED_VERSION="${{ steps.version.outputs.version }}"
           
           echo "Current snapcraft status:"
           snapcraft status facebook-messenger-desktop || true
           
           echo ""
-          echo "Promoting all architectures from edge to ${TARGET}..."
-          echo "(This promotes whatever is currently in edge - ensure Launchpad builds completed first)"
+          echo "Promoting version $EXPECTED_VERSION from edge to ${TARGET}..."
           
           # Use 'yes' pipe workaround since --yes doesn't work with edge channel
           if yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel "${TARGET}"; then

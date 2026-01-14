@@ -6,11 +6,13 @@
 - **Windows/Linux**: Menu bar hover detection not working properly
 - **Windows/Linux**: F10 now permanently toggles menu bar visibility (previously would hide again when clicking in the app)
 - **Windows/Linux**: "Hide Menu Bar" / "Show Menu Bar" label now correctly says "Toggle Menu Bar"
+- **Linux Snap**: Version stuck on 1.1.8 - now uses package.json version instead of `git describe`
 
 ### Improved
 - **Download page**: Beta channel now always shows latest version (beta or stable, whichever is newer)
 - **Download page**: Stable/Beta toggle always visible, removed version number display
 - **Download page**: Orange theme applied to all buttons when Beta is selected
+- **CI**: Snap promotion now waits for Launchpad builds to complete before promoting
 
 ### Changed
 - Renamed "Reset & Logout" menu item to "Logout and Reset App" for clarity

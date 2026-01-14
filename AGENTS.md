@@ -45,6 +45,10 @@ Tags trigger production releases to all users via GitHub Actions. Always ask and
 - If build fails: fix and retry same version, don't bump
 - See RELEASE_PROCESS.md for full procedures
 
+### Changelog Requirements
+
+**Before any version tag/commit/build**: Always ensure CHANGELOG.md is up to date with all changes for the version being released. Review recent commits and verify every user-facing change is documented before proceeding with the release.
+
 ## Code Conventions
 
 ### Platform Detection
