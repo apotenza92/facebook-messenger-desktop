@@ -325,7 +325,8 @@ jobs:
           token: ${{ secrets.WINGET_TOKEN }}
 
   # Snap builds are handled by Snapcraft's "Build from GitHub" service
-  # This job waits for those builds to complete, then promotes them to stable
+  # This job promotes whatever is currently in edge to stable
+  # Note: Run this AFTER Launchpad builds complete (typically 30-60 min after tag push)
   promote-snap-to-stable:
     name: Promote Snap to Stable
     needs: release
@@ -337,126 +338,34 @@ jobs:
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic
 
-      - name: Wait for Snapcraft builds and promote to stable
+      - name: Promote edge to stable
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAPCRAFT_HAS_TTY: "true" # Workaround for https://github.com/snapcore/snapcraft/issues/4439
         run: |
-          echo "Monitoring Snapcraft builds..."
-          echo "Builds page: https://snapcraft.io/facebook-messenger-desktop/builds"
-
-          # Function to get revision for a specific arch from edge channel
-          # Uses snapcraft status and parses the table format
-          get_edge_rev() {
-            local arch=$1
-            # snapcraft status output format varies, so we use a more robust approach
-            # Get the full status, find edge line, extract revision number
-            snapcraft status facebook-messenger-desktop 2>/dev/null | \
-              grep -E "edge\s+" | \
-              grep -E "\s${arch}\s" | \
-              grep -oE '\s[0-9]+\s' | \
-              tr -d ' ' | \
-              head -1
-          }
-
-          # Get initial revisions to detect when new builds complete
-          INITIAL_AMD64=$(get_edge_rev "amd64")
-          INITIAL_ARM64=$(get_edge_rev "arm64")
-          echo "Current edge revisions: amd64=$INITIAL_AMD64, arm64=$INITIAL_ARM64"
-
-          # Show full status for debugging
-          echo ""
-          echo "Full snapcraft status:"
-          snapcraft status facebook-messenger-desktop || true
-
-          # Poll every 2 minutes for up to 90 minutes (Launchpad builds can be slow)
-          MAX_ATTEMPTS=45
-          ATTEMPT=0
-          NEW_BUILDS_DETECTED=false
-
-          echo ""
-          echo "Waiting for new builds to appear in edge channel..."
-
-          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            ATTEMPT=$((ATTEMPT + 1))
-            echo "Check $ATTEMPT/$MAX_ATTEMPTS ($(date +%H:%M:%S))"
-
-            CURRENT_AMD64=$(get_edge_rev "amd64")
-            CURRENT_ARM64=$(get_edge_rev "arm64")
-
-            # Check if BOTH revisions changed (both builds completed)
-            if [ "$CURRENT_AMD64" != "$INITIAL_AMD64" ] && [ "$CURRENT_ARM64" != "$INITIAL_ARM64" ]; then
-              echo ""
-              echo "✅ Both builds detected!"
-              echo "New edge revisions: amd64=$CURRENT_AMD64, arm64=$CURRENT_ARM64"
-              NEW_BUILDS_DETECTED=true
-              break
-            fi
-
-            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-              echo ""
-              echo "⏰ Timeout after 90 minutes."
-              echo "⚠️ No new builds detected. Manual promotion may be required."
-              echo "Visit: https://snapcraft.io/facebook-messenger-desktop/releases"
-              break
-            fi
-
-            sleep 120  # Wait 2 minutes between checks
-          done
-
-          echo ""
           echo "Current snapcraft status:"
-          snapcraft status facebook-messenger-desktop
-
-          # Get final revision numbers
-          AMD64_REV=$(get_edge_rev "amd64")
-          ARM64_REV=$(get_edge_rev "arm64")
-
+          snapcraft status facebook-messenger-desktop || true
+          
           echo ""
-          echo "Revisions to promote: amd64=$AMD64_REV, arm64=$ARM64_REV"
-
-          # Track promotion success
-          PROMOTE_SUCCESS=true
-
-          # Promote amd64 to stable
-          if [ -n "$AMD64_REV" ] && [ "$AMD64_REV" != "-" ]; then
-            echo "Promoting amd64 revision $AMD64_REV to stable..."
-            if snapcraft release facebook-messenger-desktop "$AMD64_REV" stable; then
-              echo "✅ amd64 promoted successfully"
-            else
-              echo "❌ Failed to promote amd64"
-              PROMOTE_SUCCESS=false
-            fi
-          else
-            echo "⚠️ Warning: No amd64 revision found in edge channel"
-            PROMOTE_SUCCESS=false
-          fi
-
-          # Promote arm64 to stable
-          if [ -n "$ARM64_REV" ] && [ "$ARM64_REV" != "-" ]; then
-            echo "Promoting arm64 revision $ARM64_REV to stable..."
-            if snapcraft release facebook-messenger-desktop "$ARM64_REV" stable; then
-              echo "✅ arm64 promoted successfully"
-            else
-              echo "❌ Failed to promote arm64"
-              PROMOTE_SUCCESS=false
-            fi
-          else
-            echo "⚠️ Warning: No arm64 revision found in edge channel"
-            PROMOTE_SUCCESS=false
-          fi
-
-          echo ""
-          echo "Final snapcraft status:"
-          snapcraft status facebook-messenger-desktop
-
-          if [ "$PROMOTE_SUCCESS" = true ]; then
+          echo "Promoting all architectures from edge to stable..."
+          echo "(This promotes whatever is currently in edge - ensure Launchpad builds completed first)"
+          
+          # Use 'yes' pipe workaround since --yes doesn't work with edge channel
+          if yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable; then
             echo ""
             echo "✅ Snap promotion complete!"
           else
             echo ""
-            echo "⚠️ Snap promotion had issues. Please check manually:"
-            echo "https://snapcraft.io/facebook-messenger-desktop/releases"
+            echo "⚠️ Snap promotion failed. This may happen if:"
+            echo "   - Launchpad builds haven't completed yet"
+            echo "   - No new revisions in edge channel"
+            echo ""
+            echo "Please promote manually at: https://snapcraft.io/facebook-messenger-desktop/releases"
           fi
+          
+          echo ""
+          echo "Final snapcraft status:"
+          snapcraft status facebook-messenger-desktop || true
 
   update-flatpak-repo:
     name: Update Flatpak Repo
