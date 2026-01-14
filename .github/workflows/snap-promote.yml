@@ -1,0 +1,134 @@
+name: Snap Promotion Check
+
+# Runs daily to check if there are new edge builds that should be promoted
+# This handles cases where Launchpad builds complete after the release workflow
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  check-and-promote:
+    name: Check and Promote Snap
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for tag lookup
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Check snap status
+        id: status
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          echo "Current Snap store status:"
+          snapcraft status facebook-messenger-desktop || exit 1
+          
+          # Get edge version (first arch row under edge)
+          EDGE_VERSION=$(snapcraft status facebook-messenger-desktop 2>/dev/null | grep -A1 "edge" | tail -1 | awk '{print $1}')
+          BETA_VERSION=$(snapcraft status facebook-messenger-desktop 2>/dev/null | grep -A1 "beta" | tail -1 | awk '{print $1}')
+          STABLE_VERSION=$(snapcraft status facebook-messenger-desktop 2>/dev/null | grep -A1 "stable" | tail -1 | awk '{print $1}')
+          
+          echo "edge_version=$EDGE_VERSION" >> $GITHUB_OUTPUT
+          echo "beta_version=$BETA_VERSION" >> $GITHUB_OUTPUT
+          echo "stable_version=$STABLE_VERSION" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "Detected versions:"
+          echo "  Edge:   $EDGE_VERSION"
+          echo "  Beta:   $BETA_VERSION"
+          echo "  Stable: $STABLE_VERSION"
+
+      - name: Determine promotions needed
+        id: promote
+        run: |
+          EDGE="${{ steps.status.outputs.edge_version }}"
+          BETA="${{ steps.status.outputs.beta_version }}"
+          STABLE="${{ steps.status.outputs.stable_version }}"
+          
+          # Skip if edge is empty or has no version
+          if [ -z "$EDGE" ] || [ "$EDGE" = "-" ]; then
+            echo "No version in edge channel, nothing to promote"
+            echo "promote_beta=false" >> $GITHUB_OUTPUT
+            echo "promote_stable=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if edge version is a prerelease (contains alpha, beta, or rc)
+          IS_PRERELEASE=false
+          if [[ "$EDGE" == *"alpha"* ]] || [[ "$EDGE" == *"beta"* ]] || [[ "$EDGE" == *"rc"* ]]; then
+            IS_PRERELEASE=true
+          fi
+          
+          # Check if there's a corresponding git tag for this version
+          if git rev-parse "v$EDGE" >/dev/null 2>&1; then
+            echo "Found git tag v$EDGE - this is a released version"
+            HAS_TAG=true
+          else
+            echo "No git tag v$EDGE found - skipping promotion"
+            echo "promote_beta=false" >> $GITHUB_OUTPUT
+            echo "promote_stable=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Determine what to promote
+          PROMOTE_BETA=false
+          PROMOTE_STABLE=false
+          
+          # Prereleases go to beta, stable releases go to both
+          if [ "$IS_PRERELEASE" = true ]; then
+            if [ "$EDGE" != "$BETA" ]; then
+              PROMOTE_BETA=true
+              echo "Will promote $EDGE to beta (prerelease)"
+            fi
+          else
+            if [ "$EDGE" != "$BETA" ]; then
+              PROMOTE_BETA=true
+              echo "Will promote $EDGE to beta (stable release)"
+            fi
+            if [ "$EDGE" != "$STABLE" ]; then
+              PROMOTE_STABLE=true
+              echo "Will promote $EDGE to stable"
+            fi
+          fi
+          
+          echo "promote_beta=$PROMOTE_BETA" >> $GITHUB_OUTPUT
+          echo "promote_stable=$PROMOTE_STABLE" >> $GITHUB_OUTPUT
+          
+          if [ "$PROMOTE_BETA" = false ] && [ "$PROMOTE_STABLE" = false ]; then
+            echo "All channels are up to date!"
+          fi
+
+      - name: Promote to beta
+        if: steps.promote.outputs.promote_beta == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAPCRAFT_HAS_TTY: "true"
+        run: |
+          echo "Promoting from edge to beta..."
+          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta
+          echo "✅ Promoted to beta"
+
+      - name: Promote to stable
+        if: steps.promote.outputs.promote_stable == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAPCRAFT_HAS_TTY: "true"
+        run: |
+          echo "Promoting from edge to stable..."
+          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable
+          echo "✅ Promoted to stable"
+
+      - name: Final status
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          echo ""
+          echo "Final Snap store status:"
+          snapcraft status facebook-messenger-desktop || true

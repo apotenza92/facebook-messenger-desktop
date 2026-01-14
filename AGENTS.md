@@ -32,22 +32,58 @@ assets/tray/        # System tray icons
 
 **Never create or push version tags (v*) without explicit user confirmation.**
 
-Tags trigger production releases to all users via GitHub Actions. Always ask and wait for confirmation before:
-- `git tag v*`
-- `git push origin v*`
-- `gh release create`
+Tags trigger production releases to all users via GitHub Actions. Always ask and wait for confirmation before running `./scripts/release.sh`.
 
-**Safe without asking**: commits, pushing to main, updating CHANGELOG.md/package.json, running builds.
+**Safe without asking**: commits, pushing to main, updating CHANGELOG.md/package.json, running local builds.
+
+### Changelog Requirements
+
+**Before any release**: Always ensure CHANGELOG.md is up to date with all changes for the version being released. Review recent commits and verify every user-facing change is documented.
+
+## Release Process
+
+### How to Release
+
+```bash
+./scripts/release.sh <version>
+
+# Examples:
+./scripts/release.sh 1.2.3           # Stable release
+./scripts/release.sh 1.2.3-beta.1    # Beta release
+```
+
+The script automatically:
+1. Validates version format and checks CHANGELOG.md/package.json
+2. **On macOS**: Builds, signs, notarizes locally (faster), uploads to GitHub, then triggers CI for Windows/Linux
+3. **On other platforms**: Triggers CI to build all platforms
+
+### Pre-Release Checklist
+
+- [ ] Code changes completed and tested
+- [ ] Update `CHANGELOG.md` with version and changes
+- [ ] Update `package.json` version number
+- [ ] Commit and push changes to `main`
+- [ ] **Get explicit permission before running release script**
 
 ### Version Management
 
 - Check latest successful release before creating new version
 - If build fails: fix and retry same version, don't bump
-- See RELEASE_PROCESS.md for full procedures
 
-### Changelog Requirements
+### Package Manager Updates
 
-**Before any version tag/commit/build**: Always ensure CHANGELOG.md is up to date with all changes for the version being released. Review recent commits and verify every user-facing change is documented before proceeding with the release.
+After release, CI automatically updates:
+- **Homebrew**: Stable → main cask, Beta → @beta cask
+- **Snap**: Promoted every 6 hours via `snap-promote.yml` workflow
+- **Flatpak**: Updated via GitHub Pages repo
+
+### Emergency: Delete a Release
+
+```bash
+git tag -d vX.Y.Z                      # Delete local tag
+git push origin :refs/tags/vX.Y.Z      # Delete remote tag
+gh release delete vX.Y.Z --yes         # Delete GitHub release
+```
 
 ## Code Conventions
 
@@ -75,7 +111,9 @@ else { /* Linux */ }
 
 - `src/main/main.ts` - App entry, window management, menus, auto-update
 - `src/preload/notifications-inject.ts` - Injected into messenger.com
-- `.github/workflows/release.yml` - Release automation
+- `.github/workflows/release.yml` - Build and release automation
+- `.github/workflows/snap-promote.yml` - Snap channel promotion (runs every 6 hours)
+- `scripts/release.sh` - Release script (use this to release)
 
 ## Commit Messages
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.2-beta.4] - 2026-01-14
+
+### Improved
+- **Release process**: macOS builds now run locally when releasing from a Mac (faster signing/notarization)
+  - New `./scripts/release.sh` handles everything automatically
+  - Detects if on macOS and builds locally, otherwise CI builds all platforms
+  - CI skips macOS build if artifacts were already uploaded locally
+- **Snap promotion**: Now runs every 6 hours via dedicated workflow instead of during release
+  - More reliable promotion even if Launchpad builds take longer than expected
+  - Handles both beta and stable channel promotion automatically
+- **Download page**: Auto-detects OS on page refresh instead of persisting previous selection
+
+### Changed
+- Consolidated release documentation into AGENTS.md (removed RELEASE_PROCESS.md)
+
 ## [1.2.2-beta.3] - 2026-01-14
 
 ### Fixed

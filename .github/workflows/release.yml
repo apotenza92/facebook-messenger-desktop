@@ -15,9 +15,39 @@ jobs:
   # PHASE 1: Build all platforms
   # ============================================
 
+  # Check if macOS was already built locally (uploaded to release)
+  check-macos-artifacts:
+    name: Check for Local macOS Build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Check for existing macOS artifacts
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Checking for macOS artifacts in release $TAG..."
+          
+          # Wait a moment for release to be created
+          sleep 5
+          
+          # Check if release exists and has macOS zip
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' 2>/dev/null | grep -q "Messenger-macos"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✓ Found existing macOS artifacts - will skip CI build"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No macOS artifacts found - CI will build"
+          fi
+
   build-macos:
     name: Build macOS
+    needs: check-macos-artifacts
     runs-on: macos-latest
+    if: needs.check-macos-artifacts.outputs.exists != 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -160,9 +190,9 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-macos, build-windows, build-linux]
+    needs: [check-macos-artifacts, build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && startsWith(github.ref, 'refs/tags/v') && !failure() && !cancelled()
 
     steps:
       - name: Checkout code
@@ -176,7 +206,9 @@ jobs:
           merge-multiple: true
 
       - name: List artifacts
-        run: find artifacts -type f | sort
+        run: |
+          echo "Artifacts from CI builds:"
+          find artifacts -type f | sort || echo "No CI artifacts found"
 
       - name: Extract version from tag
         id: tag_version
@@ -409,110 +441,8 @@ jobs:
           installers-regex: 'Messenger-windows-x64-setup\.exe$'
           token: ${{ secrets.WINGET_TOKEN }}
 
-  # Snap builds are handled by Snapcraft's "Build from GitHub" service
-  # This job promotes edge to the appropriate channel based on release type
-  promote-snap:
-    name: Promote Snap
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    continue-on-error: true # Don't fail the workflow if snap promotion fails
-
-    steps:
-      - name: Install Snapcraft
-        run: sudo snap install snapcraft --classic
-
-      - name: Determine target channel
-        id: channel
-        run: |
-          if [[ "${{ github.ref }}" == *"alpha"* ]] || [[ "${{ github.ref }}" == *"beta"* ]] || [[ "${{ github.ref }}" == *"rc"* ]]; then
-            echo "target=beta" >> $GITHUB_OUTPUT
-            echo "Target channel: beta (prerelease)"
-          else
-            echo "target=stable" >> $GITHUB_OUTPUT
-            echo "Target channel: stable"
-          fi
-
-      - name: Extract expected version
-        id: version
-        run: |
-          # Extract version from tag (v1.2.2-beta.1 -> 1.2.2-beta.1)
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Expected Snap version: $VERSION"
-
-      - name: Wait for Launchpad build
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          EXPECTED_VERSION="${{ steps.version.outputs.version }}"
-          MAX_WAIT=30  # 30 minutes max
-          WAIT_INTERVAL=60  # Check every 60 seconds
-          
-          echo "Waiting for Launchpad to build version $EXPECTED_VERSION..."
-          echo "Will check every ${WAIT_INTERVAL}s for up to ${MAX_WAIT} minutes"
-          echo ""
-          
-          for i in $(seq 1 $MAX_WAIT); do
-            echo "Check $i/$MAX_WAIT..."
-            
-            # Get current status and look for expected version in edge channel
-            STATUS=$(snapcraft status facebook-messenger-desktop 2>/dev/null || echo "")
-            
-            if echo "$STATUS" | grep -q "edge.*$EXPECTED_VERSION"; then
-              echo ""
-              echo "✅ Found version $EXPECTED_VERSION in edge channel!"
-              echo ""
-              echo "$STATUS"
-              exit 0
-            fi
-            
-            # Show what's currently in edge
-            EDGE_VERSION=$(echo "$STATUS" | grep "edge" | head -1 || echo "unknown")
-            echo "   Current edge: $EDGE_VERSION"
-            
-            if [ $i -lt $MAX_WAIT ]; then
-              sleep $WAIT_INTERVAL
-            fi
-          done
-          
-          echo ""
-          echo "⚠️ Timeout waiting for version $EXPECTED_VERSION in edge channel"
-          echo "Current status:"
-          snapcraft status facebook-messenger-desktop || true
-          echo ""
-          echo "Will attempt promotion anyway with whatever is in edge..."
-
-      - name: Promote edge to ${{ steps.channel.outputs.target }}
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true" # Workaround for https://github.com/snapcore/snapcraft/issues/4439
-        run: |
-          TARGET="${{ steps.channel.outputs.target }}"
-          EXPECTED_VERSION="${{ steps.version.outputs.version }}"
-          
-          echo "Current snapcraft status:"
-          snapcraft status facebook-messenger-desktop || true
-          
-          echo ""
-          echo "Promoting version $EXPECTED_VERSION from edge to ${TARGET}..."
-          
-          # Use 'yes' pipe workaround since --yes doesn't work with edge channel
-          if yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel "${TARGET}"; then
-            echo ""
-            echo "✅ Snap promotion to ${TARGET} complete!"
-          else
-            echo ""
-            echo "⚠️ Snap promotion failed. This may happen if:"
-            echo "   - Launchpad builds haven't completed yet"
-            echo "   - No new revisions in edge channel"
-            echo ""
-            echo "Please promote manually at: https://snapcraft.io/facebook-messenger-desktop/releases"
-          fi
-          
-          echo ""
-          echo "Final snapcraft status:"
-          snapcraft status facebook-messenger-desktop || true
+  # NOTE: Snap promotion is handled by snap-promote.yml workflow (runs every 6 hours)
+  # Launchpad builds snaps automatically, then snap-promote.yml promotes edge to beta/stable
 
   update-flatpak-repo:
     name: Update Flatpak Repo
