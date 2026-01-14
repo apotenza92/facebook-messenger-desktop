@@ -15,39 +15,9 @@ jobs:
   # PHASE 1: Build all platforms
   # ============================================
 
-  # Check if macOS was already built locally (uploaded to release)
-  check-macos-artifacts:
-    name: Check for Local macOS Build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    outputs:
-      exists: ${{ steps.check.outputs.exists }}
-    steps:
-      - name: Check for existing macOS artifacts
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          echo "Checking for macOS artifacts in release $TAG..."
-          
-          # Wait a moment for release to be created
-          sleep 5
-          
-          # Check if release exists and has macOS zip
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' 2>/dev/null | grep -q "Messenger-macos"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✓ Found existing macOS artifacts - will skip CI build"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "No macOS artifacts found - CI will build"
-          fi
-
   build-macos:
     name: Build macOS
-    needs: check-macos-artifacts
     runs-on: macos-latest
-    if: needs.check-macos-artifacts.outputs.exists != 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -190,9 +160,9 @@ jobs:
 
   release:
     name: Create Release
-    needs: [check-macos-artifacts, build-macos, build-windows, build-linux]
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
-    if: always() && startsWith(github.ref, 'refs/tags/v') && !failure() && !cancelled()
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - name: Checkout code
