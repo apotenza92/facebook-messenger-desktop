@@ -133,12 +133,19 @@
 
             .connector-path {
                 fill: none;
-                stroke: #0084ff;
                 stroke-width: 2;
                 stroke-linecap: round;
                 stroke-linejoin: round;
                 stroke-dasharray: 6 4;
                 animation: flowDash 1s linear infinite;
+            }
+
+            .connector-path {
+                stroke: url(#connector-gradient-blue);
+            }
+
+            body.beta-mode .connector-path {
+                stroke: url(#connector-gradient-orange);
             }
 
             @keyframes flowDash {
@@ -213,10 +220,6 @@
 
             body.beta-mode .download-btn:hover {
                 background: #e65c00;
-            }
-
-            body.beta-mode .connector-path {
-                stroke: #ff6b00;
             }
 
             body.beta-mode .command-label {
@@ -1113,12 +1116,75 @@
             }
 
             function updateConnectors() {
-                const svg = document.getElementById("connector-svg");
-                const flow = document.getElementById("selection-flow");
-                if (!svg || !flow) return;
+                 const svg = document.getElementById("connector-svg");
+                 const flow = document.getElementById("selection-flow");
+                 if (!svg || !flow) return;
 
-                const flowRect = flow.getBoundingClientRect();
-                svg.innerHTML = "";
+                 const flowRect = flow.getBoundingClientRect();
+                 svg.innerHTML = "";
+
+                 // Create gradient definitions for fade-out effect
+                 const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+                 
+                 // Blue gradient (stable mode)
+                 const blueGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+                 blueGradient.setAttribute("id", "connector-gradient-blue");
+                 blueGradient.setAttribute("x1", "0%");
+                 blueGradient.setAttribute("y1", "0%");
+                 blueGradient.setAttribute("x2", "100%");
+                 blueGradient.setAttribute("y2", "100%");
+                 const blueStop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 blueStop1.setAttribute("offset", "0%");
+                 blueStop1.setAttribute("stop-color", "#0084ff");
+                 blueStop1.setAttribute("stop-opacity", "0");
+                 const blueStop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 blueStop2.setAttribute("offset", "15%");
+                 blueStop2.setAttribute("stop-color", "#0084ff");
+                 blueStop2.setAttribute("stop-opacity", "1");
+                 const blueStop3 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 blueStop3.setAttribute("offset", "85%");
+                 blueStop3.setAttribute("stop-color", "#0084ff");
+                 blueStop3.setAttribute("stop-opacity", "1");
+                 const blueStop4 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 blueStop4.setAttribute("offset", "100%");
+                 blueStop4.setAttribute("stop-color", "#0084ff");
+                 blueStop4.setAttribute("stop-opacity", "0");
+                 blueGradient.appendChild(blueStop1);
+                 blueGradient.appendChild(blueStop2);
+                 blueGradient.appendChild(blueStop3);
+                 blueGradient.appendChild(blueStop4);
+                 defs.appendChild(blueGradient);
+
+                 // Orange gradient (beta mode)
+                 const orangeGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+                 orangeGradient.setAttribute("id", "connector-gradient-orange");
+                 orangeGradient.setAttribute("x1", "0%");
+                 orangeGradient.setAttribute("y1", "0%");
+                 orangeGradient.setAttribute("x2", "100%");
+                 orangeGradient.setAttribute("y2", "100%");
+                 const orangeStop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 orangeStop1.setAttribute("offset", "0%");
+                 orangeStop1.setAttribute("stop-color", "#ff6b00");
+                 orangeStop1.setAttribute("stop-opacity", "0");
+                 const orangeStop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 orangeStop2.setAttribute("offset", "15%");
+                 orangeStop2.setAttribute("stop-color", "#ff6b00");
+                 orangeStop2.setAttribute("stop-opacity", "1");
+                 const orangeStop3 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 orangeStop3.setAttribute("offset", "85%");
+                 orangeStop3.setAttribute("stop-color", "#ff6b00");
+                 orangeStop3.setAttribute("stop-opacity", "1");
+                 const orangeStop4 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+                 orangeStop4.setAttribute("offset", "100%");
+                 orangeStop4.setAttribute("stop-color", "#ff6b00");
+                 orangeStop4.setAttribute("stop-opacity", "0");
+                 orangeGradient.appendChild(orangeStop1);
+                 orangeGradient.appendChild(orangeStop2);
+                 orangeGradient.appendChild(orangeStop3);
+                 orangeGradient.appendChild(orangeStop4);
+                 defs.appendChild(orangeGradient);
+
+                 svg.appendChild(defs);
 
                 // Get active channel button (if visible)
                 const channelToggle = document.getElementById("channel-toggle");
@@ -1684,10 +1750,15 @@
                 );
 
                 if (formatData.disabled) {
-                    downloadBtn.style.display = "none";
-                    commandSection.style.display = "none";
-                    formatNote.style.display = "block";
-                    formatNote.textContent = formatData.note;
+                     downloadBtn.style.display = "none";
+                     commandSection.style.display = "none";
+                     formatNote.style.display = "block";
+                     formatNote.innerHTML = `<div>${formatData.note}</div><button id="switch-to-stable-btn" style="margin-top: 0.5rem; padding: 0.3rem 0.75rem; font-size: 0.7rem; background: #0084ff; color: white; border: none; border-radius: 6px; cursor: pointer;">Switch to Stable</button>`;
+                     // Add event listener for the switch button
+                     const switchBtn = document.getElementById("switch-to-stable-btn");
+                     if (switchBtn) {
+                         switchBtn.addEventListener("click", () => switchChannel("stable"));
+                     }
                 } else {
                     formatNote.style.display = "none";
                     commandSection.style.display = "block";
@@ -2234,16 +2305,16 @@
                     .addEventListener("click", () => setLinuxArch("arm64"));
 
                 // Linux format toggle buttons
-                document.querySelectorAll(".format-btn").forEach((btn) => {
-                    btn.addEventListener("click", () => {
-                        const format = btn.getAttribute("data-format");
-                        const formatData =
-                            linuxFormats[currentLinuxArch][format];
-                        if (!formatData || !formatData.disabled) {
-                            setLinuxFormat(format);
-                        }
-                    });
-                });
+                 document.querySelectorAll(".format-btn").forEach((btn) => {
+                     btn.addEventListener("click", () => {
+                         const format = btn.getAttribute("data-format");
+                         const formatData =
+                             linuxFormats[currentLinuxArch][format];
+                         if (!formatData) return;
+                         // Allow disabled formats to be selected so the message displays
+                         setLinuxFormat(format);
+                     });
+                 });
 
                 // Linux copy button
                 document
