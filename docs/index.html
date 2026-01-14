@@ -1694,7 +1694,7 @@
                         if (format === "snap") {
                             formatData.command =
                                 "sudo snap install facebook-messenger-desktop --beta";
-                            formatData.label = "Install via Snap (Beta)";
+                            formatData.label = "Or install Snap via terminal (Beta):";
                         }
                     });
                 });
@@ -1780,10 +1780,12 @@
                 if (linuxFormats.x64 && linuxFormats.x64.snap) {
                     linuxFormats.x64.snap.command =
                         "sudo snap install facebook-messenger-desktop";
+                    linuxFormats.x64.snap.label = "Or install Snap via terminal:";
                 }
                 if (linuxFormats.arm64 && linuxFormats.arm64.snap) {
                     linuxFormats.arm64.snap.command =
                         "sudo snap install facebook-messenger-desktop";
+                    linuxFormats.arm64.snap.label = "Or install Snap via terminal:";
                 }
 
                 // Reset macOS Homebrew command to stable
@@ -2014,13 +2016,12 @@
                         }, 2000);
                     });
 
-                // macOS Homebrew copy button
+                // macOS Homebrew copy button - copies the currently displayed command
                 document
                     .getElementById("mac-homebrew-copy")
                     .addEventListener("click", () => {
-                        navigator.clipboard.writeText(
-                            "brew install --cask apotenza92/tap/facebook-messenger-desktop",
-                        );
+                        const code = document.getElementById("mac-homebrew-code").textContent;
+                        navigator.clipboard.writeText(code);
                         const copyBtn =
                             document.getElementById("mac-homebrew-copy");
                         copyBtn.innerHTML =
