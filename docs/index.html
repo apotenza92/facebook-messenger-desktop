@@ -1499,16 +1499,6 @@
                     btnText.textContent = `Download${suffix} ${downloads["windows"].ext} (x64)`;
                 }
 
-                // Update URL parameter
-                const params = new URLSearchParams(window.location.search);
-                if (arch === "arm64") {
-                    params.set("arch", "arm64");
-                } else {
-                    params.set("arch", "x64");
-                }
-                params.set("platform", "windows");
-                window.history.replaceState({}, "", "?" + params.toString());
-
                 setTimeout(updateConnectors, 0);
             }
 
@@ -1531,16 +1521,6 @@
                     btn.href = downloads["mac-arm"].url;
                     btnText.textContent = `Download${suffix} ${downloads["mac-arm"].ext} (Apple Silicon)`;
                 }
-
-                // Update URL parameter
-                const params = new URLSearchParams(window.location.search);
-                if (arch === "intel" || arch === "x64") {
-                    params.set("arch", "intel");
-                } else {
-                    params.set("arch", "arm");
-                }
-                params.set("platform", "mac");
-                window.history.replaceState({}, "", "?" + params.toString());
 
                 setTimeout(updateConnectors, 0);
             }
@@ -1962,20 +1942,15 @@
                     }
                 }
 
-                // Update URL
+                // Don't persist platform in URL - always auto-detect on refresh
+                // Only keep channel param if set
                 const params = new URLSearchParams(window.location.search);
-                if (
-                    platform === "mac" ||
-                    platform === "mac-arm" ||
-                    platform === "mac-intel"
-                ) {
-                    params.set("platform", "mac");
-                } else if (platform === "linux" || platform === "linux-arm") {
-                    params.set("platform", "linux");
-                } else {
-                    params.set("platform", "windows");
-                }
-                window.history.replaceState({}, "", "?" + params.toString());
+                params.delete("platform");
+                params.delete("arch");
+                const newUrl = params.toString()
+                    ? "?" + params.toString()
+                    : window.location.pathname;
+                window.history.replaceState({}, "", newUrl);
 
                 setTimeout(updateConnectors, 0);
             }
