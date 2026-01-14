@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3-beta.1] - 2026-01-14
+
+### Fixed
+- **Auto-update**: Beta app now correctly downloads beta-branded artifacts when updating
+  - Uses separate update channel (beta-*.yml) to ensure correct artifact selection
+  - Fixes issue where beta app would install stable app and cause dock/taskbar confusion
+
 ## [1.2.3] - 2026-01-14
 
 ### Fixed
