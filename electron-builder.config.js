@@ -56,15 +56,21 @@ if (isWindowsBuild) {
 }
 
 // Base configuration (shared between stable and beta)
+const publishConfig = {
+  provider: 'github',
+  owner: 'apotenza92',
+  repo: 'FacebookMessengerDesktop',
+};
+
+// Beta builds use 'beta' channel for updates
+// This ensures beta apps only receive beta updates and use beta-branded artifacts
+if (isBeta) {
+  publishConfig.channel = 'beta';
+}
+
 const baseConfig = {
   afterPack: './scripts/after-pack.js',
-  publish: [
-    {
-      provider: 'github',
-      owner: 'apotenza92',
-      repo: 'FacebookMessengerDesktop',
-    },
-  ],
+  publish: [publishConfig],
   directories: {
     output: 'release',
   },
