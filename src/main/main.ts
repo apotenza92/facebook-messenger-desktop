@@ -272,6 +272,27 @@ const shortcutFixTestFile = path.join(
   app.getPath("userData"),
   "shortcut-fix-test.json",
 );
+const updateFrequencyFile = path.join(
+  app.getPath("userData"),
+  "update-frequency.json",
+);
+const lastUpdateCheckFile = path.join(
+  app.getPath("userData"),
+  "last-update-check.json",
+);
+
+// Update check frequency options (in milliseconds, except "startup" and "never")
+type UpdateFrequency = "never" | "startup" | "hourly" | "sixHours" | "twelveHours" | "daily" | "weekly";
+const UPDATE_FREQUENCY_MS: Record<Exclude<UpdateFrequency, "never" | "startup">, number> = {
+  hourly: 60 * 60 * 1000,
+  sixHours: 6 * 60 * 60 * 1000,
+  twelveHours: 12 * 60 * 60 * 1000,
+  daily: 24 * 60 * 60 * 1000,
+  weekly: 7 * 24 * 60 * 60 * 1000,
+};
+let currentUpdateFrequency: UpdateFrequency = "daily";
+let updateCheckInterval: NodeJS.Timeout | null = null;
+
 // XWayland preference for Linux Wayland users (for screen sharing compatibility)
 let useXWayland = false;
 
@@ -1708,6 +1729,136 @@ function saveMenuBarModeSetting(mode: MenuBarMode): void {
   } catch (e) {
     console.warn("[Menu Bar] Failed to save mode setting:", e);
   }
+}
+
+// ===== Update Frequency Functions =====
+
+function loadUpdateFrequency(): UpdateFrequency {
+  try {
+    if (fs.existsSync(updateFrequencyFile)) {
+      const raw = fs.readFileSync(updateFrequencyFile, "utf8");
+      const parsed = JSON.parse(raw);
+      const validFrequencies: UpdateFrequency[] = ["never", "startup", "hourly", "sixHours", "twelveHours", "daily", "weekly"];
+      if (validFrequencies.includes(parsed.frequency)) {
+        console.log("[Update Frequency] Loaded setting:", parsed.frequency);
+        return parsed.frequency;
+      }
+    }
+  } catch (e) {
+    console.warn("[Update Frequency] Failed to load setting, using default:", e);
+  }
+  console.log("[Update Frequency] Using default setting: daily");
+  return "daily";
+}
+
+function saveUpdateFrequency(frequency: UpdateFrequency): void {
+  try {
+    fs.writeFileSync(updateFrequencyFile, JSON.stringify({ frequency }));
+    console.log("[Update Frequency] Saved setting:", frequency);
+  } catch (e) {
+    console.warn("[Update Frequency] Failed to save setting:", e);
+  }
+}
+
+function setUpdateFrequency(frequency: UpdateFrequency): void {
+  currentUpdateFrequency = frequency;
+  saveUpdateFrequency(frequency);
+  
+  // Restart the update check schedule with new frequency
+  stopUpdateCheckSchedule();
+  startUpdateCheckSchedule();
+  
+  // Rebuild menu to update the radio buttons
+  createApplicationMenu();
+  
+  console.log(`[Update Frequency] Set to: ${frequency}`);
+}
+
+function loadLastUpdateCheckTime(): number {
+  try {
+    if (fs.existsSync(lastUpdateCheckFile)) {
+      const raw = fs.readFileSync(lastUpdateCheckFile, "utf8");
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.timestamp === "number") {
+        return parsed.timestamp;
+      }
+    }
+  } catch (e) {
+    console.warn("[Update Frequency] Failed to load last check time:", e);
+  }
+  return 0;
+}
+
+function saveLastUpdateCheckTime(): void {
+  try {
+    fs.writeFileSync(lastUpdateCheckFile, JSON.stringify({ timestamp: Date.now() }));
+    console.log("[Update Frequency] Saved last check time");
+  } catch (e) {
+    console.warn("[Update Frequency] Failed to save last check time:", e);
+  }
+}
+
+function shouldCheckForUpdates(): boolean {
+  if (currentUpdateFrequency === "never") {
+    return false;
+  }
+  if (currentUpdateFrequency === "startup") {
+    return true;
+  }
+  
+  const lastCheck = loadLastUpdateCheckTime();
+  if (lastCheck === 0) {
+    console.log("[Update Frequency] No previous check recorded, should check");
+    return true;
+  }
+  
+  const intervalMs = UPDATE_FREQUENCY_MS[currentUpdateFrequency];
+  const elapsed = Date.now() - lastCheck;
+  const shouldCheck = elapsed >= intervalMs;
+  
+  if (shouldCheck) {
+    console.log(`[Update Frequency] ${Math.round(elapsed / 1000 / 60)} minutes since last check, time to check`);
+  } else {
+    const remaining = Math.round((intervalMs - elapsed) / 1000 / 60);
+    console.log(`[Update Frequency] ${remaining} minutes until next check`);
+  }
+  
+  return shouldCheck;
+}
+
+function performUpdateCheck(): void {
+  checkForUpdates()
+    .then(() => {
+      saveLastUpdateCheckTime();
+    })
+    .catch((err: unknown) => {
+      console.warn("[AutoUpdater] check failed:", err);
+    });
+}
+
+function stopUpdateCheckSchedule(): void {
+  if (updateCheckInterval) {
+    clearInterval(updateCheckInterval);
+    updateCheckInterval = null;
+    console.log("[Update Frequency] Stopped scheduled update checks");
+  }
+}
+
+function startUpdateCheckSchedule(): void {
+  stopUpdateCheckSchedule();
+  
+  if (currentUpdateFrequency === "never" || currentUpdateFrequency === "startup") {
+    return;
+  }
+  
+  const intervalMs = UPDATE_FREQUENCY_MS[currentUpdateFrequency];
+  console.log(`[Update Frequency] Scheduling update checks every ${currentUpdateFrequency} (${intervalMs}ms)`);
+  
+  // Also keep interval for long-running sessions
+  updateCheckInterval = setInterval(() => {
+    console.log("[Update Frequency] Running scheduled update check");
+    performUpdateCheck();
+  }, intervalMs);
 }
 
 function setMenuBarMode(mode: MenuBarMode): void {
@@ -5473,6 +5624,57 @@ function createApplicationMenu(): void {
     },
   };
 
+  // Update frequency submenu - allows configuring how often to check for updates
+  const updateFrequencySubmenu: Electron.MenuItemConstructorOptions = {
+    label: "Update Frequency",
+    enabled: !isDev && !isSnap && !isFlatpak,
+    submenu: [
+      {
+        label: "Never",
+        type: "radio",
+        checked: currentUpdateFrequency === "never",
+        click: () => setUpdateFrequency("never"),
+      },
+      {
+        label: "On Startup",
+        type: "radio",
+        checked: currentUpdateFrequency === "startup",
+        click: () => setUpdateFrequency("startup"),
+      },
+      { type: "separator" },
+      {
+        label: "Every Hour",
+        type: "radio",
+        checked: currentUpdateFrequency === "hourly",
+        click: () => setUpdateFrequency("hourly"),
+      },
+      {
+        label: "Every 6 Hours",
+        type: "radio",
+        checked: currentUpdateFrequency === "sixHours",
+        click: () => setUpdateFrequency("sixHours"),
+      },
+      {
+        label: "Every 12 Hours",
+        type: "radio",
+        checked: currentUpdateFrequency === "twelveHours",
+        click: () => setUpdateFrequency("twelveHours"),
+      },
+      {
+        label: "Daily",
+        type: "radio",
+        checked: currentUpdateFrequency === "daily",
+        click: () => setUpdateFrequency("daily"),
+      },
+      {
+        label: "Weekly",
+        type: "radio",
+        checked: currentUpdateFrequency === "weekly",
+        click: () => setUpdateFrequency("weekly"),
+      },
+    ],
+  };
+
   // Menu item for opening system notification settings
   const notificationSettingsMenuItem: Electron.MenuItemConstructorOptions = {
     label: "Notification Settings…",
@@ -5678,6 +5880,7 @@ function createApplicationMenu(): void {
           { type: "separator" },
           viewOnGitHubMenuItem,
           checkUpdatesMenuItem,
+          updateFrequencySubmenu,
           notificationSettingsMenuItem,
           iconThemeSubmenu,
           { type: "separator" },
@@ -5840,6 +6043,7 @@ function createApplicationMenu(): void {
       submenu: [
         viewOnGitHubMenuItem,
         checkUpdatesMenuItem,
+        updateFrequencySubmenu,
         notificationSettingsMenuItem,
         // XWayland mode option for Linux users (for screen sharing compatibility)
         ...(xwaylandMenuItem
@@ -8329,9 +8533,16 @@ function setupAutoUpdater(): void {
       hideDownloadProgress();
     });
 
-    checkForUpdates().catch((err: unknown) => {
-      console.warn("[AutoUpdater] check failed", err);
-    });
+    // Load update frequency preference
+    currentUpdateFrequency = loadUpdateFrequency();
+    
+    // Check for updates if enough time has elapsed since last check
+    if (shouldCheckForUpdates()) {
+      performUpdateCheck();
+    }
+    
+    // Start periodic update checks for long-running sessions
+    startUpdateCheckSchedule();
   } catch (e) {
     console.warn("[AutoUpdater] init failed", e);
   }
