@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.4] - 2026-01-16
+
+### Added
+- **Update frequency setting**: Control how often the app checks for updates ([#37](https://github.com/apotenza92/facebook-messenger-desktop/issues/37))
+  - Options: Never, On Startup, Every Hour, Every 6 Hours, Every 12 Hours, Daily, Weekly
+  - Default is "Daily" to reduce update popup frequency
+  - Persists last check time so restarts don't trigger redundant checks
+  - Available in app menu under "Update Frequency"
+
+### Fixed
+- **Windows**: Beta and stable now install to separate directories
+  - Stable: `%LOCALAPPDATA%\Programs\facebook-messenger-desktop\`
+  - Beta: `%LOCALAPPDATA%\Programs\facebook-messenger-desktop-beta\`
+  - Previously both installed to the same directory, causing conflicts
+
 ## [1.2.3-beta.2] - 2026-01-15
 
 ### Fixed
