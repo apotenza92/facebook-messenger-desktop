@@ -8,18 +8,18 @@ const path = require('path');
  */
 const VM_CONFIG = {
   windows: {
-    host: 'windows-vm.local',  // Update with actual IP/hostname
-    user: 'testuser',           // Update with actual username
+    host: 'windows-vm.local',  // Windows VM IP (will update when available)
+    user: 'parallels',          // Windows username
     password: '301192'
   },
   ubuntu: {
-    host: 'ubuntu-vm.local',    // Update with actual IP/hostname
-    user: 'testuser',           // Update with actual username
+    host: '10.211.55.12',       // Ubuntu VM IP
+    user: 'parallels',          // Ubuntu username
     password: '#p0t3nZ@'
   },
   fedora: {
-    host: 'fedora-vm.local',    // Update with actual IP/hostname
-    user: 'testuser',           // Update with actual username
+    host: '10.211.55.13',       // Fedora VM IP
+    user: 'parallels',          // Fedora username
     password: '#p0t3nZ@'
   }
 };
