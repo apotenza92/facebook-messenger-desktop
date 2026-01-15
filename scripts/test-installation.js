@@ -29,6 +29,11 @@ async function testMacStableInstallation() {
   // Build stable package
   console.log('Building stable macOS package...');
   delete process.env.FORCE_BETA_BUILD;
+
+  // Clean release directory first
+  execSync('find release -type f \\( -name "*.zip" -o -name "*.exe" -o -name "*.deb" -o -name "*.rpm" \\) -delete 2>/dev/null || true',
+    { cwd: PROJECT_ROOT });
+
   execSync('npm run build && npm run dist:mac', { cwd: PROJECT_ROOT, stdio: 'inherit' });
 
   // Locate the zip file
@@ -76,6 +81,11 @@ async function testMacBetaInstallation() {
   // Build beta package
   console.log('Building beta macOS package...');
   process.env.FORCE_BETA_BUILD = 'true';
+
+  // Clean release directory first
+  execSync('find release -type f \\( -name "*.zip" -o -name "*.exe" -o -name "*.deb" -o -name "*.rpm" \\) -delete 2>/dev/null || true',
+    { cwd: PROJECT_ROOT });
+
   execSync('npm run build && npm run dist:mac', { cwd: PROJECT_ROOT, stdio: 'inherit' });
 
   const betaZips = glob.sync(path.join(RELEASE_DIR, 'Messenger-Beta-macos-*.zip'));
