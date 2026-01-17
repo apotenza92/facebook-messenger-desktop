@@ -12,6 +12,7 @@ import {
   Tray,
   shell,
   nativeTheme,
+  powerMonitor,
   desktopCapturer,
 } from "electron";
 import { spawn, exec } from "child_process";
@@ -6064,6 +6065,49 @@ function createApplicationMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 
+type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
+
+function getMessengerWebContents(): Electron.WebContents | undefined {
+  return process.platform === "darwin" && contentView
+    ? contentView.webContents
+    : mainWindow?.webContents;
+}
+
+function sendPowerStateToRenderer(state: PowerStateEvent): void {
+  const target = getMessengerWebContents();
+  if (!target) {
+    console.warn("[PowerMonitor] No webContents available for power state", state);
+    return;
+  }
+
+  target.send("power-state", {
+    state,
+    timestamp: Date.now(),
+  });
+}
+
+function setupPowerMonitor(): void {
+  powerMonitor.on("suspend", () => {
+    console.log("[PowerMonitor] System suspend detected");
+    sendPowerStateToRenderer("suspend");
+  });
+
+  powerMonitor.on("resume", () => {
+    console.log("[PowerMonitor] System resume detected");
+    sendPowerStateToRenderer("resume");
+  });
+
+  powerMonitor.on("lock-screen", () => {
+    console.log("[PowerMonitor] Screen locked");
+    sendPowerStateToRenderer("lock-screen");
+  });
+
+  powerMonitor.on("unlock-screen", () => {
+    console.log("[PowerMonitor] Screen unlocked");
+    sendPowerStateToRenderer("unlock-screen");
+  });
+}
+
 function setupIpcHandlers(): void {
   // Handle notification requests from renderer
   ipcMain.on("show-notification", (event, data) => {
@@ -8634,6 +8678,7 @@ app.whenReady().then(async () => {
   console.log(`[App] whenReady: About to create window at ${Date.now()}`);
   createWindow("whenReady");
   setupIpcHandlers();
+  setupPowerMonitor();
 
   // Mark app as fully initialized - now safe to handle second-instance events
   appReady = true;

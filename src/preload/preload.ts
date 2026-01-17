@@ -49,6 +49,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
+// Forward power/sleep state changes to page context
+ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number }) => {
+  try {
+    window.postMessage({ type: "electron-power-state", data }, "*");
+  } catch {
+    // Ignore postMessage failures
+  }
+});
+
 // Listen for notification events from the injected script
 // The injected script dispatches custom events that we can catch
 // We need to inject a listener into the page context that forwards to us

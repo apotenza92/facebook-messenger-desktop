@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5-beta.1] - 2026-01-17
+
+### Fixed
+- **Notifications**: Suppress backlog notifications after sleep/wake by re-entering settling mode and recording unread state
+- **Notifications**: Native notifications now require a matching unread sidebar row before sending
+- **Notifications**: Resume/unlock settling only allows fresh messages, avoiding stale or self-sent alerts
+
 ## [1.2.4] - 2026-01-16
 
 ### Added

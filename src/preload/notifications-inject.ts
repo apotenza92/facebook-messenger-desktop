@@ -5,6 +5,7 @@
 ((window, notification) => {
   const DEBUG = true;
   const notifications = new Map<number, any>();
+  type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
 
   // Call detection patterns - these phrases indicate an incoming call
   const callPatterns = [
@@ -392,6 +393,25 @@
       if (callbackName === 'onclose') {
         notifications.delete(id);
       }
+      return;
+    }
+
+    if (type === 'electron-power-state') {
+      const state = eventData?.state as PowerStateEvent | undefined;
+      if (!state) return;
+
+      log('Power state change received', { state, timestamp: eventData?.timestamp });
+
+      if (state === 'resume' || state === 'unlock-screen') {
+        startSettlingPeriod({
+          reason: state,
+          durationMs: RESUME_SETTLING_MS,
+          includeFresh: false,
+        });
+      } else {
+        isSettling = true;
+      }
+      return;
     }
   });
 
@@ -481,12 +501,17 @@
               return;
             }
           }
-          
+
+          if (!foundRow) {
+            log('Native notification without matching unread conversation - skipping', { title });
+            return;
+          }
+
           // Skip notification for muted conversations
           if (isMuted) {
             return;
           }
-          
+
           recordNotification(key, bodyStr);
           sendNotification(String(title), String(body), 'NATIVE', options?.icon as string, href);
         } else {
@@ -548,14 +573,74 @@
   // How long after app start to suppress native notifications (longer than settling period)
   // This accounts for Messenger batching old notification delivery on load
   const NATIVE_NOTIFICATION_SUPPRESS_MS = 8000;
+  const RESUME_SETTLING_MS = 8000;
+  let settlingToken = 0;
+  let settlingTimeoutId: number | null = null;
+
+  const startSettlingPeriod = (options: {
+    reason: string;
+    sidebar?: Element | null;
+    durationMs: number;
+    includeFresh?: boolean;
+    rescan?: boolean;
+  }): void => {
+    const {
+      reason,
+      sidebar = findSidebarElement(),
+      durationMs,
+      includeFresh = true,
+      rescan = true,
+    } = options;
+
+    settlingToken += 1;
+    const token = settlingToken;
+
+    if (settlingTimeoutId !== null) {
+      clearTimeout(settlingTimeoutId);
+      settlingTimeoutId = null;
+    }
+
+    isSettling = true;
+
+    if (sidebar) {
+      currentSidebarElement = sidebar;
+      recordExistingConversations(sidebar, { includeFresh, reason });
+    }
+
+    settlingTimeoutId = window.setTimeout(() => {
+      if (token !== settlingToken) {
+        return;
+      }
+
+      if (rescan && currentSidebarElement) {
+        recordExistingConversations(currentSidebarElement, { includeFresh, reason });
+      }
+
+      isSettling = false;
+      settlingTimeoutId = null;
+      log(`Settling period ended (${reason})`);
+    }, durationMs);
+  };
+
+  type RecordExistingOptions = {
+    includeFresh?: boolean;
+    reason?: string;
+  };
 
   // Scan and record all currently visible unread conversations (to avoid notifying on initial load)
-  const recordExistingConversations = (sidebar: Element) => {
+  const recordExistingConversations = (
+    sidebar: Element,
+    options: RecordExistingOptions = {},
+  ) => {
+    const { includeFresh = true, reason } = options;
     const rows = sidebar.querySelectorAll(selectors.conversationRow);
     let recordedCount = 0;
-    
+
     rows.forEach((row) => {
       if (isConversationUnread(row)) {
+        if (!includeFresh && isMessageFresh(row)) {
+          return;
+        }
         const info = extractConversationInfo(row);
         if (info) {
           // Mark as already notified so we don't send notifications for these
@@ -564,8 +649,12 @@
         }
       }
     });
-    
-    log(`Recorded ${recordedCount} existing unread conversations (will not notify for these)`);
+
+    const freshnessLabel = includeFresh ? '' : ' (excluding fresh)';
+    const reasonLabel = reason ? ` after ${reason}` : '';
+    log(
+      `Recorded ${recordedCount} existing unread conversations${freshnessLabel}${reasonLabel}`,
+    );
   };
 
   const setupMutationObserver = () => {
@@ -666,21 +755,11 @@
       // Check if sidebar has changed (navigation to different section)
       if (sidebar && sidebar !== currentSidebarElement) {
         log('Navigation detected - sidebar changed, entering settling period');
-        isSettling = true;
-        currentSidebarElement = sidebar;
-        
-        // Record all existing conversations in the new view
-        recordExistingConversations(sidebar);
-        
-        // End settling period after the page stabilizes
-        setTimeout(() => {
-          // Re-scan to catch any conversations that loaded after initial scan
-          if (currentSidebarElement) {
-            recordExistingConversations(currentSidebarElement);
-          }
-          isSettling = false;
-          log('Settling period ended - now accepting notifications');
-        }, 3000);
+        startSettlingPeriod({
+          reason: 'navigation',
+          sidebar,
+          durationMs: 3000,
+        });
       }
     };
 
@@ -720,12 +799,11 @@
 
         // End the settling period after giving the page time to fully load
         // This accounts for lazy-loaded conversations and dynamic content
-        setTimeout(() => {
-          // Do one more scan to catch any late-loading conversations
-          recordExistingConversations(sidebar);
-          isSettling = false;
-          log('MutationObserver: Settling period ended, now accepting notifications');
-        }, 5000);
+        startSettlingPeriod({
+          reason: 'startup',
+          sidebar,
+          durationMs: 5000,
+        });
 
         log('MutationObserver: Active (in settling period)');
       } else {
