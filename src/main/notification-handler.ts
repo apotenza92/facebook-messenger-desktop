@@ -60,52 +60,77 @@ export class NotificationHandler {
         
         // Navigate to the conversation if href is provided
         if (data.href) {
-          // Build full URL from the path
-          const conversationUrl = `https://www.messenger.com${data.href}`;
+          // Build full URL from the path (handle both relative and absolute hrefs)
+          const conversationUrl = data.href.startsWith('http')
+            ? data.href
+            : `https://www.messenger.com${data.href}`;
           console.log('[NotificationHandler] Navigating to conversation:', conversationUrl);
-          const escapedUrl = conversationUrl.replace(/'/g, "\\'");
           const targetPath = new URL(conversationUrl).pathname.replace(/\/+$/, '') || '/';
 
-          // Prefer in-app navigation by simulating a click on the matching link.
-          // Fallback to location change if we cannot find the link.
-          targetWindow.webContents
-            .executeJavaScript(
-              `
-                (function() {
-                  const targetPath = '${targetPath}';
-                  const normalized = (p) => {
-                    const withoutHashOrQuery = p.split(/[?#]/)[0];
-                    const trimmed = withoutHashOrQuery.replace(/\\/+\$/, '');
-                    return trimmed === '' ? '/' : trimmed;
-                  };
+          // Navigation script with retry logic for when sidebar isn't rendered yet
+          const navigationScript = `
+            (function() {
+              const targetPath = '${targetPath}';
+              const normalized = (p) => {
+                const withoutHashOrQuery = p.split(/[?#]/)[0];
+                const trimmed = withoutHashOrQuery.replace(/\\/+$/, '');
+                return trimmed === '' ? '/' : trimmed;
+              };
 
-                  if (normalized(window.location.pathname) === normalized(targetPath)) {
-                    return 'already-there';
+              const tryNavigate = () => {
+                if (normalized(window.location.pathname) === normalized(targetPath)) {
+                  return 'already-there';
+                }
+
+                // Search for links including role="link" elements (Messenger uses these)
+                const links = Array.from(document.querySelectorAll('a[href], [role="link"][href], [href]'));
+                const match = links.find((el) => {
+                  try {
+                    const href = el.getAttribute('href');
+                    if (!href) return false;
+                    return normalized(new URL(href, window.location.origin).pathname) === normalized(targetPath);
+                  } catch (_) {
+                    return false;
                   }
+                });
 
-                  const links = Array.from(document.querySelectorAll('a[href]'));
-                  const match = links.find((a) => {
-                    try {
-                      return normalized(new URL(a.href, window.location.origin).pathname) === normalized(targetPath);
-                    } catch (_) {
-                      return false;
-                    }
-                  });
+                if (match) {
+                  // Use pointer events + click for better compatibility with Messenger's handlers
+                  match.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+                  match.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+                  if (match.click) match.click();
+                  return 'clicked-link';
+                }
 
-                  if (match) {
-                    match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
-                    return 'clicked-link';
-                  }
+                return null; // Not found yet
+              };
 
-                  window.location.href = '${escapedUrl}';
-                  return 'navigated-location';
-                })();
-              `,
-              true,
-            )
-            .catch((err) => {
-              console.warn('[NotificationHandler] Failed to navigate to conversation', err);
-            });
+              // Try immediately
+              const immediateResult = tryNavigate();
+              if (immediateResult) return immediateResult;
+
+              // Retry with exponential backoff (sidebar may not be rendered yet)
+              let retries = 0;
+              const maxRetries = 8;
+              const retry = () => {
+                retries++;
+                const result = tryNavigate();
+                if (result) return;
+                if (retries < maxRetries) {
+                  setTimeout(retry, 250 * Math.min(retries, 4));
+                } else {
+                  // Final fallback: direct navigation
+                  window.location.assign('${targetPath}');
+                }
+              };
+              setTimeout(retry, 250);
+              return 'retrying';
+            })();
+          `;
+
+          targetWindow.webContents.executeJavaScript(navigationScript, true).catch((err) => {
+            console.warn('[NotificationHandler] Failed to navigate to conversation', err);
+          });
         }
       }
     });

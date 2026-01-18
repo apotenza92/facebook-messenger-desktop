@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.5-beta.3] - 2026-01-18
+
+### Fixed
+- **Notifications**: Fix click-to-navigate not opening the correct chat when clicking notifications
+  - Fixed regex bug in path normalization that prevented link matching
+  - Now searches for Messenger's `role="link"` elements, not just `<a>` tags
+  - Uses pointer events for better compatibility with Messenger's React handlers
+  - Added retry logic for when sidebar isn't rendered yet after window focus
+
 ## [1.2.5-beta.2] - 2026-01-18
 
 ### Fixed
