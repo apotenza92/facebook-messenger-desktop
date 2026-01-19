@@ -21,7 +21,9 @@
     "dist:linux": "npm run build && electron-builder --config electron-builder.config.js --linux --publish=never",
     "dist:linux:arm": "npm run build && electron-builder --config electron-builder.config.js --linux --arm64 --publish=never",
     "dist:linux:x64": "npm run build && electron-builder --config electron-builder.config.js --linux --x64 --publish=never",
-    "dist:all": "npm run build && electron-builder --config electron-builder.config.js --mac --win --linux --publish=never"
+    "dist:all": "npm run build && electron-builder --config electron-builder.config.js --mac --win --linux --publish=never",
+    "ralphy": "ralphy --codex --prd PRD.md",
+    "ralphy:dry": "ralphy --codex --prd PRD.md --dry-run"
   },
   "keywords": [
     "messenger",
