@@ -14,10 +14,17 @@ export class NotificationHandler {
   private activeNotifications: Map<string, Notification> = new Map();
   private getMainWindow: () => BrowserWindow | null;
   private appDisplayName: string;
+  private createNotification: (options: Electron.NotificationConstructorOptions) => Notification;
 
-  constructor(getMainWindow: () => BrowserWindow | null, appDisplayName: string = 'Messenger') {
+  constructor(
+    getMainWindow: () => BrowserWindow | null,
+    appDisplayName: string = 'Messenger',
+    createNotification: (options: Electron.NotificationConstructorOptions) => Notification = (options) =>
+      new Notification(options),
+  ) {
     this.getMainWindow = getMainWindow;
     this.appDisplayName = appDisplayName;
+    this.createNotification = createNotification;
   }
 
   showNotification(data: NotificationData): void {
@@ -47,13 +54,14 @@ export class NotificationHandler {
       }
     }
 
-    const notification = new Notification(notificationOptions);
+    const notification = this.createNotification(notificationOptions);
+    const notificationKey = data.tag || `untagged-${Date.now()}-${Math.random()}`;
 
     // Handle notification click - navigate to the conversation
     notification.on('click', () => {
       const mainWindow = this.getMainWindow();
       const targetWindow = mainWindow || BrowserWindow.getAllWindows()[0];
-      
+
       if (targetWindow) {
         targetWindow.show();
         targetWindow.focus();
@@ -66,6 +74,19 @@ export class NotificationHandler {
             : `https://www.messenger.com${data.href}`;
           console.log('[NotificationHandler] Navigating to conversation:', conversationUrl);
           const targetPath = new URL(conversationUrl).pathname.replace(/\/+$/, '') || '/';
+          const targetWebContents = (() => {
+            const views = targetWindow.getBrowserViews();
+            if (views.length === 1) {
+              return views[0].webContents;
+            }
+            for (const view of views) {
+              const url = view.webContents.getURL();
+              if (url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com')) {
+                return view.webContents;
+              }
+            }
+            return views[0]?.webContents || targetWindow.webContents;
+          })();
 
           // Navigation script with retry logic for when sidebar isn't rendered yet
           const navigationScript = `
@@ -128,27 +149,26 @@ export class NotificationHandler {
             })();
           `;
 
-          targetWindow.webContents.executeJavaScript(navigationScript, true).catch((err) => {
+          targetWebContents.executeJavaScript(navigationScript, true).catch((err) => {
             console.warn('[NotificationHandler] Failed to navigate to conversation', err);
           });
         }
       }
     });
+    notification.on('action', () => {
+      notification.emit('click');
+    });
 
     // Handle notification close
     notification.on('close', () => {
-      if (data.tag) {
-        this.activeNotifications.delete(data.tag);
-      }
+      this.activeNotifications.delete(notificationKey);
     });
 
     // Show the notification
     notification.show();
 
     // Store notification if it has a tag
-    if (data.tag) {
-      this.activeNotifications.set(data.tag, notification);
-    }
+    this.activeNotifications.set(notificationKey, notification);
   }
 
   showTrayNotification(): void {
@@ -180,4 +200,3 @@ export class NotificationHandler {
     this.activeNotifications.clear();
   }
 }
-

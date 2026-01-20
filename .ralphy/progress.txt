@@ -1,2 +1,3 @@
 # Ralphy Progress Log
 
+2026-01-20 - Fixed notification click routing to use BrowserView webContents; added notification click test and TS loader; ran lint/test.
