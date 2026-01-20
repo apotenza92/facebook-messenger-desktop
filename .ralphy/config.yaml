@@ -21,7 +21,7 @@ rules:
   - "Follow existing code patterns in src/main/ and src/preload/"
   - "Use async/await for promises"
   - "Console logging format: [Component] message"
-  - "Beta releases are allowed without confirmation; stable releases require user confirmation"
+  - "ONLY beta versions (e.g., 1.2.3-beta.1) may be released without user permission. NEVER run release.sh for stable versions (e.g., 1.2.3) - always stop and ask user first."
   - "Platform detection: process.platform === 'darwin' | 'win32' | else"
   - "macOS: close hides to dock; Windows/Linux: close minimizes to tray"
   - "Use isQuitting flag to control actual quit behavior"

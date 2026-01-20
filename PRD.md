@@ -1,12 +1,12 @@
 # Product Requirements Document
 
-## Task 1: Release 1.2.5-beta.4
+<!-- PRD is empty - all tasks complete -->
+<!-- v1.2.5-beta.4 released with macOS notification click fix -->
 
-Run the release script:
-
-```bash
-./scripts/release.sh 1.2.5-beta.4
-```
+<!-- Add new tasks as needed:
+## Task 1: Description
+Details...
 
 ### Acceptance Criteria
-- [ ] Release script executed successfully
+- [ ] Criterion
+-->

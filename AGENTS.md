@@ -28,13 +28,13 @@ assets/tray/        # System tray icons
 
 ## Critical Rules
 
-### Release Tags - EXPLICIT PERMISSION REQUIRED
+### Release Tags
 
-**Never create or push version tags (v*) without explicit user confirmation.**
+**Beta releases** (e.g., `1.2.3-beta.1`): May be released without explicit permission.
 
-Tags trigger production releases to all users via GitHub Actions. Always ask and wait for confirmation before running `./scripts/release.sh`.
+**Stable releases** (e.g., `1.2.3`): Always ask and wait for explicit user confirmation before running `./scripts/release.sh`.
 
-**Safe without asking**: commits, pushing to main, updating CHANGELOG.md/package.json, running local builds.
+**Safe without asking**: commits, pushing to main, updating CHANGELOG.md/package.json, running local builds, beta releases.
 
 ### Changelog Requirements
 
