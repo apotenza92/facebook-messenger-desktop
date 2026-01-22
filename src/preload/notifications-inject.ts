@@ -3,6 +3,13 @@
 // Both run in parallel for maximum reliability regardless of window size
 
 ((window, notification) => {
+  // Prevent double injection
+  if ((window as any).__messengerDesktopInjected) {
+    console.log('[Notif Dual] Already injected, skipping');
+    return;
+  }
+  (window as any).__messengerDesktopInjected = true;
+
   const DEBUG = true;
   const notifications = new Map<number, any>();
   type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
@@ -1067,29 +1074,40 @@
   // KEYBOARD SHORTCUTS & COMMAND PALETTE
   // ============================================================================
 
-  // Get all conversation rows from sidebar
+  // Get all conversation rows from sidebar (raw, may include empty rows)
   const getAllConversationRows = (): Element[] => {
     const sidebar = findSidebarElement();
     if (!sidebar) return [];
     return Array.from(sidebar.querySelectorAll(selectors.conversationRow));
   };
 
-  // Click on a conversation row to open it
-  const clickConversation = (row: Element): void => {
-    const link = row.querySelector('a[href*="/t/"]') as HTMLAnchorElement | null;
-    if (link) {
-      link.click();
-      return;
+  // Get only valid chat rows (rows with actual conversation links)
+  const getValidChatRows = (): { row: Element; link: HTMLAnchorElement; threadId: string }[] => {
+    const rows = getAllConversationRows();
+    const valid: { row: Element; link: HTMLAnchorElement; threadId: string }[] = [];
+    for (const row of rows) {
+      const link = row.querySelector('a[href*="/t/"]') as HTMLAnchorElement | null;
+      if (link) {
+        const href = link.getAttribute('href') || '';
+        const match = href.match(/\/t\/(\d+)/);
+        if (match) {
+          valid.push({ row, link, threadId: match[1] });
+        }
+      }
     }
-    // Fallback: click the row itself
-    (row as HTMLElement).click();
+    return valid;
+  };
+
+  // Click on a conversation link
+  const clickConversation = (link: HTMLAnchorElement): void => {
+    link.click();
   };
 
   // Navigate to nth chat (1-indexed)
   const navigateToChat = (index: number): void => {
-    const rows = getAllConversationRows();
-    if (index >= 1 && index <= rows.length) {
-      clickConversation(rows[index - 1]);
+    const chats = getValidChatRows();
+    if (index >= 1 && index <= chats.length) {
+      clickConversation(chats[index - 1].link);
       log(`Navigated to chat ${index}`);
     }
   };
@@ -1097,43 +1115,111 @@
   // Get currently active conversation index
   const getCurrentChatIndex = (): number => {
     const currentPath = window.location.pathname;
-    if (!currentPath.includes('/t/')) return -1;
+    const match = currentPath.match(/\/t\/(\d+)/);
+    if (!match) return -1;
+    const currentThreadId = match[1];
     
-    const rows = getAllConversationRows();
-    for (let i = 0; i < rows.length; i++) {
-      const link = rows[i].querySelector('a[href*="/t/"]') as HTMLAnchorElement | null;
-      if (link) {
-        try {
-          const linkPath = new URL(link.href).pathname;
-          if (linkPath === currentPath || currentPath.startsWith(linkPath)) {
-            return i;
-          }
-        } catch { /* ignore */ }
+    const chats = getValidChatRows();
+    for (let i = 0; i < chats.length; i++) {
+      if (chats[i].threadId === currentThreadId) {
+        return i;
       }
     }
     return -1;
   };
 
-  // Navigate to previous chat
+  // Navigate to previous chat (up in sidebar)
   const navigateToPrevChat = (): void => {
-    const rows = getAllConversationRows();
-    if (rows.length === 0) return;
+    const chats = getValidChatRows();
+    if (chats.length === 0) {
+      log('No conversation rows found');
+      return;
+    }
     
     const currentIndex = getCurrentChatIndex();
-    const newIndex = currentIndex <= 0 ? rows.length - 1 : currentIndex - 1;
-    clickConversation(rows[newIndex]);
-    log(`Navigated to previous chat (index ${newIndex + 1})`);
+    const newIndex = currentIndex <= 0 ? chats.length - 1 : currentIndex - 1;
+    log(`Prev chat: current=${currentIndex}, new=${newIndex}, total=${chats.length}`);
+    clickConversation(chats[newIndex].link);
   };
 
-  // Navigate to next chat
+  // Navigate to next chat (down in sidebar)
   const navigateToNextChat = (): void => {
-    const rows = getAllConversationRows();
-    if (rows.length === 0) return;
+    const chats = getValidChatRows();
+    if (chats.length === 0) {
+      log('No conversation rows found');
+      return;
+    }
     
     const currentIndex = getCurrentChatIndex();
-    const newIndex = currentIndex >= rows.length - 1 ? 0 : currentIndex + 1;
-    clickConversation(rows[newIndex]);
-    log(`Navigated to next chat (index ${newIndex + 1})`);
+    const newIndex = currentIndex >= chats.length - 1 ? 0 : currentIndex + 1;
+    log(`Next chat: current=${currentIndex}, new=${newIndex}, total=${chats.length}`);
+    clickConversation(chats[newIndex].link);
+  };
+
+  // ============================================================================
+  // THEME DETECTION
+  // ============================================================================
+
+  interface ThemeColors {
+    backdrop: string;
+    background: string;
+    backgroundHover: string;
+    border: string;
+    text: string;
+    textSecondary: string;
+    textMuted: string;
+    kbd: string;
+    shadow: string;
+  }
+
+  const darkTheme: ThemeColors = {
+    backdrop: 'rgba(0, 0, 0, 0.7)',
+    background: '#242526',
+    backgroundHover: '#3a3b3c',
+    border: '#3a3b3c',
+    text: '#e4e6eb',
+    textSecondary: '#ffffff',
+    textMuted: '#8a8d91',
+    kbd: '#3a3b3c',
+    shadow: '0 8px 32px rgba(0,0,0,0.4)',
+  };
+
+  const lightTheme: ThemeColors = {
+    backdrop: 'rgba(0, 0, 0, 0.4)',
+    background: '#ffffff',
+    backgroundHover: '#f0f2f5',
+    border: '#dddfe2',
+    text: '#050505',
+    textSecondary: '#1c1e21',
+    textMuted: '#65676b',
+    kbd: '#e4e6eb',
+    shadow: '0 8px 32px rgba(0,0,0,0.15)',
+  };
+
+  const detectTheme = (): ThemeColors => {
+    // Check for Facebook's dark mode class
+    if (document.documentElement.classList.contains('__fb-dark-mode') ||
+        document.body.classList.contains('__fb-dark-mode')) {
+      return darkTheme;
+    }
+    
+    // Check for light mode class
+    if (document.documentElement.classList.contains('__fb-light-mode') ||
+        document.body.classList.contains('__fb-light-mode')) {
+      return lightTheme;
+    }
+    
+    // Fallback: detect by background color luminance
+    const bg = window.getComputedStyle(document.body).backgroundColor;
+    const match = bg.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (match) {
+      const [, r, g, b] = match.map(Number);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance < 0.5 ? darkTheme : lightTheme;
+    }
+    
+    // Default to dark theme
+    return darkTheme;
   };
 
   // ============================================================================
@@ -1142,14 +1228,14 @@
 
   let shortcutsOverlay: HTMLElement | null = null;
 
-  const SHORTCUTS_HTML = `
+  const getShortcutsHTML = (theme: ThemeColors): string => `
     <div style="
       position: fixed;
       top: 0;
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
+      background: ${theme.backdrop};
       display: flex;
       align-items: center;
       justify-content: center;
@@ -1157,46 +1243,46 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     " data-shortcuts-backdrop>
       <div style="
-        background: #242526;
+        background: ${theme.background};
         border-radius: 12px;
         padding: 24px 32px;
         max-width: 480px;
-        color: #e4e6eb;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        color: ${theme.text};
+        box-shadow: ${theme.shadow};
       ">
-        <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 600; color: #fff;">
+        <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 600; color: ${theme.textSecondary};">
           Keyboard Shortcuts
         </h2>
         <div style="display: grid; gap: 12px;">
-          <div style="border-bottom: 1px solid #3a3b3c; padding-bottom: 12px;">
-            <div style="color: #8a8d91; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Navigation</div>
+          <div style="border-bottom: 1px solid ${theme.border}; padding-bottom: 12px;">
+            <div style="color: ${theme.textMuted}; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Navigation</div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
               <span>Jump to chat 1-9</span>
-              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + 1-9</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + 1-9</kbd>
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
               <span>Previous chat</span>
-              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + [</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + [</kbd>
             </div>
             <div style="display: flex; justify-content: space-between;">
               <span>Next chat</span>
-              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + ]</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + ]</kbd>
             </div>
           </div>
-          <div style="border-bottom: 1px solid #3a3b3c; padding-bottom: 12px;">
-            <div style="color: #8a8d91; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Quick Actions</div>
+          <div style="border-bottom: 1px solid ${theme.border}; padding-bottom: 12px;">
+            <div style="color: ${theme.textMuted}; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Quick Actions</div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
               <span>Command palette</span>
-              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + P</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + P</kbd>
             </div>
             <div style="display: flex; justify-content: space-between;">
               <span>Show this help</span>
-              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + /</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + /</kbd>
             </div>
           </div>
         </div>
-        <div style="margin-top: 16px; text-align: center; color: #8a8d91; font-size: 13px;">
-          Press <kbd style="background: #3a3b3c; padding: 2px 6px; border-radius: 4px; font-size: 11px;">Esc</kbd> or click outside to close
+        <div style="margin-top: 16px; text-align: center; color: ${theme.textMuted}; font-size: 13px;">
+          Press <kbd style="background: ${theme.kbd}; padding: 2px 6px; border-radius: 4px; font-size: 11px;">Esc</kbd> or click outside to close
         </div>
       </div>
     </div>
@@ -1208,8 +1294,9 @@
       return;
     }
     
+    const theme = detectTheme();
     const div = document.createElement('div');
-    div.innerHTML = SHORTCUTS_HTML;
+    div.innerHTML = getShortcutsHTML(theme);
     shortcutsOverlay = div.firstElementChild as HTMLElement;
     document.body.appendChild(shortcutsOverlay);
     
@@ -1232,6 +1319,92 @@
   };
 
   // ============================================================================
+  // NAME CACHE - Learn real names from conversation avatars
+  // ============================================================================
+
+  const NAME_CACHE_KEY = 'messenger-desktop-name-cache';
+  type NameCache = Record<string, { realNames: string[]; updatedAt: number }>;
+
+  const loadNameCache = (): NameCache => {
+    try {
+      const data = localStorage.getItem(NAME_CACHE_KEY);
+      if (!data) return {};
+      const parsed = JSON.parse(data);
+      // Migrate old format (realName: string) to new format (realNames: string[])
+      for (const key of Object.keys(parsed)) {
+        if (typeof parsed[key].realName === 'string') {
+          parsed[key] = { realNames: [parsed[key].realName], updatedAt: parsed[key].updatedAt };
+        }
+      }
+      return parsed;
+    } catch { return {}; }
+  };
+
+  const saveNameCache = (cache: NameCache): void => {
+    try { localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache)); } catch { /* ignore */ }
+  };
+
+  let nameCache = loadNameCache();
+
+  // Extract all real names from avatar alts in current conversation
+  const extractRealNamesFromConversation = (): string[] => {
+    const mainArea = document.querySelector('[role="main"]');
+    if (!mainArea) return [];
+
+    const imgs = Array.from(mainArea.querySelectorAll('img[alt]'));
+    const names: string[] = [];
+    const seen: Record<string, boolean> = {};
+    
+    for (let i = 0; i < imgs.length; i++) {
+      const alt = imgs[i].getAttribute('alt') || '';
+      if (alt.length < 3 || alt.length > 50) continue;
+      if (alt.startsWith('Seen by')) continue;
+      if (alt.startsWith('Open ')) continue; // "Open photo" etc
+      if (alt.startsWith('Original ')) continue; // "Original image"
+      if (['GIF', 'Sticker', 'Photo', 'Video'].includes(alt)) continue;
+      // Skip emoji-only alts
+      if (/^[\p{Emoji}\s]+$/u.test(alt)) continue;
+      
+      if (!seen[alt]) {
+        seen[alt] = true;
+        names.push(alt);
+      }
+    }
+    return names;
+  };
+
+  // Update cache when viewing a conversation
+  const updateNameCache = (): void => {
+    const match = window.location.pathname.match(/\/t\/(\d+)/);
+    if (!match) return;
+    const threadId = match[1];
+
+    const realNames = extractRealNamesFromConversation();
+    if (realNames.length === 0) return;
+
+    // Check if different from what we have
+    const existing = nameCache[threadId];
+    const namesChanged = !existing || 
+      existing.realNames.length !== realNames.length ||
+      existing.realNames.some((n, i) => n !== realNames[i]);
+    
+    if (namesChanged) {
+      nameCache[threadId] = { realNames, updatedAt: Date.now() };
+      saveNameCache(nameCache);
+      log(`Name cache: thread ${threadId} -> [${realNames.join(', ')}]`);
+    }
+  };
+
+  // Monitor for conversation changes
+  let lastCheckedPath = '';
+  setInterval(() => {
+    if (window.location.pathname !== lastCheckedPath) {
+      lastCheckedPath = window.location.pathname;
+      setTimeout(updateNameCache, 1500); // Wait for conversation to load
+    }
+  }, 1000);
+
+  // ============================================================================
   // COMMAND PALETTE
   // ============================================================================
 
@@ -1239,7 +1412,7 @@
   let paletteInputEl: HTMLInputElement | null = null;
   let paletteResultsEl: HTMLElement | null = null;
   let paletteSelectedIndex = 0;
-  let paletteContacts: { name: string; row: Element }[] = [];
+  let paletteContacts: { name: string; realNames?: string[]; threadId?: string; row: Element }[] = [];
 
   // Simple fuzzy match: check if query chars appear in order
   const fuzzyMatch = (query: string, text: string): { match: boolean; score: number } => {
@@ -1262,35 +1435,69 @@
     return { match: qi === q.length, score };
   };
 
-  // Extract contacts from sidebar
-  const extractContacts = (): { name: string; row: Element }[] => {
+  // Match against both nickname and real names (supports multiple for groups)
+  const fuzzyMatchContact = (query: string, contact: { name: string; realNames?: string[] }): { match: boolean; score: number } => {
+    const nicknameMatch = fuzzyMatch(query, contact.name);
+    let bestScore = nicknameMatch.score;
+    let matched = nicknameMatch.match;
+    
+    if (contact.realNames) {
+      for (const realName of contact.realNames) {
+        const realNameMatch = fuzzyMatch(query, realName);
+        if (realNameMatch.match && realNameMatch.score > bestScore) {
+          bestScore = realNameMatch.score + 10; // Boost real name matches
+          matched = true;
+        }
+      }
+    }
+    return { match: matched, score: bestScore };
+  };
+
+  // Extract contacts from sidebar with cached real names
+  const extractContacts = (): { name: string; realNames?: string[]; threadId?: string; row: Element }[] => {
     const rows = getAllConversationRows();
-    const contacts: { name: string; row: Element }[] = [];
+    const contacts: { name: string; realNames?: string[]; threadId?: string; row: Element }[] = [];
     
     for (const row of rows) {
       const info = extractConversationInfo(row);
       if (info?.title) {
-        contacts.push({ name: info.title, row });
+        // Get thread ID from href
+        const match = info.href.match(/\/t\/(\d+)/);
+        const threadId = match ? match[1] : undefined;
+        
+        // Look up real names from cache
+        const cached = threadId ? nameCache[threadId] : undefined;
+        // Only include if at least one real name differs from the display name
+        const realNames = cached?.realNames?.filter(n => n !== info.title);
+        
+        contacts.push({ 
+          name: info.title, 
+          realNames: realNames && realNames.length > 0 ? realNames : undefined, 
+          threadId, 
+          row 
+        });
       }
     }
     
     return contacts;
   };
 
-  const PALETTE_STYLES = `
+  const getPaletteStyles = (theme: ThemeColors): string => `
     position: fixed;
     top: 80px;
     left: 50%;
     transform: translateX(-50%);
     width: 400px;
     max-width: 90vw;
-    background: #242526;
+    background: ${theme.background};
     border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    box-shadow: ${theme.shadow};
     z-index: 999999;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     overflow: hidden;
   `;
+
+  let currentPaletteTheme: ThemeColors = darkTheme;
 
   const showCommandPalette = (): void => {
     if (commandPaletteEl) {
@@ -1298,21 +1505,22 @@
       return;
     }
     
+    currentPaletteTheme = detectTheme();
     paletteContacts = extractContacts();
     paletteSelectedIndex = 0;
     
     const div = document.createElement('div');
-    div.style.cssText = PALETTE_STYLES;
+    div.style.cssText = getPaletteStyles(currentPaletteTheme);
     div.innerHTML = `
       <div style="padding: 12px;">
         <input type="text" placeholder="Search conversations..." style="
           width: 100%;
-          background: #3a3b3c;
+          background: ${currentPaletteTheme.backgroundHover};
           border: none;
           border-radius: 8px;
           padding: 12px 16px;
           font-size: 15px;
-          color: #e4e6eb;
+          color: ${currentPaletteTheme.text};
           outline: none;
           box-sizing: border-box;
         " data-palette-input>
@@ -1374,16 +1582,16 @@
   const updatePaletteResults = (query: string): void => {
     if (!paletteResultsEl) return;
     
-    let results: { name: string; row: Element; score: number }[];
+    let results: { name: string; realNames?: string[]; threadId?: string; row: Element; score: number }[];
     
     if (!query.trim()) {
       // Show first 10 contacts
       results = paletteContacts.slice(0, 10).map((c, i) => ({ ...c, score: 100 - i }));
     } else {
-      // Fuzzy search
+      // Fuzzy search - match against both nickname and real names
       results = paletteContacts
         .map(c => {
-          const { match, score } = fuzzyMatch(query, c.name);
+          const { match, score } = fuzzyMatchContact(query, c);
           return { ...c, score, match };
         })
         .filter(c => c.match)
@@ -1393,12 +1601,21 @@
     
     if (results.length === 0) {
       paletteResultsEl.innerHTML = `
-        <div style="padding: 24px; text-align: center; color: #8a8d91;">
+        <div style="padding: 24px; text-align: center; color: ${currentPaletteTheme.textMuted};">
           No conversations found
         </div>
       `;
       return;
     }
+    
+    // Format display name: show "Nickname (Real Name, Real Name, ...)" if different
+    const formatDisplayName = (c: { name: string; realNames?: string[] }): string => {
+      if (c.realNames && c.realNames.length > 0) {
+        const namesStr = c.realNames.map(n => escapeHtml(n)).join(', ');
+        return `${escapeHtml(c.name)} <span style="color: ${currentPaletteTheme.textMuted};">(${namesStr})</span>`;
+      }
+      return escapeHtml(c.name);
+    };
     
     paletteResultsEl.innerHTML = results.map((r, i) => `
       <div data-palette-item="${i}" style="
@@ -1407,8 +1624,8 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        background: ${i === paletteSelectedIndex ? '#3a3b3c' : 'transparent'};
-        color: #e4e6eb;
+        background: ${i === paletteSelectedIndex ? currentPaletteTheme.backgroundHover : 'transparent'};
+        color: ${currentPaletteTheme.text};
       ">
         <div style="
           width: 36px;
@@ -1421,8 +1638,8 @@
           font-weight: 600;
           font-size: 14px;
           color: white;
-        ">${r.name.charAt(0).toUpperCase()}</div>
-        <span style="font-size: 15px;">${escapeHtml(r.name)}</span>
+        ">${(r.realNames?.[0] || r.name).charAt(0).toUpperCase()}</div>
+        <span style="font-size: 15px;">${formatDisplayName(r)}</span>
       </div>
     `).join('');
     
@@ -1443,7 +1660,7 @@
   const updatePaletteSelection = (): void => {
     if (!paletteResultsEl) return;
     paletteResultsEl.querySelectorAll('[data-palette-item]').forEach((el, i) => {
-      (el as HTMLElement).style.background = i === paletteSelectedIndex ? '#3a3b3c' : 'transparent';
+      (el as HTMLElement).style.background = i === paletteSelectedIndex ? currentPaletteTheme.backgroundHover : 'transparent';
     });
   };
 
@@ -1460,7 +1677,10 @@
     }
     
     if (results[index]) {
-      clickConversation(results[index].row);
+      const link = results[index].row.querySelector('a[href*="/t/"]') as HTMLAnchorElement | null;
+      if (link) {
+        clickConversation(link);
+      }
       hideCommandPalette();
     }
   };
@@ -1484,60 +1704,66 @@
       if (shortcutsOverlay) {
         hideShortcutsOverlay();
         e.preventDefault();
+        e.stopPropagation();
         return;
       }
       if (commandPaletteEl) {
         hideCommandPalette();
         e.preventDefault();
+        e.stopPropagation();
         return;
       }
     }
     
-    // Don't handle shortcuts if typing in an input (except our palette)
+    // Don't handle shortcuts if typing in a form input (but allow contentEditable for chat nav)
     const target = e.target as HTMLElement;
-    const isInInput = target.tagName === 'INPUT' || 
-                      target.tagName === 'TEXTAREA' || 
-                      target.isContentEditable;
+    const isInFormInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+    const isInContentEditable = target.isContentEditable;
     
     // Allow palette keyboard nav
     if (commandPaletteEl && target === paletteInputEl) {
       return; // Let palette handle its own keyboard events
     }
     
-    // Cmd/Ctrl + Shift + P → Command palette
+    // Cmd/Ctrl + Shift + P → Command palette (works everywhere)
     if (isMod && e.shiftKey && e.key.toLowerCase() === 'p') {
       e.preventDefault();
+      e.stopPropagation();
       showCommandPalette();
       return;
     }
     
-    // Cmd/Ctrl + / → Shortcuts help (using / since ? requires shift)
+    // Cmd/Ctrl + / → Shortcuts help (works everywhere)
     if (isMod && e.key === '/') {
       e.preventDefault();
+      e.stopPropagation();
       showShortcutsOverlay();
       return;
     }
     
-    // Skip other shortcuts if in input
-    if (isInInput) return;
+    // Skip navigation shortcuts if in form input (but allow in contentEditable message box)
+    if (isInFormInput) return;
     
     // Cmd/Ctrl + 1-9 → Jump to chat
     if (isMod && !e.shiftKey && e.key >= '1' && e.key <= '9') {
       e.preventDefault();
+      e.stopPropagation();
       navigateToChat(parseInt(e.key, 10));
       return;
     }
     
-    // Cmd/Ctrl + Shift + [ → Previous chat
-    if (isMod && e.shiftKey && e.key === '[') {
+    // Cmd/Ctrl + Shift + [ or { → Previous chat (use e.code for physical key)
+    if (isMod && e.shiftKey && (e.code === 'BracketLeft' || e.key === '[' || e.key === '{')) {
       e.preventDefault();
+      e.stopPropagation();
       navigateToPrevChat();
       return;
     }
     
-    // Cmd/Ctrl + Shift + ] → Next chat
-    if (isMod && e.shiftKey && e.key === ']') {
+    // Cmd/Ctrl + Shift + ] or } → Next chat (use e.code for physical key)
+    if (isMod && e.shiftKey && (e.code === 'BracketRight' || e.key === ']' || e.key === '}')) {
       e.preventDefault();
+      e.stopPropagation();
       navigateToNextChat();
       return;
     }

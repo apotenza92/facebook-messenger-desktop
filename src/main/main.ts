@@ -2923,6 +2923,8 @@ function createWindow(source: string = "unknown"): void {
           // Successfully loaded messenger.com with content - login complete!
           console.log("[ContentView] Messenger loaded successfully!");
           loginFlowActive = true; // Keep this true so we don't redirect on future navigations
+          // Focus the content view so keyboard shortcuts work immediately
+          contentView?.webContents.focus();
         }
       }
 

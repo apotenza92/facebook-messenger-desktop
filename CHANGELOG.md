@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.2.5-beta.7] - 2026-01-22
+
+### Added
+- **Real Name Learning**: Command palette now learns and searches by real names
+  - Automatically extracts real names from conversation avatar alt text
+  - Caches names in localStorage (persists across restarts)
+  - Search matches both nickname and all member real names
+  - Shows as "Nickname (Real Name)" for 1:1 chats
+  - Shows as "Group Name (Member1, Member2, ...)" for group chats
+  - Avatar initial uses first real name when available
+
+### Fixed
+- **Keyboard Shortcuts**: Fixed Cmd+Shift+[ and Cmd+Shift+] not working
+  - Was checking for `[` and `]` keys, but with Shift pressed they become `{` and `}`
+  - Now uses `e.code` for reliable physical key detection
+- **Keyboard Shortcuts**: Fixed shortcuts not working on app startup
+  - Content view now auto-focuses when Messenger loads
+  - No longer requires clicking inside the app first
+- **Keyboard Shortcuts**: Fixed navigation going to wrong chat
+  - Sidebar row detection now only counts rows with valid conversation links
+  - Consistent indexing between current position detection and navigation
+- **Shortcuts Overlay & Command Palette**: Now match Messenger's theme
+  - Detects dark/light mode via `__fb-dark-mode` class or background luminance
+  - Uses appropriate colors for each theme
+- **Script Injection**: Prevented double-injection of keyboard handlers
+
 ## [1.2.5-beta.6] - 2026-01-22
 
 ### Added
@@ -8,13 +34,12 @@
   - **Cmd/Ctrl + Shift + [**: Navigate to previous chat
   - **Cmd/Ctrl + Shift + ]**: Navigate to next chat
   - **Cmd/Ctrl + Shift + P**: Open command palette with contact search
-  - **Cmd/Ctrl + ?**: Show keyboard shortcuts overlay
+  - **Cmd/Ctrl + /**: Show keyboard shortcuts overlay
   - All shortcuts work on macOS (Cmd), Windows, and Linux (Ctrl)
 
 - **Command Palette** for instant contact search:
   - Access with Cmd/Ctrl + Shift + P
   - Fuzzy search through all contacts in sidebar
-  - Search by real name or nickname
   - Click result or press Enter to open conversation
 
 - **Keyboard Shortcuts Menu**:
