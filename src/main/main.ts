@@ -8700,6 +8700,7 @@ function setupTitleOverlay(
               background: ${backgroundColor};
               -webkit-user-select: none;
               cursor: default;
+              pointer-events: none;
             }
             .bar {
               display: flex;
