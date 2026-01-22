@@ -1395,14 +1395,26 @@
     }
   };
 
-  // Monitor for conversation changes
+  // Monitor for conversation changes with retry for slow-loading conversations
   let lastCheckedPath = '';
   setInterval(() => {
     if (window.location.pathname !== lastCheckedPath) {
       lastCheckedPath = window.location.pathname;
-      setTimeout(updateNameCache, 1500); // Wait for conversation to load
+      // Try multiple times as conversation may load slowly
+      const tryExtract = (attempt: number) => {
+        updateNameCache();
+        // Retry up to 5 times if no names found yet (covers ~8 seconds total)
+        const match = window.location.pathname.match(/\/t\/(\d+)/);
+        if (match && attempt < 5) {
+          const threadId = match[1];
+          if (!nameCache[threadId] || nameCache[threadId].realNames.length === 0) {
+            setTimeout(() => tryExtract(attempt + 1), 1500);
+          }
+        }
+      };
+      setTimeout(() => tryExtract(0), 500); // Initial delay shorter
     }
-  }, 1000);
+  }, 500);
 
   // ============================================================================
   // COMMAND PALETTE
@@ -1666,13 +1678,16 @@
 
   const selectPaletteItem = (index: number): void => {
     const query = paletteInputEl?.value.trim() || '';
-    let results: { name: string; row: Element }[];
+    let results: { name: string; realNames?: string[]; row: Element }[];
     
     if (!query) {
       results = paletteContacts.slice(0, 10);
     } else {
+      // Use fuzzyMatchContact to match both nickname and real names (same as updatePaletteResults)
       results = paletteContacts
-        .filter(c => fuzzyMatch(query, c.name).match)
+        .map(c => ({ ...c, ...fuzzyMatchContact(query, c) }))
+        .filter(c => c.match)
+        .sort((a, b) => b.score - a.score)
         .slice(0, 10);
     }
     

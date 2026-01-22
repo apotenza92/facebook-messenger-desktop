@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.5-beta.8] - 2026-01-22
+
+### Fixed
+- **Command Palette**: Fixed Enter key not working when searching by real name
+  - Search results matched real names but selection only checked nicknames
+  - Now uses same matching logic for both display and selection
+- **Real Name Extraction**: Improved speed and reliability
+  - Now starts extraction after 500ms (was 1.5s)
+  - Retries up to 5 times for slow-loading conversations
+  - Total coverage ~8 seconds for conversations that load slowly
+
 ## [1.2.5-beta.7] - 2026-01-22
 
 ### Added
