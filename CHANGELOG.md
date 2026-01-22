@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.5-beta.6] - 2026-01-22
+
+### Added
+- **Keyboard Shortcuts** for faster navigation and operations:
+  - **Cmd/Ctrl + 1-9**: Jump directly to numbered chat in sidebar
+  - **Cmd/Ctrl + Shift + [**: Navigate to previous chat
+  - **Cmd/Ctrl + Shift + ]**: Navigate to next chat
+  - **Cmd/Ctrl + Shift + P**: Open command palette with contact search
+  - **Cmd/Ctrl + ?**: Show keyboard shortcuts overlay
+  - All shortcuts work on macOS (Cmd), Windows, and Linux (Ctrl)
+
+- **Command Palette** for instant contact search:
+  - Access with Cmd/Ctrl + Shift + P
+  - Fuzzy search through all contacts in sidebar
+  - Search by real name or nickname
+  - Click result or press Enter to open conversation
+
+- **Keyboard Shortcuts Menu**:
+  - Added "Keyboard Shortcuts" to Help menu
+  - Shows all available shortcuts and their functions
+  - Easy reference for power users
+
 ## [1.2.5-beta.5] - 2026-01-22
 
 ### Fixed

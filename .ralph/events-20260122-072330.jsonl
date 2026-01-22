@@ -1,1 +1,0 @@
-{"payload":"Fix #33: Changed call-window-preload.js from post-load injection to actual preload script. getUserMedia override now executes BEFORE page JS, ensuring all MediaStreams are tracked and released.","topic":"task.done","ts":"2026-01-22T07:24:06.620263+00:00"}
