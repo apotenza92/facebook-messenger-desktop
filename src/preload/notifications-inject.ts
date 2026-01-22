@@ -1062,5 +1062,494 @@
   };
 
   setupCallPopupObserver();
+
+  // ============================================================================
+  // KEYBOARD SHORTCUTS & COMMAND PALETTE
+  // ============================================================================
+
+  // Get all conversation rows from sidebar
+  const getAllConversationRows = (): Element[] => {
+    const sidebar = findSidebarElement();
+    if (!sidebar) return [];
+    return Array.from(sidebar.querySelectorAll(selectors.conversationRow));
+  };
+
+  // Click on a conversation row to open it
+  const clickConversation = (row: Element): void => {
+    const link = row.querySelector('a[href*="/t/"]') as HTMLAnchorElement | null;
+    if (link) {
+      link.click();
+      return;
+    }
+    // Fallback: click the row itself
+    (row as HTMLElement).click();
+  };
+
+  // Navigate to nth chat (1-indexed)
+  const navigateToChat = (index: number): void => {
+    const rows = getAllConversationRows();
+    if (index >= 1 && index <= rows.length) {
+      clickConversation(rows[index - 1]);
+      log(`Navigated to chat ${index}`);
+    }
+  };
+
+  // Get currently active conversation index
+  const getCurrentChatIndex = (): number => {
+    const currentPath = window.location.pathname;
+    if (!currentPath.includes('/t/')) return -1;
+    
+    const rows = getAllConversationRows();
+    for (let i = 0; i < rows.length; i++) {
+      const link = rows[i].querySelector('a[href*="/t/"]') as HTMLAnchorElement | null;
+      if (link) {
+        try {
+          const linkPath = new URL(link.href).pathname;
+          if (linkPath === currentPath || currentPath.startsWith(linkPath)) {
+            return i;
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    return -1;
+  };
+
+  // Navigate to previous chat
+  const navigateToPrevChat = (): void => {
+    const rows = getAllConversationRows();
+    if (rows.length === 0) return;
+    
+    const currentIndex = getCurrentChatIndex();
+    const newIndex = currentIndex <= 0 ? rows.length - 1 : currentIndex - 1;
+    clickConversation(rows[newIndex]);
+    log(`Navigated to previous chat (index ${newIndex + 1})`);
+  };
+
+  // Navigate to next chat
+  const navigateToNextChat = (): void => {
+    const rows = getAllConversationRows();
+    if (rows.length === 0) return;
+    
+    const currentIndex = getCurrentChatIndex();
+    const newIndex = currentIndex >= rows.length - 1 ? 0 : currentIndex + 1;
+    clickConversation(rows[newIndex]);
+    log(`Navigated to next chat (index ${newIndex + 1})`);
+  };
+
+  // ============================================================================
+  // KEYBOARD SHORTCUTS OVERLAY
+  // ============================================================================
+
+  let shortcutsOverlay: HTMLElement | null = null;
+
+  const SHORTCUTS_HTML = `
+    <div style="
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    " data-shortcuts-backdrop>
+      <div style="
+        background: #242526;
+        border-radius: 12px;
+        padding: 24px 32px;
+        max-width: 480px;
+        color: #e4e6eb;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      ">
+        <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 600; color: #fff;">
+          Keyboard Shortcuts
+        </h2>
+        <div style="display: grid; gap: 12px;">
+          <div style="border-bottom: 1px solid #3a3b3c; padding-bottom: 12px;">
+            <div style="color: #8a8d91; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Navigation</div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span>Jump to chat 1-9</span>
+              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + 1-9</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span>Previous chat</span>
+              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + [</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>Next chat</span>
+              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + ]</kbd>
+            </div>
+          </div>
+          <div style="border-bottom: 1px solid #3a3b3c; padding-bottom: 12px;">
+            <div style="color: #8a8d91; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Quick Actions</div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span>Command palette</span>
+              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + P</kbd>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>Show this help</span>
+              <kbd style="background: #3a3b3c; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + /</kbd>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top: 16px; text-align: center; color: #8a8d91; font-size: 13px;">
+          Press <kbd style="background: #3a3b3c; padding: 2px 6px; border-radius: 4px; font-size: 11px;">Esc</kbd> or click outside to close
+        </div>
+      </div>
+    </div>
+  `;
+
+  const showShortcutsOverlay = (): void => {
+    if (shortcutsOverlay) {
+      hideShortcutsOverlay();
+      return;
+    }
+    
+    const div = document.createElement('div');
+    div.innerHTML = SHORTCUTS_HTML;
+    shortcutsOverlay = div.firstElementChild as HTMLElement;
+    document.body.appendChild(shortcutsOverlay);
+    
+    // Close on backdrop click
+    shortcutsOverlay.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).hasAttribute('data-shortcuts-backdrop')) {
+        hideShortcutsOverlay();
+      }
+    });
+    
+    log('Shortcuts overlay shown');
+  };
+
+  const hideShortcutsOverlay = (): void => {
+    if (shortcutsOverlay) {
+      shortcutsOverlay.remove();
+      shortcutsOverlay = null;
+      log('Shortcuts overlay hidden');
+    }
+  };
+
+  // ============================================================================
+  // COMMAND PALETTE
+  // ============================================================================
+
+  let commandPaletteEl: HTMLElement | null = null;
+  let paletteInputEl: HTMLInputElement | null = null;
+  let paletteResultsEl: HTMLElement | null = null;
+  let paletteSelectedIndex = 0;
+  let paletteContacts: { name: string; row: Element }[] = [];
+
+  // Simple fuzzy match: check if query chars appear in order
+  const fuzzyMatch = (query: string, text: string): { match: boolean; score: number } => {
+    const q = query.toLowerCase();
+    const t = text.toLowerCase();
+    
+    if (t.includes(q)) {
+      return { match: true, score: t.indexOf(q) === 0 ? 100 : 50 };
+    }
+    
+    let qi = 0;
+    let score = 0;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+      if (t[ti] === q[qi]) {
+        score += (ti === 0 || t[ti - 1] === ' ') ? 10 : 5;
+        qi++;
+      }
+    }
+    
+    return { match: qi === q.length, score };
+  };
+
+  // Extract contacts from sidebar
+  const extractContacts = (): { name: string; row: Element }[] => {
+    const rows = getAllConversationRows();
+    const contacts: { name: string; row: Element }[] = [];
+    
+    for (const row of rows) {
+      const info = extractConversationInfo(row);
+      if (info?.title) {
+        contacts.push({ name: info.title, row });
+      }
+    }
+    
+    return contacts;
+  };
+
+  const PALETTE_STYLES = `
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 400px;
+    max-width: 90vw;
+    background: #242526;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    z-index: 999999;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  `;
+
+  const showCommandPalette = (): void => {
+    if (commandPaletteEl) {
+      hideCommandPalette();
+      return;
+    }
+    
+    paletteContacts = extractContacts();
+    paletteSelectedIndex = 0;
+    
+    const div = document.createElement('div');
+    div.style.cssText = PALETTE_STYLES;
+    div.innerHTML = `
+      <div style="padding: 12px;">
+        <input type="text" placeholder="Search conversations..." style="
+          width: 100%;
+          background: #3a3b3c;
+          border: none;
+          border-radius: 8px;
+          padding: 12px 16px;
+          font-size: 15px;
+          color: #e4e6eb;
+          outline: none;
+          box-sizing: border-box;
+        " data-palette-input>
+      </div>
+      <div style="max-height: 320px; overflow-y: auto;" data-palette-results></div>
+    `;
+    
+    commandPaletteEl = div;
+    paletteInputEl = div.querySelector('[data-palette-input]') as HTMLInputElement;
+    paletteResultsEl = div.querySelector('[data-palette-results]') as HTMLElement;
+    
+    document.body.appendChild(commandPaletteEl);
+    paletteInputEl.focus();
+    
+    // Show all contacts initially
+    updatePaletteResults('');
+    
+    // Handle input
+    paletteInputEl.addEventListener('input', () => {
+      paletteSelectedIndex = 0;
+      updatePaletteResults(paletteInputEl!.value);
+    });
+    
+    // Handle keyboard navigation
+    paletteInputEl.addEventListener('keydown', (e) => {
+      const items = paletteResultsEl?.querySelectorAll('[data-palette-item]') || [];
+      
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        paletteSelectedIndex = Math.min(paletteSelectedIndex + 1, items.length - 1);
+        updatePaletteSelection();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        paletteSelectedIndex = Math.max(paletteSelectedIndex - 1, 0);
+        updatePaletteSelection();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        selectPaletteItem(paletteSelectedIndex);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        hideCommandPalette();
+      }
+    });
+    
+    log('Command palette shown');
+  };
+
+  const hideCommandPalette = (): void => {
+    if (commandPaletteEl) {
+      commandPaletteEl.remove();
+      commandPaletteEl = null;
+      paletteInputEl = null;
+      paletteResultsEl = null;
+      paletteContacts = [];
+      log('Command palette hidden');
+    }
+  };
+
+  const updatePaletteResults = (query: string): void => {
+    if (!paletteResultsEl) return;
+    
+    let results: { name: string; row: Element; score: number }[];
+    
+    if (!query.trim()) {
+      // Show first 10 contacts
+      results = paletteContacts.slice(0, 10).map((c, i) => ({ ...c, score: 100 - i }));
+    } else {
+      // Fuzzy search
+      results = paletteContacts
+        .map(c => {
+          const { match, score } = fuzzyMatch(query, c.name);
+          return { ...c, score, match };
+        })
+        .filter(c => c.match)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+    }
+    
+    if (results.length === 0) {
+      paletteResultsEl.innerHTML = `
+        <div style="padding: 24px; text-align: center; color: #8a8d91;">
+          No conversations found
+        </div>
+      `;
+      return;
+    }
+    
+    paletteResultsEl.innerHTML = results.map((r, i) => `
+      <div data-palette-item="${i}" style="
+        padding: 10px 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: ${i === paletteSelectedIndex ? '#3a3b3c' : 'transparent'};
+        color: #e4e6eb;
+      ">
+        <div style="
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          background: #0084ff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 600;
+          font-size: 14px;
+          color: white;
+        ">${r.name.charAt(0).toUpperCase()}</div>
+        <span style="font-size: 15px;">${escapeHtml(r.name)}</span>
+      </div>
+    `).join('');
+    
+    // Add click handlers
+    paletteResultsEl.querySelectorAll('[data-palette-item]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.getAttribute('data-palette-item') || '0', 10);
+        selectPaletteItem(idx);
+      });
+      el.addEventListener('mouseenter', () => {
+        const idx = parseInt(el.getAttribute('data-palette-item') || '0', 10);
+        paletteSelectedIndex = idx;
+        updatePaletteSelection();
+      });
+    });
+  };
+
+  const updatePaletteSelection = (): void => {
+    if (!paletteResultsEl) return;
+    paletteResultsEl.querySelectorAll('[data-palette-item]').forEach((el, i) => {
+      (el as HTMLElement).style.background = i === paletteSelectedIndex ? '#3a3b3c' : 'transparent';
+    });
+  };
+
+  const selectPaletteItem = (index: number): void => {
+    const query = paletteInputEl?.value.trim() || '';
+    let results: { name: string; row: Element }[];
+    
+    if (!query) {
+      results = paletteContacts.slice(0, 10);
+    } else {
+      results = paletteContacts
+        .filter(c => fuzzyMatch(query, c.name).match)
+        .slice(0, 10);
+    }
+    
+    if (results[index]) {
+      clickConversation(results[index].row);
+      hideCommandPalette();
+    }
+  };
+
+  // HTML escape helper
+  const escapeHtml = (text: string): string => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  };
+
+  // ============================================================================
+  // GLOBAL KEYBOARD LISTENER
+  // ============================================================================
+
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    const isMod = e.metaKey || e.ctrlKey;
+    
+    // Close overlays on Escape
+    if (e.key === 'Escape') {
+      if (shortcutsOverlay) {
+        hideShortcutsOverlay();
+        e.preventDefault();
+        return;
+      }
+      if (commandPaletteEl) {
+        hideCommandPalette();
+        e.preventDefault();
+        return;
+      }
+    }
+    
+    // Don't handle shortcuts if typing in an input (except our palette)
+    const target = e.target as HTMLElement;
+    const isInInput = target.tagName === 'INPUT' || 
+                      target.tagName === 'TEXTAREA' || 
+                      target.isContentEditable;
+    
+    // Allow palette keyboard nav
+    if (commandPaletteEl && target === paletteInputEl) {
+      return; // Let palette handle its own keyboard events
+    }
+    
+    // Cmd/Ctrl + Shift + P → Command palette
+    if (isMod && e.shiftKey && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      showCommandPalette();
+      return;
+    }
+    
+    // Cmd/Ctrl + / → Shortcuts help (using / since ? requires shift)
+    if (isMod && e.key === '/') {
+      e.preventDefault();
+      showShortcutsOverlay();
+      return;
+    }
+    
+    // Skip other shortcuts if in input
+    if (isInInput) return;
+    
+    // Cmd/Ctrl + 1-9 → Jump to chat
+    if (isMod && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      navigateToChat(parseInt(e.key, 10));
+      return;
+    }
+    
+    // Cmd/Ctrl + Shift + [ → Previous chat
+    if (isMod && e.shiftKey && e.key === '[') {
+      e.preventDefault();
+      navigateToPrevChat();
+      return;
+    }
+    
+    // Cmd/Ctrl + Shift + ] → Next chat
+    if (isMod && e.shiftKey && e.key === ']') {
+      e.preventDefault();
+      navigateToNextChat();
+      return;
+    }
+  }, true); // Use capture to get events before Messenger
+
+  // Listen for menu-triggered shortcuts overlay
+  document.addEventListener('show-keyboard-shortcuts', () => {
+    showShortcutsOverlay();
+  });
+
+  log('Keyboard shortcuts initialized');
+
+  setupCallPopupObserver();
   log('Initialization complete');
 })(window, Notification);

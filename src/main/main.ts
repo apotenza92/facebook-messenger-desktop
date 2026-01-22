@@ -5890,6 +5890,23 @@ function createApplicationMenu(): void {
         ],
       },
       { role: "windowMenu" as const },
+      {
+        label: "Help",
+        submenu: [
+          {
+            label: "Keyboard Shortcuts",
+            accelerator: "CmdOrCtrl+/",
+            click: () => {
+              const target = contentView?.webContents ?? mainWindow?.webContents;
+              target?.executeJavaScript(`
+                document.dispatchEvent(new CustomEvent('show-keyboard-shortcuts'));
+              `).catch(() => {});
+            },
+          },
+          { type: "separator" },
+          viewOnGitHubMenuItem,
+        ],
+      },
       // Include Develop menu in dev mode or for beta testers
       ...(isDev || isBetaOptedIn() ? [developMenu] : []),
     ];
@@ -5990,6 +6007,17 @@ function createApplicationMenu(): void {
     {
       label: "Help",
       submenu: [
+        {
+          label: "Keyboard Shortcuts",
+          accelerator: "CmdOrCtrl+/",
+          click: () => {
+            const target = contentView?.webContents ?? mainWindow?.webContents;
+            target?.executeJavaScript(`
+              document.dispatchEvent(new CustomEvent('show-keyboard-shortcuts'));
+            `).catch(() => {});
+          },
+        },
+        { type: "separator" },
         viewOnGitHubMenuItem,
         checkUpdatesMenuItem,
         updateFrequencySubmenu,

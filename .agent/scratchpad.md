@@ -1,33 +1,34 @@
-# Issue: Cursor Lag & Input Responsiveness (macOS)
+# Keyboard Shortcuts & Command Palette
 
-## Root Cause Analysis
+## Feature Requirements
 
-**CONFIRMED BUG:** The `titleOverlay` BrowserView blocks mouse events from reaching `contentView`.
+1. **Chat Navigation Shortcuts**
+   - Cmd/Ctrl + 1-9 → Jump to numbered chat in sidebar
+   - Cmd/Ctrl + Shift + [ → Previous chat
+   - Cmd/Ctrl + Shift + ] → Next chat
 
-### Architecture:
-```
-BrowserWindow (main window)
-  ├── contentView (BrowserView) - y: 16px, loads messenger.com
-  └── titleOverlay (BrowserView) - y: 0px, height: 32px, ADDED LAST = ON TOP
-```
+2. **Keyboard Shortcuts Help**
+   - Menu item "Keyboard Shortcuts"
+   - Cmd/Ctrl + ? → Display shortcuts overlay
 
-### Problem:
-1. `titleOverlay` is added AFTER `contentView` → sits on top in z-order
-2. `titleOverlay` is 32px tall, but `contentView` starts at y=16px
-3. **16px overlap zone** where titleOverlay blocks events from reaching content
-4. CSS has `-webkit-app-region: drag` but NO `pointer-events: none`
-5. Result: clicks/hovers in top ~32px area are intercepted by overlay
+3. **Command Palette**
+   - Cmd/Ctrl + Shift + P → Open palette
+   - Search contacts by name/nickname with fuzzy matching
+   - Enter/click opens that chat
 
-### Evidence:
-- [main.ts#L8702-L8714](file:///Users/alex/code/facebook-messenger-desktop/src/main/main.ts#L8702-L8714): No pointer-events rule in overlay CSS
-- [main.ts#L8681-8687](file:///Users/alex/code/facebook-messenger-desktop/src/main/main.ts#L8681-L8687): titleOverlay added after contentView
+## Architecture Plan
 
-## Solution
-
-Add `pointer-events: none` to the overlay HTML/CSS. The `-webkit-app-region: drag` will still work for window dragging, but non-drag clicks will pass through to contentView.
+- **Keyboard events**: Captured in `notifications-inject.ts` (runs in page context)
+- **IPC for commands**: Add channels in `preload.ts` + handlers in `main.ts`
+- **Command palette UI**: Inject floating DOM element via `notifications-inject.ts`
+- **Shortcuts overlay**: Inject as DOM overlay OR use Electron dialog
 
 ## Tasks
 
-- [x] Task 1: Add `pointer-events: none` to titleOverlay CSS (html, body, .bar elements)
-- [x] Task 2: Build and verify TypeScript compiles
-- [ ] Task 3: Test manually - cursor should now respond properly in top area
+- [x] Task 1: Add keyboard event listener in notifications-inject.ts for shortcuts
+- [~] Task 2: Add IPC channels for keyboard commands (not needed - handled in page context)
+- [x] Task 3: Implement chat navigation (jump to nth, prev/next) in inject script
+- [x] Task 4: Create shortcuts help overlay UI (injected DOM)
+- [x] Task 5: Create command palette UI with fuzzy search
+- [x] Task 6: Add "Keyboard Shortcuts" menu item in main.ts menus (macOS + Win/Linux)
+- [x] Task 7: Build and typecheck
