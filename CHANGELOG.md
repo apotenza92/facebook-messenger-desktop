@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5-beta.9] - 2026-01-22
+
+### Improved
+- **Keyboard Shortcuts Overlay**: UI improvements
+  - Wider dialog to prevent text crowding
+  - Shows platform-specific shortcuts (⌘ on macOS, Ctrl on Windows/Linux)
+
 ## [1.2.5-beta.8] - 2026-01-22
 
 ### Fixed

@@ -1228,6 +1228,10 @@
 
   let shortcutsOverlay: HTMLElement | null = null;
 
+  // Detect if running on macOS (in renderer process)
+  const isMacOS = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const modKey = isMacOS ? '⌘' : 'Ctrl';
+
   const getShortcutsHTML = (theme: ThemeColors): string => `
     <div style="
       position: fixed;
@@ -1246,7 +1250,7 @@
         background: ${theme.background};
         border-radius: 12px;
         padding: 24px 32px;
-        max-width: 480px;
+        min-width: 380px;
         color: ${theme.text};
         box-shadow: ${theme.shadow};
       ">
@@ -1256,28 +1260,28 @@
         <div style="display: grid; gap: 12px;">
           <div style="border-bottom: 1px solid ${theme.border}; padding-bottom: 12px;">
             <div style="color: ${theme.textMuted}; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Navigation</div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; gap: 24px;">
               <span>Jump to chat 1-9</span>
-              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + 1-9</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${modKey} + 1-9</kbd>
             </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; gap: 24px;">
               <span>Previous chat</span>
-              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + [</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${modKey} + Shift + [</kbd>
             </div>
-            <div style="display: flex; justify-content: space-between;">
+            <div style="display: flex; justify-content: space-between; gap: 24px;">
               <span>Next chat</span>
-              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + ]</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${modKey} + Shift + ]</kbd>
             </div>
           </div>
           <div style="border-bottom: 1px solid ${theme.border}; padding-bottom: 12px;">
             <div style="color: ${theme.textMuted}; font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">Quick Actions</div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; gap: 24px;">
               <span>Command palette</span>
-              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + Shift + P</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${modKey} + Shift + P</kbd>
             </div>
-            <div style="display: flex; justify-content: space-between;">
+            <div style="display: flex; justify-content: space-between; gap: 24px;">
               <span>Show this help</span>
-              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px;">⌘/Ctrl + /</kbd>
+              <kbd style="background: ${theme.kbd}; padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${modKey} + /</kbd>
             </div>
           </div>
         </div>
