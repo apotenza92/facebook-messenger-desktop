@@ -67,23 +67,17 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          FORCE_BETA_BUILD: 'true'
+          FORCE_BETA_BUILD: "true"
 
-      - name: Create beta yml files and restore stable yml files
+      - name: Restore stable yml files (beta yml already created by electron-builder)
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
         run: |
-          # The beta build created latest-*.yml files pointing to beta artifacts
-          # Rename them to beta-*.yml so beta apps can find them
-          for f in release/latest*.yml; do
-            if [ -f "$f" ]; then
-              beta_name=$(echo "$f" | sed 's/latest/beta/')
-              cp "$f" "$beta_name"
-              echo "Created $beta_name from $f"
-            fi
-          done
-          # Restore stable yml files (so latest-*.yml points to stable artifacts)
-          cp release/stable-yml-backup/*.yml release/ || true
+          # The beta build with channel:'beta' creates beta-*.yml files directly
+          # We just need to restore the stable latest-*.yml files from backup
+          cp release/stable-yml-backup/latest*.yml release/ || true
           rm -rf release/stable-yml-backup
+          echo "YML files in release folder:"
+          ls -la release/*.yml
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -137,22 +131,18 @@ jobs:
         run: npx electron-builder --config electron-builder.config.js --win --publish=never
         timeout-minutes: 30
         env:
-          FORCE_BETA_BUILD: 'true'
+          FORCE_BETA_BUILD: "true"
 
-      - name: Create beta yml files and restore stable yml files
+      - name: Restore stable yml files (beta yml already created by electron-builder)
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
         shell: pwsh
         run: |
-          # The beta build created latest-*.yml files pointing to beta artifacts
-          # Rename them to beta-*.yml so beta apps can find them
-          Get-ChildItem release/latest*.yml | ForEach-Object {
-            $betaName = $_.Name -replace 'latest', 'beta'
-            Copy-Item $_.FullName "release/$betaName"
-            Write-Host "Created release/$betaName from $($_.Name)"
-          }
-          # Restore stable yml files (so latest-*.yml points to stable artifacts)
-          Copy-Item release/stable-yml-backup/*.yml release/ -Force -ErrorAction SilentlyContinue
+          # The beta build with channel:'beta' creates beta-*.yml files directly
+          # We just need to restore the stable latest-*.yml files from backup
+          Copy-Item release/stable-yml-backup/latest*.yml release/ -Force -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force release/stable-yml-backup -ErrorAction SilentlyContinue
+          Write-Host "YML files in release folder:"
+          Get-ChildItem release/*.yml
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -218,23 +208,17 @@ jobs:
           npx electron-builder --config electron-builder.config.js --linux --publish=never
         timeout-minutes: 60
         env:
-          FORCE_BETA_BUILD: 'true'
+          FORCE_BETA_BUILD: "true"
 
-      - name: Create beta yml files and restore stable yml files
+      - name: Restore stable yml files (beta yml already created by electron-builder)
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
         run: |
-          # The beta build created latest-*.yml files pointing to beta artifacts
-          # Rename them to beta-*.yml so beta apps can find them
-          for f in release/latest*.yml; do
-            if [ -f "$f" ]; then
-              beta_name=$(echo "$f" | sed 's/latest/beta/')
-              cp "$f" "$beta_name"
-              echo "Created $beta_name from $f"
-            fi
-          done
-          # Restore stable yml files (so latest-*.yml points to stable artifacts)
-          cp release/stable-yml-backup/*.yml release/ || true
+          # The beta build with channel:'beta' creates beta-*.yml files directly
+          # We just need to restore the stable latest-*.yml files from backup
+          cp release/stable-yml-backup/latest*.yml release/ || true
           rm -rf release/stable-yml-backup
+          echo "YML files in release folder:"
+          ls -la release/*.yml
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

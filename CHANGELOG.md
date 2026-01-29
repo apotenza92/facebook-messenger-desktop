@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.6] - 2026-01-29
+
+### Fixed
+
+- **Auto-update**: Beta users can now correctly update to stable releases
+  - Fixed release workflow bug where beta-\*.yml files were incorrectly overwritten with stable artifact paths
+  - Beta users will now receive proper update packages when stable versions are released
+
 ## [1.2.5] - 2026-01-29
 
 ### Added
