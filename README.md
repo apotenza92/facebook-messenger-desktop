@@ -6,6 +6,8 @@
   <img src="https://img.shields.io/badge/Download-Messenger%20Desktop-0084ff?style=for-the-badge&logo=messenger&logoColor=white" alt="Download Messenger Desktop" height="40">
 </a>
 <br><br>
+    
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/apotenza)
 
 This is an unofficial, third-party desktop application for Facebook Messenger.
 
