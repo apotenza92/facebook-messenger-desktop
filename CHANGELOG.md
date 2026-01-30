@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.6-beta.2] - 2026-01-30
+
+### Added
+
+- **Icon selection**: New "Icon" menu lets stable and beta users choose official (blue) or beta (orange) icons
+  - Applies immediately to dock/taskbar/tray icons (launcher icons follow installed app)
+
 ## [1.2.6-beta.1] - 2026-01-29
 
 ### Fixed

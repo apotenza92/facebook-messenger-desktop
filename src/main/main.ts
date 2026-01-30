@@ -195,16 +195,24 @@ const versionIndicatesBeta =
 function detectBetaFromInstallation(): boolean {
   const execPath = process.execPath.toLowerCase();
   const appPath = app.getAppPath().toLowerCase();
-  
+
   if (process.platform === "darwin") {
     // macOS: Check if running from "Messenger Beta.app" bundle
-    return execPath.includes("messenger beta.app") || appPath.includes("messenger beta.app");
+    return (
+      execPath.includes("messenger beta.app") ||
+      appPath.includes("messenger beta.app")
+    );
   } else if (process.platform === "win32") {
     // Windows: Check if running from beta install location or executable name
-    return execPath.includes("messenger-beta") || execPath.includes("messenger beta");
+    return (
+      execPath.includes("messenger-beta") || execPath.includes("messenger beta")
+    );
   } else {
     // Linux: Check executable name
-    return execPath.includes("messenger-desktop-beta") || execPath.includes("messenger-beta");
+    return (
+      execPath.includes("messenger-desktop-beta") ||
+      execPath.includes("messenger-beta")
+    );
   }
 }
 
@@ -212,7 +220,9 @@ const installationIndicatesBeta = detectBetaFromInstallation();
 const isBetaVersion = versionIndicatesBeta || installationIndicatesBeta;
 
 if (installationIndicatesBeta && !versionIndicatesBeta) {
-  console.log(`[Beta] Detected beta installation with stable version ${appVersion}`);
+  console.log(
+    `[Beta] Detected beta installation with stable version ${appVersion}`,
+  );
 }
 
 // Set app name early and explicitly pin userData/log paths so they don't default to the package name
@@ -257,6 +267,7 @@ const snapHelpShownFile = path.join(
   "snap-help-shown.json",
 );
 const iconThemeFile = path.join(app.getPath("userData"), "icon-theme.json");
+const iconVariantFile = path.join(app.getPath("userData"), "icon-variant.json");
 const menuBarHoverFile = path.join(
   app.getPath("userData"),
   "menu-bar-hover.json",
@@ -265,10 +276,7 @@ const xwaylandPreferenceFile = path.join(
   app.getPath("userData"),
   "xwayland-preference.json",
 );
-const lastVersionFile = path.join(
-  app.getPath("userData"),
-  "last-version.json",
-);
+const lastVersionFile = path.join(app.getPath("userData"), "last-version.json");
 const shortcutFixTestFile = path.join(
   app.getPath("userData"),
   "shortcut-fix-test.json",
@@ -283,8 +291,18 @@ const lastUpdateCheckFile = path.join(
 );
 
 // Update check frequency options (in milliseconds, except "startup" and "never")
-type UpdateFrequency = "never" | "startup" | "hourly" | "sixHours" | "twelveHours" | "daily" | "weekly";
-const UPDATE_FREQUENCY_MS: Record<Exclude<UpdateFrequency, "never" | "startup">, number> = {
+type UpdateFrequency =
+  | "never"
+  | "startup"
+  | "hourly"
+  | "sixHours"
+  | "twelveHours"
+  | "daily"
+  | "weekly";
+const UPDATE_FREQUENCY_MS: Record<
+  Exclude<UpdateFrequency, "never" | "startup">,
+  number
+> = {
   hourly: 60 * 60 * 1000,
   sixHours: 6 * 60 * 60 * 1000,
   twelveHours: 12 * 60 * 60 * 1000,
@@ -1281,12 +1299,19 @@ async function injectLoginPageCSS(
 type IconTheme = "light" | "dark" | "system";
 let currentIconTheme: IconTheme = "system";
 
+// Icon variant: 'match' (default), 'official' (blue), or 'beta' (orange)
+// 'match' follows the installed channel (stable/beta)
+type IconVariant = "match" | "official" | "beta";
+let currentIconVariant: IconVariant = "match";
+
 // Request single instance lock early (before app.whenReady) to prevent race conditions
 // on Linux/Windows where multiple instances might start before lock is checked
 // Skip for testing if SKIP_SINGLE_INSTANCE_LOCK is set
-const skipSingleInstance = process.env.SKIP_SINGLE_INSTANCE_LOCK === 'true';
+const skipSingleInstance = process.env.SKIP_SINGLE_INSTANCE_LOCK === "true";
 const gotTheLock = skipSingleInstance || app.requestSingleInstanceLock();
-console.log(`[SingleInstance] Lock acquired: ${gotTheLock}${skipSingleInstance ? ' (skipped for testing)' : ''}`);
+console.log(
+  `[SingleInstance] Lock acquired: ${gotTheLock}${skipSingleInstance ? " (skipped for testing)" : ""}`,
+);
 if (!gotTheLock) {
   // Another instance is already running - quit immediately
   // app.quit() is asynchronous and doesn't stop code execution, so we must also
@@ -1697,6 +1722,36 @@ function saveIconTheme(theme: IconTheme): void {
   }
 }
 
+function loadIconVariant(): IconVariant {
+  try {
+    if (fs.existsSync(iconVariantFile)) {
+      const raw = fs.readFileSync(iconVariantFile, "utf8");
+      const parsed = JSON.parse(raw);
+      if (
+        parsed.variant === "match" ||
+        parsed.variant === "official" ||
+        parsed.variant === "beta"
+      ) {
+        console.log("[Icon Variant] Loaded variant:", parsed.variant);
+        return parsed.variant;
+      }
+    }
+  } catch (e) {
+    console.warn("[Icon Variant] Failed to load variant, using default:", e);
+  }
+  console.log("[Icon Variant] Using default variant: match");
+  return "match";
+}
+
+function saveIconVariant(variant: IconVariant): void {
+  try {
+    fs.writeFileSync(iconVariantFile, JSON.stringify({ variant }));
+    console.log("[Icon Variant] Saved variant:", variant);
+  } catch (e) {
+    console.warn("[Icon Variant] Failed to save variant:", e);
+  }
+}
+
 // ===== Menu Bar Mode Functions =====
 
 function loadMenuBarModeSetting(): MenuBarMode {
@@ -1705,14 +1760,21 @@ function loadMenuBarModeSetting(): MenuBarMode {
       const raw = fs.readFileSync(menuBarHoverFile, "utf8");
       const parsed = JSON.parse(raw);
       // Support new 'mode' format
-      if (parsed.mode === "always" || parsed.mode === "hover" || parsed.mode === "never") {
+      if (
+        parsed.mode === "always" ||
+        parsed.mode === "hover" ||
+        parsed.mode === "never"
+      ) {
         console.log("[Menu Bar] Loaded mode setting:", parsed.mode);
         return parsed.mode;
       }
       // Migrate from old boolean 'enabled' format
       if (typeof parsed.enabled === "boolean") {
         const migratedMode = parsed.enabled ? "hover" : "never";
-        console.log("[Menu Bar] Migrated old hover setting to mode:", migratedMode);
+        console.log(
+          "[Menu Bar] Migrated old hover setting to mode:",
+          migratedMode,
+        );
         return migratedMode;
       }
     }
@@ -1739,14 +1801,25 @@ function loadUpdateFrequency(): UpdateFrequency {
     if (fs.existsSync(updateFrequencyFile)) {
       const raw = fs.readFileSync(updateFrequencyFile, "utf8");
       const parsed = JSON.parse(raw);
-      const validFrequencies: UpdateFrequency[] = ["never", "startup", "hourly", "sixHours", "twelveHours", "daily", "weekly"];
+      const validFrequencies: UpdateFrequency[] = [
+        "never",
+        "startup",
+        "hourly",
+        "sixHours",
+        "twelveHours",
+        "daily",
+        "weekly",
+      ];
       if (validFrequencies.includes(parsed.frequency)) {
         console.log("[Update Frequency] Loaded setting:", parsed.frequency);
         return parsed.frequency;
       }
     }
   } catch (e) {
-    console.warn("[Update Frequency] Failed to load setting, using default:", e);
+    console.warn(
+      "[Update Frequency] Failed to load setting, using default:",
+      e,
+    );
   }
   console.log("[Update Frequency] Using default setting: daily");
   return "daily";
@@ -1764,14 +1837,14 @@ function saveUpdateFrequency(frequency: UpdateFrequency): void {
 function setUpdateFrequency(frequency: UpdateFrequency): void {
   currentUpdateFrequency = frequency;
   saveUpdateFrequency(frequency);
-  
+
   // Restart the update check schedule with new frequency
   stopUpdateCheckSchedule();
   startUpdateCheckSchedule();
-  
+
   // Rebuild menu to update the radio buttons
   createApplicationMenu();
-  
+
   console.log(`[Update Frequency] Set to: ${frequency}`);
 }
 
@@ -1792,7 +1865,10 @@ function loadLastUpdateCheckTime(): number {
 
 function saveLastUpdateCheckTime(): void {
   try {
-    fs.writeFileSync(lastUpdateCheckFile, JSON.stringify({ timestamp: Date.now() }));
+    fs.writeFileSync(
+      lastUpdateCheckFile,
+      JSON.stringify({ timestamp: Date.now() }),
+    );
     console.log("[Update Frequency] Saved last check time");
   } catch (e) {
     console.warn("[Update Frequency] Failed to save last check time:", e);
@@ -1806,24 +1882,26 @@ function shouldCheckForUpdates(): boolean {
   if (currentUpdateFrequency === "startup") {
     return true;
   }
-  
+
   const lastCheck = loadLastUpdateCheckTime();
   if (lastCheck === 0) {
     console.log("[Update Frequency] No previous check recorded, should check");
     return true;
   }
-  
+
   const intervalMs = UPDATE_FREQUENCY_MS[currentUpdateFrequency];
   const elapsed = Date.now() - lastCheck;
   const shouldCheck = elapsed >= intervalMs;
-  
+
   if (shouldCheck) {
-    console.log(`[Update Frequency] ${Math.round(elapsed / 1000 / 60)} minutes since last check, time to check`);
+    console.log(
+      `[Update Frequency] ${Math.round(elapsed / 1000 / 60)} minutes since last check, time to check`,
+    );
   } else {
     const remaining = Math.round((intervalMs - elapsed) / 1000 / 60);
     console.log(`[Update Frequency] ${remaining} minutes until next check`);
   }
-  
+
   return shouldCheck;
 }
 
@@ -1847,14 +1925,19 @@ function stopUpdateCheckSchedule(): void {
 
 function startUpdateCheckSchedule(): void {
   stopUpdateCheckSchedule();
-  
-  if (currentUpdateFrequency === "never" || currentUpdateFrequency === "startup") {
+
+  if (
+    currentUpdateFrequency === "never" ||
+    currentUpdateFrequency === "startup"
+  ) {
     return;
   }
-  
+
   const intervalMs = UPDATE_FREQUENCY_MS[currentUpdateFrequency];
-  console.log(`[Update Frequency] Scheduling update checks every ${currentUpdateFrequency} (${intervalMs}ms)`);
-  
+  console.log(
+    `[Update Frequency] Scheduling update checks every ${currentUpdateFrequency} (${intervalMs}ms)`,
+  );
+
   // Also keep interval for long-running sessions
   updateCheckInterval = setInterval(() => {
     console.log("[Update Frequency] Running scheduled update check");
@@ -1863,7 +1946,8 @@ function startUpdateCheckSchedule(): void {
 }
 
 function setMenuBarMode(mode: MenuBarMode): void {
-  if (process.platform === "darwin" || !mainWindow || mainWindow.isDestroyed()) return;
+  if (process.platform === "darwin" || !mainWindow || mainWindow.isDestroyed())
+    return;
 
   menuBarMode = mode;
   saveMenuBarModeSetting(mode);
@@ -1900,12 +1984,18 @@ function shouldUseDarkIcon(): boolean {
   return nativeTheme.shouldUseDarkColors;
 }
 
+function shouldUseBetaIcons(): boolean {
+  if (currentIconVariant === "official") return false;
+  if (currentIconVariant === "beta") return true;
+  return isBetaVersion;
+}
+
 function getIconSubdir(): string {
   // Returns the appropriate icon subdirectory based on:
-  // 1. Beta version (uses orange icons from 'beta/' subdirectory)
+  // 1. Icon variant (uses orange icons from 'beta/' subdirectory)
   // 2. Dark mode preference (uses icons from 'dark/' subdirectory)
   // Combines to: '', 'dark', 'beta', or 'beta/dark'
-  const betaPrefix = isBetaVersion ? "beta" : "";
+  const betaPrefix = shouldUseBetaIcons() ? "beta" : "";
   const darkSuffix = shouldUseDarkIcon() ? "dark" : "";
 
   if (betaPrefix && darkSuffix) {
@@ -1917,7 +2007,7 @@ function getIconSubdir(): string {
 function applyCurrentIconTheme(): void {
   const useDark = shouldUseDarkIcon();
   console.log(
-    `[Icon Theme] Applying theme, useDark=${useDark}, currentIconTheme=${currentIconTheme}`,
+    `[Icon Theme] Applying theme, useDark=${useDark}, currentIconTheme=${currentIconTheme}, currentIconVariant=${currentIconVariant}`,
   );
 
   // Update window icon (Windows/Linux only)
@@ -1935,7 +2025,7 @@ function applyCurrentIconTheme(): void {
 
   // Update macOS dock icon
   if (process.platform === "darwin" && app.dock) {
-    if (currentIconTheme === "system") {
+    if (currentIconTheme === "system" && currentIconVariant === "match") {
       // In 'system' mode on macOS: Use native bundle icon
       // This allows Tahoe's glass/clear effects AND automatic dark mode handling
       app.dock.setIcon(null as unknown as Electron.NativeImage);
@@ -1967,6 +2057,17 @@ function setIconTheme(theme: IconTheme): void {
 
   currentIconTheme = theme;
   saveIconTheme(theme);
+  applyCurrentIconTheme();
+
+  // Rebuild menu to update checkmarks
+  createApplicationMenu();
+}
+
+function setIconVariant(variant: IconVariant): void {
+  if (variant === currentIconVariant) return;
+
+  currentIconVariant = variant;
+  saveIconVariant(variant);
   applyCurrentIconTheme();
 
   // Rebuild menu to update checkmarks
@@ -2846,9 +2947,7 @@ function createWindow(source: string = "unknown"): void {
             const callInjectScript = fs.readFileSync(callInjectPath, "utf-8");
             try {
               await childWindow.webContents.executeJavaScript(callInjectScript);
-              console.log(
-                "[Window] Call window MediaStream tracking injected",
-              );
+              console.log("[Window] Call window MediaStream tracking injected");
             } catch (err) {
               console.error(
                 "[Window] Failed to inject call window script:",
@@ -3622,9 +3721,7 @@ function createWindow(source: string = "unknown"): void {
             const callInjectScript = fs.readFileSync(callInjectPath, "utf-8");
             try {
               await childWindow.webContents.executeJavaScript(callInjectScript);
-              console.log(
-                "[Window] Call window MediaStream tracking injected",
-              );
+              console.log("[Window] Call window MediaStream tracking injected");
             } catch (err) {
               console.error(
                 "[Window] Failed to inject call window script:",
@@ -3998,9 +4095,21 @@ function getIconPath(): string | undefined {
   const platformIcon = process.platform === "win32" ? "icon.ico" : "icon.png";
 
   const appPath = app.getAppPath();
+  const subdir = getIconSubdir();
 
   // Try platform-specific icon first, then fall back to .png
-  const possiblePaths: string[] = [
+  const possiblePaths: string[] = [];
+  if (subdir) {
+    // Packaged app paths
+    possiblePaths.push(
+      path.join(appPath, "assets/icons", subdir, platformIcon),
+      // Development paths (relative to dist/main/)
+      path.join(__dirname, "../../assets/icons", subdir, platformIcon),
+      // Development paths (relative to project root)
+      path.join(process.cwd(), "assets/icons", subdir, platformIcon),
+    );
+  }
+  possiblePaths.push(
     // Packaged app paths
     path.join(appPath, "assets/icons", platformIcon),
     // Development paths (relative to dist/main/)
@@ -4011,7 +4120,7 @@ function getIconPath(): string | undefined {
     path.join(appPath, "assets/icons/icon.png"),
     path.join(__dirname, "../../assets/icons/icon.png"),
     path.join(process.cwd(), "assets/icons/icon.png"),
-  ];
+  );
 
   // Find the first existing icon file
   try {
@@ -4082,7 +4191,7 @@ function getTrayIconPath(): string | undefined {
   const devTrayDir = path.join(process.cwd(), "assets", "tray");
 
   // Beta uses orange icons from 'beta/' subdirectory
-  const betaPrefix = isBetaVersion ? "beta" : "";
+  const betaPrefix = shouldUseBetaIcons() ? "beta" : "";
   const darkSuffix = shouldUseDarkIcon() ? "dark" : "";
 
   // macOS uses template icons (always same), Windows/Linux use themed icons
@@ -5414,15 +5523,23 @@ function toggleMenuBarMode(): void {
 
   // From hover, go to always. Otherwise toggle between always and never.
   const nextMode: MenuBarMode =
-    menuBarMode === "hover" ? "always" :
-    menuBarMode === "always" ? "never" : "always";
+    menuBarMode === "hover"
+      ? "always"
+      : menuBarMode === "always"
+        ? "never"
+        : "always";
 
   setMenuBarMode(nextMode);
 }
 
 // Start polling cursor position to show menu bar on hover (Windows/Linux only)
 function startMenuBarHoverDetection(): void {
-  if (process.platform === "darwin" || menuBarHoverInterval || menuBarMode !== "hover") return;
+  if (
+    process.platform === "darwin" ||
+    menuBarHoverInterval ||
+    menuBarMode !== "hover"
+  )
+    return;
 
   let lastInHoverZone = false;
 
@@ -5447,7 +5564,10 @@ function startMenuBarHoverDetection(): void {
 
       // Check if cursor is in the top hover zone of the window
       const distanceFromTop = cursorPos.y - windowBounds.y;
-      const inHoverZone = inWindowX && distanceFromTop >= 0 && distanceFromTop <= MENU_BAR_HOVER_ZONE;
+      const inHoverZone =
+        inWindowX &&
+        distanceFromTop >= 0 &&
+        distanceFromTop <= MENU_BAR_HOVER_ZONE;
 
       if (inHoverZone && !lastInHoverZone) {
         // Entered hover zone - show menu bar immediately
@@ -5457,7 +5577,11 @@ function startMenuBarHoverDetection(): void {
         // Left hover zone - hide menu bar quickly
         // Tiny delay to allow clicking menu items
         setTimeout(() => {
-          if (mainWindow && !mainWindow.isDestroyed() && menuBarMode === "hover") {
+          if (
+            mainWindow &&
+            !mainWindow.isDestroyed() &&
+            menuBarMode === "hover"
+          ) {
             // Check if still outside hover zone
             const newCursorPos = screen.getCursorScreenPoint();
             const newBounds = mainWindow.getBounds();
@@ -5492,7 +5616,7 @@ function stopMenuBarHoverDetection(): void {
 // IPC Handlers
 function createApplicationMenu(): void {
   const resetAndLogoutMenuItem: Electron.MenuItemConstructorOptions = {
-  label: "Logout and Reset App…",
+    label: "Logout and Reset App…",
     click: () => {
       void handleResetAndLogout();
     },
@@ -5745,6 +5869,36 @@ function createApplicationMenu(): void {
     ],
   };
 
+  const iconVariantSubmenu: Electron.MenuItemConstructorOptions = {
+    label: "Icon",
+    submenu: [
+      {
+        label: "Match Channel",
+        type: "radio",
+        checked: currentIconVariant === "match",
+        click: () => {
+          setIconVariant("match");
+        },
+      },
+      {
+        label: "Official (Blue)",
+        type: "radio",
+        checked: currentIconVariant === "official",
+        click: () => {
+          setIconVariant("official");
+        },
+      },
+      {
+        label: "Beta (Orange)",
+        type: "radio",
+        checked: currentIconVariant === "beta",
+        click: () => {
+          setIconVariant("beta");
+        },
+      },
+    ],
+  };
+
   // Dev-only menu for testing features (only included in menu when isDev is true)
   const developMenu: Electron.MenuItemConstructorOptions = {
     label: "Develop",
@@ -5804,7 +5958,12 @@ function createApplicationMenu(): void {
               } else {
                 const speed = (1.5 + Math.random() * 2).toFixed(1) + " MB/s";
                 const downloaded = ((progress / 100) * 67.5).toFixed(1) + " MB";
-                updateDownloadProgress(Math.round(progress), speed, downloaded, "67.5 MB");
+                updateDownloadProgress(
+                  Math.round(progress),
+                  speed,
+                  downloaded,
+                  "67.5 MB",
+                );
               }
             }, 200);
           });
@@ -5818,9 +5977,14 @@ function createApplicationMenu(): void {
             // Write marker file so we know to show results after restart
             fs.writeFileSync(
               shortcutFixTestFile,
-              JSON.stringify({ pending: true, startedAt: new Date().toISOString() }),
+              JSON.stringify({
+                pending: true,
+                startedAt: new Date().toISOString(),
+              }),
             );
-            console.log("[Test] Wrote fake previous version to trigger shortcut fix on restart");
+            console.log(
+              "[Test] Wrote fake previous version to trigger shortcut fix on restart",
+            );
           } catch (err) {
             console.error("[Test] Failed to write version file:", err);
           }
@@ -5844,7 +6008,9 @@ function createApplicationMenu(): void {
           });
 
           if (restartResult.response === 0) {
-            console.log("[Test] Restarting app to simulate post-update launch...");
+            console.log(
+              "[Test] Restarting app to simulate post-update launch...",
+            );
             app.relaunch();
             app.quit();
           }
@@ -5877,6 +6043,7 @@ function createApplicationMenu(): void {
           checkUpdatesMenuItem,
           updateFrequencySubmenu,
           notificationSettingsMenuItem,
+          iconVariantSubmenu,
           iconThemeSubmenu,
           { type: "separator" },
           { role: "services" as const },
@@ -5943,10 +6110,15 @@ function createApplicationMenu(): void {
             label: "Keyboard Shortcuts",
             accelerator: "CmdOrCtrl+/",
             click: () => {
-              const target = contentView?.webContents ?? mainWindow?.webContents;
-              target?.executeJavaScript(`
+              const target =
+                contentView?.webContents ?? mainWindow?.webContents;
+              target
+                ?.executeJavaScript(
+                  `
                 document.dispatchEvent(new CustomEvent('show-keyboard-shortcuts'));
-              `).catch(() => {});
+              `,
+                )
+                .catch(() => {});
             },
           },
           { type: "separator" },
@@ -5966,6 +6138,7 @@ function createApplicationMenu(): void {
     {
       label: "File",
       submenu: [
+        iconVariantSubmenu,
         iconThemeSubmenu,
         { type: "separator" },
         { role: "quit" as const },
@@ -6058,9 +6231,13 @@ function createApplicationMenu(): void {
           accelerator: "CmdOrCtrl+/",
           click: () => {
             const target = contentView?.webContents ?? mainWindow?.webContents;
-            target?.executeJavaScript(`
+            target
+              ?.executeJavaScript(
+                `
               document.dispatchEvent(new CustomEvent('show-keyboard-shortcuts'));
-            `).catch(() => {});
+            `,
+              )
+              .catch(() => {});
           },
         },
         { type: "separator" },
@@ -6098,7 +6275,10 @@ function getMessengerWebContents(): Electron.WebContents | undefined {
 function sendPowerStateToRenderer(state: PowerStateEvent): void {
   const target = getMessengerWebContents();
   if (!target) {
-    console.warn("[PowerMonitor] No webContents available for power state", state);
+    console.warn(
+      "[PowerMonitor] No webContents available for power state",
+      state,
+    );
     return;
   }
 
@@ -6141,7 +6321,10 @@ function setupIpcHandlers(): void {
         "[Main Process] Notification handler not ready, queuing notification",
       );
       // Initialize handler if not ready
-      notificationHandler = new NotificationHandler(() => mainWindow, APP_DISPLAY_NAME);
+      notificationHandler = new NotificationHandler(
+        () => mainWindow,
+        APP_DISPLAY_NAME,
+      );
       notificationHandler.showNotification(data);
     }
   });
@@ -7396,7 +7579,7 @@ async function checkAndFixShortcutsAfterUpdate(): Promise<void> {
       if (isTestRun) {
         const statusIcon = result.success ? "✓" : "✗";
         const statusText = result.success ? "Success" : "Failed";
-        
+
         await dialog.showMessageBox({
           type: result.success ? "info" : "error",
           title: "Shortcut Fix Test Results",
@@ -7452,7 +7635,12 @@ async function runWindowsShortcutFix(): Promise<ShortcutFixResult> {
       console.warn(
         "[Shortcut Fix] Script not found, skipping (may not be included in build)",
       );
-      resolve({ success: true, updated: 0, found: 0, output: "Script not found (dev mode)" });
+      resolve({
+        success: true,
+        updated: 0,
+        found: 0,
+        output: "Script not found (dev mode)",
+      });
       return;
     }
 
@@ -7462,15 +7650,15 @@ async function runWindowsShortcutFix(): Promise<ShortcutFixResult> {
 
     exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
       const output = stdout || "";
-      
+
       if (error) {
         console.error("[Shortcut Fix] Execution error:", error);
-        resolve({ 
-          success: false, 
-          updated: 0, 
-          found: 0, 
-          output, 
-          error: error.message 
+        resolve({
+          success: false,
+          updated: 0,
+          found: 0,
+          output,
+          error: error.message,
         });
         return;
       }
@@ -7782,7 +7970,9 @@ async function showCustomUpdateDialog(
       .split("\n")
       .map((line) => {
         // Section headers (Fixed:, Added:, etc.)
-        const headerMatch = line.match(/^(Fixed|Added|Changed|Removed|Security|Deprecated|Breaking|Improved):/i);
+        const headerMatch = line.match(
+          /^(Fixed|Added|Changed|Removed|Security|Deprecated|Breaking|Improved):/i,
+        );
         if (headerMatch) {
           return `<div class="section-header"><strong>${headerMatch[1]}:</strong>${line.slice(headerMatch[0].length)}</div>`;
         }
@@ -7794,7 +7984,7 @@ async function showCustomUpdateDialog(
         }
         return `<div>${line}</div>`;
       })
-      .filter(line => line) // Remove empty strings
+      .filter((line) => line) // Remove empty strings
       .join("");
 
     return html;
@@ -8128,9 +8318,7 @@ async function showCustomUpdateDialog(
     // Center on parent window
     if (parentWindow) {
       const parentBounds = parentWindow.getBounds();
-      const x = Math.round(
-        parentBounds.x + (parentBounds.width - 420) / 2,
-      );
+      const x = Math.round(parentBounds.x + (parentBounds.width - 420) / 2);
       const y = Math.round(
         parentBounds.y + (parentBounds.height - windowHeight) / 2,
       );
@@ -8601,12 +8789,12 @@ function setupAutoUpdater(): void {
 
     // Load update frequency preference
     currentUpdateFrequency = loadUpdateFrequency();
-    
+
     // Check for updates if enough time has elapsed since last check
     if (shouldCheckForUpdates()) {
       performUpdateCheck();
     }
-    
+
     // Start periodic update checks for long-running sessions
     startUpdateCheckSchedule();
   } catch (e) {
@@ -8662,7 +8850,10 @@ app.whenReady().then(async () => {
   await promptMoveToApplications();
 
   // Initialize managers
-  notificationHandler = new NotificationHandler(() => mainWindow, APP_DISPLAY_NAME);
+  notificationHandler = new NotificationHandler(
+    () => mainWindow,
+    APP_DISPLAY_NAME,
+  );
   badgeManager = new BadgeManager();
   badgeManager.setWindowGetter(() => mainWindow);
   _backgroundService = new BackgroundService();
@@ -8676,6 +8867,10 @@ app.whenReady().then(async () => {
   // Load icon theme preference
   currentIconTheme = loadIconTheme();
   console.log(`[Icon Theme] Initial theme: ${currentIconTheme}`);
+
+  // Load icon variant preference
+  currentIconVariant = loadIconVariant();
+  console.log(`[Icon Variant] Initial variant: ${currentIconVariant}`);
 
   // Listen for system theme changes (for 'system' mode auto-switching)
   nativeTheme.on("updated", () => {
