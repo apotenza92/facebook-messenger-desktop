@@ -1,8 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from "electron";
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('electronAPI', {
+contextBridge.exposeInMainWorld("electronAPI", {
   // Notification API override (legacy - kept for compatibility)
   showNotification: (data: {
     title: string;
@@ -11,52 +11,55 @@ contextBridge.exposeInMainWorld('electronAPI', {
     tag?: string;
     silent?: boolean;
   }) => {
-    ipcRenderer.send('show-notification', data);
+    ipcRenderer.send("show-notification", data);
   },
-  
+
   // Unread count updates
   updateUnreadCount: (count: number) => {
     console.log(`[Preload] Sending update-unread-count: ${count}`);
-    ipcRenderer.send('update-unread-count', count);
+    ipcRenderer.send("update-unread-count", count);
   },
-  
+
   // Clear badge
   clearBadge: () => {
-    ipcRenderer.send('clear-badge');
+    ipcRenderer.send("clear-badge");
   },
-  
+
   // Incoming call - bring window to foreground
   incomingCall: () => {
-    console.log('[Preload] Sending incoming-call signal');
-    ipcRenderer.send('incoming-call');
+    console.log("[Preload] Sending incoming-call signal");
+    ipcRenderer.send("incoming-call");
   },
-  
+
   // Notification actions
   onNotificationAction: (callback: (action: string, data: any) => void) => {
-    ipcRenderer.on('notification-action-handler', (event, action, data) => {
+    ipcRenderer.on("notification-action-handler", (event, action, data) => {
       callback(action, data);
     });
   },
-  
+
   // Test notification (for testing)
   testNotification: () => {
-    ipcRenderer.send('test-notification');
+    ipcRenderer.send("test-notification");
   },
-  
+
   // Menu bar hover tracking
   sendMousePosition: (y: number) => {
-    ipcRenderer.send('mouse-position', y);
+    ipcRenderer.send("mouse-position", y);
   },
 });
 
 // Forward power/sleep state changes to page context
-ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number }) => {
-  try {
-    window.postMessage({ type: "electron-power-state", data }, "*");
-  } catch {
-    // Ignore postMessage failures
-  }
-});
+ipcRenderer.on(
+  "power-state",
+  (_event, data: { state: string; timestamp: number }) => {
+    try {
+      window.postMessage({ type: "electron-power-state", data }, "*");
+    } catch {
+      // Ignore postMessage failures
+    }
+  },
+);
 
 // Listen for notification events from the injected script
 // The injected script dispatches custom events that we can catch
@@ -72,41 +75,46 @@ ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number 
       });
     })();
   `;
-  
+
   // Execute the bridge listener in the page context
   // This runs after the page loads, so we'll inject it via main process
-  
+
   // Also listen for messages (fallback)
-  window.addEventListener('message', (event: MessageEvent) => {
+  window.addEventListener("message", (event: MessageEvent) => {
     // Only process messages from the same origin (our injected script)
-    if (event.data && typeof event.data === 'object') {
+    if (event.data && typeof event.data === "object") {
       // Handle both 'electron-notification' (from bridge) and 'notification' (from fallback)
-      if (event.data.type === 'electron-notification' || event.data.type === 'notification') {
+      if (
+        event.data.type === "electron-notification" ||
+        event.data.type === "notification"
+      ) {
         const data = event.data.data;
         try {
-          console.log('[Preload Bridge] Received electron-notification', {
+          console.log("[Preload Bridge] Received electron-notification", {
             title: data?.title,
             hasIcon: Boolean(data?.icon),
             tag: data?.tag,
             id: data?.id,
           });
-        } catch { /* intentionally empty */ }
-        
+        } catch {
+          /* intentionally empty */
+        }
+
         // Convert icon if it's a data URL
         if (data.icon) {
           const image = new Image();
-          image.crossOrigin = 'anonymous';
-          
-          image.addEventListener('load', () => {
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
+          image.crossOrigin = "anonymous";
+
+          image.addEventListener("load", () => {
+            const canvas = document.createElement("canvas");
+            const context = canvas.getContext("2d");
             if (context) {
               canvas.width = image.width;
               canvas.height = image.height;
               context.drawImage(image, 0, 0);
-              
+
               const iconDataUrl = canvas.toDataURL();
-              ipcRenderer.send('show-notification', {
+              ipcRenderer.send("show-notification", {
                 title: data.title,
                 body: data.body,
                 icon: iconDataUrl,
@@ -116,14 +124,19 @@ ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number 
                 href: data.href, // Pass conversation URL for click navigation
               });
               try {
-                console.log('[Preload Bridge] Sent notification with icon to main', { id: data.id, title: data.title, href: data.href });
-              } catch { /* intentionally empty */ }
+                console.log(
+                  "[Preload Bridge] Sent notification with icon to main",
+                  { id: data.id, title: data.title, href: data.href },
+                );
+              } catch {
+                /* intentionally empty */
+              }
             }
           });
-          
-          image.addEventListener('error', () => {
+
+          image.addEventListener("error", () => {
             // If image loading fails, send without icon
-            ipcRenderer.send('show-notification', {
+            ipcRenderer.send("show-notification", {
               title: data.title,
               body: data.body,
               tag: data.tag,
@@ -132,14 +145,19 @@ ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number 
               href: data.href, // Pass conversation URL for click navigation
             });
             try {
-              console.warn('[Preload Bridge] Icon load failed, sent without icon', { id: data.id, title: data.title, href: data.href });
-            } catch { /* intentionally empty */ }
+              console.warn(
+                "[Preload Bridge] Icon load failed, sent without icon",
+                { id: data.id, title: data.title, href: data.href },
+              );
+            } catch {
+              /* intentionally empty */
+            }
           });
-          
+
           image.src = data.icon;
         } else {
           // No icon, send directly
-          ipcRenderer.send('show-notification', {
+          ipcRenderer.send("show-notification", {
             title: data.title,
             body: data.body,
             tag: data.tag,
@@ -148,29 +166,44 @@ ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number 
             href: data.href, // Pass conversation URL for click navigation
           });
           try {
-            console.log('[Preload Bridge] Sent notification without icon to main', { id: data.id, title: data.title, href: data.href });
-          } catch { /* intentionally empty */ }
+            console.log(
+              "[Preload Bridge] Sent notification without icon to main",
+              { id: data.id, title: data.title, href: data.href },
+            );
+          } catch {
+            /* intentionally empty */
+          }
         }
-      } else if (event.data.type === 'electron-fallback-log') {
+      } else if (event.data.type === "electron-fallback-log") {
         try {
-          ipcRenderer.send('log-fallback', event.data.data);
-        } catch { /* intentionally empty */ }
-      } else if (event.data.type === 'electron-badge-update') {
+          ipcRenderer.send("log-fallback", event.data.data);
+        } catch {
+          /* intentionally empty */
+        }
+      } else if (event.data.type === "electron-badge-update") {
         // Handle badge count updates from page context
         const count = event.data.count;
-        if (typeof count === 'number') {
-          console.log(`[Preload Bridge] Received badge update from page context: ${count}`);
-          ipcRenderer.send('update-unread-count', count);
+        if (typeof count === "number") {
+          console.log(
+            `[Preload Bridge] Received badge update from page context: ${count}`,
+          );
+          ipcRenderer.send("update-unread-count", count);
         }
-      } else if (event.data.type === 'electron-incoming-call') {
+      } else if (event.data.type === "electron-incoming-call") {
         // Handle incoming call detection from page context
-        console.log('[Preload Bridge] Incoming call detected - signaling main process');
-        ipcRenderer.send('incoming-call');
-      } else if (event.data.type === 'electron-recount-badge') {
+        console.log(
+          "[Preload Bridge] Incoming call detected - signaling main process",
+        );
+        ipcRenderer.send("incoming-call");
+      } else if (event.data.type === "electron-recount-badge") {
         // Handle badge recount request from injected script (issue #38)
-        console.log('[Preload Bridge] Badge recount requested - triggering DOM count');
+        console.log(
+          "[Preload Bridge] Badge recount requested - triggering DOM count",
+        );
         // Dispatch custom event that the badge monitor will catch
-        document.dispatchEvent(new CustomEvent('electron-badge-recount-request', { detail: {} }));
+        document.dispatchEvent(
+          new CustomEvent("electron-badge-recount-request", { detail: {} }),
+        );
       }
     }
   });
@@ -179,18 +212,18 @@ ipcRenderer.on("power-state", (_event, data: { state: string; timestamp: number 
 // Track mouse position for menu bar hover (Windows/Linux only)
 // We use screenY and window.screenY to calculate position relative to window top
 // This is more reliable than clientY which starts at the web content area
-if (process.platform !== 'darwin') {
+if (process.platform !== "darwin") {
   let lastInHoverZone = false;
   const HOVER_ZONE = 10; // Pixels from top of window content area
-  
+
   function setupMouseTracking() {
-    document.addEventListener('mousemove', (event: MouseEvent) => {
+    document.addEventListener("mousemove", (event: MouseEvent) => {
       // Use clientY - position within the viewport/web content
       const y = event.clientY;
-      
+
       // Detect if mouse is near the top of the content area
       const inHoverZone = y <= HOVER_ZONE;
-      
+
       // Only send updates when state changes (to avoid spam)
       if (inHoverZone !== lastInHoverZone) {
         lastInHoverZone = inHoverZone;
@@ -200,10 +233,10 @@ if (process.platform !== 'darwin') {
       }
     });
   }
-  
+
   // Set up mouse tracking when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setupMouseTracking);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupMouseTracking);
   } else {
     setupMouseTracking();
   }
@@ -212,11 +245,11 @@ if (process.platform !== 'darwin') {
 // Media viewer CSS adjustment for macOS title bar
 // Pushes media viewer controls down to be fully below the custom title bar overlay
 (function setupMediaViewerCSSAdjustment() {
-  if (process.platform !== 'darwin') return; // Only needed on macOS
-  
+  if (process.platform !== "darwin") return; // Only needed on macOS
+
   const TOP_OFFSET = 16;
-  const style = document.createElement('style');
-  style.id = 'messenger-media-viewer-fix';
+  const style = document.createElement("style");
+  style.id = "messenger-media-viewer-fix";
   style.textContent = `
     /* Push media viewer top controls down */
     /* Close button is a direct div, download/share are wrapped in spans */
@@ -226,17 +259,17 @@ if (process.platform !== 'darwin') {
       transform: translateY(${TOP_OFFSET}px) !important;
     }
   `;
-  
+
   // Inject when DOM is ready
   const inject = () => {
-    if (!document.getElementById('messenger-media-viewer-fix')) {
+    if (!document.getElementById("messenger-media-viewer-fix")) {
       document.head.appendChild(style);
-      console.log('[Preload] Media viewer CSS fix injected');
+      console.log("[Preload] Media viewer CSS fix injected");
     }
   };
-  
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', inject);
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", inject);
   } else {
     inject();
   }
@@ -244,8 +277,8 @@ if (process.platform !== 'darwin') {
 
 // Legacy Notification override (kept as fallback, but main injection happens after page load)
 // This must happen immediately and be non-configurable to prevent messenger.com from overriding it
-(function() {
-  'use strict';
+(function () {
+  "use strict";
 
   // Store original Notification constructor if it exists
   const _OriginalNotification = window.Notification;
@@ -263,9 +296,13 @@ if (process.platform !== 'darwin') {
         this.title = title;
         this.options = options || {};
         this.tag = this.options.tag;
-        this.body = this.options.body || '';
+        this.body = this.options.body || "";
 
-        console.log('[Notification Override] Creating notification:', { title, body: this.body, tag: this.tag });
+        console.log("[Notification Override] Creating notification:", {
+          title,
+          body: this.body,
+          tag: this.tag,
+        });
 
         // Forward to Electron main process
         if ((window as any).electronAPI) {
@@ -277,7 +314,7 @@ if (process.platform !== 'darwin') {
             silent: this.options.silent,
           });
         } else {
-          console.warn('[Notification Override] electronAPI not available yet');
+          console.warn("[Notification Override] electronAPI not available yet");
         }
       }
 
@@ -305,11 +342,11 @@ if (process.platform !== 'darwin') {
       }
 
       static requestPermission(): Promise<NotificationPermission> {
-        return Promise.resolve('granted');
+        return Promise.resolve("granted");
       }
 
       static get permission(): NotificationPermission {
-        return 'granted';
+        return "granted";
       }
 
       // Some scripts assign to Notification.permission; include a no-op setter to avoid TypeErrors
@@ -326,12 +363,15 @@ if (process.platform !== 'darwin') {
   // Replace window.Notification immediately and make it non-configurable
   try {
     // Delete existing Notification if it exists and is configurable
-    const existingDescriptor = Object.getOwnPropertyDescriptor(window, 'Notification');
+    const existingDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "Notification",
+    );
     if (existingDescriptor && existingDescriptor.configurable) {
       delete (window as any).Notification;
     }
-    
-    Object.defineProperty(window, 'Notification', {
+
+    Object.defineProperty(window, "Notification", {
       value: ElectronNotification,
       writable: false,
       configurable: false,
@@ -341,50 +381,64 @@ if (process.platform !== 'darwin') {
     // Note: We don't need to define the prototype property - it's already
     // read-only on class constructors and cannot be reassigned
 
-    console.log('[Notification Override] Successfully overridden Notification API');
+    console.log(
+      "[Notification Override] Successfully overridden Notification API",
+    );
   } catch (e) {
     // If defineProperty fails, we can't safely assign a class constructor directly
     // as it may cause prototype errors. Log the error and continue.
-    console.error('[Notification Override] Failed to override Notification API:', e);
-    console.warn('[Notification Override] Notifications may not work correctly');
+    console.error(
+      "[Notification Override] Failed to override Notification API:",
+      e,
+    );
+    console.warn(
+      "[Notification Override] Notifications may not work correctly",
+    );
   }
 
   // Continuously monitor and re-override if messenger.com tries to change it
   let _overrideCheckInterval: number | null = null;
-  
+
   function ensureOverride() {
     // Check if Notification was changed by comparing constructor name or instance
     const currentNotification = (window as any).Notification;
-    
+
     // If it's already our notification, don't do anything
     if (currentNotification === ElectronNotification) {
       return;
     }
-    
+
     // Check if it has our class name
-    if (currentNotification && currentNotification.name === 'ElectronNotification') {
+    if (
+      currentNotification &&
+      currentNotification.name === "ElectronNotification"
+    ) {
       return;
     }
-    
+
     // Only try to override if it's actually different
-    console.log('[Notification Override] Detected Notification was changed, re-overriding...');
-    
+    console.log(
+      "[Notification Override] Detected Notification was changed, re-overriding...",
+    );
+
     // Check if the property is configurable
-    const descriptor = Object.getOwnPropertyDescriptor(window, 'Notification');
+    const descriptor = Object.getOwnPropertyDescriptor(window, "Notification");
     if (descriptor && !descriptor.configurable) {
       // If it's non-configurable and not ours, we can't change it
       // This shouldn't happen if our initial override worked, but handle it gracefully
-      console.warn('[Notification Override] Cannot override - property is non-configurable');
+      console.warn(
+        "[Notification Override] Cannot override - property is non-configurable",
+      );
       return;
     }
-    
+
     try {
       // If property exists and is configurable, delete it first to avoid conflicts
       if (descriptor && descriptor.configurable) {
         delete (window as any).Notification;
       }
-      
-      Object.defineProperty(window, 'Notification', {
+
+      Object.defineProperty(window, "Notification", {
         value: ElectronNotification,
         writable: false,
         configurable: false,
@@ -393,7 +447,7 @@ if (process.platform !== 'darwin') {
     } catch (e) {
       // If defineProperty fails completely, log the error but don't try direct assignment
       // Direct assignment of class constructors can cause prototype errors
-      console.warn('[Notification Override] Failed to re-override:', e);
+      console.warn("[Notification Override] Failed to re-override:", e);
     }
   }
 
@@ -401,8 +455,8 @@ if (process.platform !== 'darwin') {
   _overrideCheckInterval = window.setInterval(ensureOverride, 2000);
 
   // Also override when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
       ensureOverride();
     });
   } else {
@@ -413,6 +467,7 @@ if (process.platform !== 'darwin') {
   function monitorUnreadCount() {
     let lastTitle = document.title;
     let unreadCount = 0;
+    let pendingClear = false;
 
     // Parse unread count from title (e.g., "(5) Messenger")
     function parseUnreadCount(title: string): number {
@@ -420,15 +475,33 @@ if (process.platform !== 'darwin') {
       return match ? parseInt(match[1], 10) : 0;
     }
 
+    const isAppFocused = (): boolean => {
+      return document.hasFocus() && document.visibilityState === "visible";
+    };
+
     // Send badge update via postMessage (works from page context)
     function sendBadgeUpdate(count: number) {
-      console.log(`[BadgeMonitor] Sending badge update via postMessage: ${count}`);
-      window.postMessage({ type: 'electron-badge-update', count }, '*');
+      if (count === 0 && unreadCount > 0 && !isAppFocused()) {
+        pendingClear = true;
+        console.log(
+          "[BadgeMonitor] Deferring badge clear until app is focused",
+        );
+        return;
+      }
+      if (count > 0) {
+        pendingClear = false;
+      }
+      console.log(
+        `[BadgeMonitor] Sending badge update via postMessage: ${count}`,
+      );
+      window.postMessage({ type: "electron-badge-update", count }, "*");
     }
 
     // Check initial title
     unreadCount = parseUnreadCount(lastTitle);
-    console.log(`[BadgeMonitor] Initial title: "${lastTitle}", parsed count: ${unreadCount}`);
+    console.log(
+      `[BadgeMonitor] Initial title: "${lastTitle}", parsed count: ${unreadCount}`,
+    );
     // Send initial count
     sendBadgeUpdate(unreadCount);
 
@@ -439,8 +512,10 @@ if (process.platform !== 'darwin') {
         const newCount = parseUnreadCount(lastTitle);
         // Always send count updates (including 0) to ensure badge stays in sync
         if (newCount !== unreadCount) {
-          console.log(`[BadgeMonitor] Title changed: "${lastTitle}", new count: ${newCount} (was ${unreadCount})`);
-          
+          console.log(
+            `[BadgeMonitor] Title changed: "${lastTitle}", new count: ${newCount} (was ${unreadCount})`,
+          );
+
           // When count goes to 0, wait a bit for DOM to update before trusting the title
           // This prevents the badge from flashing when opening a conversation
           if (newCount === 0 && unreadCount > 0) {
@@ -448,12 +523,17 @@ if (process.platform !== 'darwin') {
             setTimeout(() => {
               const domCount = countUnreadConversations();
               const titleCount = parseUnreadCount(document.title);
-              
+
               // Use DOM count if it's valid, otherwise use title count
-              const finalCount = (domCount >= 0 && domCount !== titleCount) ? domCount : titleCount;
-              
+              const finalCount =
+                domCount >= 0 && domCount !== titleCount
+                  ? domCount
+                  : titleCount;
+
               if (finalCount !== unreadCount) {
-                console.log(`[BadgeMonitor] After delay, final count: ${finalCount} (title: ${titleCount}, DOM: ${domCount})`);
+                console.log(
+                  `[BadgeMonitor] After delay, final count: ${finalCount} (title: ${titleCount}, DOM: ${domCount})`,
+                );
                 unreadCount = finalCount;
                 sendBadgeUpdate(unreadCount);
               }
@@ -479,22 +559,41 @@ if (process.platform !== 'darwin') {
       }
       domCountTimeout = window.setTimeout(() => {
         const domCount = countUnreadConversations();
-        console.log(`[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount})`);
-        
+        console.log(
+          `[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount})`,
+        );
+
         // Use DOM count if it's valid and provides useful information
         if (domCount >= 0) {
           const titleCount = parseUnreadCount(document.title);
-          
+
+          if (
+            pendingClear &&
+            isAppFocused() &&
+            titleCount === 0 &&
+            domCount === 0 &&
+            unreadCount > 0
+          ) {
+            console.log("[BadgeMonitor] Applying deferred badge clear");
+            pendingClear = false;
+            unreadCount = 0;
+            sendBadgeUpdate(unreadCount);
+            domCountTimeout = null;
+            return;
+          }
+
           // Use DOM count when:
           // 1. Title says 0 but DOM shows unread (catches manually marked unread chats)
           // 2. DOM count is higher than title count (title might be stale)
           // Prefer title count when it's > 0 and matches or is higher than DOM count
-          const shouldUseDomCount = 
+          const shouldUseDomCount =
             (titleCount === 0 && domCount > 0) || // Title says 0 but DOM shows unread
-            (domCount > titleCount);               // DOM count is higher (more accurate)
-          
+            domCount > titleCount; // DOM count is higher (more accurate)
+
           if (shouldUseDomCount && domCount !== unreadCount) {
-            console.log(`[BadgeMonitor] Using DOM count: ${domCount} (title count: ${titleCount})`);
+            console.log(
+              `[BadgeMonitor] Using DOM count: ${domCount} (title count: ${titleCount})`,
+            );
             unreadCount = domCount;
             sendBadgeUpdate(unreadCount);
           }
@@ -504,7 +603,7 @@ if (process.platform !== 'darwin') {
     };
 
     // Observe title element
-    titleObserver.observe(document.querySelector('title') || document.head, {
+    titleObserver.observe(document.querySelector("title") || document.head, {
       childList: true,
       subtree: true,
       characterData: true,
@@ -519,14 +618,14 @@ if (process.platform !== 'darwin') {
         const getCurrentConversationPath = (): string | null => {
           const path = window.location.pathname;
           // Messenger conversation URLs: /t/THREAD_ID or /e2ee/t/THREAD_ID
-          if (path.startsWith('/t/') || path.startsWith('/e2ee/t/')) {
-            return path.split(/[?#]/)[0].replace(/\/+$/, ''); // Normalize
+          if (path.startsWith("/t/") || path.startsWith("/e2ee/t/")) {
+            return path.split(/[?#]/)[0].replace(/\/+$/, ""); // Normalize
           }
           return null;
         };
 
         const isWindowFocused = (): boolean => {
-          return document.hasFocus() && document.visibilityState === 'visible';
+          return document.hasFocus() && document.visibilityState === "visible";
         };
 
         const currentConversationPath = getCurrentConversationPath();
@@ -537,7 +636,7 @@ if (process.platform !== 'darwin') {
         const conversationSelectors = [
           '[role="row"]', // Standard conversation row (same as notification system)
           'div[role="list"] > div[role="listitem"]', // Alternative structure
-          'ul[role="list"] > li[role="listitem"]',  // Another alternative
+          'ul[role="list"] > li[role="listitem"]', // Another alternative
         ];
 
         const allConversations: Element[] = [];
@@ -552,14 +651,18 @@ if (process.platform !== 'darwin') {
 
         // If we didn't find conversations, try finding by links
         if (allConversations.length === 0) {
-          const links = document.querySelectorAll('a[href*="/t/"], a[href*="/e2ee/t/"]');
+          const links = document.querySelectorAll(
+            'a[href*="/t/"], a[href*="/e2ee/t/"]',
+          );
           links.forEach((link) => {
             // Find the parent row element
             let parent = link.parentElement;
             while (parent && parent !== document.body) {
-              if (parent.getAttribute('role') === 'row' || 
-                  parent.getAttribute('role') === 'listitem' ||
-                  parent.querySelector('[aria-label*="Mark as Read"]')) {
+              if (
+                parent.getAttribute("role") === "row" ||
+                parent.getAttribute("role") === "listitem" ||
+                parent.querySelector('[aria-label*="Mark as Read"]')
+              ) {
                 allConversations.push(parent);
                 break;
               }
@@ -573,25 +676,25 @@ if (process.platform !== 'darwin') {
         const isConversationMuted = (conversationEl: Element): boolean => {
           // PRIMARY DETECTION: Look for the mute bell icon SVG path
           // This path represents the "bell with slash" icon shown next to muted conversations
-          const paths = Array.from(conversationEl.querySelectorAll('svg path'));
+          const paths = Array.from(conversationEl.querySelectorAll("svg path"));
           for (const path of paths) {
-            const d = path.getAttribute('d') || '';
+            const d = path.getAttribute("d") || "";
             // Check for the specific mute icon path pattern
             // The mute bell SVG path starts with "M9.244 24.99" and contains "L26.867 7.366"
-            if (d.startsWith('M9.244 24.99') || d.includes('L26.867 7.366')) {
+            if (d.startsWith("M9.244 24.99") || d.includes("L26.867 7.366")) {
               return true;
             }
           }
 
           // FALLBACK: Check aria-label/text indicators
-          const textContent = conversationEl.textContent || '';
-          const ariaLabel = conversationEl.getAttribute('aria-label') || '';
+          const textContent = conversationEl.textContent || "";
+          const ariaLabel = conversationEl.getAttribute("aria-label") || "";
           const lowered = ariaLabel.toLowerCase();
           if (
-            lowered.includes('muted') ||
-            lowered.includes('notifications are off') ||
-            lowered.includes('notifications off') ||
-            textContent.includes('Notifications are off')
+            lowered.includes("muted") ||
+            lowered.includes("notifications are off") ||
+            lowered.includes("notifications off") ||
+            textContent.includes("Notifications are off")
           ) {
             return true;
           }
@@ -607,25 +710,32 @@ if (process.platform !== 'darwin') {
           // Check if this conversation is unread
           const isUnread = (() => {
             // PRIMARY CHECK: Look for "Unread message:" text
-            const textContent = conversationEl.textContent || '';
-            if (textContent.includes('Unread message:')) {
+            const textContent = conversationEl.textContent || "";
+            if (textContent.includes("Unread message:")) {
               return true;
             }
 
             // Check aria-label patterns
-            const ariaLabel = conversationEl.getAttribute('aria-label') || '';
-            if (ariaLabel.includes('Unread message') || ariaLabel.toLowerCase().includes('unread')) {
+            const ariaLabel = conversationEl.getAttribute("aria-label") || "";
+            if (
+              ariaLabel.includes("Unread message") ||
+              ariaLabel.toLowerCase().includes("unread")
+            ) {
               return true;
             }
 
             // Look for the "Mark as Read" button which indicates unread
-            const markAsRead = conversationEl.querySelector('[aria-label="Mark as Read"]');
+            const markAsRead = conversationEl.querySelector(
+              '[aria-label="Mark as Read"]',
+            );
             if (markAsRead) {
               return true;
             }
 
             // Check aria-label on child elements
-            const childWithUnread = conversationEl.querySelector('[aria-label*="unread"], [aria-label*="Unread"]');
+            const childWithUnread = conversationEl.querySelector(
+              '[aria-label*="unread"], [aria-label*="Unread"]',
+            );
             if (childWithUnread) {
               return true;
             }
@@ -643,12 +753,14 @@ if (process.platform !== 'darwin') {
             const link = conversationEl.querySelector('a[href*="/t/"]');
             if (link) {
               const href = (link as HTMLAnchorElement).href;
-              
+
               // Issue #22: Skip counting the currently viewed conversation as unread
               // when the window is focused - the user is actively reading it
               if (windowFocused && currentConversationPath) {
                 try {
-                  const conversationPath = new URL(href).pathname.split(/[?#]/)[0].replace(/\/+$/, '');
+                  const conversationPath = new URL(href).pathname
+                    .split(/[?#]/)[0]
+                    .replace(/\/+$/, "");
                   if (conversationPath === currentConversationPath) {
                     // This is the conversation the user is currently viewing
                     // Don't count it as unread since they're actively looking at it
@@ -658,7 +770,7 @@ if (process.platform !== 'darwin') {
                   // URL parsing failed, continue with counting
                 }
               }
-              
+
               if (!seenHrefs.has(href)) {
                 seenHrefs.add(href);
                 unreadCount++;
@@ -687,7 +799,7 @@ if (process.platform !== 'darwin') {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'data-testid', 'class'],
+      attributeFilter: ["aria-label", "data-testid", "class"],
     });
 
     // Run initial DOM count check after a short delay to ensure DOM is fully loaded
@@ -704,7 +816,7 @@ if (process.platform !== 'darwin') {
         debouncedCountUnread();
       }
     };
-    
+
     const handleFocus = () => {
       // Window focused, check immediately
       debouncedCountUnread();
@@ -725,24 +837,24 @@ if (process.platform !== 'darwin') {
     // Intercept pushState and replaceState to catch SPA navigation
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
-    
-    history.pushState = function(...args) {
+
+    history.pushState = function (...args) {
       originalPushState.apply(history, args);
       setTimeout(checkUrlChange, 50); // Small delay to let DOM update
     };
-    
-    history.replaceState = function(...args) {
+
+    history.replaceState = function (...args) {
       originalReplaceState.apply(history, args);
       setTimeout(checkUrlChange, 50);
     };
-    
+
     // Also listen for popstate (back/forward)
-    window.addEventListener('popstate', () => {
+    window.addEventListener("popstate", () => {
       setTimeout(checkUrlChange, 50);
     });
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
 
     // Issue #22: More responsive badge updates when user is active in a conversation
     // When user interacts (clicks, types), trigger a badge recount after a short delay
@@ -751,8 +863,8 @@ if (process.platform !== 'darwin') {
     const handleUserActivity = () => {
       // Only trigger if we're in a conversation (URL contains /t/)
       const path = window.location.pathname;
-      if (!path.includes('/t/')) return;
-      
+      if (!path.includes("/t/")) return;
+
       // Debounce activity-based recounts to avoid spam
       if (activityTimeout !== null) {
         clearTimeout(activityTimeout);
@@ -764,29 +876,35 @@ if (process.platform !== 'darwin') {
     };
 
     // Listen for user interaction events that indicate they're reading/responding
-    document.addEventListener('click', handleUserActivity, { passive: true });
-    document.addEventListener('keydown', handleUserActivity, { passive: true });
+    document.addEventListener("click", handleUserActivity, { passive: true });
+    document.addEventListener("keydown", handleUserActivity, { passive: true });
 
     // Issue #38: Handle badge recount requests from the injected notifications script
     // When messages are marked as read in the active chat, trigger an immediate recount
-    document.addEventListener('electron-badge-recount-request', () => {
-      console.log('[BadgeMonitor] Recount requested from notifications script');
-      debouncedCountUnread();
-    }, { passive: true });
+    document.addEventListener(
+      "electron-badge-recount-request",
+      () => {
+        console.log(
+          "[BadgeMonitor] Recount requested from notifications script",
+        );
+        debouncedCountUnread();
+      },
+      { passive: true },
+    );
 
     // Issue #27: Periodic recheck to catch cross-device read status changes
     // When messages are read on another device, the local DOM doesn't update automatically
     // This interval rechecks the DOM every 30 seconds to catch stale badge counts
     setInterval(() => {
-      console.log('[BadgeMonitor] Periodic recheck triggered');
+      console.log("[BadgeMonitor] Periodic recheck triggered");
       debouncedCountUnread();
     }, 30000); // Recheck every 30 seconds
   }
 
   // Wait for DOM to be ready, then wait a bit more for electronAPI to be available
   function startMonitoring() {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => {
         // Wait a bit for contextBridge to complete
         setTimeout(monitorUnreadCount, 100);
       });
@@ -795,7 +913,7 @@ if (process.platform !== 'darwin') {
       setTimeout(monitorUnreadCount, 100);
     }
   }
-  
+
   startMonitoring();
 })();
 
@@ -814,9 +932,10 @@ declare global {
       updateUnreadCount: (count: number) => void;
       clearBadge: () => void;
       incomingCall: () => void;
-      onNotificationAction: (callback: (action: string, data: any) => void) => void;
+      onNotificationAction: (
+        callback: (action: string, data: any) => void,
+      ) => void;
       testNotification: () => void;
     };
   }
 }
-

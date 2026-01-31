@@ -1,7 +1,0 @@
-cli:
-  backend: "amp"
-
-event_loop:
-  prompt_file: "PROMPT-cursor-lag.md"
-  completion_promise: "LOOP_COMPLETE"
-  max_iterations: 100

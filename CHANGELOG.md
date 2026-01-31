@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.6-beta.3] - 2026-01-31
+
+### Fixed
+
+- **Badge**: Prevented aggressive badge clearing while the app is unfocused ([#38](https://github.com/apotenza92/facebook-messenger-desktop/issues/38))
+  - Badge now clears when the app is focused and the chat is truly read
+
+### Changed
+
+- **Project cleanup**: Removed internal prompt/orchestration files
+
 ## [1.2.6-beta.2] - 2026-01-30
 
 ### Added
