@@ -479,6 +479,44 @@ if (process.platform !== "darwin") {
       return document.hasFocus() && document.visibilityState === "visible";
     };
 
+    let pendingClearRetryTimeout: number | null = null;
+    const schedulePendingClearRetry = (attempt = 0): void => {
+      if (!pendingClear || !isAppFocused()) {
+        return;
+      }
+      if (pendingClearRetryTimeout !== null) {
+        clearTimeout(pendingClearRetryTimeout);
+      }
+      const maxAttempts = 3;
+      const retryDelay = 150;
+
+      pendingClearRetryTimeout = window.setTimeout(() => {
+        pendingClearRetryTimeout = null;
+        if (!pendingClear || !isAppFocused()) {
+          return;
+        }
+
+        const domCount = countUnreadConversations();
+        const titleCount = parseUnreadCount(document.title);
+        const canClear =
+          unreadCount > 0 &&
+          titleCount === 0 &&
+          (domCount === 0 || domCount === -1);
+
+        if (canClear) {
+          console.log("[BadgeMonitor] Applying deferred badge clear (retry)");
+          pendingClear = false;
+          unreadCount = 0;
+          sendBadgeUpdate(unreadCount);
+          return;
+        }
+
+        if (attempt + 1 < maxAttempts) {
+          schedulePendingClearRetry(attempt + 1);
+        }
+      }, retryDelay);
+    };
+
     // Send badge update via postMessage (works from page context)
     function sendBadgeUpdate(count: number) {
       if (count === 0 && unreadCount > 0 && !isAppFocused()) {
@@ -563,25 +601,25 @@ if (process.platform !== "darwin") {
           `[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount})`,
         );
 
+        const titleCount = parseUnreadCount(document.title);
+
+        if (
+          pendingClear &&
+          isAppFocused() &&
+          unreadCount > 0 &&
+          titleCount === 0 &&
+          (domCount === 0 || domCount === -1)
+        ) {
+          console.log("[BadgeMonitor] Applying deferred badge clear");
+          pendingClear = false;
+          unreadCount = 0;
+          sendBadgeUpdate(unreadCount);
+          domCountTimeout = null;
+          return;
+        }
+
         // Use DOM count if it's valid and provides useful information
         if (domCount >= 0) {
-          const titleCount = parseUnreadCount(document.title);
-
-          if (
-            pendingClear &&
-            isAppFocused() &&
-            titleCount === 0 &&
-            domCount === 0 &&
-            unreadCount > 0
-          ) {
-            console.log("[BadgeMonitor] Applying deferred badge clear");
-            pendingClear = false;
-            unreadCount = 0;
-            sendBadgeUpdate(unreadCount);
-            domCountTimeout = null;
-            return;
-          }
-
           // Use DOM count when:
           // 1. Title says 0 but DOM shows unread (catches manually marked unread chats)
           // 2. DOM count is higher than title count (title might be stale)
@@ -814,12 +852,14 @@ if (process.platform !== "darwin") {
       if (!document.hidden) {
         // Window is visible, check immediately
         debouncedCountUnread();
+        schedulePendingClearRetry();
       }
     };
 
     const handleFocus = () => {
       // Window focused, check immediately
       debouncedCountUnread();
+      schedulePendingClearRetry();
     };
 
     // Check when URL changes (user navigates to a conversation)

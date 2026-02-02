@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.6-beta.4] - 2026-02-02
+
+### Fixed
+
+- **Badge**: Tightened deferred clear logic so focus reliably clears the badge when chats are read ([#38](https://github.com/apotenza92/facebook-messenger-desktop/issues/38))
+  - Adds short retry checks on focus/visibility to account for DOM/title settling
+  - Allows clear when title is 0 and DOM is temporarily unavailable
+
 ## [1.2.6-beta.3] - 2026-01-31
 
 ### Fixed
