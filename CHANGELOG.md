@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.6] - 2026-02-03
+
+### Added
+
+- **Icon selection**: New "Icon" menu lets users choose official (blue) or beta (orange) icons
+  - Applies immediately to dock/taskbar/tray icons (launcher icons follow installed app)
+
+### Fixed
+
+- **Auto-update**: Beta users can now correctly update to stable releases
+  - Fixed release workflow bug where beta-\*.yml files were incorrectly overwritten with stable artifact paths
+  - Beta users will now receive proper update packages when stable versions are released
+- **Badge**: Focus-based clearing now waits for focus and retries, preventing premature clears while unfocused
+  - Adds short retry checks on focus/visibility to account for DOM/title settling
+  - Allows clear when title is 0 and DOM is temporarily unavailable
+
 ## [1.2.6-beta.4] - 2026-02-02
 
 ### Fixed
