@@ -242,39 +242,6 @@ if (process.platform !== "darwin") {
   }
 }
 
-// Media viewer CSS adjustment for macOS title bar
-// Pushes media viewer controls down to be fully below the custom title bar overlay
-(function setupMediaViewerCSSAdjustment() {
-  if (process.platform !== "darwin") return; // Only needed on macOS
-
-  const TOP_OFFSET = 16;
-  const style = document.createElement("style");
-  style.id = "messenger-media-viewer-fix";
-  style.textContent = `
-    /* Push media viewer top controls down */
-    /* Close button is a direct div, download/share are wrapped in spans */
-    [aria-label="Close"][role="button"],
-    span:has([aria-label="Download media attachment"]),
-    span:has([aria-label="Forward media attachment"]) {
-      transform: translateY(${TOP_OFFSET}px) !important;
-    }
-  `;
-
-  // Inject when DOM is ready
-  const inject = () => {
-    if (!document.getElementById("messenger-media-viewer-fix")) {
-      document.head.appendChild(style);
-      console.log("[Preload] Media viewer CSS fix injected");
-    }
-  };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", inject);
-  } else {
-    inject();
-  }
-})();
-
 // Legacy Notification override (kept as fallback, but main injection happens after page load)
 // This must happen immediately and be non-configurable to prevent messenger.com from overriding it
 (function () {
@@ -468,6 +435,12 @@ if (process.platform !== "darwin") {
     let lastTitle = document.title;
     let unreadCount = 0;
     let pendingClear = false;
+    type DomUnreadCountResult = {
+      count: number;
+      sidebarFound: boolean;
+      totalRows: number;
+      countedRows: number;
+    };
 
     // Parse unread count from title (e.g., "(5) Messenger")
     function parseUnreadCount(title: string): number {
@@ -475,8 +448,35 @@ if (process.platform !== "darwin") {
       return match ? parseInt(match[1], 10) : 0;
     }
 
+    function normalizeConversationPath(raw: string): string | null {
+      try {
+        const url = raw.startsWith("http://") || raw.startsWith("https://")
+          ? new URL(raw)
+          : new URL(raw, window.location.origin);
+        const path = url.pathname.split(/[?#]/)[0].replace(/\/+$/, "");
+        return path || "/";
+      } catch {
+        return null;
+      }
+    }
+
     const isAppFocused = (): boolean => {
       return document.hasFocus() && document.visibilityState === "visible";
+    };
+
+    const logCountDecision = (
+      stage: string,
+      details: {
+        titleCount: number;
+        domCount: number;
+        chosenCount: number;
+        reason: string;
+        sidebarFound: boolean;
+        totalRows: number;
+        countedRows: number;
+      },
+    ): void => {
+      console.log(`[BadgeMonitor] Count decision (${stage})`, details);
     };
 
     let pendingClearRetryTimeout: number | null = null;
@@ -496,12 +496,23 @@ if (process.platform !== "darwin") {
           return;
         }
 
-        const domCount = countUnreadConversations();
+        const domResult = countUnreadConversations();
+        const domCount = domResult.count;
         const titleCount = parseUnreadCount(document.title);
         const canClear =
           unreadCount > 0 &&
           titleCount === 0 &&
           (domCount === 0 || domCount === -1);
+
+        logCountDecision("pending-clear-retry", {
+          titleCount,
+          domCount,
+          chosenCount: canClear ? 0 : unreadCount,
+          reason: canClear ? "clear-deferred-badge" : "wait-for-confirmation",
+          sidebarFound: domResult.sidebarFound,
+          totalRows: domResult.totalRows,
+          countedRows: domResult.countedRows,
+        });
 
         if (canClear) {
           console.log("[BadgeMonitor] Applying deferred badge clear (retry)");
@@ -559,14 +570,35 @@ if (process.platform !== "darwin") {
           if (newCount === 0 && unreadCount > 0) {
             // User likely opened a conversation - wait for DOM to reflect the read state
             setTimeout(() => {
-              const domCount = countUnreadConversations();
+              const domResult = countUnreadConversations();
+              const domCount = domResult.count;
               const titleCount = parseUnreadCount(document.title);
 
-              // Use DOM count if it's valid, otherwise use title count
-              const finalCount =
-                domCount >= 0 && domCount !== titleCount
-                  ? domCount
-                  : titleCount;
+              // Prefer DOM only when the sidebar is available and count is trustworthy
+              let finalCount = titleCount;
+              let decisionReason = "title-default";
+
+              if (domCount >= 0 && domResult.sidebarFound) {
+                finalCount = domCount;
+                decisionReason =
+                  domCount === titleCount
+                    ? "dom-matches-title"
+                    : "dom-sidebar-authoritative";
+              } else if (domCount >= 0) {
+                decisionReason = "title-used-dom-untrusted-no-sidebar";
+              } else {
+                decisionReason = "title-used-dom-unavailable";
+              }
+
+              logCountDecision("title-zero-delay", {
+                titleCount,
+                domCount,
+                chosenCount: finalCount,
+                reason: decisionReason,
+                sidebarFound: domResult.sidebarFound,
+                totalRows: domResult.totalRows,
+                countedRows: domResult.countedRows,
+              });
 
               if (finalCount !== unreadCount) {
                 console.log(
@@ -596,9 +628,10 @@ if (process.platform !== "darwin") {
         clearTimeout(domCountTimeout);
       }
       domCountTimeout = window.setTimeout(() => {
-        const domCount = countUnreadConversations();
+        const domResult = countUnreadConversations();
+        const domCount = domResult.count;
         console.log(
-          `[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount})`,
+          `[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount}, sidebar: ${domResult.sidebarFound}, rows: ${domResult.countedRows}/${domResult.totalRows})`,
         );
 
         const titleCount = parseUnreadCount(document.title);
@@ -620,13 +653,27 @@ if (process.platform !== "darwin") {
 
         // Use DOM count if it's valid and provides useful information
         if (domCount >= 0) {
-          // Use DOM count when:
-          // 1. Title says 0 but DOM shows unread (catches manually marked unread chats)
-          // 2. DOM count is higher than title count (title might be stale)
-          // Prefer title count when it's > 0 and matches or is higher than DOM count
+          // Use DOM count only when sidebar rows were confidently discovered
+          // and it adds stronger unread-chat evidence than the title.
+          const hasStrongDomSignal =
+            domResult.sidebarFound && domResult.totalRows > 0;
           const shouldUseDomCount =
-            (titleCount === 0 && domCount > 0) || // Title says 0 but DOM shows unread
-            domCount > titleCount; // DOM count is higher (more accurate)
+            hasStrongDomSignal &&
+            ((titleCount === 0 && domCount > 0) || domCount > titleCount);
+
+          logCountDecision("dom-recount", {
+            titleCount,
+            domCount,
+            chosenCount: shouldUseDomCount ? domCount : unreadCount,
+            reason: shouldUseDomCount
+              ? "dom-preferred"
+              : hasStrongDomSignal
+                ? "title-preferred"
+                : "title-preferred-dom-untrusted",
+            sidebarFound: domResult.sidebarFound,
+            totalRows: domResult.totalRows,
+            countedRows: domResult.countedRows,
+          });
 
           if (shouldUseDomCount && domCount !== unreadCount) {
             console.log(
@@ -649,65 +696,57 @@ if (process.platform !== "darwin") {
 
     // Also monitor for unread indicators in the DOM
     // This catches manually marked unread chats and is a fallback if title doesn't change
-    function countUnreadConversations(): number {
+    function countUnreadConversations(): DomUnreadCountResult {
       try {
-        // Helper to check if we're currently viewing a conversation
-        // Used to exclude the active conversation from unread count (issue #22)
-        const getCurrentConversationPath = (): string | null => {
-          const path = window.location.pathname;
-          // Messenger conversation URLs: /t/THREAD_ID or /e2ee/t/THREAD_ID
-          if (path.startsWith("/t/") || path.startsWith("/e2ee/t/")) {
-            return path.split(/[?#]/)[0].replace(/\/+$/, ""); // Normalize
+        const chatLinkSelector = 'a[href*="/t/"], a[href*="/e2ee/t/"]';
+        const findSidebarElement = (): Element | null => {
+          const navigationSidebar = document.querySelector(
+            '[role="navigation"]:has([role="grid"])',
+          );
+          if (navigationSidebar) return navigationSidebar;
+
+          const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
+          if (chatsGrid) {
+            return chatsGrid.closest('[role="navigation"]') || chatsGrid;
           }
+
           return null;
         };
 
-        const isWindowFocused = (): boolean => {
-          return document.hasFocus() && document.visibilityState === "visible";
-        };
+        const sidebar = findSidebarElement();
+        if (!sidebar) {
+          return {
+            count: -1,
+            sidebarFound: false,
+            totalRows: 0,
+            countedRows: 0,
+          };
+        }
 
-        const currentConversationPath = getCurrentConversationPath();
-        const windowFocused = isWindowFocused();
-
-        // Find conversation rows - use the same selectors as notifications-inject.ts
-        // Messenger uses [role="row"] for conversation rows
-        const conversationSelectors = [
-          '[role="row"]', // Standard conversation row (same as notification system)
-          'div[role="list"] > div[role="listitem"]', // Alternative structure
-          'ul[role="list"] > li[role="listitem"]', // Another alternative
-        ];
-
-        const allConversations: Element[] = [];
-        conversationSelectors.forEach((selector) => {
-          try {
-            const elements = document.querySelectorAll(selector);
-            allConversations.push(...Array.from(elements));
-          } catch (_e) {
-            // Ignore selector errors
+        // Build row list from real conversation links first to avoid non-chat rows.
+        const rowsFromLinks = new Set<Element>();
+        sidebar.querySelectorAll(chatLinkSelector).forEach((link) => {
+          const row =
+            link.closest('[role="row"]') || link.closest('[role="listitem"]');
+          if (row && sidebar.contains(row)) {
+            rowsFromLinks.add(row);
           }
         });
 
-        // If we didn't find conversations, try finding by links
-        if (allConversations.length === 0) {
-          const links = document.querySelectorAll(
-            'a[href*="/t/"], a[href*="/e2ee/t/"]',
-          );
-          links.forEach((link) => {
-            // Find the parent row element
-            let parent = link.parentElement;
-            while (parent && parent !== document.body) {
-              if (
-                parent.getAttribute("role") === "row" ||
-                parent.getAttribute("role") === "listitem" ||
-                parent.querySelector('[aria-label*="Mark as Read"]')
-              ) {
-                allConversations.push(parent);
-                break;
-              }
-              parent = parent.parentElement;
-            }
-          });
-        }
+        const fallbackRows = Array.from(
+          sidebar.querySelectorAll('[role="row"], [role="listitem"]'),
+        ).filter((row) => row.querySelector(chatLinkSelector));
+
+        const allConversations = Array.from(
+          new Set(
+            rowsFromLinks.size > 0 ? Array.from(rowsFromLinks) : fallbackRows,
+          ),
+        );
+
+        const currentConversationPath = normalizeConversationPath(
+          window.location.pathname,
+        );
+        const windowFocused = isAppFocused();
 
         // Check if a conversation is muted (same logic as notifications-inject.ts)
         // Messenger shows a "bell with slash" SVG icon for muted conversations
@@ -741,10 +780,27 @@ if (process.platform !== "darwin") {
         };
 
         // Count unread conversations using the same logic as notifications-inject.ts
-        let unreadCount = 0;
-        const seenHrefs = new Set<string>();
+        let domUnreadCount = 0;
+        const seenConversationPaths = new Set<string>();
 
         allConversations.forEach((conversationEl) => {
+          const link = conversationEl.querySelector(
+            chatLinkSelector,
+          ) as HTMLAnchorElement | null;
+          if (!link) {
+            return;
+          }
+
+          const href = link.getAttribute("href") || link.href;
+          if (!href) {
+            return;
+          }
+
+          const conversationPath = normalizeConversationPath(href);
+          if (!conversationPath) {
+            return;
+          }
+
           // Check if this conversation is unread
           const isUnread = (() => {
             // PRIMARY CHECK: Look for "Unread message:" text
@@ -757,7 +813,7 @@ if (process.platform !== "darwin") {
             const ariaLabel = conversationEl.getAttribute("aria-label") || "";
             if (
               ariaLabel.includes("Unread message") ||
-              ariaLabel.toLowerCase().includes("unread")
+              ariaLabel.toLowerCase().includes("unread message")
             ) {
               return true;
             }
@@ -770,14 +826,6 @@ if (process.platform !== "darwin") {
               return true;
             }
 
-            // Check aria-label on child elements
-            const childWithUnread = conversationEl.querySelector(
-              '[aria-label*="unread"], [aria-label*="Unread"]',
-            );
-            if (childWithUnread) {
-              return true;
-            }
-
             return false;
           })();
 
@@ -787,43 +835,36 @@ if (process.platform !== "darwin") {
           }
 
           if (isUnread) {
-            // Try to get a unique identifier for this conversation to avoid double-counting
-            const link = conversationEl.querySelector('a[href*="/t/"]');
-            if (link) {
-              const href = (link as HTMLAnchorElement).href;
+            // Issue #22: Don't count the actively viewed conversation while focused
+            if (
+              windowFocused &&
+              currentConversationPath &&
+              conversationPath === currentConversationPath
+            ) {
+              return;
+            }
 
-              // Issue #22: Skip counting the currently viewed conversation as unread
-              // when the window is focused - the user is actively reading it
-              if (windowFocused && currentConversationPath) {
-                try {
-                  const conversationPath = new URL(href).pathname
-                    .split(/[?#]/)[0]
-                    .replace(/\/+$/, "");
-                  if (conversationPath === currentConversationPath) {
-                    // This is the conversation the user is currently viewing
-                    // Don't count it as unread since they're actively looking at it
-                    return; // Skip this conversation
-                  }
-                } catch {
-                  // URL parsing failed, continue with counting
-                }
-              }
-
-              if (!seenHrefs.has(href)) {
-                seenHrefs.add(href);
-                unreadCount++;
-              }
-            } else {
-              // If no link found, count it anyway (might be a different structure)
-              unreadCount++;
+            if (!seenConversationPaths.has(conversationPath)) {
+              seenConversationPaths.add(conversationPath);
+              domUnreadCount++;
             }
           }
         });
 
-        return unreadCount;
+        return {
+          count: domUnreadCount,
+          sidebarFound: true,
+          totalRows: allConversations.length,
+          countedRows: seenConversationPaths.size,
+        };
       } catch (_e) {
         // If DOM counting fails, return -1 to indicate we should rely on title
-        return -1;
+        return {
+          count: -1,
+          sidebarFound: false,
+          totalRows: 0,
+          countedRows: 0,
+        };
       }
     }
 
