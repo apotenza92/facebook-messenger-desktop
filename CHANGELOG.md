@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.7] - 2026-02-19
+
+### Fixed
+
+- **Offline recovery**: Retry, auto-retry countdown, and reload shortcuts now correctly navigate back to Messenger instead of reloading the offline data page ([#40](https://github.com/apotenza92/facebook-messenger-desktop/issues/40))
+- **Messenger UI**: Removed custom media-viewer CSS override on macOS
+  - No longer injects `messenger-media-viewer-fix` offsets for Close/Download/Forward controls
+  - Messenger media viewer buttons now use native messenger.com styling
+- **Badge**: Fixed unread chat count getting stuck at `1` in some cases ([#38](https://github.com/apotenza92/facebook-messenger-desktop/issues/38))
+  - Badge DOM recount now scopes to the chats sidebar instead of scanning the full document
+  - Counts only real conversation rows with `/t/` links and deduplicates by normalized conversation path
+  - Tightened unread detection to explicit signals (`Unread message`, `Mark as Read`) to avoid false positives
+  - Added source-decision logs for title-vs-DOM badge arbitration to aid beta validation
+
 ## [1.2.7-beta.1] - 2026-02-07
 
 ### Fixed

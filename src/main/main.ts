@@ -163,6 +163,8 @@ let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
 const overlayHeight = 32;
 const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar show
+const MESSENGER_HOME_URL = "https://www.messenger.com/";
+const OFFLINE_PAGE_MARKER = "#md-offline";
 
 // Login flow state tracking - prevents redirect loops during authentication
 // Once user starts login, we don't redirect back to custom login page until they explicitly log out
@@ -1181,7 +1183,7 @@ function getOfflinePageHTML(errorDescription: string): string {
           <h1>No Internet Connection</h1>
           <p>Unable to connect to Messenger. Please check your internet connection and try again.</p>
           <p class="error-detail">${errorDescription}</p>
-          <button onclick="window.location.reload()">Retry</button>
+          <button onclick="window.location.href='${MESSENGER_HOME_URL}'">Retry</button>
           <p class="auto-retry"><span class="spinner"></span>Auto-retrying in <span id="countdown">10</span>s...</p>
         </div>
         <script>
@@ -1192,13 +1194,35 @@ function getOfflinePageHTML(errorDescription: string): string {
             countdownEl.textContent = countdown;
             if (countdown <= 0) {
               clearInterval(timer);
-              window.location.reload();
+              window.location.href = '${MESSENGER_HOME_URL}';
             }
           }, 1000);
         </script>
       </body>
     </html>
   `;
+}
+
+function reloadMessengerTarget(
+  target: Electron.WebContents | undefined,
+  ignoreCache: boolean = false,
+): void {
+  if (!target) return;
+
+  const currentUrl = target.getURL();
+  if (currentUrl.includes(OFFLINE_PAGE_MARKER)) {
+    console.log("[Reload] Offline page detected, loading Messenger home");
+    target.loadURL(MESSENGER_HOME_URL).catch((error) => {
+      console.error("[Reload] Failed to load Messenger home:", error);
+    });
+    return;
+  }
+
+  if (ignoreCache) {
+    target.reloadIgnoringCache();
+  } else {
+    target.reload();
+  }
 }
 
 // CSS for the verification page banner (shown during 2FA, security checks, etc.)
@@ -3243,7 +3267,7 @@ function createWindow(source: string = "unknown"): void {
           );
           const offlineHTML = getOfflinePageHTML(errorDescription);
           contentView?.webContents.loadURL(
-            `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}`,
+            `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`,
           );
         }
       },
@@ -3786,7 +3810,7 @@ function createWindow(source: string = "unknown"): void {
           );
           const offlineHTML = getOfflinePageHTML(errorDescription);
           mainWindow?.webContents.loadURL(
-            `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}`,
+            `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`,
           );
         }
       },
@@ -6073,7 +6097,7 @@ function createApplicationMenu(): void {
               // Target contentView on macOS (where Messenger runs), mainWindow on other platforms
               const target =
                 contentView?.webContents ?? mainWindow?.webContents;
-              target?.reload();
+              reloadMessengerTarget(target);
             },
           },
           {
@@ -6082,7 +6106,7 @@ function createApplicationMenu(): void {
             click: () => {
               const target =
                 contentView?.webContents ?? mainWindow?.webContents;
-              target?.reloadIgnoringCache();
+              reloadMessengerTarget(target, true);
             },
           },
           {
@@ -6165,7 +6189,7 @@ function createApplicationMenu(): void {
           click: () => {
             // Target contentView on macOS (where Messenger runs), mainWindow on other platforms
             const target = contentView?.webContents ?? mainWindow?.webContents;
-            target?.reload();
+            reloadMessengerTarget(target);
           },
         },
         {
@@ -6173,7 +6197,7 @@ function createApplicationMenu(): void {
           accelerator: "CmdOrCtrl+Shift+R",
           click: () => {
             const target = contentView?.webContents ?? mainWindow?.webContents;
-            target?.reloadIgnoringCache();
+            reloadMessengerTarget(target, true);
           },
         },
         {
