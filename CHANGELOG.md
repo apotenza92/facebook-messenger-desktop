@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.2] - 2026-02-22
+
+### Fixed
+
+- **Issue #44: muted chats and phantom unread counts after Facebook Messages migration** ([#44](https://github.com/apotenza92/facebook-messenger-desktop/issues/44))
+  - Strengthened muted conversation detection to handle both legacy and new Facebook icon markup (`svg path`, `svg use`, accessibility labels/tooltips)
+  - Excluded muted chats from both native notifications and DOM unread badge recounts
+  - Canonicalized thread paths (`/messages/t/`, `/messages/e2ee/t/`, `/e2ee/t/`) to avoid duplicate counting/notification records for the same chat
+  - Filtered hidden/virtualized sidebar rows during DOM unread recount to reduce phantom increments
+  - Broadened unread indicator matching to tolerate Facebook label casing/wording changes
+- **Titlebar unread source isolation**
+  - On `/messages`, titlebar count now uses app-computed Messenger unread count instead of Facebook page-title prefix
+  - Fixes false `(1)` titlebar cases caused by non-Messenger Facebook notification counters appearing in `document.title`
+  - Keeps title text synced while preventing global Facebook notification noise from leaking into Messenger unread UX
+
 ## [1.3.0-beta.1] - 2026-02-19
 
 ### Changed

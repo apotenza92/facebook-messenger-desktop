@@ -43,13 +43,14 @@
     // Alternative: the grid directly
     chatsGrid: '[role="grid"][aria-label="Chats"]',
     // Individual conversation row container
-    conversationRow: '[role="row"]',
+    conversationRow: '[role="row"], [role="listitem"]',
     // Link element within a conversation (contains href for deduplication)
-    conversationLink: '[role="link"]',
+    conversationLink: '[role="link"], a[href*="/t/"], a[href*="/e2ee/t/"]',
     // Text content elements in conversation preview
     conversationText: '[dir="auto"]',
     // The unread indicator (blue dot next to unread conversations)
-    unreadIndicator: '[aria-label="Mark as Read"]',
+    unreadIndicator:
+      '[aria-label*="Mark as read" i], [aria-label*="Mark as Read"], [aria-label*="mark as read"], [aria-label*="Unread message" i]',
   };
 
   const log = (message: string, payload?: any) => {
@@ -78,6 +79,31 @@
   // Fixes issue #13: users getting repeated notifications for weeks-old unread messages.
   const notifiedConversations = new Map<string, { body: string }>();
 
+  const normalizeConversationKey = (raw: string): string => {
+    if (raw.startsWith('native:')) {
+      return raw;
+    }
+
+    try {
+      const url = raw.startsWith('http://') || raw.startsWith('https://')
+        ? new URL(raw)
+        : new URL(raw, window.location.origin);
+      const trimmedPath = (url.pathname || '/').replace(/\/+$/, '') || '/';
+      const canonicalPath = trimmedPath
+        .replace(/^\/messages\/e2ee\/t\//, '/t/')
+        .replace(/^\/messages\/t\//, '/t/')
+        .replace(/^\/e2ee\/t\//, '/t/');
+      return canonicalPath;
+    } catch {
+      const withoutHashOrQuery = raw.split(/[?#]/)[0] || '/';
+      const trimmed = withoutHashOrQuery.replace(/\/+$/, '') || '/';
+      return trimmed
+        .replace(/^\/messages\/e2ee\/t\//, '/t/')
+        .replace(/^\/messages\/t\//, '/t/')
+        .replace(/^\/e2ee\/t\//, '/t/');
+    }
+  };
+
   // Clear notification records for conversations that are no longer unread
   // This allows new notifications to be sent when new messages arrive in the same conversation
   const clearReadConversationRecords = () => {
@@ -96,7 +122,7 @@
           row.closest(selectors.conversationLink);
         const href = linkEl?.getAttribute('href');
         if (href) {
-          unreadHrefs.add(href);
+          unreadHrefs.add(normalizeConversationKey(href));
         }
         // Also collect titles for native notification key matching
         const info = extractConversationInfo(row);
@@ -128,7 +154,8 @@
 
   // Check if we've already notified for this exact message
   const hasAlreadyNotified = (href: string, body: string): boolean => {
-    const existing = notifiedConversations.get(href);
+    const key = normalizeConversationKey(href);
+    const existing = notifiedConversations.get(key);
     if (!existing) return false;
     // Already notified for this exact message content
     return existing.body === body;
@@ -140,7 +167,8 @@
   };
 
   const recordNotification = (href: string, body: string) => {
-    notifiedConversations.set(href, { body });
+    const key = normalizeConversationKey(href);
+    notifiedConversations.set(key, { body });
   };
 
   // ============================================================================
@@ -199,9 +227,7 @@
   };
 
   const normalizePath = (path: string): string => {
-    const withoutHashOrQuery = path.split(/[?#]/)[0];
-    const trimmed = withoutHashOrQuery.replace(/\/+$/, '');
-    return trimmed === '' ? '/' : trimmed;
+    return normalizeConversationKey(path);
   };
 
   const isCurrentConversation = (href: string): boolean => {
@@ -276,34 +302,81 @@
   };
 
   // Detect whether a conversation is muted
-  // Messenger shows a "bell with slash" SVG icon for muted conversations in the sidebar
-  // The mute icon SVG has a path starting with "M9.244 24.99" (bell with diagonal slash)
+  // Keep this heuristic broad because Facebook frequently changes sidebar icon markup.
   const isConversationMuted = (conversationEl: Element): boolean => {
-    // PRIMARY DETECTION: Look for the mute bell icon SVG path
-    // This path represents the "bell with slash" icon shown next to muted conversations
-    // Path pattern: "M9.244 24.99..." - this is the diagonal slash through the bell
+    // 1) Legacy mute bell SVG path used by earlier Messenger markup.
     const paths = Array.from(conversationEl.querySelectorAll('svg path'));
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
-      // Check for the specific mute icon path pattern
-      // The mute bell SVG path starts with "M9.244 24.99" and contains "L26.867 7.366"
-      if (d.startsWith('M9.244 24.99') || d.includes('L26.867 7.366')) {
-        log('Muted detected via SVG mute bell path');
+      if (
+        d.startsWith('M9.244 24.99') ||
+        d.includes('L26.867 7.366') ||
+        d.startsWith('M29.676 7.746') ||
+        d.includes('L6.293 28.29')
+      ) {
+        log('Muted detected via legacy SVG mute bell path');
         return true;
       }
     }
 
-    // FALLBACK: Check aria-label/text indicators (less reliable)
-    const textContent = conversationEl.textContent || '';
-    const ariaLabel = conversationEl.getAttribute('aria-label') || '';
-    const lowered = ariaLabel.toLowerCase();
-    if (
-      lowered.includes('muted') ||
-      lowered.includes('notifications are off') ||
-      lowered.includes('notifications off') ||
-      textContent.includes('Notifications are off')
-    ) {
-      log('Muted detected via aria-label/text', { ariaLabel: ariaLabel.slice(0, 100) });
+    // 2) Modern icon systems often use <use href="#..."></use> with symbolic ids.
+    const iconUseNodes = Array.from(conversationEl.querySelectorAll('svg use'));
+    for (const useNode of iconUseNodes) {
+      const href = (
+        useNode.getAttribute('href') || useNode.getAttribute('xlink:href') || ''
+      ).toLowerCase();
+      if (
+        href.includes('mute') ||
+        href.includes('muted') ||
+        href.includes('notification_off') ||
+        (href.includes('bell') && href.includes('slash'))
+      ) {
+        log('Muted detected via SVG use href', { href });
+        return true;
+      }
+    }
+
+    // 3) Accessibility labels/tooltips (most resilient across UI icon changes).
+    const labelSources: string[] = [];
+    const pushLabel = (value: string | null | undefined) => {
+      const text = value?.trim();
+      if (text) labelSources.push(text.toLowerCase());
+    };
+
+    pushLabel(conversationEl.textContent);
+    pushLabel(conversationEl.getAttribute('aria-label'));
+    pushLabel(conversationEl.getAttribute('title'));
+    pushLabel(conversationEl.getAttribute('data-tooltip-content'));
+
+    const metaNodes = conversationEl.querySelectorAll(
+      '[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]',
+    );
+    metaNodes.forEach((node) => {
+      pushLabel(node.getAttribute('aria-label'));
+      pushLabel(node.getAttribute('title'));
+      pushLabel(node.getAttribute('data-tooltip-content'));
+      pushLabel(node.getAttribute('data-tooltip'));
+      if (node instanceof HTMLImageElement) {
+        pushLabel(node.alt);
+      }
+    });
+
+    const mutePhrases = [
+      'muted',
+      'notifications are off',
+      'notifications off',
+      'notification off',
+      'unmute',
+    ];
+
+    const matchedPhrase = labelSources.find((text) =>
+      mutePhrases.some((phrase) => text.includes(phrase)),
+    );
+
+    if (matchedPhrase) {
+      log('Muted detected via accessibility metadata', {
+        sample: matchedPhrase.slice(0, 140),
+      });
       return true;
     }
 

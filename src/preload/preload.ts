@@ -619,8 +619,11 @@ if (process.platform !== "darwin") {
         const url = raw.startsWith("http://") || raw.startsWith("https://")
           ? new URL(raw)
           : new URL(raw, window.location.origin);
-        const path = url.pathname.split(/[?#]/)[0].replace(/\/+$/, "");
-        return path || "/";
+        const path = (url.pathname || "/").split(/[?#]/)[0].replace(/\/+$/, "") || "/";
+        return path
+          .replace(/^\/messages\/e2ee\/t\//, "/t/")
+          .replace(/^\/messages\/t\//, "/t/")
+          .replace(/^\/e2ee\/t\//, "/t/");
       } catch {
         return null;
       }
@@ -926,7 +929,16 @@ if (process.platform !== "darwin") {
           new Set(
             rowsFromLinks.size > 0 ? Array.from(rowsFromLinks) : fallbackRows,
           ),
-        );
+        ).filter((row) => {
+          const el = row as HTMLElement;
+          if (el.getAttribute("aria-hidden") === "true") return false;
+          if (el.closest('[aria-hidden="true"]')) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === "none" || style.visibility === "hidden") {
+            return false;
+          }
+          return el.getClientRects().length > 0;
+        });
 
         const currentConversationPath = normalizeConversationPath(
           window.location.pathname,
@@ -934,34 +946,71 @@ if (process.platform !== "darwin") {
         const windowFocused = isAppFocused();
 
         // Check if a conversation is muted (same logic as notifications-inject.ts)
-        // Messenger shows a "bell with slash" SVG icon for muted conversations
         const isConversationMuted = (conversationEl: Element): boolean => {
-          // PRIMARY DETECTION: Look for the mute bell icon SVG path
-          // This path represents the "bell with slash" icon shown next to muted conversations
+          // 1) Legacy mute bell SVG path.
           const paths = Array.from(conversationEl.querySelectorAll("svg path"));
           for (const path of paths) {
             const d = path.getAttribute("d") || "";
-            // Check for the specific mute icon path pattern
-            // The mute bell SVG path starts with "M9.244 24.99" and contains "L26.867 7.366"
-            if (d.startsWith("M9.244 24.99") || d.includes("L26.867 7.366")) {
+            if (
+              d.startsWith("M9.244 24.99") ||
+              d.includes("L26.867 7.366") ||
+              d.startsWith("M29.676 7.746") ||
+              d.includes("L6.293 28.29")
+            ) {
               return true;
             }
           }
 
-          // FALLBACK: Check aria-label/text indicators
-          const textContent = conversationEl.textContent || "";
-          const ariaLabel = conversationEl.getAttribute("aria-label") || "";
-          const lowered = ariaLabel.toLowerCase();
-          if (
-            lowered.includes("muted") ||
-            lowered.includes("notifications are off") ||
-            lowered.includes("notifications off") ||
-            textContent.includes("Notifications are off")
-          ) {
-            return true;
+          // 2) Modern icon systems often use <use href="#..."></use>.
+          const useNodes = Array.from(conversationEl.querySelectorAll("svg use"));
+          for (const useNode of useNodes) {
+            const href = (
+              useNode.getAttribute("href") ||
+              useNode.getAttribute("xlink:href") ||
+              ""
+            ).toLowerCase();
+            if (
+              href.includes("mute") ||
+              href.includes("muted") ||
+              href.includes("notification_off") ||
+              (href.includes("bell") && href.includes("slash"))
+            ) {
+              return true;
+            }
           }
 
-          return false;
+          // 3) Accessibility labels and tooltips.
+          const labelSources: string[] = [];
+          const pushLabel = (value: string | null | undefined): void => {
+            const text = value?.trim();
+            if (text) labelSources.push(text.toLowerCase());
+          };
+
+          pushLabel(conversationEl.textContent);
+          pushLabel(conversationEl.getAttribute("aria-label"));
+          pushLabel(conversationEl.getAttribute("title"));
+          pushLabel(conversationEl.getAttribute("data-tooltip-content"));
+
+          const metaNodes = conversationEl.querySelectorAll(
+            '[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]',
+          );
+          metaNodes.forEach((node) => {
+            pushLabel(node.getAttribute("aria-label"));
+            pushLabel(node.getAttribute("title"));
+            pushLabel(node.getAttribute("data-tooltip-content"));
+            pushLabel(node.getAttribute("data-tooltip"));
+            if (node instanceof HTMLImageElement) {
+              pushLabel(node.alt);
+            }
+          });
+
+          return labelSources.some((text) =>
+            text.includes("muted") ||
+            text.includes("notifications are off") ||
+            text.includes("notifications off") ||
+            text.includes("notification off") ||
+            text.includes("unmute"),
+          );
         };
 
         // Count unread conversations using the same logic as notifications-inject.ts
@@ -1005,7 +1054,7 @@ if (process.platform !== "darwin") {
 
             // Look for the "Mark as Read" button which indicates unread
             const markAsRead = conversationEl.querySelector(
-              '[aria-label="Mark as Read"]',
+              '[aria-label*="Mark as read" i], [aria-label*="Mark as Read"], [aria-label*="mark as read"], [aria-label*="Unread message" i]',
             );
             if (markAsRead) {
               return true;

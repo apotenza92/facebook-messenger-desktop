@@ -179,6 +179,39 @@ const MAX_MESSAGES_TOP_CROP = 120;
 
 let dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 let applyContentViewBoundsHandler: (() => void) | null = null;
+let lastMessagesUnreadCount = 0;
+
+function stripLeadingUnreadCount(title: string): string {
+  const normalized = (title || "").replace(/^\(\d+\)\s*/, "").trim();
+  return normalized || APP_DISPLAY_NAME;
+}
+
+function getEffectiveWindowTitle(rawTitle: string, url: string): string {
+  if (isMessagesRoute(url)) {
+    const baseTitle = stripLeadingUnreadCount(rawTitle);
+    return lastMessagesUnreadCount > 0
+      ? `(${lastMessagesUnreadCount}) ${baseTitle}`
+      : baseTitle;
+  }
+
+  return rawTitle || APP_DISPLAY_NAME;
+}
+
+function syncWindowTitleFromCurrentPage(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const targetContents = getMessengerWebContents();
+  if (!targetContents || targetContents.isDestroyed()) return;
+
+  const rawTitle = targetContents.getTitle() || APP_DISPLAY_NAME;
+  const url = targetContents.getURL();
+  const effectiveTitle = getEffectiveWindowTitle(rawTitle, url);
+
+  mainWindow.setTitle(effectiveTitle);
+  if (process.platform === "darwin") {
+    updateTitleOverlayText(effectiveTitle);
+  }
+}
 
 // Login flow state tracking - prevents redirect loops during authentication
 // Once user starts login, we don't redirect back to custom login page until they explicitly log out
@@ -3160,12 +3193,14 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
-    // Update title bar overlay when page title changes (e.g., "(5) Messenger" for unread counts)
+    // Update title bar overlay/window title when page title changes.
     contentView.webContents.on("page-title-updated", (event, title) => {
-      updateTitleOverlayText(title);
+      const currentUrl = contentView?.webContents.getURL() || "";
+      const effectiveTitle = getEffectiveWindowTitle(title, currentUrl);
+      updateTitleOverlayText(effectiveTitle);
       // Also update the main window title for dock/taskbar
       if (mainWindow) {
-        mainWindow.setTitle(title);
+        mainWindow.setTitle(effectiveTitle);
       }
     });
 
@@ -3837,7 +3872,9 @@ function createWindow(source: string = "unknown"): void {
     // Update window title when page title changes (for dock/taskbar)
     mainWindow.webContents.on("page-title-updated", (event, title) => {
       if (mainWindow) {
-        mainWindow.setTitle(title);
+        const currentUrl = mainWindow.webContents.getURL();
+        const effectiveTitle = getEffectiveWindowTitle(title, currentUrl);
+        mainWindow.setTitle(effectiveTitle);
       }
     });
   }
@@ -6165,16 +6202,31 @@ function setupIpcHandlers(): void {
   // Handle unread count updates
   ipcMain.on("update-unread-count", (event, count: number) => {
     console.log(`[IPC] Received update-unread-count: ${count}`);
+
+    const targetContents = getMessengerWebContents();
+    if (targetContents && event.sender !== targetContents) {
+      return;
+    }
+
+    const normalizedCount = Number.isFinite(count)
+      ? Math.max(0, Math.floor(count))
+      : 0;
+    lastMessagesUnreadCount = normalizedCount;
+
     if (badgeManager) {
-      badgeManager.updateBadgeCount(count);
+      badgeManager.updateBadgeCount(normalizedCount);
     } else {
       console.warn("[IPC] BadgeManager not initialized yet");
     }
+
+    syncWindowTitleFromCurrentPage();
   });
 
   // Handle clear badge request
   ipcMain.on("clear-badge", () => {
+    lastMessagesUnreadCount = 0;
     badgeManager.clearBadge();
+    syncWindowTitleFromCurrentPage();
   });
 
   // Header height measured in preload; use it to tune BrowserView crop per platform/zoom/layout.
