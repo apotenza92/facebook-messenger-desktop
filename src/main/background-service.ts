@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import { MESSAGES_HOME_URL } from './url-policy';
 
 export class BackgroundService {
   private hiddenWindow: BrowserWindow | null = null;
@@ -21,7 +22,7 @@ export class BackgroundService {
       },
     });
 
-    this.hiddenWindow.loadURL('https://www.messenger.com');
+    this.hiddenWindow.loadURL(MESSAGES_HOME_URL);
 
     this.hiddenWindow.on('closed', () => {
       this.hiddenWindow = null;
@@ -45,4 +46,3 @@ export class BackgroundService {
     return this.hiddenWindow !== null;
   }
 }
-

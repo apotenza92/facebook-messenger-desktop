@@ -65,7 +65,7 @@
   /**
    * Stop all media tracks from all sources
    */
-  function stopAllMediaTracks(reason: string): void {
+  function stopAllMediaTracks(_reason: string): void {
     let tracksStopped = 0;
 
     // 1. Stop tracked streams from RTCPeerConnection

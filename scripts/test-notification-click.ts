@@ -1,6 +1,6 @@
 const Module = require('module');
 
-const TARGET_PATH = '/t/123456';
+const TARGET_PATH = '/messages/t/123456';
 
 const assert = (condition: boolean, message: string) => {
   if (!condition) {
@@ -103,7 +103,7 @@ const runTest = () => {
 
   const executedOn: string[] = [];
   const contentWebContents = {
-    getURL: () => 'https://www.messenger.com/t/123456',
+    getURL: () => 'https://www.facebook.com/messages/t/123456',
     executeJavaScript: (script: string) => {
       executedOn.push('content');
       assert(script.includes(TARGET_PATH), 'Expected navigation script to include target path');

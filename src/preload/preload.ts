@@ -61,6 +61,172 @@ ipcRenderer.on(
   },
 );
 
+// BrowserView bounds crop removes the Facebook top bar; this keeps the messages
+// app root tall enough so we don't expose a blank bottom gap on some layouts.
+(function setupMessagesViewportCompensation() {
+  const isDesktop =
+    process.platform === "darwin" ||
+    process.platform === "win32" ||
+    process.platform === "linux";
+  if (!isDesktop) return;
+
+  const STYLE_ID = "md-fb-messages-viewport-fix-style";
+  const ACTIVE_CLASS = "md-fb-messages-viewport-fix";
+  const HEADER_HEIGHT_CSS_VAR = "--md-fb-header-height";
+  const DEFAULT_HEADER_HEIGHT = 56;
+  const MIN_HEADER_HEIGHT = DEFAULT_HEADER_HEIGHT;
+  const MAX_HEADER_HEIGHT = 120;
+  const HEADER_SEND_DEBOUNCE_MS = 120;
+
+  let pendingApply = false;
+  let pendingSend = false;
+  let currentHeaderHeight = DEFAULT_HEADER_HEIGHT;
+  let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
+
+  const isMessagesRoute = (): boolean => {
+    try {
+      const url = new URL(window.location.href);
+      const isFacebookHost =
+        url.hostname === "facebook.com" ||
+        url.hostname.endsWith(".facebook.com");
+      if (!isFacebookHost) return false;
+      const path = url.pathname.toLowerCase();
+      return path === "/messages" || path.startsWith("/messages/");
+    } catch {
+      return false;
+    }
+  };
+
+  const clampHeaderHeight = (value: number): number => {
+    if (!Number.isFinite(value)) return DEFAULT_HEADER_HEIGHT;
+    return Math.max(
+      MIN_HEADER_HEIGHT,
+      Math.min(MAX_HEADER_HEIGHT, Math.round(value)),
+    );
+  };
+
+  const measureHeaderHeight = (): number => {
+    const banners = Array.from(
+      document.querySelectorAll('[role="banner"]'),
+    ) as HTMLElement[];
+
+    let topAnchoredBannerBottom = 0;
+    for (const banner of banners) {
+      const rect = banner.getBoundingClientRect();
+      // Facebook's global top bar is anchored at the top edge.
+      if (rect.top > 12) continue;
+      if (rect.height < 20) continue;
+      topAnchoredBannerBottom = Math.max(topAnchoredBannerBottom, rect.bottom);
+    }
+
+    if (topAnchoredBannerBottom > 0) {
+      return clampHeaderHeight(topAnchoredBannerBottom);
+    }
+
+    return DEFAULT_HEADER_HEIGHT;
+  };
+
+  const setHeaderHeight = (height: number): void => {
+    currentHeaderHeight = clampHeaderHeight(height);
+    document.documentElement.style.setProperty(
+      HEADER_HEIGHT_CSS_VAR,
+      `${currentHeaderHeight}px`,
+    );
+  };
+
+  const scheduleHeaderHeightSend = (): void => {
+    if (pendingSend) return;
+    pendingSend = true;
+    window.setTimeout(() => {
+      pendingSend = false;
+      if (Math.abs(currentHeaderHeight - lastSentHeaderHeight) < 2) return;
+      lastSentHeaderHeight = currentHeaderHeight;
+      ipcRenderer.send("messages-header-height", currentHeaderHeight);
+    }, HEADER_SEND_DEBOUNCE_MS);
+  };
+
+  const ensureStyleTag = (): void => {
+    if (document.getElementById(STYLE_ID)) return;
+
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      html.${ACTIVE_CLASS},
+      html.${ACTIVE_CLASS} body {
+        overflow: hidden !important;
+        height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
+        min-height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
+      }
+
+      html.${ACTIVE_CLASS} body > div[id^="mount_"],
+      html.${ACTIVE_CLASS} body > div[id^="mount_"] > div,
+      html.${ACTIVE_CLASS} [data-pagelet="root"] {
+        height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
+        min-height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
+      }
+    `;
+    document.head.appendChild(style);
+  };
+
+  const applyCompensation = (): void => {
+    if (!document.head) return;
+    ensureStyleTag();
+
+    if (isMessagesRoute()) {
+      document.documentElement.classList.add(ACTIVE_CLASS);
+      setHeaderHeight(measureHeaderHeight());
+      scheduleHeaderHeightSend();
+    } else {
+      document.documentElement.classList.remove(ACTIVE_CLASS);
+      document.documentElement.style.removeProperty(HEADER_HEIGHT_CSS_VAR);
+    }
+  };
+
+  const scheduleApply = (): void => {
+    if (pendingApply) return;
+    pendingApply = true;
+    window.setTimeout(() => {
+      pendingApply = false;
+      applyCompensation();
+    }, 0);
+  };
+
+  const startObservers = (): void => {
+    if (!document.body) return;
+    const observer = new MutationObserver(() => {
+      scheduleApply();
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "role"],
+    });
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      startObservers();
+      scheduleApply();
+    });
+  } else {
+    startObservers();
+    scheduleApply();
+  }
+
+  let lastUrl = window.location.href;
+  window.setInterval(() => {
+    const currentUrl = window.location.href;
+    if (currentUrl !== lastUrl) {
+      lastUrl = currentUrl;
+      scheduleApply();
+    }
+  }, 300);
+
+  window.addEventListener("pageshow", scheduleApply);
+  window.addEventListener("resize", scheduleApply);
+})();
+
 // Listen for notification events from the injected script
 // The injected script dispatches custom events that we can catch
 // We need to inject a listener into the page context that forwards to us
@@ -243,7 +409,7 @@ if (process.platform !== "darwin") {
 }
 
 // Legacy Notification override (kept as fallback, but main injection happens after page load)
-// This must happen immediately and be non-configurable to prevent messenger.com from overriding it
+// This must happen immediately and be non-configurable to prevent site scripts from overriding it
 (function () {
   "use strict";
 
@@ -363,7 +529,7 @@ if (process.platform !== "darwin") {
     );
   }
 
-  // Continuously monitor and re-override if messenger.com tries to change it
+  // Continuously monitor and re-override if site scripts try to change it
   let _overrideCheckInterval: number | null = null;
 
   function ensureOverride() {
@@ -657,16 +823,35 @@ if (process.platform !== "darwin") {
           // and it adds stronger unread-chat evidence than the title.
           const hasStrongDomSignal =
             domResult.sidebarFound && domResult.totalRows > 0;
+          const focusedConversationPath = normalizeConversationPath(
+            window.location.pathname,
+          );
+          const isFocusedConversationView =
+            isAppFocused() &&
+            typeof focusedConversationPath === "string" &&
+            focusedConversationPath.includes("/t/");
+          // Issue #43: reactions in the active chat can keep the title count stale
+          // until user navigates. When focused in a conversation and the sidebar
+          // confidently reports fewer unread chats, trust the DOM to clear drift.
+          const shouldTrustFocusedLowerDomCount =
+            hasStrongDomSignal &&
+            isFocusedConversationView &&
+            titleCount > 0 &&
+            domCount < titleCount;
           const shouldUseDomCount =
             hasStrongDomSignal &&
-            ((titleCount === 0 && domCount > 0) || domCount > titleCount);
+            ((titleCount === 0 && domCount > 0) ||
+              domCount > titleCount ||
+              shouldTrustFocusedLowerDomCount);
 
           logCountDecision("dom-recount", {
             titleCount,
             domCount,
             chosenCount: shouldUseDomCount ? domCount : unreadCount,
             reason: shouldUseDomCount
-              ? "dom-preferred"
+              ? shouldTrustFocusedLowerDomCount
+                ? "dom-preferred-focused-lower"
+                : "dom-preferred"
               : hasStrongDomSignal
                 ? "title-preferred"
                 : "title-preferred-dom-untrusted",

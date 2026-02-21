@@ -189,7 +189,7 @@ async function runTests() {
   console.log('📍 Current URL:', currentUrl?.substring(0, 60) + '...');
   
   // Check if we're on messenger
-  const isLoggedIn = currentUrl && currentUrl.includes('messenger.com') && 
+  const isLoggedIn = currentUrl && currentUrl.includes('facebook.com/messages') && 
                      !currentUrl.includes('login') && !currentUrl.includes('loginBtn');
   
   if (!isLoggedIn) {

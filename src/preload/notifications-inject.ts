@@ -1348,7 +1348,7 @@
     try { localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache)); } catch { /* ignore */ }
   };
 
-  let nameCache = loadNameCache();
+  const nameCache = loadNameCache();
 
   // Extract all real names from avatar alts in current conversation
   const extractRealNamesFromConversation = (): string[] => {
@@ -1737,7 +1737,6 @@
     // Don't handle shortcuts if typing in a form input (but allow contentEditable for chat nav)
     const target = e.target as HTMLElement;
     const isInFormInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
-    const isInContentEditable = target.isContentEditable;
     
     // Allow palette keyboard nav
     if (commandPaletteEl && target === paletteInputEl) {

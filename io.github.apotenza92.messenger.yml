@@ -22,7 +22,7 @@ finish-args:
   - --share=ipc
   # Audio for calls
   - --socket=pulseaudio
-  # Network for messenger.com
+  # Network for Facebook Messages
   - --share=network
   # GPU acceleration
   - --device=dri

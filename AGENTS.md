@@ -1,6 +1,6 @@
 # Facebook Messenger Desktop
 
-Electron desktop app wrapping messenger.com with native OS integrations.
+Electron desktop app wrapping Facebook Messages with native OS integrations.
 
 ## Tech Stack
 
@@ -112,7 +112,7 @@ else { /* Linux */ }
 ## Key Files
 
 - `src/main/main.ts` - App entry, window management, menus, auto-update
-- `src/preload/notifications-inject.ts` - Injected into messenger.com
+- `src/preload/notifications-inject.ts` - Injected into facebook.com/messages
 - `.github/workflows/release.yml` - Build and release automation
 - `.github/workflows/snap-promote.yml` - Snap channel promotion (runs every 6 hours)
 - `scripts/release.sh` - Release script (use this to release)

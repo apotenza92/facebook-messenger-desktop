@@ -1,4 +1,5 @@
 import { Notification, nativeImage, BrowserWindow } from 'electron';
+import { isMessagesRoute, toMessagesUrl } from './url-policy';
 
 export interface NotificationData {
   title: string;
@@ -68,10 +69,8 @@ export class NotificationHandler {
         
         // Navigate to the conversation if href is provided
         if (data.href) {
-          // Build full URL from the path (handle both relative and absolute hrefs)
-          const conversationUrl = data.href.startsWith('http')
-            ? data.href
-            : `https://www.messenger.com${data.href}`;
+          // Build a canonical facebook.com/messages URL from relative or absolute href.
+          const conversationUrl = toMessagesUrl(data.href);
           console.log('[NotificationHandler] Navigating to conversation:', conversationUrl);
           const targetPath = new URL(conversationUrl).pathname.replace(/\/+$/, '') || '/';
           const targetWebContents = (() => {
@@ -81,7 +80,7 @@ export class NotificationHandler {
             }
             for (const view of views) {
               const url = view.webContents.getURL();
-              if (url.startsWith('https://www.messenger.com') || url.startsWith('https://messenger.com')) {
+              if (isMessagesRoute(url)) {
                 return view.webContents;
               }
             }

@@ -302,7 +302,7 @@ async function runTest() {
     const shortUrl = currentUrl ? currentUrl.substring(0, 60) : 'null';
     console.log(`  Check ${i + 1}/45: ${shortUrl}...`);
     
-    // Handle "Trust this device" / "Remember browser" page FIRST (before messenger.com check)
+    // Handle "Trust this device" / "Remember browser" page FIRST (before messages check)
     if (currentUrl && (currentUrl.includes('remember_browser') || currentUrl.includes('two_factor/checkpoint'))) {
       console.log('\n🔒 "Trust this device" page detected...');
       await takeScreenshot(electronApp, '11-trust-device.png');
@@ -337,8 +337,8 @@ async function runTest() {
       continue;
     }
     
-    // Check if we've reached the actual Messenger interface
-    if (currentUrl && currentUrl.includes('messenger.com') && !currentUrl.includes('login') && !currentUrl.includes('checkpoint')) {
+    // Check if we've reached the actual Messages interface
+    if (currentUrl && currentUrl.includes('facebook.com/messages') && !currentUrl.includes('login') && !currentUrl.includes('checkpoint')) {
       reachedMessenger = true;
       console.log('\n✅ Reached Messenger!');
       break;
@@ -772,7 +772,7 @@ async function runTest() {
     await takeScreenshot(electronApp2, '14-after-restart.png');
     
     // Verify session persisted
-    if (restartUrl && restartUrl.includes('messenger.com') && !restartUrl.includes('login') && !restartUrl.includes('loginBtn')) {
+    if (restartUrl && restartUrl.includes('facebook.com/messages') && !restartUrl.includes('login') && !restartUrl.includes('loginBtn')) {
       console.log('\n✅ SESSION PERSISTED - Still logged in to Messenger!');
       console.log('\n🎉🎉🎉 FULL LOGIN FLOW TEST PASSED! 🎉🎉🎉');
     } else {

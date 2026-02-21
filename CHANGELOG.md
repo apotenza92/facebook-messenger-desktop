@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0-beta.1] - 2026-02-19
+
+### Changed
+
+- **Backend migration**: App backend now targets `https://www.facebook.com/messages/` instead of `messenger.com` ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+- **Navigation scope**: In-app navigation now stays focused on Messages/auth routes; non-messaging Facebook pages open in the system browser
+- **Session startup**: Cookie/session checks now validate against `facebook.com` and load the Messages URL directly
+
+### Fixed
+
+- **Facebook header UI**: Added route-aware suppression for Facebook's top branded header on `/messages` so chat content fills the app window
+- **Notifications**: Notification click-to-navigate now canonicalizes legacy thread links to Facebook Messages URLs
+- **Calls/popups**: Child window/call URL allowlists and permission checks now support Facebook-hosted call flows
+- **Badge**: Fixed unread badge count drift when reactions arrive in the currently open conversation ([#43](https://github.com/apotenza92/facebook-messenger-desktop/issues/43))
+  - Badge reconciliation now trusts a lower, sidebar-verified DOM unread count while focused in an active chat
+  - Prevents badge from staying stuck until switching to another conversation
+
 ## [1.2.7] - 2026-02-19
 
 ### Fixed
