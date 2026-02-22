@@ -596,11 +596,12 @@ if (process.platform !== "darwin") {
     ensureOverride();
   }
 
-  // Monitor page title for unread count
+  // Monitor unread count and keep app badge state synchronized.
+  // Simplified strategy:
+  // 1) Use sidebar DOM count as the only unread source of truth
+  // 2) If sidebar is unavailable, hold the last computed count
+  // 3) Defer clearing to 0 while app is unfocused (preserves unread signal)
   function monitorUnreadCount() {
-    let lastTitle = document.title;
-    let unreadCount = 0;
-    let pendingClear = false;
     type DomUnreadCountResult = {
       count: number;
       sidebarFound: boolean;
@@ -608,18 +609,32 @@ if (process.platform !== "darwin") {
       countedRows: number;
     };
 
-    // Parse unread count from title (e.g., "(5) Messenger")
-    function parseUnreadCount(title: string): number {
-      const match = title.match(/^\((\d+)\)/);
-      return match ? parseInt(match[1], 10) : 0;
-    }
+    type UnreadSnapshot = {
+      source: "dom" | "hold";
+      chosenCount: number;
+      dom: DomUnreadCountResult;
+    };
 
-    function normalizeConversationPath(raw: string): string | null {
+    const chatLinkSelector = 'a[href*="/t/"], a[href*="/e2ee/t/"]';
+    const unreadIndicatorSelector =
+      '[aria-label*="Mark as read" i], [aria-label*="Unread message" i]';
+
+    let lastSentCount = -1;
+    let deferredZeroWhileUnfocused = false;
+    let recountTimer: number | null = null;
+    let pendingTrigger = "startup";
+
+    const isAppFocused = (): boolean => {
+      return document.hasFocus() && document.visibilityState === "visible";
+    };
+
+    const normalizeConversationPath = (raw: string): string | null => {
       try {
         const url = raw.startsWith("http://") || raw.startsWith("https://")
           ? new URL(raw)
           : new URL(raw, window.location.origin);
-        const path = (url.pathname || "/").split(/[?#]/)[0].replace(/\/+$/, "") || "/";
+        const path =
+          (url.pathname || "/").split(/[?#]/)[0].replace(/\/+$/, "") || "/";
         return path
           .replace(/^\/messages\/e2ee\/t\//, "/t/")
           .replace(/^\/messages\/t\//, "/t/")
@@ -627,280 +642,106 @@ if (process.platform !== "darwin") {
       } catch {
         return null;
       }
-    }
-
-    const isAppFocused = (): boolean => {
-      return document.hasFocus() && document.visibilityState === "visible";
     };
 
-    const logCountDecision = (
-      stage: string,
-      details: {
-        titleCount: number;
-        domCount: number;
-        chosenCount: number;
-        reason: string;
-        sidebarFound: boolean;
-        totalRows: number;
-        countedRows: number;
-      },
-    ): void => {
-      console.log(`[BadgeMonitor] Count decision (${stage})`, details);
+    const isConversationUnread = (conversationEl: Element): boolean => {
+      const textContent = conversationEl.textContent || "";
+      if (textContent.includes("Unread message:")) {
+        return true;
+      }
+
+      const ariaLabel = (conversationEl.getAttribute("aria-label") || "").toLowerCase();
+      if (ariaLabel.includes("unread message")) {
+        return true;
+      }
+
+      return Boolean(conversationEl.querySelector(unreadIndicatorSelector));
     };
 
-    let pendingClearRetryTimeout: number | null = null;
-    const schedulePendingClearRetry = (attempt = 0): void => {
-      if (!pendingClear || !isAppFocused()) {
-        return;
-      }
-      if (pendingClearRetryTimeout !== null) {
-        clearTimeout(pendingClearRetryTimeout);
-      }
-      const maxAttempts = 3;
-      const retryDelay = 150;
-
-      pendingClearRetryTimeout = window.setTimeout(() => {
-        pendingClearRetryTimeout = null;
-        if (!pendingClear || !isAppFocused()) {
-          return;
-        }
-
-        const domResult = countUnreadConversations();
-        const domCount = domResult.count;
-        const titleCount = parseUnreadCount(document.title);
-        const canClear =
-          unreadCount > 0 &&
-          titleCount === 0 &&
-          (domCount === 0 || domCount === -1);
-
-        logCountDecision("pending-clear-retry", {
-          titleCount,
-          domCount,
-          chosenCount: canClear ? 0 : unreadCount,
-          reason: canClear ? "clear-deferred-badge" : "wait-for-confirmation",
-          sidebarFound: domResult.sidebarFound,
-          totalRows: domResult.totalRows,
-          countedRows: domResult.countedRows,
-        });
-
-        if (canClear) {
-          console.log("[BadgeMonitor] Applying deferred badge clear (retry)");
-          pendingClear = false;
-          unreadCount = 0;
-          sendBadgeUpdate(unreadCount);
-          return;
-        }
-
-        if (attempt + 1 < maxAttempts) {
-          schedulePendingClearRetry(attempt + 1);
-        }
-      }, retryDelay);
-    };
-
-    // Send badge update via postMessage (works from page context)
-    function sendBadgeUpdate(count: number) {
-      if (count === 0 && unreadCount > 0 && !isAppFocused()) {
-        pendingClear = true;
-        console.log(
-          "[BadgeMonitor] Deferring badge clear until app is focused",
-        );
-        return;
-      }
-      if (count > 0) {
-        pendingClear = false;
-      }
-      console.log(
-        `[BadgeMonitor] Sending badge update via postMessage: ${count}`,
-      );
-      window.postMessage({ type: "electron-badge-update", count }, "*");
-    }
-
-    // Check initial title
-    unreadCount = parseUnreadCount(lastTitle);
-    console.log(
-      `[BadgeMonitor] Initial title: "${lastTitle}", parsed count: ${unreadCount}`,
-    );
-    // Send initial count
-    sendBadgeUpdate(unreadCount);
-
-    // Monitor title changes with immediate response
-    const titleObserver = new MutationObserver(() => {
-      if (document.title !== lastTitle) {
-        lastTitle = document.title;
-        const newCount = parseUnreadCount(lastTitle);
-        // Always send count updates (including 0) to ensure badge stays in sync
-        if (newCount !== unreadCount) {
-          console.log(
-            `[BadgeMonitor] Title changed: "${lastTitle}", new count: ${newCount} (was ${unreadCount})`,
-          );
-
-          // When count goes to 0, wait a bit for DOM to update before trusting the title
-          // This prevents the badge from flashing when opening a conversation
-          if (newCount === 0 && unreadCount > 0) {
-            // User likely opened a conversation - wait for DOM to reflect the read state
-            setTimeout(() => {
-              const domResult = countUnreadConversations();
-              const domCount = domResult.count;
-              const titleCount = parseUnreadCount(document.title);
-
-              // Prefer DOM only when the sidebar is available and count is trustworthy
-              let finalCount = titleCount;
-              let decisionReason = "title-default";
-
-              if (domCount >= 0 && domResult.sidebarFound) {
-                finalCount = domCount;
-                decisionReason =
-                  domCount === titleCount
-                    ? "dom-matches-title"
-                    : "dom-sidebar-authoritative";
-              } else if (domCount >= 0) {
-                decisionReason = "title-used-dom-untrusted-no-sidebar";
-              } else {
-                decisionReason = "title-used-dom-unavailable";
-              }
-
-              logCountDecision("title-zero-delay", {
-                titleCount,
-                domCount,
-                chosenCount: finalCount,
-                reason: decisionReason,
-                sidebarFound: domResult.sidebarFound,
-                totalRows: domResult.totalRows,
-                countedRows: domResult.countedRows,
-              });
-
-              if (finalCount !== unreadCount) {
-                console.log(
-                  `[BadgeMonitor] After delay, final count: ${finalCount} (title: ${titleCount}, DOM: ${domCount})`,
-                );
-                unreadCount = finalCount;
-                sendBadgeUpdate(unreadCount);
-              }
-            }, 300); // Wait 300ms for DOM to update
-          } else {
-            // For increases or non-zero counts, update immediately
-            unreadCount = newCount;
-            sendBadgeUpdate(unreadCount);
-            // Also trigger DOM check when count changes to 0 from a non-zero value
-            if (newCount === 0) {
-              debouncedCountUnread();
-            }
-          }
-        }
-      }
-    });
-
-    // Debounce DOM counting to avoid performance issues
-    let domCountTimeout: number | null = null;
-    const debouncedCountUnread = () => {
-      if (domCountTimeout !== null) {
-        clearTimeout(domCountTimeout);
-      }
-      domCountTimeout = window.setTimeout(() => {
-        const domResult = countUnreadConversations();
-        const domCount = domResult.count;
-        console.log(
-          `[BadgeMonitor] DOM count check: ${domCount} (current: ${unreadCount}, sidebar: ${domResult.sidebarFound}, rows: ${domResult.countedRows}/${domResult.totalRows})`,
-        );
-
-        const titleCount = parseUnreadCount(document.title);
-
+    const isConversationMuted = (conversationEl: Element): boolean => {
+      const paths = Array.from(conversationEl.querySelectorAll("svg path"));
+      for (const path of paths) {
+        const d = path.getAttribute("d") || "";
         if (
-          pendingClear &&
-          isAppFocused() &&
-          unreadCount > 0 &&
-          titleCount === 0 &&
-          (domCount === 0 || domCount === -1)
+          d.startsWith("M9.244 24.99") ||
+          d.includes("L26.867 7.366") ||
+          d.startsWith("M29.676 7.746") ||
+          d.includes("L6.293 28.29") ||
+          d.startsWith("M2.5 6c0-.322") ||
+          d.includes("8.296 8.296A3.001 3.001 0 0 1 5 12.5")
         ) {
-          console.log("[BadgeMonitor] Applying deferred badge clear");
-          pendingClear = false;
-          unreadCount = 0;
-          sendBadgeUpdate(unreadCount);
-          domCountTimeout = null;
-          return;
+          return true;
         }
+      }
 
-        // Use DOM count if it's valid and provides useful information
-        if (domCount >= 0) {
-          // Use DOM count only when sidebar rows were confidently discovered
-          // and it adds stronger unread-chat evidence than the title.
-          const hasStrongDomSignal =
-            domResult.sidebarFound && domResult.totalRows > 0;
-          const focusedConversationPath = normalizeConversationPath(
-            window.location.pathname,
-          );
-          const isFocusedConversationView =
-            isAppFocused() &&
-            typeof focusedConversationPath === "string" &&
-            focusedConversationPath.includes("/t/");
-          // Issue #43: reactions in the active chat can keep the title count stale
-          // until user navigates. When focused in a conversation and the sidebar
-          // confidently reports fewer unread chats, trust the DOM to clear drift.
-          const shouldTrustFocusedLowerDomCount =
-            hasStrongDomSignal &&
-            isFocusedConversationView &&
-            titleCount > 0 &&
-            domCount < titleCount;
-          const shouldUseDomCount =
-            hasStrongDomSignal &&
-            ((titleCount === 0 && domCount > 0) ||
-              domCount > titleCount ||
-              shouldTrustFocusedLowerDomCount);
-
-          logCountDecision("dom-recount", {
-            titleCount,
-            domCount,
-            chosenCount: shouldUseDomCount ? domCount : unreadCount,
-            reason: shouldUseDomCount
-              ? shouldTrustFocusedLowerDomCount
-                ? "dom-preferred-focused-lower"
-                : "dom-preferred"
-              : hasStrongDomSignal
-                ? "title-preferred"
-                : "title-preferred-dom-untrusted",
-            sidebarFound: domResult.sidebarFound,
-            totalRows: domResult.totalRows,
-            countedRows: domResult.countedRows,
-          });
-
-          if (shouldUseDomCount && domCount !== unreadCount) {
-            console.log(
-              `[BadgeMonitor] Using DOM count: ${domCount} (title count: ${titleCount})`,
-            );
-            unreadCount = domCount;
-            sendBadgeUpdate(unreadCount);
-          }
+      const useNodes = Array.from(conversationEl.querySelectorAll("svg use"));
+      for (const useNode of useNodes) {
+        const href = (
+          useNode.getAttribute("href") ||
+          useNode.getAttribute("xlink:href") ||
+          ""
+        ).toLowerCase();
+        if (
+          href.includes("mute") ||
+          href.includes("muted") ||
+          href.includes("notification_off") ||
+          (href.includes("bell") && href.includes("slash"))
+        ) {
+          return true;
         }
-        domCountTimeout = null;
-      }, 200); // Reduced debounce to 200ms for faster updates
+      }
+
+      const labelSources: string[] = [];
+      const pushLabel = (value: string | null | undefined): void => {
+        const text = value?.trim();
+        if (text) {
+          labelSources.push(text.toLowerCase());
+        }
+      };
+
+      pushLabel(conversationEl.textContent);
+      pushLabel(conversationEl.getAttribute("aria-label"));
+      pushLabel(conversationEl.getAttribute("title"));
+      pushLabel(conversationEl.getAttribute("data-tooltip-content"));
+
+      const metaNodes = conversationEl.querySelectorAll(
+        '[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]',
+      );
+      metaNodes.forEach((node) => {
+        pushLabel(node.getAttribute("aria-label"));
+        pushLabel(node.getAttribute("title"));
+        pushLabel(node.getAttribute("data-tooltip-content"));
+        pushLabel(node.getAttribute("data-tooltip"));
+        if (node instanceof HTMLImageElement) {
+          pushLabel(node.alt);
+        }
+      });
+
+      return labelSources.some((text) =>
+        text.includes("muted") ||
+        text.includes("notifications are off") ||
+        text.includes("notifications off") ||
+        text.includes("notification off") ||
+        text.includes("unmute"),
+      );
     };
 
-    // Observe title element
-    titleObserver.observe(document.querySelector("title") || document.head, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
+    const findSidebarElement = (): Element | null => {
+      const navigationSidebar = document.querySelector(
+        '[role="navigation"]:has([role="grid"])',
+      );
+      if (navigationSidebar) return navigationSidebar;
 
-    // Also monitor for unread indicators in the DOM
-    // This catches manually marked unread chats and is a fallback if title doesn't change
-    function countUnreadConversations(): DomUnreadCountResult {
+      const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
+      if (chatsGrid) {
+        return chatsGrid.closest('[role="navigation"]') || chatsGrid;
+      }
+
+      return null;
+    };
+
+    const countUnreadConversations = (): DomUnreadCountResult => {
       try {
-        const chatLinkSelector = 'a[href*="/t/"], a[href*="/e2ee/t/"]';
-        const findSidebarElement = (): Element | null => {
-          const navigationSidebar = document.querySelector(
-            '[role="navigation"]:has([role="grid"])',
-          );
-          if (navigationSidebar) return navigationSidebar;
-
-          const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
-          if (chatsGrid) {
-            return chatsGrid.closest('[role="navigation"]') || chatsGrid;
-          }
-
-          return null;
-        };
-
         const sidebar = findSidebarElement();
         if (!sidebar) {
           return {
@@ -911,7 +752,6 @@ if (process.platform !== "darwin") {
           };
         }
 
-        // Build row list from real conversation links first to avoid non-chat rows.
         const rowsFromLinks = new Set<Element>();
         sidebar.querySelectorAll(chatLinkSelector).forEach((link) => {
           const row =
@@ -925,10 +765,8 @@ if (process.platform !== "darwin") {
           sidebar.querySelectorAll('[role="row"], [role="listitem"]'),
         ).filter((row) => row.querySelector(chatLinkSelector));
 
-        const allConversations = Array.from(
-          new Set(
-            rowsFromLinks.size > 0 ? Array.from(rowsFromLinks) : fallbackRows,
-          ),
+        const rows = Array.from(
+          new Set(rowsFromLinks.size > 0 ? Array.from(rowsFromLinks) : fallbackRows),
         ).filter((row) => {
           const el = row as HTMLElement;
           if (el.getAttribute("aria-hidden") === "true") return false;
@@ -943,156 +781,47 @@ if (process.platform !== "darwin") {
         const currentConversationPath = normalizeConversationPath(
           window.location.pathname,
         );
-        const windowFocused = isAppFocused();
+        const focused = isAppFocused();
 
-        // Check if a conversation is muted (same logic as notifications-inject.ts)
-        const isConversationMuted = (conversationEl: Element): boolean => {
-          // 1) Legacy mute bell SVG path.
-          const paths = Array.from(conversationEl.querySelectorAll("svg path"));
-          for (const path of paths) {
-            const d = path.getAttribute("d") || "";
-            if (
-              d.startsWith("M9.244 24.99") ||
-              d.includes("L26.867 7.366") ||
-              d.startsWith("M29.676 7.746") ||
-              d.includes("L6.293 28.29")
-            ) {
-              return true;
-            }
-          }
-
-          // 2) Modern icon systems often use <use href="#..."></use>.
-          const useNodes = Array.from(conversationEl.querySelectorAll("svg use"));
-          for (const useNode of useNodes) {
-            const href = (
-              useNode.getAttribute("href") ||
-              useNode.getAttribute("xlink:href") ||
-              ""
-            ).toLowerCase();
-            if (
-              href.includes("mute") ||
-              href.includes("muted") ||
-              href.includes("notification_off") ||
-              (href.includes("bell") && href.includes("slash"))
-            ) {
-              return true;
-            }
-          }
-
-          // 3) Accessibility labels and tooltips.
-          const labelSources: string[] = [];
-          const pushLabel = (value: string | null | undefined): void => {
-            const text = value?.trim();
-            if (text) labelSources.push(text.toLowerCase());
-          };
-
-          pushLabel(conversationEl.textContent);
-          pushLabel(conversationEl.getAttribute("aria-label"));
-          pushLabel(conversationEl.getAttribute("title"));
-          pushLabel(conversationEl.getAttribute("data-tooltip-content"));
-
-          const metaNodes = conversationEl.querySelectorAll(
-            '[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]',
-          );
-          metaNodes.forEach((node) => {
-            pushLabel(node.getAttribute("aria-label"));
-            pushLabel(node.getAttribute("title"));
-            pushLabel(node.getAttribute("data-tooltip-content"));
-            pushLabel(node.getAttribute("data-tooltip"));
-            if (node instanceof HTMLImageElement) {
-              pushLabel(node.alt);
-            }
-          });
-
-          return labelSources.some((text) =>
-            text.includes("muted") ||
-            text.includes("notifications are off") ||
-            text.includes("notifications off") ||
-            text.includes("notification off") ||
-            text.includes("unmute"),
-          );
-        };
-
-        // Count unread conversations using the same logic as notifications-inject.ts
-        let domUnreadCount = 0;
+        let count = 0;
         const seenConversationPaths = new Set<string>();
 
-        allConversations.forEach((conversationEl) => {
+        rows.forEach((conversationEl) => {
           const link = conversationEl.querySelector(
             chatLinkSelector,
           ) as HTMLAnchorElement | null;
-          if (!link) {
-            return;
-          }
+          if (!link) return;
 
           const href = link.getAttribute("href") || link.href;
-          if (!href) {
-            return;
-          }
+          if (!href) return;
 
           const conversationPath = normalizeConversationPath(href);
-          if (!conversationPath) {
+          if (!conversationPath) return;
+
+          if (!isConversationUnread(conversationEl)) return;
+          if (isConversationMuted(conversationEl)) return;
+
+          // Do not count the active conversation while app is focused.
+          if (
+            focused &&
+            currentConversationPath &&
+            conversationPath === currentConversationPath
+          ) {
             return;
           }
 
-          // Check if this conversation is unread
-          const isUnread = (() => {
-            // PRIMARY CHECK: Look for "Unread message:" text
-            const textContent = conversationEl.textContent || "";
-            if (textContent.includes("Unread message:")) {
-              return true;
-            }
-
-            // Check aria-label patterns
-            const ariaLabel = conversationEl.getAttribute("aria-label") || "";
-            if (
-              ariaLabel.includes("Unread message") ||
-              ariaLabel.toLowerCase().includes("unread message")
-            ) {
-              return true;
-            }
-
-            // Look for the "Mark as Read" button which indicates unread
-            const markAsRead = conversationEl.querySelector(
-              '[aria-label*="Mark as read" i], [aria-label*="Mark as Read"], [aria-label*="mark as read"], [aria-label*="Unread message" i]',
-            );
-            if (markAsRead) {
-              return true;
-            }
-
-            return false;
-          })();
-
-          // Skip muted conversations - they shouldn't count toward unread badge (issue #14)
-          if (isUnread && isConversationMuted(conversationEl)) {
-            return; // Skip this conversation
-          }
-
-          if (isUnread) {
-            // Issue #22: Don't count the actively viewed conversation while focused
-            if (
-              windowFocused &&
-              currentConversationPath &&
-              conversationPath === currentConversationPath
-            ) {
-              return;
-            }
-
-            if (!seenConversationPaths.has(conversationPath)) {
-              seenConversationPaths.add(conversationPath);
-              domUnreadCount++;
-            }
-          }
+          if (seenConversationPaths.has(conversationPath)) return;
+          seenConversationPaths.add(conversationPath);
+          count += 1;
         });
 
         return {
-          count: domUnreadCount,
+          count,
           sidebarFound: true,
-          totalRows: allConversations.length,
+          totalRows: rows.length,
           countedRows: seenConversationPaths.size,
         };
-      } catch (_e) {
-        // If DOM counting fails, return -1 to indicate we should rely on title
+      } catch {
         return {
           count: -1,
           sidebarFound: false,
@@ -1100,120 +829,229 @@ if (process.platform !== "darwin") {
           countedRows: 0,
         };
       }
-    }
+    };
 
-    const domObserver = new MutationObserver(() => {
-      // Debounced counting to avoid performance issues
-      debouncedCountUnread();
+    const computeSnapshot = (): UnreadSnapshot => {
+      const dom = countUnreadConversations();
+
+      if (dom.sidebarFound) {
+        return {
+          source: "dom",
+          chosenCount: Math.max(0, dom.count),
+          dom,
+        };
+      }
+
+      // Sidebar unavailable (loading/transient route): keep last known count.
+      return {
+        source: "hold",
+        chosenCount: Math.max(0, lastSentCount),
+        dom,
+      };
+    };
+
+    const sendBadgeUpdate = (
+      nextCount: number,
+      trigger: string,
+      snapshot: UnreadSnapshot,
+    ): void => {
+      if (
+        nextCount === 0 &&
+        lastSentCount > 0 &&
+        !isAppFocused()
+      ) {
+        deferredZeroWhileUnfocused = true;
+        console.log("[BadgeMonitor] Deferring clear while unfocused", {
+          trigger,
+          lastSentCount,
+          domCount: snapshot.dom.count,
+          source: snapshot.source,
+        });
+        return;
+      }
+
+      if (nextCount > 0) {
+        deferredZeroWhileUnfocused = false;
+      }
+
+      if (nextCount === lastSentCount) {
+        return;
+      }
+
+      lastSentCount = nextCount;
+      console.log("[BadgeMonitor] Sending badge update", {
+        trigger,
+        count: nextCount,
+        source: snapshot.source,
+        domCount: snapshot.dom.count,
+        sidebarFound: snapshot.dom.sidebarFound,
+        rows: `${snapshot.dom.countedRows}/${snapshot.dom.totalRows}`,
+      });
+      window.postMessage({ type: "electron-badge-update", count: nextCount }, "*");
+    };
+
+    const runRecount = (trigger: string): void => {
+      const snapshot = computeSnapshot();
+
+      if (
+        deferredZeroWhileUnfocused &&
+        isAppFocused() &&
+        snapshot.chosenCount === 0
+      ) {
+        deferredZeroWhileUnfocused = false;
+      }
+
+      sendBadgeUpdate(snapshot.chosenCount, trigger, snapshot);
+    };
+
+    const scheduleRecount = (trigger: string, delayMs = 120): void => {
+      pendingTrigger = trigger;
+      if (recountTimer !== null) {
+        clearTimeout(recountTimer);
+      }
+      recountTimer = window.setTimeout(() => {
+        recountTimer = null;
+        runRecount(pendingTrigger);
+      }, delayMs);
+    };
+
+    // Observe title changes only as a recount trigger (not as a count source).
+    const titleObserver = new MutationObserver(() => {
+      scheduleRecount("title-change", 60);
+    });
+    titleObserver.observe(document.querySelector("title") || document.head, {
+      childList: true,
+      subtree: true,
+      characterData: true,
     });
 
-    // Observe body for changes
+    // Observe DOM changes to catch unread state transitions.
+    const domObserver = new MutationObserver(() => {
+      scheduleRecount("dom-mutation", 150);
+    });
     domObserver.observe(document.body, {
       childList: true,
       subtree: true,
+      characterData: true,
       attributes: true,
       attributeFilter: ["aria-label", "data-testid", "class"],
     });
 
-    // Run initial DOM count check after a short delay to ensure DOM is fully loaded
-    // This catches manually marked unread chats that might not be in the title
-    setTimeout(() => {
-      debouncedCountUnread();
-    }, 2000); // Wait 2 seconds for Messenger to fully load
-
-    // Also check when window becomes visible/focused (user clicks on conversation)
-    // This makes badge updates faster when reading messages
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        // Window is visible, check immediately
-        debouncedCountUnread();
-        schedulePendingClearRetry();
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") {
+        scheduleRecount("visibility", 50);
       }
     };
 
-    const handleFocus = () => {
-      // Window focused, check immediately
-      debouncedCountUnread();
-      schedulePendingClearRetry();
+    const handleFocus = (): void => {
+      scheduleRecount("focus", 40);
     };
 
-    // Check when URL changes (user navigates to a conversation)
-    // Messenger uses pushState for navigation, so we need to intercept it
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+
+    // Messenger is SPA; detect in-app route changes.
     let lastUrl = window.location.href;
-    const checkUrlChange = () => {
+    const onUrlMaybeChanged = (trigger: string): void => {
       const currentUrl = window.location.href;
-      if (currentUrl !== lastUrl) {
-        lastUrl = currentUrl;
-        // URL changed (likely opened a conversation), check badge immediately
-        debouncedCountUnread();
-      }
+      if (currentUrl === lastUrl) return;
+      lastUrl = currentUrl;
+      scheduleRecount(trigger, 80);
     };
 
-    // Intercept pushState and replaceState to catch SPA navigation
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
     history.pushState = function (...args) {
       originalPushState.apply(history, args);
-      setTimeout(checkUrlChange, 50); // Small delay to let DOM update
+      window.setTimeout(() => onUrlMaybeChanged("pushstate"), 50);
     };
 
     history.replaceState = function (...args) {
       originalReplaceState.apply(history, args);
-      setTimeout(checkUrlChange, 50);
+      window.setTimeout(() => onUrlMaybeChanged("replacestate"), 50);
     };
 
-    // Also listen for popstate (back/forward)
     window.addEventListener("popstate", () => {
-      setTimeout(checkUrlChange, 50);
+      window.setTimeout(() => onUrlMaybeChanged("popstate"), 50);
     });
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleFocus);
-
-    // Issue #22: More responsive badge updates when user is active in a conversation
-    // When user interacts (clicks, types), trigger a badge recount after a short delay
-    // This catches cases where Messenger marks a message as read after user interaction
-    let activityTimeout: number | null = null;
-    const handleUserActivity = () => {
-      // Only trigger if we're in a conversation (URL contains /t/)
-      const path = window.location.pathname;
-      if (!path.includes("/t/")) return;
-
-      // Debounce activity-based recounts to avoid spam
-      if (activityTimeout !== null) {
-        clearTimeout(activityTimeout);
-      }
-      activityTimeout = window.setTimeout(() => {
-        debouncedCountUnread();
-        activityTimeout = null;
-      }, 500); // Wait 500ms after activity stops before recounting
+    const scheduleRecountBurst = (trigger: string, delays: number[]): void => {
+      delays.forEach((delay) => {
+        window.setTimeout(() => {
+          runRecount(`${trigger}:${delay}`);
+        }, delay);
+      });
     };
 
-    // Listen for user interaction events that indicate they're reading/responding
-    document.addEventListener("click", handleUserActivity, { passive: true });
-    document.addEventListener("keydown", handleUserActivity, { passive: true });
+    const isMarkUnreadReadAction = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Element)) return false;
+      const actionEl = target.closest(
+        '[role="menuitem"], [role="button"], button, [aria-label], [title]'
+      );
+      if (!actionEl) return false;
 
-    // Issue #38: Handle badge recount requests from the injected notifications script
-    // When messages are marked as read in the active chat, trigger an immediate recount
+      const text = `${actionEl.getAttribute("aria-label") || ""} ${
+        actionEl.getAttribute("title") || ""
+      } ${actionEl.textContent || ""}`
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+
+      return (
+        text.includes("mark as unread") ||
+        text.includes("mark unread") ||
+        text.includes("mark as read") ||
+        text.includes("mark read")
+      );
+    };
+
+    // Trigger recounts when user is active anywhere in Messages.
+    let activityTimer: number | null = null;
+    const scheduleActivityRecount = (): void => {
+      if (!window.location.pathname.includes("/messages")) {
+        return;
+      }
+      if (activityTimer !== null) {
+        clearTimeout(activityTimer);
+      }
+      activityTimer = window.setTimeout(() => {
+        activityTimer = null;
+        scheduleRecount("activity", 40);
+      }, 400);
+    };
+
+    document.addEventListener("click", (event) => {
+      scheduleActivityRecount();
+      if (isMarkUnreadReadAction(event.target)) {
+        // Mark unread/read is often applied asynchronously after the context menu closes.
+        // Burst recounts to make dock/taskbar badge update feel immediate.
+        scheduleRecountBurst("mark-toggle", [40, 180, 450, 900]);
+      }
+    }, { passive: true, capture: true });
+
+    document.addEventListener("keydown", (event) => {
+      scheduleActivityRecount();
+      if ((event.key === "Enter" || event.key === " ") && isMarkUnreadReadAction(event.target)) {
+        scheduleRecountBurst("mark-toggle-key", [40, 180, 450, 900]);
+      }
+    }, { passive: true, capture: true });
+
+    // Recount requested by injected notifications script.
     document.addEventListener(
       "electron-badge-recount-request",
       () => {
-        console.log(
-          "[BadgeMonitor] Recount requested from notifications script",
-        );
-        debouncedCountUnread();
+        scheduleRecount("requested", 20);
       },
       { passive: true },
     );
 
-    // Issue #27: Periodic recheck to catch cross-device read status changes
-    // When messages are read on another device, the local DOM doesn't update automatically
-    // This interval rechecks the DOM every 30 seconds to catch stale badge counts
-    setInterval(() => {
-      console.log("[BadgeMonitor] Periodic recheck triggered");
-      debouncedCountUnread();
-    }, 30000); // Recheck every 30 seconds
+    // Catch cross-device read state changes.
+    window.setInterval(() => {
+      scheduleRecount("periodic", 0);
+    }, 30000);
+
+    // Initial recount after startup settle.
+    scheduleRecount("startup", 250);
   }
 
   // Wait for DOM to be ready, then wait a bit more for electronAPI to be available

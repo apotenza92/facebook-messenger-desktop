@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.0-beta.3] - 2026-02-22
+
+### Fixed
+
+- **Issue #44 follow-up: muted + unread badge reliability on facebook.com/messages** ([#44](https://github.com/apotenza92/facebook-messenger-desktop/issues/44))
+  - Re-enabled MutationObserver notification path for Facebook Messages where native `Notification(...)` callbacks are not always emitted
+  - Updated muted detection for current Facebook Messages icon markup (including new mute bell slash path signatures)
+  - MutationObserver notifications now explicitly skip muted conversations
+  - Badge counting refactored to use sidebar DOM as the sole unread source (removed page-title count fallback)
+  - Improved mark read/unread responsiveness with immediate recount bursts so dock/taskbar badges update without needing chat switches
+
 ## [1.3.0-beta.2] - 2026-02-22
 
 ### Fixed

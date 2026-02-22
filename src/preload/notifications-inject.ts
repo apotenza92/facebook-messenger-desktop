@@ -280,9 +280,9 @@
       return true;
     }
 
-    // Check aria-label patterns (the row element often has full text including "Unread message:")
-    const ariaLabel = conversationEl.getAttribute('aria-label') || '';
-    if (ariaLabel.includes('Unread message') || ariaLabel.toLowerCase().includes('unread')) {
+    // Check aria-label patterns (strictly "Unread message" to avoid false positives)
+    const ariaLabel = (conversationEl.getAttribute('aria-label') || '').toLowerCase();
+    if (ariaLabel.includes('unread message')) {
       return true;
     }
 
@@ -292,19 +292,24 @@
       return true;
     }
 
-    // Check aria-label on child elements
-    const childWithUnread = conversationEl.querySelector('[aria-label*="unread"], [aria-label*="Unread"]');
-    if (childWithUnread) {
+    // Child unread indicator (strict variant)
+    const childUnreadIndicator = conversationEl.querySelector('[aria-label*="Unread message" i]');
+    if (childUnreadIndicator) {
       return true;
     }
 
     return false;
   };
 
-  // Detect whether a conversation is muted
-  // Keep this heuristic broad because Facebook frequently changes sidebar icon markup.
-  const isConversationMuted = (conversationEl: Element): boolean => {
-    // 1) Legacy mute bell SVG path used by earlier Messenger markup.
+  type MuteAnalysis = {
+    isMuted: boolean;
+    method: 'legacy-path' | 'svg-use' | 'a11y-label' | 'none';
+    matchedPathSnippet?: string;
+    matchedHref?: string;
+    matchedPhrase?: string;
+  };
+
+  const analyzeMuteSignals = (conversationEl: Element): MuteAnalysis => {
     const paths = Array.from(conversationEl.querySelectorAll('svg path'));
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
@@ -312,14 +317,18 @@
         d.startsWith('M9.244 24.99') ||
         d.includes('L26.867 7.366') ||
         d.startsWith('M29.676 7.746') ||
-        d.includes('L6.293 28.29')
+        d.includes('L6.293 28.29') ||
+        d.startsWith('M2.5 6c0-.322') ||
+        d.includes('8.296 8.296A3.001 3.001 0 0 1 5 12.5')
       ) {
-        log('Muted detected via legacy SVG mute bell path');
-        return true;
+        return {
+          isMuted: true,
+          method: 'legacy-path',
+          matchedPathSnippet: d.slice(0, 140),
+        };
       }
     }
 
-    // 2) Modern icon systems often use <use href="#..."></use> with symbolic ids.
     const iconUseNodes = Array.from(conversationEl.querySelectorAll('svg use'));
     for (const useNode of iconUseNodes) {
       const href = (
@@ -331,12 +340,14 @@
         href.includes('notification_off') ||
         (href.includes('bell') && href.includes('slash'))
       ) {
-        log('Muted detected via SVG use href', { href });
-        return true;
+        return {
+          isMuted: true,
+          method: 'svg-use',
+          matchedHref: href,
+        };
       }
     }
 
-    // 3) Accessibility labels/tooltips (most resilient across UI icon changes).
     const labelSources: string[] = [];
     const pushLabel = (value: string | null | undefined) => {
       const text = value?.trim();
@@ -367,6 +378,8 @@
       'notifications off',
       'notification off',
       'unmute',
+      'turn on notifications',
+      'turn notifications on',
     ];
 
     const matchedPhrase = labelSources.find((text) =>
@@ -374,13 +387,33 @@
     );
 
     if (matchedPhrase) {
-      log('Muted detected via accessibility metadata', {
-        sample: matchedPhrase.slice(0, 140),
-      });
-      return true;
+      return {
+        isMuted: true,
+        method: 'a11y-label',
+        matchedPhrase,
+      };
     }
 
-    return false;
+    return {
+      isMuted: false,
+      method: 'none',
+    };
+  };
+
+  // Detect whether a conversation is muted
+  // Keep this heuristic broad because Facebook frequently changes sidebar icon markup.
+  const isConversationMuted = (conversationEl: Element): boolean => {
+    const analysis = analyzeMuteSignals(conversationEl);
+    if (!analysis.isMuted) return false;
+
+    log('Muted detected', {
+      method: analysis.method,
+      matchedPathSnippet: analysis.matchedPathSnippet,
+      matchedHref: analysis.matchedHref,
+      matchedPhrase: analysis.matchedPhrase,
+    });
+
+    return true;
   };
 
   // Extract conversation info from a conversation element
@@ -571,7 +604,7 @@
             // Check if the conversation is muted
             if (foundRow && isConversationMuted(foundRow)) {
               isMuted = true;
-              log('Native notification for muted conversation - skipping', { title });
+              log('Native notification for muted conversation - skipping', { title, href });
             }
 
             // CRITICAL: Check if message is fresh (no timestamp = just arrived)
@@ -641,6 +674,10 @@
   // ============================================================================
   // DETECTION METHOD 1: MutationObserver on sidebar
   // ============================================================================
+  // Re-enabled: on facebook.com/messages the native Notification constructor
+  // pipeline is often not invoked, so MutationObserver is required for
+  // notification delivery. Keep strict unread/mute/fresh checks to avoid
+  // false positives.
   const ENABLE_MUTATION_OBSERVER_NOTIFICATIONS = true;
 
   // Track whether we're in the initial settling period (no notifications during this time)
@@ -744,7 +781,6 @@
       if (mutationsList.length === 0) return;
 
       // Skip if MutationObserver notifications are disabled
-      // (disabled because sidebar rows don't contain mute status - see comment above)
       if (!ENABLE_MUTATION_OBSERVER_NOTIFICATIONS) {
         return;
       }
@@ -796,6 +832,10 @@
 
         // Skip muted conversations
         if (isConversationMuted(conversationRow)) {
+          log('Skipping mutation notification for muted conversation', {
+            title: info.title,
+            href: info.href,
+          });
           continue;
         }
 
@@ -841,6 +881,7 @@
           durationMs: 3000,
         });
       }
+
     };
 
     // Watch for URL changes (SPA navigation)
