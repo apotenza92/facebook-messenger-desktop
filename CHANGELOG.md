@@ -1,6 +1,16 @@
 # Changelog
 
 
+## [1.3.0-beta.5] - 2026-02-23
+
+### Fixed
+
+- **Issue #45: migration banner incorrectly shown/persisting during media open/close** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Added route exclusions so auth-flow disclaimer banners do not appear on Facebook media/content viewer routes (photo/video/reels/stories/watch)
+  - Added banner lifecycle cleanup on navigation and SPA route changes so injected banner DOM/CSS is removed when leaving login/verification/intermediate pages
+  - Hardened session-state gating for intermediate banner injection to avoid false positives when cookie/session checks are unavailable
+
+
 ## [1.3.0-beta.4] - 2026-02-23
 
 ### Changed

@@ -877,9 +877,9 @@ function isVerificationPage(url: string): boolean {
 
 // Check if Facebook session cookies are established
 // Returns true if c_user or xs cookies exist for facebook.com domain
-async function _hasMessengerSession(
+async function hasFacebookSession(
   session: Electron.Session,
-): Promise<boolean> {
+): Promise<boolean | null> {
   try {
     const cookies = await session.cookies.get({
       url: "https://www.facebook.com",
@@ -890,7 +890,8 @@ async function _hasMessengerSession(
     return hasSessionCookie;
   } catch (err) {
     console.warn("[Session Check] Failed to check cookies:", err);
-    return false;
+    // Unknown session state. Be conservative and avoid showing auth-flow banners.
+    return null;
   }
 }
 
@@ -1217,9 +1218,11 @@ const VERIFICATION_BANNER_JS = `
 
 // Check if this is any Facebook page (for showing consistent banner during login flow)
 function isFacebookIntermediatePage(url: string): boolean {
+  let path = "";
   try {
     const urlObj = new URL(url);
     if (!isFacebookHost(urlObj.hostname)) return false;
+    path = urlObj.pathname.toLowerCase();
   } catch {
     return false;
   }
@@ -1228,6 +1231,19 @@ function isFacebookIntermediatePage(url: string): boolean {
   if (isLoginPage(url) || isVerificationPage(url)) return false;
   // Don't show while on the actual Messenger UI.
   if (isMessagesRoute(url)) return false;
+  // Don't show on regular Facebook content pages (image/video/story viewers, etc.).
+  if (
+    path.startsWith("/photo") ||
+    path.startsWith("/photos") ||
+    path.startsWith("/video") ||
+    path.startsWith("/watch") ||
+    path.startsWith("/reel") ||
+    path.startsWith("/reels") ||
+    path.startsWith("/story") ||
+    path.startsWith("/stories")
+  ) {
+    return false;
+  }
 
   return true;
 }
@@ -1257,22 +1273,77 @@ function getFacebookBannerCSS(): string {
   return getAppBannerCSS("md-facebook-banner");
 }
 
+type LoginBannerKind = "login" | "verification" | "facebook" | null;
+
+const bannerCssKeyByWebContentsId = new Map<number, string>();
+
+const REMOVE_APP_BANNERS_JS = `
+  (function() {
+    const ids = ['md-login-banner', 'md-verification-banner', 'md-facebook-banner'];
+    for (const id of ids) {
+      const element = document.getElementById(id);
+      if (element) element.remove();
+    }
+  })();
+`;
+
+async function clearInjectedBanner(
+  webContents: Electron.WebContents,
+): Promise<void> {
+  const cssKey = bannerCssKeyByWebContentsId.get(webContents.id);
+  if (cssKey) {
+    try {
+      await webContents.removeInsertedCSS(cssKey);
+    } catch (e) {
+      console.warn("[LoginPage] Failed to remove previous banner CSS:", e);
+    } finally {
+      bannerCssKeyByWebContentsId.delete(webContents.id);
+    }
+  }
+
+  try {
+    await webContents.executeJavaScript(REMOVE_APP_BANNERS_JS);
+  } catch (e) {
+    console.warn("[LoginPage] Failed to remove previous banner element:", e);
+  }
+}
+
+async function getBannerKindForUrl(
+  webContents: Electron.WebContents,
+  url: string,
+): Promise<LoginBannerKind> {
+  if (isLoginPage(url)) return "login";
+  if (isVerificationPage(url)) return "verification";
+  if (!isFacebookIntermediatePage(url)) return null;
+
+  // Logged-in sessions browsing regular Facebook routes shouldn't get auth-flow banners.
+  const loggedIn = await hasFacebookSession(webContents.session);
+  if (loggedIn !== false) return null;
+  return "facebook";
+}
+
 async function injectLoginPageCSS(
   webContents: Electron.WebContents,
 ): Promise<void> {
   try {
     const url = webContents.getURL();
+    const bannerKind = await getBannerKindForUrl(webContents, url);
 
-    if (isLoginPage(url)) {
-      await webContents.insertCSS(getLoginBannerCSS());
+    await clearInjectedBanner(webContents);
+
+    if (bannerKind === "login") {
+      const cssKey = await webContents.insertCSS(getLoginBannerCSS());
+      bannerCssKeyByWebContentsId.set(webContents.id, cssKey);
       await webContents.executeJavaScript(LOGIN_BANNER_JS);
       console.log("[LoginPage] Banner injected");
-    } else if (isVerificationPage(url)) {
-      await webContents.insertCSS(getVerificationBannerCSS());
+    } else if (bannerKind === "verification") {
+      const cssKey = await webContents.insertCSS(getVerificationBannerCSS());
+      bannerCssKeyByWebContentsId.set(webContents.id, cssKey);
       await webContents.executeJavaScript(VERIFICATION_BANNER_JS);
       console.log("[VerificationPage] Banner injected");
-    } else if (isFacebookIntermediatePage(url)) {
-      await webContents.insertCSS(getFacebookBannerCSS());
+    } else if (bannerKind === "facebook") {
+      const cssKey = await webContents.insertCSS(getFacebookBannerCSS());
+      bannerCssKeyByWebContentsId.set(webContents.id, cssKey);
       await webContents.executeJavaScript(FACEBOOK_BANNER_JS);
       console.log("[FacebookPage] Banner injected");
     }
