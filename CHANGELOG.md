@@ -1,5 +1,14 @@
 # Changelog
 
+
+## [1.3.0-beta.4] - 2026-02-23
+
+### Changed
+
+- Reverted macOS main window to the native system title bar/chrome
+- Removed custom macOS titlebar overlay and seam/shadow workaround
+- Preserved Facebook /messages header-removal behavior (viewport crop + compensation)
+
 ## [1.3.0-beta.3] - 2026-02-22
 
 ### Fixed

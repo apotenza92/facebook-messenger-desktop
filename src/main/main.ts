@@ -162,7 +162,6 @@ let resetApplied = false;
 let manualUpdateCheckInProgress = false;
 let updateDownloadedAndReady = false;
 let tray: Tray | null = null;
-let titleOverlay: BrowserView | null = null;
 let isCreatingWindow = false; // Guard against race conditions during window creation
 let lastShowWindowTime = 0; // Debounce for showMainWindow to prevent double window on Linux
 let appReady = false; // Flag to indicate app is fully initialized (window created)
@@ -170,7 +169,6 @@ let pendingShowWindow = false; // Queue second-instance events that arrive befor
 type MenuBarMode = "always" | "hover" | "never";
 let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
-const overlayHeight = 32;
 const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar show
 const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
@@ -208,9 +206,6 @@ function syncWindowTitleFromCurrentPage(): void {
   const effectiveTitle = getEffectiveWindowTitle(rawTitle, url);
 
   mainWindow.setTitle(effectiveTitle);
-  if (process.platform === "darwin") {
-    updateTitleOverlayText(effectiveTitle);
-  }
 }
 
 // Login flow state tracking - prevents redirect loops during authentication
@@ -2177,18 +2172,6 @@ function ensureWindowInBounds(state: WindowState): WindowState {
   return { x: safeX, y: safeY, width: safeWidth, height: safeHeight };
 }
 
-function getOverlayColors(): {
-  background: string;
-  text: string;
-  symbols: string;
-} {
-  const isDark = nativeTheme.shouldUseDarkColors;
-  // Colors matched to Messenger's actual background colors
-  return isDark
-    ? { background: "#1a1a1a", text: "#f5f5f7", symbols: "#f5f5f7" }
-    : { background: "#f5f5f5", text: "#1c1c1e", symbols: "#1c1c1e" };
-}
-
 /**
  * Set up context menu (right-click) handling for webContents
  * Shows spelling suggestions, dictionary options, and standard edit actions
@@ -2287,10 +2270,7 @@ function createWindow(source: string = "unknown"): void {
   const hasPosition =
     restoredState.x !== undefined && restoredState.y !== undefined;
   const isMac = process.platform === "darwin";
-  const isWindows = process.platform === "win32";
-  const isLinux = process.platform === "linux";
-  const useContentView = isMac || isWindows || isLinux;
-  const colors = getOverlayColors();
+  const useContentView = true;
 
   mainWindow = new BrowserWindow({
     width: restoredState.width,
@@ -2303,24 +2283,12 @@ function createWindow(source: string = "unknown"): void {
     title: APP_DISPLAY_NAME,
     // Only set custom icon in production - dev mode uses default Electron icon
     icon: isDev ? undefined : getIconPath(),
-    // Use native hidden inset style on macOS to remove the separator while keeping drag area/buttons
-    // Use default frame on Windows/Linux for standard title bar and menu
+    // Use standard native frame on all platforms.
+    // Windows/Linux: menu bar is hidden by default, press Alt to show.
+    frame: true,
     ...(isMac
-      ? {
-          titleBarStyle: "hiddenInset" as const,
-          titleBarOverlay: {
-            color: colors.background,
-            symbolColor: colors.symbols,
-            height: overlayHeight,
-          },
-          trafficLightPosition: { x: 12, y: 10 },
-          backgroundColor: colors.background,
-        }
+      ? {}
       : {
-          // Windows/Linux: use standard frame with native auto-hide menu bar
-          // Menu bar is hidden by default, press Alt to show, click away or Esc to hide
-          // F10 can permanently toggle visibility
-          frame: true,
           autoHideMenuBar: true,
         }),
     webPreferences: {
@@ -2373,15 +2341,13 @@ function createWindow(source: string = "unknown"): void {
 
   // For BrowserView-backed platforms, crop the /messages top header using view
   // bounds to avoid layout side effects inside the page DOM.
-  const initialViewBounds = isMac
-    ? mainWindow.getBounds()
-    : mainWindow.getContentBounds();
-  const contentOffset = isMac ? overlayHeight : 0;
+  const initialViewBounds = mainWindow.getContentBounds();
+  const contentOffset = 0;
   dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 
   const applyContentViewBounds = () => {
     if (!mainWindow || !contentView) return;
-    const bounds = isMac ? mainWindow.getBounds() : mainWindow.getContentBounds();
+    const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
     const crop = isMessagesRoute(currentUrl) ? dynamicMessagesTopCrop : 0;
 
@@ -3193,12 +3159,10 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
-    // Update title bar overlay/window title when page title changes.
+    // Update window title when page title changes (for dock/taskbar).
     contentView.webContents.on("page-title-updated", (event, title) => {
       const currentUrl = contentView?.webContents.getURL() || "";
       const effectiveTitle = getEffectiveWindowTitle(title, currentUrl);
-      updateTitleOverlayText(effectiveTitle);
-      // Also update the main window title for dock/taskbar
       if (mainWindow) {
         mainWindow.setTitle(effectiveTitle);
       }
@@ -3882,7 +3846,6 @@ function createWindow(source: string = "unknown"): void {
   // Handle window closed
   mainWindow.on("closed", () => {
     // Window is already destroyed at this point, just clean up references
-    titleOverlay = null;
     contentView = null;
     applyContentViewBoundsHandler = null;
     dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
@@ -3913,21 +3876,6 @@ function createWindow(source: string = "unknown"): void {
       return;
     }
   });
-
-  if (isMac && mainWindow) {
-    setupTitleOverlay(mainWindow, overlayHeight);
-    nativeTheme.on("updated", () => {
-      if (!mainWindow) return;
-      const colors = getOverlayColors();
-      mainWindow.setTitleBarOverlay?.({
-        color: colors.background,
-        symbolColor: colors.symbols,
-        height: overlayHeight,
-      });
-      mainWindow.setBackgroundColor(colors.background);
-      updateTitleOverlayColors();
-    });
-  }
 
   // On Windows/Linux, menu bar uses configurable visibility mode
   // Hover near top or press Alt to show, F10 cycles through modes
@@ -6941,11 +6889,6 @@ function updateDownloadProgress(
     mainWindow.setTitle(progressTitle);
   }
 
-  // On macOS, also update the custom title overlay (the visible title bar)
-  if (process.platform === "darwin") {
-    updateTitleOverlayText(progressTitle);
-  }
-
   // Update tray tooltip with same progress info
   if (tray) {
     tray.setToolTip(`Messenger - ${progressTitle}`);
@@ -6961,11 +6904,6 @@ function hideDownloadProgress(): void {
 
     // Restore original window title
     mainWindow.setTitle(originalWindowTitle);
-
-    // On macOS, also restore the custom title overlay
-    if (process.platform === "darwin") {
-      updateTitleOverlayText(originalWindowTitle);
-    }
 
     // Flash taskbar to get attention (Windows)
     if (process.platform === "win32") {
@@ -8825,106 +8763,6 @@ app.whenReady().then(async () => {
     showMainWindow("activate");
   });
 });
-
-function setupTitleOverlay(
-  window: BrowserWindow,
-  overlayHeight: number,
-  title: string = APP_DISPLAY_NAME,
-): void {
-  if (titleOverlay) {
-    window.removeBrowserView(titleOverlay);
-    titleOverlay = null;
-  }
-
-  titleOverlay = new BrowserView({
-    webPreferences: {
-      sandbox: true,
-      contextIsolation: true,
-    },
-  });
-
-  const { background: backgroundColor, text: textColor } = getOverlayColors();
-  // Escape HTML entities in title to prevent XSS
-  const safeTitle = title
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-  window.addBrowserView(titleOverlay);
-  titleOverlay.setBounds({
-    x: 0,
-    y: 0,
-    width: window.getBounds().width,
-    height: overlayHeight,
-  });
-  titleOverlay.setAutoResize({ width: true });
-  titleOverlay.webContents.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <style>
-            html, body {
-              margin: 0;
-              padding: 0;
-              width: 100%;
-              height: 100%;
-              background: ${backgroundColor};
-              -webkit-user-select: none;
-              cursor: default;
-              pointer-events: none;
-            }
-            .bar {
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              padding: 0 72px;
-              height: 100%;
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              font-size: 13px;
-              color: ${textColor};
-              -webkit-app-region: drag;
-              pointer-events: auto;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="bar">${safeTitle}</div>
-        </body>
-      </html>
-    `)}`,
-  );
-}
-
-// Update just the title text in the overlay without rebuilding it
-function updateTitleOverlayText(title: string): void {
-  if (!titleOverlay) return;
-  const safeTitle = title
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/'/g, "\\'");
-  titleOverlay.webContents
-    .executeJavaScript(
-      `document.querySelector('.bar').textContent = '${safeTitle}';`,
-    )
-    .catch(() => {});
-}
-
-// Update overlay colors in-place without recreating the BrowserView
-function updateTitleOverlayColors(): void {
-  if (!titleOverlay) return;
-  const { background: backgroundColor, text: textColor } = getOverlayColors();
-  titleOverlay.webContents
-    .executeJavaScript(
-      `
-    document.body.style.background = '${backgroundColor}';
-    document.documentElement.style.background = '${backgroundColor}';
-    document.querySelector('.bar').style.color = '${textColor}';
-  `,
-    )
-    .catch(() => {});
-}
 
 app.on("window-all-closed", () => {
   // Keep running in background unless user explicitly quits
