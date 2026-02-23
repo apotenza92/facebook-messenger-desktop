@@ -164,6 +164,38 @@ ipcRenderer.on(
         height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
         min-height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
       }
+
+      /* Remove residual top-edge divider/shadow from Facebook's fixed header layer */
+      html.${ACTIVE_CLASS} [role="banner"],
+      html.${ACTIVE_CLASS} [role="banner"]::before,
+      html.${ACTIVE_CLASS} [role="banner"]::after {
+        box-shadow: none !important;
+        filter: none !important;
+        border-bottom: none !important;
+      }
+
+      /* Keep the top edge under native titlebar uniform in light mode */
+      @media (prefers-color-scheme: light) {
+        html.${ACTIVE_CLASS},
+        html.${ACTIVE_CLASS} body,
+        html.${ACTIVE_CLASS} body > div[id^="mount_"],
+        html.${ACTIVE_CLASS} body > div[id^="mount_"] > div,
+        html.${ACTIVE_CLASS} [data-pagelet="root"] {
+          background-color: #F2F4F7 !important;
+        }
+
+        html.${ACTIVE_CLASS} body::before {
+          content: "";
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 8px;
+          background: #F2F4F7;
+          pointer-events: none;
+          z-index: 2147483647;
+        }
+      }
     `;
     document.head.appendChild(style);
   };

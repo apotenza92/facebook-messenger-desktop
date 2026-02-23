@@ -174,6 +174,7 @@ const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
 const MIN_MESSAGES_TOP_CROP = DEFAULT_MESSAGES_TOP_CROP;
 const MAX_MESSAGES_TOP_CROP = 120;
+const MESSAGES_TOP_SEAM_TRIM = 0;
 
 let dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 let applyContentViewBoundsHandler: (() => void) | null = null;
@@ -2287,7 +2288,11 @@ function createWindow(source: string = "unknown"): void {
     // Windows/Linux: menu bar is hidden by default, press Alt to show.
     frame: true,
     ...(isMac
-      ? {}
+      ? {
+          // Keep native title bar but force an opaque window background.
+          titleBarStyle: "default" as const,
+          transparent: false,
+        }
       : {
           autoHideMenuBar: true,
         }),
@@ -2349,13 +2354,14 @@ function createWindow(source: string = "unknown"): void {
     if (!mainWindow || !contentView) return;
     const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
-    const crop = isMessagesRoute(currentUrl) ? dynamicMessagesTopCrop : 0;
-
+    const isMessages = isMessagesRoute(currentUrl);
+    const crop = isMessages ? dynamicMessagesTopCrop : 0;
+    const seamTrim = isMessages ? MESSAGES_TOP_SEAM_TRIM : 0;
     contentView.setBounds({
       x: 0,
-      y: contentOffset - crop,
+      y: contentOffset - crop - seamTrim,
       width: bounds.width,
-      height: bounds.height - contentOffset + crop,
+      height: bounds.height - contentOffset + crop + seamTrim,
     });
   };
   applyContentViewBoundsHandler = applyContentViewBounds;
