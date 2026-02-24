@@ -909,6 +909,39 @@ function shouldAllowInternalNavigation(url: string): boolean {
   return shouldOpenInApp(url);
 }
 
+function isLikelyCallPopupUrl(url: string): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  if (lower === "about:blank") return true;
+
+  return (
+    lower.includes("call") ||
+    lower.includes("videochat") ||
+    lower.includes("webrtc") ||
+    lower.includes("rtc") ||
+    lower.includes("voip")
+  );
+}
+
+function isMessagesMediaPopupUrl(input: string): boolean {
+  if (!input) return false;
+  if (!isFacebookOrMessengerUrl(input)) return false;
+  if (isMessagesMediaViewerRoute(input)) return true;
+
+  try {
+    const parsed = new URL(input);
+    const path = parsed.pathname.toLowerCase();
+    return (
+      path === "/messages/attachment_preview" ||
+      path.startsWith("/messages/attachment_preview/") ||
+      path === "/messages/media_viewer" ||
+      path.startsWith("/messages/media_viewer/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Generate custom login page that opens Facebook in system browser
 // This allows password managers and passkeys to work natively
 function getCustomLoginPageURL(): string {
@@ -2743,13 +2776,29 @@ function createWindow(source: string = "unknown"): void {
           disposition,
         });
 
-        // Allow trusted Facebook pop-up windows (needed for video/audio calls).
-        // Also allow about:blank - Messenger opens call windows with about:blank first, then navigates.
+        // Media viewers opened from messages should stay in the main view so
+        // we keep consistent chrome/title behavior.
         const isMessengerUrl = isFacebookOrMessengerUrl(url);
         const isAboutBlank = url === "about:blank";
 
+        if (isMessengerUrl && isMessagesMediaPopupUrl(url)) {
+          console.log(
+            "[Window] Rerouting media popup into main view:",
+            url,
+          );
+          contentView?.webContents.loadURL(url).catch((err) => {
+            console.error("[Window] Failed to reroute popup URL:", url, err);
+          });
+          return { action: "deny" };
+        }
+
         if (isMessengerUrl || isAboutBlank) {
-          console.log("[Window] Allowing Facebook pop-up window:", url);
+          // Keep child windows for call-like flows and other trusted popups.
+          if (!isAboutBlank && !isLikelyCallPopupUrl(url)) {
+            console.log("[Window] Allowing trusted Facebook popup:", url);
+          } else {
+            console.log("[Window] Allowing Facebook pop-up window:", url);
+          }
           return {
             action: "allow",
             overrideBrowserWindowOptions: {
@@ -2801,12 +2850,28 @@ function createWindow(source: string = "unknown"): void {
         options: details.options,
       });
 
-      // Allow navigation to trusted Facebook URLs (for about:blank windows that navigate to call URLs)
+      // Route media-viewer style child navigation back into main view.
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
           "[Window] Child window navigation requested:",
           navigationUrl,
         );
+        if (isMessagesMediaPopupUrl(navigationUrl)) {
+          event.preventDefault();
+          console.log(
+            "[Window] Rerouting media child navigation into main view:",
+            navigationUrl,
+          );
+          contentView?.webContents.loadURL(navigationUrl).catch((err) => {
+            console.error(
+              "[Window] Failed to reroute child navigation URL:",
+              navigationUrl,
+              err,
+            );
+          });
+          childWindow.close();
+          return;
+        }
         if (
           !isFacebookOrMessengerUrl(navigationUrl) &&
           navigationUrl !== "about:blank"
@@ -3434,13 +3499,29 @@ function createWindow(source: string = "unknown"): void {
           disposition,
         });
 
-        // Allow trusted Facebook pop-up windows (needed for video/audio calls).
-        // Also allow about:blank - Messenger opens call windows with about:blank first, then navigates.
+        // Media viewers opened from messages should stay in the main view so
+        // we keep consistent chrome/title behavior.
         const isMessengerUrl = isFacebookOrMessengerUrl(url);
         const isAboutBlank = url === "about:blank";
 
+        if (isMessengerUrl && isMessagesMediaPopupUrl(url)) {
+          console.log(
+            "[Window] Rerouting media popup into main view:",
+            url,
+          );
+          mainWindow?.webContents.loadURL(url).catch((err) => {
+            console.error("[Window] Failed to reroute popup URL:", url, err);
+          });
+          return { action: "deny" };
+        }
+
         if (isMessengerUrl || isAboutBlank) {
-          console.log("[Window] Allowing Facebook pop-up window:", url);
+          // Keep child windows for call-like flows and other trusted popups.
+          if (!isAboutBlank && !isLikelyCallPopupUrl(url)) {
+            console.log("[Window] Allowing trusted Facebook popup:", url);
+          } else {
+            console.log("[Window] Allowing Facebook pop-up window:", url);
+          }
           return {
             action: "allow",
             overrideBrowserWindowOptions: {
@@ -3492,12 +3573,28 @@ function createWindow(source: string = "unknown"): void {
         options: details.options,
       });
 
-      // Allow navigation to trusted Facebook URLs (for about:blank windows that navigate to call URLs)
+      // Route media-viewer style child navigation back into the main window.
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
           "[Window] Child window navigation requested:",
           navigationUrl,
         );
+        if (isMessagesMediaPopupUrl(navigationUrl)) {
+          event.preventDefault();
+          console.log(
+            "[Window] Rerouting media child navigation into main view:",
+            navigationUrl,
+          );
+          mainWindow?.webContents.loadURL(navigationUrl).catch((err) => {
+            console.error(
+              "[Window] Failed to reroute child navigation URL:",
+              navigationUrl,
+              err,
+            );
+          });
+          childWindow.close();
+          return;
+        }
         if (
           !isFacebookOrMessengerUrl(navigationUrl) &&
           navigationUrl !== "about:blank"

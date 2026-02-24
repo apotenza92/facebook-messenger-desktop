@@ -84,6 +84,8 @@ ipcRenderer.on(
   let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
 
   const MEDIA_VIEWER_PATH_PREFIXES = [
+    "/messages/attachment_preview",
+    "/messages/media_viewer",
     "/photo",
     "/photos",
     "/video",
@@ -107,7 +109,10 @@ ipcRenderer.on(
       }
 
       return MEDIA_VIEWER_PATH_PREFIXES.some(
-        (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+        (prefix) =>
+          path === prefix ||
+          path.startsWith(`${prefix}/`) ||
+          path.startsWith(`${prefix}.`),
       );
     } catch {
       return false;

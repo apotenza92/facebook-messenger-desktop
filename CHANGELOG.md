@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.0-beta.7] - 2026-02-24
+
+### Fixed
+
+- **Issue #45 follow-up: media popup flow still showed Facebook top controls / could open broken child windows** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Reroute Messenger media popup URLs (`/messages/attachment_preview`, `/messages/media_viewer`, `/photo`, `/video.php`, `/story.php`, etc.) into the main app surface instead of allowing separate child windows
+  - Keep Messages-surface routing active for `/messages/attachment_preview` and `/messages/media_viewer` so header crop + viewport compensation remain applied
+  - Hardened media-route matching to include dot-suffix paths (for example `.php` routes)
+- **Issue #46 hardening: reduce non-messages notification leakage paths** ([#46](https://github.com/apotenza92/facebook-messenger-desktop/issues/46))
+  - Scoped injected renderer notifications to Messages routes only (`/messages`, `/t/*`, `/e2ee/t/*`) to avoid forwarding non-chat Facebook notifications
+
 
 ## [1.3.0-beta.6] - 2026-02-24
 

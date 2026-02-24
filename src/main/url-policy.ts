@@ -34,6 +34,8 @@ const AUTH_PATH_PREFIXES = [
 ];
 
 const MESSAGES_MEDIA_VIEWER_PATH_PREFIXES = [
+  "/messages/attachment_preview",
+  "/messages/media_viewer",
   "/photo",
   "/photos",
   "/video",
@@ -82,7 +84,10 @@ export function isMessagesMediaViewerRoute(input: string): boolean {
 
   const pathname = parsed.pathname.toLowerCase();
   return MESSAGES_MEDIA_VIEWER_PATH_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    (prefix) =>
+      pathname === prefix ||
+      pathname.startsWith(`${prefix}/`) ||
+      pathname.startsWith(`${prefix}.`),
   );
 }
 

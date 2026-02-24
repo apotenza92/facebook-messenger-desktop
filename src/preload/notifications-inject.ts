@@ -161,9 +161,23 @@
     return existing.body === body;
   };
 
+  const isMessagesNotificationRoute = (): boolean => {
+    try {
+      const pathname = window.location.pathname.toLowerCase();
+      return (
+        pathname === '/messages' ||
+        pathname.startsWith('/messages/') ||
+        pathname.startsWith('/t/') ||
+        pathname.startsWith('/e2ee/t/')
+      );
+    } catch {
+      return false;
+    }
+  };
+
   const canSendNotification = (): boolean => {
-    // No global rate limit
-    return true;
+    // Keep notifications scoped to message surfaces only.
+    return isMessagesNotificationRoute();
   };
 
   const recordNotification = (href: string, body: string) => {
