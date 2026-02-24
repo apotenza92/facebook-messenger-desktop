@@ -1,6 +1,19 @@
 # Changelog
 
 
+## [1.3.0-beta.6] - 2026-02-24
+
+### Fixed
+
+- **Issue #45: media viewer still showed Facebook top controls/title count noise** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Treat media viewer routes (`/photo`, `/video`, `/reel`, `/story`, etc.) as part of the Messages surface
+  - Keep Messages header crop/viewport compensation active while media is open to prevent top-bar control pop-in
+  - Force Messenger-style window title on media viewer routes and ignore unrelated Facebook global notification prefixes
+- **Issue #46: muted conversations occasionally leaked a first notification after launch/refresh** ([#46](https://github.com/apotenza92/facebook-messenger-desktop/issues/46))
+  - Disabled legacy preload notification forwarding path that could emit unfiltered notifications before mute checks
+  - Removed renderer native `notifications` permission allowlist so site notifications cannot bypass app-level mute filtering
+
+
 ## [1.3.0-beta.5] - 2026-02-23
 
 ### Fixed

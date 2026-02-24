@@ -83,7 +83,18 @@ ipcRenderer.on(
   let currentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
 
-  const isMessagesRoute = (): boolean => {
+  const MEDIA_VIEWER_PATH_PREFIXES = [
+    "/photo",
+    "/photos",
+    "/video",
+    "/watch",
+    "/reel",
+    "/reels",
+    "/story",
+    "/stories",
+  ];
+
+  const isMessagesSurfaceRoute = (): boolean => {
     try {
       const url = new URL(window.location.href);
       const isFacebookHost =
@@ -91,7 +102,13 @@ ipcRenderer.on(
         url.hostname.endsWith(".facebook.com");
       if (!isFacebookHost) return false;
       const path = url.pathname.toLowerCase();
-      return path === "/messages" || path.startsWith("/messages/");
+      if (path === "/messages" || path.startsWith("/messages/")) {
+        return true;
+      }
+
+      return MEDIA_VIEWER_PATH_PREFIXES.some(
+        (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+      );
     } catch {
       return false;
     }
@@ -204,7 +221,7 @@ ipcRenderer.on(
     if (!document.head) return;
     ensureStyleTag();
 
-    if (isMessagesRoute()) {
+    if (isMessagesSurfaceRoute()) {
       document.documentElement.classList.add(ACTIVE_CLASS);
       setHeaderHeight(measureHeaderHeight());
       scheduleHeaderHeightSend();
@@ -469,18 +486,8 @@ if (process.platform !== "darwin") {
           tag: this.tag,
         });
 
-        // Forward to Electron main process
-        if ((window as any).electronAPI) {
-          (window as any).electronAPI.showNotification({
-            title: this.title,
-            body: this.body,
-            icon: this.options.icon,
-            tag: this.tag,
-            silent: this.options.silent,
-          });
-        } else {
-          console.warn("[Notification Override] electronAPI not available yet");
-        }
+        // Intentionally suppress this legacy fallback path.
+        // Notifications are handled by notifications-inject.ts with mute filters.
       }
 
       addEventListener(event: string, listener: EventListener | null) {

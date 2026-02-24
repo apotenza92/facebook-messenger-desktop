@@ -33,6 +33,17 @@ const AUTH_PATH_PREFIXES = [
   "/settings",
 ];
 
+const MESSAGES_MEDIA_VIEWER_PATH_PREFIXES = [
+  "/photo",
+  "/photos",
+  "/video",
+  "/watch",
+  "/reel",
+  "/reels",
+  "/story",
+  "/stories",
+];
+
 function parseUrl(input: string): URL | null {
   try {
     if (input.startsWith("http://") || input.startsWith("https://")) {
@@ -63,6 +74,20 @@ export function isMessagesRoute(input: string): boolean {
   if (!parsed || !isFacebookHost(parsed.hostname)) return false;
   const pathname = parsed.pathname.toLowerCase();
   return pathname === "/messages" || pathname.startsWith("/messages/");
+}
+
+export function isMessagesMediaViewerRoute(input: string): boolean {
+  const parsed = parseUrl(input);
+  if (!parsed || !isFacebookHost(parsed.hostname)) return false;
+
+  const pathname = parsed.pathname.toLowerCase();
+  return MESSAGES_MEDIA_VIEWER_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+export function isMessagesSurfaceRoute(input: string): boolean {
+  return isMessagesRoute(input) || isMessagesMediaViewerRoute(input);
 }
 
 export function isFacebookHomePage(input: string): boolean {

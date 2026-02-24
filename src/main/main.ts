@@ -31,7 +31,9 @@ import {
   isFacebookHomePage,
   isFacebookHost,
   isFacebookOrMessengerUrl,
+  isMessagesMediaViewerRoute,
   isMessagesRoute,
+  isMessagesSurfaceRoute,
   shouldOpenInApp,
 } from "./url-policy";
 import { autoUpdater } from "electron-updater";
@@ -193,7 +195,13 @@ function getEffectiveWindowTitle(rawTitle: string, url: string): string {
       : baseTitle;
   }
 
-  return rawTitle || APP_DISPLAY_NAME;
+  if (isMessagesMediaViewerRoute(url)) {
+    return lastMessagesUnreadCount > 0
+      ? `(${lastMessagesUnreadCount}) ${APP_DISPLAY_NAME}`
+      : APP_DISPLAY_NAME;
+  }
+
+  return stripLeadingUnreadCount(rawTitle);
 }
 
 function syncWindowTitleFromCurrentPage(): void {
@@ -2415,8 +2423,8 @@ function createWindow(source: string = "unknown"): void {
     }
   }
 
-  // For BrowserView-backed platforms, crop the /messages top header using view
-  // bounds to avoid layout side effects inside the page DOM.
+  // For BrowserView-backed platforms, crop the Messages surface top header
+  // using view bounds to avoid layout side effects inside the page DOM.
   const initialViewBounds = mainWindow.getContentBounds();
   const contentOffset = 0;
   dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
@@ -2425,9 +2433,9 @@ function createWindow(source: string = "unknown"): void {
     if (!mainWindow || !contentView) return;
     const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
-    const isMessages = isMessagesRoute(currentUrl);
-    const crop = isMessages ? dynamicMessagesTopCrop : 0;
-    const seamTrim = isMessages ? MESSAGES_TOP_SEAM_TRIM : 0;
+    const isMessagesSurface = isMessagesSurfaceRoute(currentUrl);
+    const crop = isMessagesSurface ? dynamicMessagesTopCrop : 0;
+    const seamTrim = isMessagesSurface ? MESSAGES_TOP_SEAM_TRIM : 0;
     contentView.setBounds({
       x: 0,
       y: contentOffset - crop - seamTrim,
@@ -2486,7 +2494,6 @@ function createWindow(source: string = "unknown"): void {
         const allowedPermissions = [
           "media",
           "mediaKeySystem",
-          "notifications",
           "fullscreen",
           "pointerLock",
         ];
@@ -2506,7 +2513,6 @@ function createWindow(source: string = "unknown"): void {
         const allowedPermissions = [
           "media",
           "mediaKeySystem",
-          "notifications",
           "fullscreen",
           "pointerLock",
         ];
@@ -2842,7 +2848,6 @@ function createWindow(source: string = "unknown"): void {
           const allowedPermissions = [
             "media",
             "mediaKeySystem",
-            "notifications",
             "fullscreen",
             "pointerLock",
           ];
@@ -2864,7 +2869,6 @@ function createWindow(source: string = "unknown"): void {
           const allowedPermissions = [
             "media",
             "mediaKeySystem",
-            "notifications",
             "fullscreen",
             "pointerLock",
           ];
@@ -3275,7 +3279,6 @@ function createWindow(source: string = "unknown"): void {
         const allowedPermissions = [
           "media",
           "mediaKeySystem",
-          "notifications",
           "fullscreen",
           "pointerLock",
         ];
@@ -3295,7 +3298,6 @@ function createWindow(source: string = "unknown"): void {
         const allowedPermissions = [
           "media",
           "mediaKeySystem",
-          "notifications",
           "fullscreen",
           "pointerLock",
         ];
@@ -3537,7 +3539,6 @@ function createWindow(source: string = "unknown"): void {
           const allowedPermissions = [
             "media",
             "mediaKeySystem",
-            "notifications",
             "fullscreen",
             "pointerLock",
           ];
@@ -3559,7 +3560,6 @@ function createWindow(source: string = "unknown"): void {
           const allowedPermissions = [
             "media",
             "mediaKeySystem",
-            "notifications",
             "fullscreen",
             "pointerLock",
           ];
