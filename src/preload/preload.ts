@@ -83,20 +83,7 @@ ipcRenderer.on(
   let currentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
 
-  const MEDIA_VIEWER_PATH_PREFIXES = [
-    "/messages/attachment_preview",
-    "/messages/media_viewer",
-    "/photo",
-    "/photos",
-    "/video",
-    "/watch",
-    "/reel",
-    "/reels",
-    "/story",
-    "/stories",
-  ];
-
-  const isMessagesSurfaceRoute = (): boolean => {
+  const isMessagesCropRoute = (): boolean => {
     try {
       const url = new URL(window.location.href);
       const isFacebookHost =
@@ -104,16 +91,18 @@ ipcRenderer.on(
         url.hostname.endsWith(".facebook.com");
       if (!isFacebookHost) return false;
       const path = url.pathname.toLowerCase();
-      if (path === "/messages" || path.startsWith("/messages/")) {
-        return true;
+      if (!(path === "/messages" || path.startsWith("/messages/"))) {
+        return false;
       }
-
-      return MEDIA_VIEWER_PATH_PREFIXES.some(
-        (prefix) =>
-          path === prefix ||
-          path.startsWith(`${prefix}/`) ||
-          path.startsWith(`${prefix}.`),
-      );
+      if (
+        path === "/messages/attachment_preview" ||
+        path.startsWith("/messages/attachment_preview/") ||
+        path === "/messages/media_viewer" ||
+        path.startsWith("/messages/media_viewer/")
+      ) {
+        return false;
+      }
+      return true;
     } catch {
       return false;
     }
@@ -226,7 +215,7 @@ ipcRenderer.on(
     if (!document.head) return;
     ensureStyleTag();
 
-    if (isMessagesSurfaceRoute()) {
+    if (isMessagesCropRoute()) {
       document.documentElement.classList.add(ACTIVE_CLASS);
       setHeaderHeight(measureHeaderHeight());
       scheduleHeaderHeightSend();

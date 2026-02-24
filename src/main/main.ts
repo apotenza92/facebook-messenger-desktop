@@ -33,7 +33,6 @@ import {
   isFacebookOrMessengerUrl,
   isMessagesMediaViewerRoute,
   isMessagesRoute,
-  isMessagesSurfaceRoute,
   shouldOpenInApp,
 } from "./url-policy";
 import { autoUpdater } from "electron-updater";
@@ -2466,9 +2465,14 @@ function createWindow(source: string = "unknown"): void {
     if (!mainWindow || !contentView) return;
     const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
-    const isMessagesSurface = isMessagesSurfaceRoute(currentUrl);
-    const crop = isMessagesSurface ? dynamicMessagesTopCrop : 0;
-    const seamTrim = isMessagesSurface ? MESSAGES_TOP_SEAM_TRIM : 0;
+    // Keep crop scoped to core /messages chat routes. Media viewers need
+    // their native top controls (close/download/share) visible.
+    const isMessagesCropRoute =
+      isMessagesRoute(currentUrl) &&
+      !isMessagesMediaViewerRoute(currentUrl) &&
+      !isMessagesMediaPopupUrl(currentUrl);
+    const crop = isMessagesCropRoute ? dynamicMessagesTopCrop : 0;
+    const seamTrim = isMessagesCropRoute ? MESSAGES_TOP_SEAM_TRIM : 0;
     contentView.setBounds({
       x: 0,
       y: contentOffset - crop - seamTrim,
