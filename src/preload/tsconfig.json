@@ -8,10 +8,11 @@
   },
   "include": [
     "./preload.ts",
+    "./messages-viewport-policy.ts",
+    "./notification-decision-policy.ts",
     "./notifications-inject.ts",
     "./call-window-preload.ts",
     "./call-window-inject.ts"
   ],
   "exclude": []
 }
-

@@ -34,6 +34,7 @@ const AUTH_PATH_PREFIXES = [
 ];
 
 const MESSAGES_MEDIA_VIEWER_PATH_PREFIXES = [
+  "/messenger_media",
   "/messages/attachment_preview",
   "/messages/media_viewer",
   "/photo",

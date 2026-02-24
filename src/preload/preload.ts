@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
+import {
+  MessagesViewportMode,
+  resolveViewportMode,
+  shouldApplyMessagesCrop,
+} from "./messages-viewport-policy";
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -72,41 +77,192 @@ ipcRenderer.on(
 
   const STYLE_ID = "md-fb-messages-viewport-fix-style";
   const ACTIVE_CLASS = "md-fb-messages-viewport-fix";
+  const MEDIA_CLEAN_CLASS = "md-fb-media-viewer-clean";
+  const MEDIA_CLOSE_ACTION_CLASS = "md-fb-media-action-close";
+  const MEDIA_DOWNLOAD_ACTION_CLASS = "md-fb-media-action-download";
+  const MEDIA_SHARE_ACTION_CLASS = "md-fb-media-action-share";
   const HEADER_HEIGHT_CSS_VAR = "--md-fb-header-height";
   const DEFAULT_HEADER_HEIGHT = 56;
   const MIN_HEADER_HEIGHT = DEFAULT_HEADER_HEIGHT;
   const MAX_HEADER_HEIGHT = 120;
   const HEADER_SEND_DEBOUNCE_MS = 120;
+  const MEDIA_OVERLAY_TRANSITION_MS = 120;
+  const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 80;
 
   let pendingApply = false;
   let pendingSend = false;
   let currentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
+  let mediaOverlayVisible = false;
+  let mediaOverlayTransitionTimer: number | null = null;
+  let viewportStateSendTimer: number | null = null;
+  let lastSentViewportState: { visible: boolean; url: string } | null = null;
+  let lastViewportMode: MessagesViewportMode | null = null;
+  const mediaActionClasses = [
+    MEDIA_CLOSE_ACTION_CLASS,
+    MEDIA_DOWNLOAD_ACTION_CLASS,
+    MEDIA_SHARE_ACTION_CLASS,
+  ];
+  const pinnedStyleProperties = [
+    "position",
+    "top",
+    "right",
+    "left",
+    "margin",
+    "transform",
+    "z-index",
+    "inset-inline-start",
+    "inset-inline-end",
+  ];
+  const pinnedMediaActionNodes = new Set<HTMLElement>();
 
-  const isMessagesCropRoute = (): boolean => {
+  const isFacebookHost = (): boolean => {
     try {
-      const url = new URL(window.location.href);
-      const isFacebookHost =
-        url.hostname === "facebook.com" ||
-        url.hostname.endsWith(".facebook.com");
-      if (!isFacebookHost) return false;
-      const path = url.pathname.toLowerCase();
-      if (!(path === "/messages" || path.startsWith("/messages/"))) {
-        return false;
-      }
-      if (
-        path === "/messages/attachment_preview" ||
-        path.startsWith("/messages/attachment_preview/") ||
-        path === "/messages/media_viewer" ||
-        path.startsWith("/messages/media_viewer/")
-      ) {
-        return false;
-      }
-      return true;
+      const hostname = new URL(window.location.href).hostname;
+      return hostname === "facebook.com" || hostname.endsWith(".facebook.com");
     } catch {
       return false;
     }
   };
+
+  const hasTopAnchoredAction = (
+    selector: string,
+    maxTop = 180,
+  ): boolean => {
+    const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
+    for (const node of nodes) {
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 6 || rect.height < 6) continue;
+      if (rect.top < -10 || rect.top > maxTop) continue;
+      return true;
+    }
+    return false;
+  };
+
+  const detectMediaOverlayVisible = (): boolean => {
+    if (!isFacebookHost()) return false;
+
+    const path = window.location.pathname.toLowerCase();
+    const modeFromPath = resolveViewportMode({
+      urlPath: path,
+      mediaOverlayVisible: false,
+    });
+    if (modeFromPath === "media") {
+      return true;
+    }
+
+    const hasClose = hasTopAnchoredAction(
+      '[aria-label="Close" i][role="button"], button[aria-label="Close" i]',
+      220,
+    );
+    if (!hasClose) {
+      return false;
+    }
+
+    const hasDownload = hasTopAnchoredAction(
+      '[aria-label*="Download" i][role="button"], button[aria-label*="Download" i]',
+    );
+    const hasShare = hasTopAnchoredAction(
+      '[aria-label*="Share" i][role="button"], button[aria-label*="Share" i]',
+    );
+
+    // Treat as media viewer only when close + at least one media action is visible.
+    return hasDownload || hasShare;
+  };
+
+  const clearMarkedMediaActions = (): void => {
+    for (const node of pinnedMediaActionNodes) {
+      for (const property of pinnedStyleProperties) {
+        node.style.removeProperty(property);
+      }
+    }
+    pinnedMediaActionNodes.clear();
+
+    for (const className of mediaActionClasses) {
+      const nodes = document.querySelectorAll(`.${className}`);
+      for (const node of Array.from(nodes)) {
+        node.classList.remove(className);
+      }
+    }
+  };
+
+  const pinMediaAction = (
+    node: HTMLElement,
+    topPx: number,
+    rightPx: number,
+  ): void => {
+    node.style.setProperty("position", "fixed", "important");
+    node.style.setProperty("top", `${topPx}px`, "important");
+    node.style.setProperty("right", `${rightPx}px`, "important");
+    node.style.setProperty("left", "auto", "important");
+    node.style.setProperty("margin", "0", "important");
+    node.style.setProperty("transform", "none", "important");
+    node.style.setProperty("z-index", "2147483647", "important");
+    pinnedMediaActionNodes.add(node);
+  };
+
+  const pickTopRightAction = (
+    selectors: string[],
+    minRightFraction = 0.45,
+  ): HTMLElement | null => {
+    const nodes = new Set<HTMLElement>();
+    for (const selector of selectors) {
+      const matches = document.querySelectorAll(selector) as NodeListOf<HTMLElement>;
+      for (const match of Array.from(matches)) {
+        nodes.add(match);
+      }
+    }
+
+    const candidates: { node: HTMLElement; top: number; right: number }[] = [];
+    for (const node of nodes) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 6 || rect.height < 6) continue;
+      if (rect.top < -12 || rect.top > 220) continue;
+      if (rect.right < window.innerWidth * minRightFraction) continue;
+      candidates.push({ node, top: rect.top, right: rect.right });
+    }
+
+    candidates.sort((a, b) => {
+      if (a.right !== b.right) return b.right - a.right;
+      return a.top - b.top;
+    });
+    return candidates[0]?.node ?? null;
+  };
+
+  const markMediaActions = (): void => {
+    clearMarkedMediaActions();
+
+    const downloadNode = pickTopRightAction([
+      '[aria-label*="Download" i][role="button"]',
+      'button[aria-label*="Download" i]',
+      '[aria-label*="Download" i]',
+    ]);
+    if (downloadNode) {
+      downloadNode.classList.add(MEDIA_DOWNLOAD_ACTION_CLASS);
+      pinMediaAction(downloadNode, 8, 16);
+    }
+
+    const shareNode = pickTopRightAction([
+      '[aria-label*="Share" i][role="button"]',
+      'button[aria-label*="Share" i]',
+      '[aria-label*="Share" i]',
+      '[aria-label*="Forward" i][role="button"]',
+      'button[aria-label*="Forward" i]',
+      '[aria-label*="Forward" i]',
+    ]);
+    if (shareNode) {
+      shareNode.classList.add(MEDIA_SHARE_ACTION_CLASS);
+      pinMediaAction(shareNode, 8, 64);
+    }
+  };
+
+  const resolveMode = (): MessagesViewportMode =>
+    resolveViewportMode({
+      urlPath: window.location.pathname,
+      mediaOverlayVisible,
+    });
 
   const clampHeaderHeight = (value: number): number => {
     if (!Number.isFinite(value)) return DEFAULT_HEADER_HEIGHT;
@@ -154,6 +310,29 @@ ipcRenderer.on(
       lastSentHeaderHeight = currentHeaderHeight;
       ipcRenderer.send("messages-header-height", currentHeaderHeight);
     }, HEADER_SEND_DEBOUNCE_MS);
+  };
+
+  const scheduleViewportStateSend = (force = false): void => {
+    if (viewportStateSendTimer !== null) {
+      clearTimeout(viewportStateSendTimer);
+    }
+
+    viewportStateSendTimer = window.setTimeout(() => {
+      viewportStateSendTimer = null;
+      const payload = {
+        visible: mediaOverlayVisible,
+        url: window.location.href,
+      };
+      const unchanged =
+        !force &&
+        lastSentViewportState !== null &&
+        lastSentViewportState.visible === payload.visible &&
+        lastSentViewportState.url === payload.url;
+      if (unchanged) return;
+
+      lastSentViewportState = payload;
+      ipcRenderer.send("media-viewer-state", payload);
+    }, VIEWPORT_STATE_SEND_DEBOUNCE_MS);
   };
 
   const ensureStyleTag = (): void => {
@@ -207,6 +386,51 @@ ipcRenderer.on(
           z-index: 2147483647;
         }
       }
+
+      /* On media viewer, hide Facebook global top-right controls (menu, messenger, bell, profile)
+         but keep media controls like Close/Download visible. */
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Menu" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Messenger" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label*="Notifications" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label*="Account controls and settings" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Your profile" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href*="/notifications/"],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="/messages/"] {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      /* Keep media controls clustered on the right edge. */
+      html.${MEDIA_CLEAN_CLASS} .${MEDIA_CLOSE_ACTION_CLASS} {
+        position: fixed !important;
+        top: 8px !important;
+        right: 16px !important;
+        left: auto !important;
+        margin: 0 !important;
+        transform: none !important;
+        z-index: 2147483647 !important;
+      }
+
+      html.${MEDIA_CLEAN_CLASS} .${MEDIA_DOWNLOAD_ACTION_CLASS} {
+        position: fixed !important;
+        top: 10px !important;
+        right: 64px !important;
+        left: auto !important;
+        margin: 0 !important;
+        transform: none !important;
+        z-index: 2147483647 !important;
+      }
+
+      html.${MEDIA_CLEAN_CLASS} .${MEDIA_SHARE_ACTION_CLASS} {
+        position: fixed !important;
+        top: 10px !important;
+        right: 112px !important;
+        left: auto !important;
+        margin: 0 !important;
+        transform: none !important;
+        z-index: 2147483647 !important;
+      }
     `;
     document.head.appendChild(style);
   };
@@ -215,7 +439,26 @@ ipcRenderer.on(
     if (!document.head) return;
     ensureStyleTag();
 
-    if (isMessagesCropRoute()) {
+    const mode = resolveMode();
+    if (mode !== lastViewportMode) {
+      lastViewportMode = mode;
+      scheduleViewportStateSend(true);
+    }
+
+    if (mode === "media") {
+      document.documentElement.classList.add(MEDIA_CLEAN_CLASS);
+      markMediaActions();
+    } else {
+      document.documentElement.classList.remove(MEDIA_CLEAN_CLASS);
+      clearMarkedMediaActions();
+    }
+
+    if (
+      shouldApplyMessagesCrop({
+        urlPath: window.location.pathname,
+        mediaOverlayVisible,
+      })
+    ) {
       document.documentElement.classList.add(ACTIVE_CLASS);
       setHeaderHeight(measureHeaderHeight());
       scheduleHeaderHeightSend();
@@ -223,6 +466,22 @@ ipcRenderer.on(
       document.documentElement.classList.remove(ACTIVE_CLASS);
       document.documentElement.style.removeProperty(HEADER_HEIGHT_CSS_VAR);
     }
+  };
+
+  const scheduleMediaOverlayRecheck = (): void => {
+    if (mediaOverlayTransitionTimer !== null) {
+      clearTimeout(mediaOverlayTransitionTimer);
+    }
+
+    mediaOverlayTransitionTimer = window.setTimeout(() => {
+      mediaOverlayTransitionTimer = null;
+      const nextVisible = detectMediaOverlayVisible();
+      if (nextVisible === mediaOverlayVisible) return;
+
+      mediaOverlayVisible = nextVisible;
+      scheduleViewportStateSend(true);
+      scheduleApply();
+    }, MEDIA_OVERLAY_TRANSITION_MS);
   };
 
   const scheduleApply = (): void => {
@@ -237,6 +496,7 @@ ipcRenderer.on(
   const startObservers = (): void => {
     if (!document.body) return;
     const observer = new MutationObserver(() => {
+      scheduleMediaOverlayRecheck();
       scheduleApply();
     });
     observer.observe(document.body, {
@@ -250,11 +510,15 @@ ipcRenderer.on(
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       startObservers();
+      mediaOverlayVisible = detectMediaOverlayVisible();
       scheduleApply();
+      scheduleViewportStateSend(true);
     });
   } else {
     startObservers();
+    mediaOverlayVisible = detectMediaOverlayVisible();
     scheduleApply();
+    scheduleViewportStateSend(true);
   }
 
   let lastUrl = window.location.href;
@@ -262,12 +526,20 @@ ipcRenderer.on(
     const currentUrl = window.location.href;
     if (currentUrl !== lastUrl) {
       lastUrl = currentUrl;
+      scheduleMediaOverlayRecheck();
       scheduleApply();
+      scheduleViewportStateSend(true);
     }
   }, 300);
 
-  window.addEventListener("pageshow", scheduleApply);
-  window.addEventListener("resize", scheduleApply);
+  window.addEventListener("pageshow", () => {
+    scheduleMediaOverlayRecheck();
+    scheduleApply();
+  });
+  window.addEventListener("resize", () => {
+    scheduleMediaOverlayRecheck();
+    scheduleApply();
+  });
 })();
 
 // Listen for notification events from the injected script

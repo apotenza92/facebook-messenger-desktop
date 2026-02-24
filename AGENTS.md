@@ -62,6 +62,7 @@ The script automatically:
 ### Pre-Release Checklist
 
 - [ ] Code changes completed and tested
+- [ ] Run `npm run test:issues` to verify #45/#46 regressions are covered
 - [ ] Update `CHANGELOG.md` with version and changes
 - [ ] Update `package.json` version number
 - [ ] Commit and push changes to `main`

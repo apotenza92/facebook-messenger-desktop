@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.0-beta.9] - 2026-02-24
+
+### Fixed
+
+- **Issue #45: deterministic media-view behavior and top-right control layout** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Added explicit viewport-mode policy (`chat`/`media`/`other`) and media overlay state IPC so BrowserView crop is disabled whenever media viewer is active
+  - Added media-view cleanup in preload to hide Facebook global top-right controls in media viewer context
+  - Repositioned remaining media actions to stable top-right placement and aligned selectors with current Facebook labels (`Download media attachment`, `Forward media attachment`)
+  - Added guard against stale media state during rapid transitions and route changes
+- **Issue #46: fail-closed muted notification mapping and duplicate suppression** ([#46](https://github.com/apotenza92/facebook-messenger-desktop/issues/46))
+  - Added notification decision policy module with confidence scoring + ambiguity detection and fail-closed suppression on uncertain mapping
+  - Routed native notification target matching through unread-row candidates and muted conversation checks before forwarding
+  - Unified dedupe keying around normalized conversation href with TTL protection to block sender/group double-fire sequences
+- **Main process stability during close/reopen test runs**
+  - Prevented `Object has been destroyed` crash path by avoiding `mainWindow.webContents` access in the `closed` handler and cleaning media state using cached webContents IDs
+
+### Added
+
+- Deterministic local regression suite for issue repro patterns:
+  - `npm run test:issues` command
+  - `scripts/test-issues-regressions.ts` covering #45 media mode transitions and #46 muted/ambiguous notification decisions
+
 ## [1.3.0-beta.8] - 2026-02-24
 
 ### Fixed

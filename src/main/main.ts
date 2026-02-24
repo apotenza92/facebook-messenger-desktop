@@ -180,6 +180,7 @@ const MESSAGES_TOP_SEAM_TRIM = 0;
 let dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 let applyContentViewBoundsHandler: (() => void) | null = null;
 let lastMessagesUnreadCount = 0;
+const mediaViewerVisibleByWebContentsId = new Map<number, boolean>();
 
 function stripLeadingUnreadCount(title: string): string {
   const normalized = (title || "").replace(/^\(\d+\)\s*/, "").trim();
@@ -1273,6 +1274,7 @@ function isFacebookIntermediatePage(url: string): boolean {
   if (isMessagesRoute(url)) return false;
   // Don't show on regular Facebook content pages (image/video/story viewers, etc.).
   if (
+    path.startsWith("/messenger_media") ||
     path.startsWith("/photo") ||
     path.startsWith("/photos") ||
     path.startsWith("/video") ||
@@ -1352,6 +1354,13 @@ async function getBannerKindForUrl(
   webContents: Electron.WebContents,
   url: string,
 ): Promise<LoginBannerKind> {
+  if (
+    mediaViewerVisibleByWebContentsId.get(webContents.id) === true &&
+    isMessagesRoute(url)
+  ) {
+    return null;
+  }
+
   if (isLoginPage(url)) return "login";
   if (isVerificationPage(url)) return "verification";
   if (!isFacebookIntermediatePage(url)) return null;
@@ -1389,6 +1398,58 @@ async function injectLoginPageCSS(
     }
   } catch (e) {
     console.warn("[LoginPage] Failed to inject styling:", e);
+  }
+}
+
+async function injectNotificationScripts(
+  webContents: Electron.WebContents,
+): Promise<void> {
+  await webContents.executeJavaScript(`
+    (function() {
+      window.__electronNotificationBridge = function(data) {
+        const event = new CustomEvent('electron-notification', { detail: data });
+        window.dispatchEvent(event);
+      };
+      window.addEventListener('electron-notification', function(event) {
+        window.postMessage({ type: 'electron-notification', data: event.detail }, '*');
+      });
+      console.log('[Notification Bridge] Bridge function and listener installed');
+    })();
+  `);
+
+  const notificationDecisionPolicyScriptPath = path.join(
+    __dirname,
+    "../preload/notification-decision-policy.js",
+  );
+  if (fs.existsSync(notificationDecisionPolicyScriptPath)) {
+    const notificationDecisionPolicyScript = fs.readFileSync(
+      notificationDecisionPolicyScriptPath,
+      "utf8",
+    );
+    await webContents.executeJavaScript(notificationDecisionPolicyScript);
+    console.log(
+      "[Main Process] Notification decision policy script injected successfully",
+    );
+  } else {
+    console.warn(
+      "[Main Process] Notification decision policy script not found at:",
+      notificationDecisionPolicyScriptPath,
+    );
+  }
+
+  const notificationScriptPath = path.join(
+    __dirname,
+    "../preload/notifications-inject.js",
+  );
+  if (fs.existsSync(notificationScriptPath)) {
+    const notificationScript = fs.readFileSync(notificationScriptPath, "utf8");
+    await webContents.executeJavaScript(notificationScript);
+    console.log("[Main Process] Notification override script injected successfully");
+  } else {
+    console.warn(
+      "[Main Process] Notification script not found at:",
+      notificationScriptPath,
+    );
   }
 }
 
@@ -2421,6 +2482,8 @@ function createWindow(source: string = "unknown"): void {
       enableWebSQL: false,
     },
   });
+  const mainWindowWebContentsId = mainWindow.webContents.id;
+  let contentViewWebContentsId: number | null = null;
 
   // Explicitly set window icon for Windows/Linux taskbar (production only)
   // Dev mode uses default Electron icon for consistency across platforms
@@ -2465,12 +2528,15 @@ function createWindow(source: string = "unknown"): void {
     if (!mainWindow || !contentView) return;
     const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
+    const mediaOverlayVisible =
+      mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true;
     // Keep crop scoped to core /messages chat routes. Media viewers need
     // their native top controls (close/download/share) visible.
     const isMessagesCropRoute =
       isMessagesRoute(currentUrl) &&
       !isMessagesMediaViewerRoute(currentUrl) &&
-      !isMessagesMediaPopupUrl(currentUrl);
+      !isMessagesMediaPopupUrl(currentUrl) &&
+      !mediaOverlayVisible;
     const crop = isMessagesCropRoute ? dynamicMessagesTopCrop : 0;
     const seamTrim = isMessagesCropRoute ? MESSAGES_TOP_SEAM_TRIM : 0;
     contentView.setBounds({
@@ -2495,6 +2561,7 @@ function createWindow(source: string = "unknown"): void {
         enableWebSQL: false,
       },
     });
+    contentViewWebContentsId = contentView.webContents.id;
 
     mainWindow.addBrowserView(contentView);
     // Initial bounds before we know the destination route.
@@ -3142,37 +3209,9 @@ function createWindow(source: string = "unknown"): void {
       }
 
       try {
-        await contentView?.webContents.executeJavaScript(`
-          (function() {
-            window.__electronNotificationBridge = function(data) {
-              const event = new CustomEvent('electron-notification', { detail: data });
-              window.dispatchEvent(event);
-            };
-            window.addEventListener('electron-notification', function(event) {
-              window.postMessage({ type: 'electron-notification', data: event.detail }, '*');
-            });
-            console.log('[Notification Bridge] Bridge function and listener installed');
-          })();
-        `);
-
-        const notificationScriptPath = path.join(
-          __dirname,
-          "../preload/notifications-inject.js",
-        );
-        if (fs.existsSync(notificationScriptPath)) {
-          const notificationScript = fs.readFileSync(
-            notificationScriptPath,
-            "utf8",
-          );
-          await contentView?.webContents.executeJavaScript(notificationScript);
-          console.log(
-            "[Main Process] Notification override script injected successfully",
-          );
-        } else {
-          console.warn(
-            "[Main Process] Notification script not found at:",
-            notificationScriptPath,
-          );
+        if (contentView) {
+          mediaViewerVisibleByWebContentsId.set(contentView.webContents.id, false);
+          await injectNotificationScripts(contentView.webContents);
         }
       } catch (error) {
         console.error(
@@ -3902,37 +3941,9 @@ function createWindow(source: string = "unknown"): void {
       }
 
       try {
-        await mainWindow?.webContents.executeJavaScript(`
-          (function() {
-            window.__electronNotificationBridge = function(data) {
-              const event = new CustomEvent('electron-notification', { detail: data });
-              window.dispatchEvent(event);
-            };
-            window.addEventListener('electron-notification', function(event) {
-              window.postMessage({ type: 'electron-notification', data: event.detail }, '*');
-            });
-            console.log('[Notification Bridge] Bridge function and listener installed');
-          })();
-        `);
-
-        const notificationScriptPath = path.join(
-          __dirname,
-          "../preload/notifications-inject.js",
-        );
-        if (fs.existsSync(notificationScriptPath)) {
-          const notificationScript = fs.readFileSync(
-            notificationScriptPath,
-            "utf8",
-          );
-          await mainWindow?.webContents.executeJavaScript(notificationScript);
-          console.log(
-            "[Main Process] Notification override script injected successfully",
-          );
-        } else {
-          console.warn(
-            "[Main Process] Notification script not found at:",
-            notificationScriptPath,
-          );
+        if (mainWindow) {
+          mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
+          await injectNotificationScripts(mainWindow.webContents);
         }
       } catch (error) {
         console.error(
@@ -4023,6 +4034,10 @@ function createWindow(source: string = "unknown"): void {
 
   // Handle window closed
   mainWindow.on("closed", () => {
+    if (contentViewWebContentsId !== null) {
+      mediaViewerVisibleByWebContentsId.delete(contentViewWebContentsId);
+    }
+    mediaViewerVisibleByWebContentsId.delete(mainWindowWebContentsId);
     // Window is already destroyed at this point, just clean up references
     contentView = null;
     applyContentViewBoundsHandler = null;
@@ -6372,6 +6387,39 @@ function setupIpcHandlers(): void {
     );
     applyContentViewBoundsHandler?.();
   });
+
+  ipcMain.on(
+    "media-viewer-state",
+    (
+      event,
+      payload?: {
+        visible?: unknown;
+        url?: unknown;
+      },
+    ) => {
+      const targetContents = contentView?.webContents ?? mainWindow?.webContents;
+      if (!targetContents || event.sender !== targetContents) {
+        return;
+      }
+
+      const visible = payload?.visible === true;
+      const previous =
+        mediaViewerVisibleByWebContentsId.get(event.sender.id) === true;
+      if (visible === previous) {
+        return;
+      }
+
+      mediaViewerVisibleByWebContentsId.set(event.sender.id, visible);
+
+      const urlForLog =
+        typeof payload?.url === "string" ? payload.url : event.sender.getURL();
+      console.log(
+        `[ContentView] Media viewer state updated: visible=${visible}, url=${urlForLog}`,
+      );
+
+      applyContentViewBoundsHandler?.();
+    },
+  );
 
   // Handle incoming call - bring window to foreground
   // This is triggered when Messenger shows an incoming call popup

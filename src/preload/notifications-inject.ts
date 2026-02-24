@@ -13,6 +13,30 @@
   const DEBUG = true;
   const notifications = new Map<number, any>();
   type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
+  type NotificationCandidate = {
+    href: string;
+    title: string;
+    body: string;
+    muted: boolean;
+    unread: boolean;
+  };
+  type NotificationMatchResult = {
+    matchedHref?: string;
+    confidence: number;
+    ambiguous: boolean;
+    muted: boolean;
+    reason: string;
+  };
+  type NotificationDeduper = {
+    shouldSuppress: (href: string, nowMs?: number) => boolean;
+  };
+  type NotificationDecisionPolicyApi = {
+    resolveNativeNotificationTarget: (
+      payload: { title: string; body: string },
+      unreadRows: NotificationCandidate[],
+    ) => NotificationMatchResult;
+    createNotificationDeduper: (ttlMs?: number) => NotificationDeduper;
+  };
 
   // Call detection patterns - these phrases indicate an incoming call
   const callPatterns = [
@@ -67,6 +91,18 @@
     } catch { /* intentionally empty */ }
   };
 
+  const getNotificationDecisionPolicy = (): NotificationDecisionPolicyApi | null => {
+    const policy = (window as any).__mdNotificationDecisionPolicy;
+    if (
+      policy &&
+      typeof policy.resolveNativeNotificationTarget === 'function' &&
+      typeof policy.createNotificationDeduper === 'function'
+    ) {
+      return policy as NotificationDecisionPolicyApi;
+    }
+    return null;
+  };
+
   // ============================================================================
   // SHARED STATE - used by both MutationObserver and Title-based detection
   // ============================================================================
@@ -78,6 +114,8 @@
   // No time-based expiry needed - memory usage is negligible (~400 bytes per conversation)
   // Fixes issue #13: users getting repeated notifications for weeks-old unread messages.
   const notifiedConversations = new Map<string, { body: string }>();
+  const nativeConversationDeduper =
+    getNotificationDecisionPolicy()?.createNotificationDeduper(4000) ?? null;
 
   const normalizeConversationKey = (raw: string): string => {
     if (raw.startsWith('native:')) {
@@ -112,9 +150,7 @@
 
     const rows = sidebar.querySelectorAll(selectors.conversationRow);
     const unreadHrefs = new Set<string>();
-    const unreadTitles = new Set<string>();
-
-    // Collect all currently unread conversation hrefs and titles
+    // Collect all currently unread conversation hrefs
     rows.forEach((row) => {
       if (isConversationUnread(row)) {
         const linkEl =
@@ -124,30 +160,15 @@
         if (href) {
           unreadHrefs.add(normalizeConversationKey(href));
         }
-        // Also collect titles for native notification key matching
-        const info = extractConversationInfo(row);
-        if (info?.title) {
-          unreadTitles.add(info.title);
-        }
       }
     });
 
     // Remove records for conversations that are no longer unread
     for (const key of notifiedConversations.keys()) {
-      if (key.startsWith('native:')) {
-        // For native notification keys (format: "native:SenderName"), check if
-        // the sender still has unread messages
-        const title = key.slice(7); // Remove "native:" prefix
-        if (!unreadTitles.has(title)) {
-          log('Clearing native notification record for read conversation', { title });
-          notifiedConversations.delete(key);
-        }
-      } else {
-        // For href-based keys (from MutationObserver), check against unread hrefs
-        if (!unreadHrefs.has(key)) {
-          log('Clearing notification record for read conversation', { href: key });
-          notifiedConversations.delete(key);
-        }
+      // Check href-based keys against unread hrefs
+      if (!unreadHrefs.has(key)) {
+        log('Clearing notification record for read conversation', { href: key });
+        notifiedConversations.delete(key);
       }
     }
   };
@@ -575,75 +596,108 @@
           return;
         }
 
-        // Use title as key for deduplication (title is usually the sender name)
-        const key = `native:${title}`;
         const bodyStr = String(body).slice(0, 100);
 
-        if (!hasAlreadyNotified(key, bodyStr) && canSendNotification()) {
-          // Try to find the conversation in the sidebar to get href and check muted status
-          let href: string | undefined;
-          let isMuted = false;
-          let foundRow: Element | null = null;
-          
-          const sidebar = findSidebarElement();
-          if (sidebar) {
-            const rows = Array.from(sidebar.querySelectorAll(selectors.conversationRow));
-            // First try exact match
-            for (const row of rows) {
-              if (isConversationUnread(row)) {
-                const info = extractConversationInfo(row);
-                if (info && info.title === title) {
-                  href = info.href;
-                  foundRow = row;
-                  log('Found row for native notification (exact match)', { title, href });
-                  break;
-                }
-              }
-            }
-            // If no exact match, try partial match (title might be truncated)
-            if (!foundRow) {
-              for (const row of rows) {
-                if (isConversationUnread(row)) {
-                  const info = extractConversationInfo(row);
-                  if (info && (info.title.includes(String(title)) || String(title).includes(info.title))) {
-                    href = info.href;
-                    foundRow = row;
-                    log('Found row via partial match for native notification', { title, infoTitle: info.title, href });
-                    break;
-                  }
-                }
-              }
-            }
-            
-            // Check if the conversation is muted
-            if (foundRow && isConversationMuted(foundRow)) {
-              isMuted = true;
-              log('Native notification for muted conversation - skipping', { title, href });
-            }
-
-            // CRITICAL: Check if message is fresh (no timestamp = just arrived)
-            // This is the primary fix for issue #13 - only notify for messages that JUST arrived
-            if (foundRow && !isMessageFresh(foundRow)) {
-              log('Native notification for old message - skipping (has timestamp)', { title });
-              return;
-            }
-          }
-
-          if (!foundRow) {
-            log('Native notification without matching unread conversation - skipping', { title });
-            return;
-          }
-
-          // Skip notification for muted conversations
-          if (isMuted) {
-            return;
-          }
-
-          recordNotification(key, bodyStr);
-          sendNotification(String(title), String(body), 'NATIVE', options?.icon as string, href);
-        } else {
-          log('Native notification deduplicated', { key });
+        if (!canSendNotification()) {
+          log('Native notification skipped outside messages route', { title });
+          return;
         }
+
+        const policy = getNotificationDecisionPolicy();
+        if (!policy) {
+          // Fail-closed if policy script is unavailable to avoid muted leaks.
+          log('Native notification policy unavailable - suppressing', { title });
+          return;
+        }
+
+        const sidebar = findSidebarElement();
+        if (!sidebar) {
+          log('Native notification skipped - sidebar unavailable', { title });
+          return;
+        }
+
+        const rows = Array.from(sidebar.querySelectorAll(selectors.conversationRow));
+        const rowByHref = new Map<string, Element>();
+        const unreadCandidates: NotificationCandidate[] = [];
+
+        for (const row of rows) {
+          if (!isConversationUnread(row)) continue;
+          const info = extractConversationInfo(row);
+          if (!info) continue;
+
+          const normalizedHref = normalizeConversationKey(info.href);
+          rowByHref.set(normalizedHref, row);
+          unreadCandidates.push({
+            href: normalizedHref,
+            title: info.title,
+            body: info.body,
+            muted: isConversationMuted(row),
+            unread: true,
+          });
+        }
+
+        const match = policy.resolveNativeNotificationTarget(
+          { title: String(title), body: String(body) },
+          unreadCandidates,
+        );
+        log('Native notification match', match);
+
+        if (match.ambiguous || !match.matchedHref) {
+          log('Native notification ambiguous - suppressing', {
+            title,
+            confidence: match.confidence,
+            reason: match.reason,
+          });
+          return;
+        }
+
+        if (match.muted) {
+          log('Native notification for muted conversation - skipping', {
+            title,
+            href: match.matchedHref,
+          });
+          return;
+        }
+
+        const normalizedHref = normalizeConversationKey(match.matchedHref);
+        const matchedRow = rowByHref.get(normalizedHref);
+        if (!matchedRow) {
+          log('Native notification match had no unread row - suppressing', {
+            title,
+            href: normalizedHref,
+          });
+          return;
+        }
+
+        if (!isMessageFresh(matchedRow)) {
+          log('Native notification for old message - skipping (has timestamp)', {
+            title,
+            href: normalizedHref,
+          });
+          return;
+        }
+
+        if (hasAlreadyNotified(normalizedHref, bodyStr)) {
+          log('Native notification deduplicated', { href: normalizedHref });
+          return;
+        }
+
+        if (nativeConversationDeduper?.shouldSuppress(normalizedHref)) {
+          log('Native notification suppressed by TTL deduper', {
+            title,
+            href: normalizedHref,
+          });
+          return;
+        }
+
+        recordNotification(normalizedHref, bodyStr);
+        sendNotification(
+          String(title),
+          String(body),
+          'NATIVE',
+          options?.icon as string,
+          normalizedHref,
+        );
       }
 
       close(): void {}
