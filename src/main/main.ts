@@ -34,6 +34,7 @@ import {
   isMessagesMediaViewerRoute,
   isMessagesRoute,
   shouldOpenInApp,
+  decideWindowOpenAction,
 } from "./url-policy";
 import { autoUpdater } from "electron-updater";
 
@@ -855,18 +856,6 @@ function isLoginPage(url: string): boolean {
   }
 }
 
-// Check if URL is a Facebook CDN media URL (for native download handling)
-// Facebook serves images, videos, and other media from *.fbcdn.net domains
-function isFacebookMediaUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname;
-    // Facebook CDN patterns: scontent*.fbcdn.net, video*.fbcdn.net, etc.
-    return hostname.endsWith(".fbcdn.net");
-  } catch {
-    return false;
-  }
-}
-
 // Check if we're on a Facebook verification/checkpoint page (2FA, security check, etc.)
 function isVerificationPage(url: string): boolean {
   if (!isFacebookOrMessengerUrl(url)) return false;
@@ -907,20 +896,6 @@ async function hasFacebookSession(
 // We keep the app scoped to Messages + auth/checkpoint flow.
 function shouldAllowInternalNavigation(url: string): boolean {
   return shouldOpenInApp(url);
-}
-
-function isLikelyCallPopupUrl(url: string): boolean {
-  if (!url) return false;
-  const lower = url.toLowerCase();
-  if (lower === "about:blank") return true;
-
-  return (
-    lower.includes("call") ||
-    lower.includes("videochat") ||
-    lower.includes("webrtc") ||
-    lower.includes("rtc") ||
-    lower.includes("voip")
-  );
 }
 
 function isMessagesMediaPopupUrl(input: string): boolean {
@@ -2847,12 +2822,9 @@ function createWindow(source: string = "unknown"): void {
           disposition,
         });
 
-        // Media viewers opened from messages should stay in the main view so
-        // we keep consistent chrome/title behavior.
-        const isMessengerUrl = isFacebookOrMessengerUrl(url);
-        const isAboutBlank = url === "about:blank";
+        const windowAction = decideWindowOpenAction(url);
 
-        if (isMessengerUrl && isMessagesMediaPopupUrl(url)) {
+        if (windowAction === "reroute-main-view") {
           console.log(
             "[Window] Rerouting media popup into main view:",
             url,
@@ -2863,13 +2835,8 @@ function createWindow(source: string = "unknown"): void {
           return { action: "deny" };
         }
 
-        if (isMessengerUrl || isAboutBlank) {
-          // Keep child windows for call-like flows and other trusted popups.
-          if (!isAboutBlank && !isLikelyCallPopupUrl(url)) {
-            console.log("[Window] Allowing trusted Facebook popup:", url);
-          } else {
-            console.log("[Window] Allowing Facebook pop-up window:", url);
-          }
+        if (windowAction === "allow-child-window") {
+          console.log("[Window] Allowing Facebook call pop-up window:", url);
           return {
             action: "allow",
             overrideBrowserWindowOptions: {
@@ -2894,8 +2861,7 @@ function createWindow(source: string = "unknown"): void {
           };
         }
 
-        // Check if this is a Facebook media URL - download natively instead of opening browser
-        if (isFacebookMediaUrl(url)) {
+        if (windowAction === "download-media") {
           console.log(
             "[Download] Initiating native download for Facebook media:",
             url,
@@ -2904,7 +2870,6 @@ function createWindow(source: string = "unknown"): void {
           return { action: "deny" };
         }
 
-        // Open external URLs in system browser
         console.log("[Window] Opening external URL in browser:", url);
         shell.openExternal(url).catch((err) => {
           console.error("[External Link] Failed to open URL:", url, err);
@@ -2921,14 +2886,26 @@ function createWindow(source: string = "unknown"): void {
         options: details.options,
       });
 
-      // Route media-viewer style child navigation back into main view.
+      // Keep child windows scoped to call flows; reroute/open externally otherwise.
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
           "[Window] Child window navigation requested:",
           navigationUrl,
         );
-        if (isMessagesMediaPopupUrl(navigationUrl)) {
-          event.preventDefault();
+
+        if (navigationUrl === "about:blank") {
+          return;
+        }
+
+        const navigationAction = decideWindowOpenAction(navigationUrl);
+
+        if (navigationAction === "allow-child-window") {
+          return;
+        }
+
+        event.preventDefault();
+
+        if (navigationAction === "reroute-main-view") {
           console.log(
             "[Window] Rerouting media child navigation into main view:",
             navigationUrl,
@@ -2943,16 +2920,29 @@ function createWindow(source: string = "unknown"): void {
           childWindow.close();
           return;
         }
-        if (
-          !isFacebookOrMessengerUrl(navigationUrl) &&
-          navigationUrl !== "about:blank"
-        ) {
+
+        if (navigationAction === "download-media") {
           console.log(
-            "[Window] Blocking navigation to non-facebook URL:",
+            "[Download] Initiating native download from child window:",
             navigationUrl,
           );
-          event.preventDefault();
+          contentView?.webContents.downloadURL(navigationUrl);
+          childWindow.close();
+          return;
         }
+
+        console.log(
+          "[Window] Opening child-window external URL in browser:",
+          navigationUrl,
+        );
+        shell.openExternal(navigationUrl).catch((err) => {
+          console.error(
+            "[External Link] Failed to open child-window URL:",
+            navigationUrl,
+            err,
+          );
+        });
+        childWindow.close();
       });
 
       // Set up permission handler for the child window's session
@@ -3543,11 +3533,9 @@ function createWindow(source: string = "unknown"): void {
         });
 
         // Media viewers opened from messages should stay in the main view so
-        // we keep consistent chrome/title behavior.
-        const isMessengerUrl = isFacebookOrMessengerUrl(url);
-        const isAboutBlank = url === "about:blank";
+        const windowAction = decideWindowOpenAction(url);
 
-        if (isMessengerUrl && isMessagesMediaPopupUrl(url)) {
+        if (windowAction === "reroute-main-view") {
           console.log(
             "[Window] Rerouting media popup into main view:",
             url,
@@ -3558,13 +3546,8 @@ function createWindow(source: string = "unknown"): void {
           return { action: "deny" };
         }
 
-        if (isMessengerUrl || isAboutBlank) {
-          // Keep child windows for call-like flows and other trusted popups.
-          if (!isAboutBlank && !isLikelyCallPopupUrl(url)) {
-            console.log("[Window] Allowing trusted Facebook popup:", url);
-          } else {
-            console.log("[Window] Allowing Facebook pop-up window:", url);
-          }
+        if (windowAction === "allow-child-window") {
+          console.log("[Window] Allowing Facebook call pop-up window:", url);
           return {
             action: "allow",
             overrideBrowserWindowOptions: {
@@ -3589,8 +3572,7 @@ function createWindow(source: string = "unknown"): void {
           };
         }
 
-        // Check if this is a Facebook media URL - download natively instead of opening browser
-        if (isFacebookMediaUrl(url)) {
+        if (windowAction === "download-media") {
           console.log(
             "[Download] Initiating native download for Facebook media:",
             url,
@@ -3599,7 +3581,6 @@ function createWindow(source: string = "unknown"): void {
           return { action: "deny" };
         }
 
-        // Open external URLs in system browser
         console.log("[Window] Opening external URL in browser:", url);
         shell.openExternal(url).catch((err) => {
           console.error("[External Link] Failed to open URL:", url, err);
@@ -3616,14 +3597,26 @@ function createWindow(source: string = "unknown"): void {
         options: details.options,
       });
 
-      // Route media-viewer style child navigation back into the main window.
+      // Keep child windows scoped to call flows; reroute/open externally otherwise.
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
           "[Window] Child window navigation requested:",
           navigationUrl,
         );
-        if (isMessagesMediaPopupUrl(navigationUrl)) {
-          event.preventDefault();
+
+        if (navigationUrl === "about:blank") {
+          return;
+        }
+
+        const navigationAction = decideWindowOpenAction(navigationUrl);
+
+        if (navigationAction === "allow-child-window") {
+          return;
+        }
+
+        event.preventDefault();
+
+        if (navigationAction === "reroute-main-view") {
           console.log(
             "[Window] Rerouting media child navigation into main view:",
             navigationUrl,
@@ -3638,16 +3631,29 @@ function createWindow(source: string = "unknown"): void {
           childWindow.close();
           return;
         }
-        if (
-          !isFacebookOrMessengerUrl(navigationUrl) &&
-          navigationUrl !== "about:blank"
-        ) {
+
+        if (navigationAction === "download-media") {
           console.log(
-            "[Window] Blocking navigation to non-facebook URL:",
+            "[Download] Initiating native download from child window:",
             navigationUrl,
           );
-          event.preventDefault();
+          mainWindow?.webContents.downloadURL(navigationUrl);
+          childWindow.close();
+          return;
         }
+
+        console.log(
+          "[Window] Opening child-window external URL in browser:",
+          navigationUrl,
+        );
+        shell.openExternal(navigationUrl).catch((err) => {
+          console.error(
+            "[External Link] Failed to open child-window URL:",
+            navigationUrl,
+            err,
+          );
+        });
+        childWindow.close();
       });
 
       // Set up permission handler for the child window's session

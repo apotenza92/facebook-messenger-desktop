@@ -92,6 +92,60 @@ export function isMessagesMediaViewerRoute(input: string): boolean {
   );
 }
 
+export function isLikelyCallPopupUrl(input: string): boolean {
+  if (!input) return false;
+  const lower = input.toLowerCase();
+  if (lower === "about:blank") return true;
+
+  return (
+    lower.includes("call") ||
+    lower.includes("videochat") ||
+    lower.includes("webrtc") ||
+    lower.includes("rtc") ||
+    lower.includes("voip")
+  );
+}
+
+export function isFacebookMediaUrl(input: string): boolean {
+  try {
+    const hostname = new URL(input).hostname;
+    return hostname.endsWith(".fbcdn.net");
+  } catch {
+    return false;
+  }
+}
+
+export type WindowOpenAction =
+  | "allow-child-window"
+  | "reroute-main-view"
+  | "download-media"
+  | "open-external-browser";
+
+export function decideWindowOpenAction(input: string): WindowOpenAction {
+  const isMessengerUrl = isFacebookOrMessengerUrl(input);
+
+  const shouldAllowChildWindow =
+    input === "about:blank" ||
+    (isMessengerUrl && isLikelyCallPopupUrl(input));
+  if (shouldAllowChildWindow) {
+    return "allow-child-window";
+  }
+
+  if (isMessengerUrl && isMessagesRoute(input)) {
+    return "reroute-main-view";
+  }
+
+  if (isMessengerUrl && isMessagesMediaViewerRoute(input)) {
+    return "reroute-main-view";
+  }
+
+  if (isFacebookMediaUrl(input)) {
+    return "download-media";
+  }
+
+  return "open-external-browser";
+}
+
 export function isMessagesSurfaceRoute(input: string): boolean {
   return isMessagesRoute(input) || isMessagesMediaViewerRoute(input);
 }

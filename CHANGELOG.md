@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0-beta.10] - 2026-02-25
+
+### Fixed
+
+- **External link routing regression**
+  - Restored expected behavior so normal links open in the system browser instead of being treated as call windows
+  - Kept Facebook/Messenger call flows opening in dedicated in-app child windows
+- **Messages thread popup routing**
+  - `_blank` opens to Facebook Messages thread URLs are now routed back into the main in-app Messenger surface instead of spawning/retaining child windows
+- **Child window navigation policy parity**
+  - Applied the same routing decisions to child-window navigations (in-app reroute, media download, external browser) to prevent inconsistent behavior after popup creation
+
+### Added
+
+- Window-open routing regression tests:
+  - `npm run test:window-open` for deterministic policy coverage
+  - `scripts/test-window-open-gui.js` Playwright/Electron GUI smoke test for real popup behavior
+
 ## [1.3.0-beta.9] - 2026-02-24
 
 ### Fixed
