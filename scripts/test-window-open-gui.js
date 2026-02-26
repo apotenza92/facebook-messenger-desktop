@@ -117,9 +117,40 @@ async function triggerWindowOpen(electronApp, url) {
   }, url);
 }
 
+async function triggerAboutBlankThenNavigate(electronApp, targetUrl) {
+  await electronApp.evaluate(async ({ BrowserWindow }, nextUrl) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) throw new Error('No main window');
+
+    const views = win.getBrowserViews();
+    const wc = views.length > 0 ? views[0].webContents : win.webContents;
+    const script = `(() => {
+      const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+      if (!popup) return;
+      setTimeout(() => {
+        try {
+          popup.location.href = ${JSON.stringify(nextUrl)};
+        } catch {
+          // ignore
+        }
+      }, 120);
+    })();`;
+
+    try {
+      await wc.executeJavaScript(script, true);
+    } catch {
+      // Ignore result errors; open handler side effects are what we assert.
+    }
+  }, targetUrl);
+}
+
 async function runCase(electronApp, testCase) {
   const before = await readState(electronApp);
-  await triggerWindowOpen(electronApp, testCase.url);
+  if (testCase.bootstrapViaAboutBlank) {
+    await triggerAboutBlankThenNavigate(electronApp, testCase.url);
+  } else {
+    await triggerWindowOpen(electronApp, testCase.url);
+  }
   await wait(800);
   const after = await readState(electronApp);
 
@@ -175,6 +206,12 @@ async function run() {
       {
         name: 'Call-like Facebook URL opens child call window',
         url: 'https://www.facebook.com/videochat/',
+        expected: { newWindows: 1 },
+      },
+      {
+        name: 'About:blank bootstrap to Facebook thread stays in child window (call bootstrap)',
+        url: 'https://www.facebook.com/messages/t/1234567890',
+        bootstrapViaAboutBlank: true,
         expected: { newWindows: 1 },
       },
       {

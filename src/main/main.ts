@@ -2887,6 +2887,12 @@ function createWindow(source: string = "unknown"): void {
       });
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
+      // Some Messenger call flows bootstrap a pop-up as about:blank and then navigate
+      // to a messages thread before transitioning into the actual RTC URL.
+      // Allow exactly this first same-site navigation so call windows don't get stuck blank.
+      const childOpenedAsAboutBlank = details.url === "about:blank";
+      let allowedInitialBootstrapNavigation = false;
+
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
           "[Window] Child window navigation requested:",
@@ -2894,6 +2900,19 @@ function createWindow(source: string = "unknown"): void {
         );
 
         if (navigationUrl === "about:blank") {
+          return;
+        }
+
+        if (
+          childOpenedAsAboutBlank &&
+          !allowedInitialBootstrapNavigation &&
+          isFacebookOrMessengerUrl(navigationUrl)
+        ) {
+          allowedInitialBootstrapNavigation = true;
+          console.log(
+            "[Window] Allowing initial about:blank child bootstrap navigation:",
+            navigationUrl,
+          );
           return;
         }
 
@@ -3598,6 +3617,12 @@ function createWindow(source: string = "unknown"): void {
       });
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
+      // Some Messenger call flows bootstrap a pop-up as about:blank and then navigate
+      // to a messages thread before transitioning into the actual RTC URL.
+      // Allow exactly this first same-site navigation so call windows don't get stuck blank.
+      const childOpenedAsAboutBlank = details.url === "about:blank";
+      let allowedInitialBootstrapNavigation = false;
+
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
           "[Window] Child window navigation requested:",
@@ -3605,6 +3630,19 @@ function createWindow(source: string = "unknown"): void {
         );
 
         if (navigationUrl === "about:blank") {
+          return;
+        }
+
+        if (
+          childOpenedAsAboutBlank &&
+          !allowedInitialBootstrapNavigation &&
+          isFacebookOrMessengerUrl(navigationUrl)
+        ) {
+          allowedInitialBootstrapNavigation = true;
+          console.log(
+            "[Window] Allowing initial about:blank child bootstrap navigation:",
+            navigationUrl,
+          );
           return;
         }
 

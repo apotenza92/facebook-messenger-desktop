@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "1.3.0-beta.10",
+  "version": "1.3.0-beta.11",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -25,6 +25,17 @@
     "test:notification": "node -r ./scripts/register-ts.js scripts/test-notification-click.ts",
     "test:issues": "node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts",
     "test:window-open": "node -r ./scripts/register-ts.js scripts/test-window-open-policy.ts",
+    "test:issue45:gui": "node scripts/test-issue45-gui.js",
+    "test:issue45:buttons:gui": "node scripts/test-issue45-buttons-resize-gui.js",
+    "test:issue45:buttons:resize:gui": "node scripts/test-issue45-buttons-resize-gui.js",
+    "test:issue45:capture:gui": "node scripts/capture-issue45-media-buttons-gui.js",
+    "test:issue45:live:capture:gui": "node scripts/capture-issue45-live-media-gui.js",
+    "test:issue45:live:scan:gui": "node scripts/scan-issue45-live-media-types-gui.js",
+    "test:issue45:live:types:gui": "node scripts/test-issue45-live-types-symmetry-gui.js",
+    "test:issue45:types:fixture:gui": "node scripts/test-issue45-route-types-fixture-gui.js",
+    "test:issue45:media-history:gui": "node scripts/scan-issue45-media-history-gui.js",
+    "test:issue45:real:resize:gui": "node scripts/capture-issue45-live-real-resize-gui.js",
+    "test:issue45:real:flow:resize:gui": "node scripts/capture-issue45-real-flow-resize-gui.js",
     "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts",
     "ralphy": "PATH=\"$PWD/scripts:$PATH\" ~/code/ralphy/ralphy.sh --codex --prd PRD.md",
     "ralphy:dry": "PATH=\"$PWD/scripts:$PATH\" ~/code/ralphy/ralphy.sh --codex --prd PRD.md --dry-run"

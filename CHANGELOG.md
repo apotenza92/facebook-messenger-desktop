@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.0-beta.11] - 2026-02-26
+
+### Fixed
+
+- **Issue #47: incoming call popup could stay blank / delayed before controls appear** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Fixed child-window navigation handling for call popups that bootstrap via `about:blank` and then perform an initial Facebook/Messenger navigation before entering RTC/call routes
+  - Prevented premature reroute/close of that bootstrap navigation, which could hide incoming call Answer/Decline UI and cause ~15s blank call windows
+  - Kept strict popup policy behavior for subsequent navigations (main-view reroute, media download, external browser) after bootstrap is complete
+
+- **Issue #45: media-viewer controls were misaligned/non-clickable across layout variants** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Reworked media action detection/pinning for `Close`, `Download`, and `Forward/Share` with hit-validation so only clickable nodes are pinned
+  - Added left-dismiss layout handling and mirrored right-side spacing based on measured close-button gap for more symmetric control placement
+  - Unified vertical alignment so right-side media actions stay level with the active close control
+  - Preserved and restored original inline styles when pinning/unpinning media actions to prevent stale layout drift
+  - Kept media control placement stable during window resize while maintaining Messages crop/media mode transitions
+
+### Added
+
+- Window-open GUI regression coverage for call bootstrap flow:
+  - `scripts/test-window-open-gui.js` now includes an `about:blank` → `/messages/t/...` child-window bootstrap case to prevent this regression from returning
+- Expanded issue #45 GUI coverage:
+  - `npm run test:issue45:gui` for E2EE vs legacy media mode parity
+  - `npm run test:issue45:buttons:gui` for pinned control spacing + resize behavior
+  - `npm run test:issue45:live:scan:gui` and `npm run test:issue45:media-history:gui` for live chat/media discovery snapshots
+  - `npm run test:issue45:real:flow:resize:gui` for real media-history click flow checks across multiple window sizes
+
 ## [1.3.0-beta.10] - 2026-02-25
 
 ### Fixed

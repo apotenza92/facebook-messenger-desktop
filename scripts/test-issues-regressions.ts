@@ -44,6 +44,8 @@ const runViewportPolicyTests = () => {
   // Core #45 deterministic checks
   expectMode("/messages/t/123", false, "chat", true);
   expectMode("/messages/t/123", true, "media", false);
+  expectMode("/messages/e2ee/t/123", false, "chat", true);
+  expectMode("/messages/e2ee/t/123", true, "media", false);
   expectMode("/messages/media_viewer.123", false, "media", false);
   expectMode("/photo/123", false, "media", false);
   expectMode("/settings", false, "other", false);

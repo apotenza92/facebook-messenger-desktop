@@ -78,6 +78,7 @@ ipcRenderer.on(
   const STYLE_ID = "md-fb-messages-viewport-fix-style";
   const ACTIVE_CLASS = "md-fb-messages-viewport-fix";
   const MEDIA_CLEAN_CLASS = "md-fb-media-viewer-clean";
+  const MEDIA_LEFT_DISMISS_CLASS = "md-fb-media-dismiss-left";
   const MEDIA_CLOSE_ACTION_CLASS = "md-fb-media-action-close";
   const MEDIA_DOWNLOAD_ACTION_CLASS = "md-fb-media-action-download";
   const MEDIA_SHARE_ACTION_CLASS = "md-fb-media-action-share";
@@ -88,12 +89,17 @@ ipcRenderer.on(
   const HEADER_SEND_DEBOUNCE_MS = 120;
   const MEDIA_OVERLAY_TRANSITION_MS = 120;
   const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 80;
+  const NON_DRAG_APP_REGION = "no-drag";
+  const MEDIA_ACTION_TOP_OFFSET = 8;
+  const MEDIA_ACTION_CLOSE_LEFT_OFFSET = 16;
+  const MAX_ACTION_NODE_DIMENSION = 160;
 
   let pendingApply = false;
   let pendingSend = false;
   let currentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let mediaOverlayVisible = false;
+  let forcedMediaOverlayVisible: boolean | null = null;
   let mediaOverlayTransitionTimer: number | null = null;
   let viewportStateSendTimer: number | null = null;
   let lastSentViewportState: { visible: boolean; url: string } | null = null;
@@ -111,10 +117,16 @@ ipcRenderer.on(
     "margin",
     "transform",
     "z-index",
+    "pointer-events",
+    "-webkit-app-region",
     "inset-inline-start",
     "inset-inline-end",
   ];
   const pinnedMediaActionNodes = new Set<HTMLElement>();
+  const pinnedMediaActionOriginalStyles = new Map<
+    HTMLElement,
+    Map<string, { hadValue: boolean; value: string; priority: string }>
+  >();
 
   const isFacebookHost = (): boolean => {
     try {
@@ -127,19 +139,47 @@ ipcRenderer.on(
 
   const hasTopAnchoredAction = (
     selector: string,
-    maxTop = 180,
+    minTop = -120,
+    maxTop = 220,
+    minRightFraction = 0,
   ): boolean => {
     const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
     for (const node of nodes) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+
       const rect = node.getBoundingClientRect();
       if (rect.width < 6 || rect.height < 6) continue;
-      if (rect.top < -10 || rect.top > maxTop) continue;
+      if (rect.top < minTop || rect.top > maxTop) continue;
+      if (minRightFraction > 0 && rect.right < window.innerWidth * minRightFraction) {
+        continue;
+      }
+
+      return true;
+    }
+    return false;
+  };
+
+  const hasLargeViewportMedia = (): boolean => {
+    const nodes = Array.from(document.querySelectorAll("img, video")) as HTMLElement[];
+    for (const node of nodes) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 180 && rect.height < 180) continue;
+      if (rect.width * rect.height < 50000) continue;
+      if (rect.bottom < 24 || rect.top > window.innerHeight - 24) continue;
       return true;
     }
     return false;
   };
 
   const detectMediaOverlayVisible = (): boolean => {
+    if (forcedMediaOverlayVisible !== null) {
+      return forcedMediaOverlayVisible;
+    }
+
     if (!isFacebookHost()) return false;
 
     const path = window.location.pathname.toLowerCase();
@@ -151,30 +191,105 @@ ipcRenderer.on(
       return true;
     }
 
-    const hasClose = hasTopAnchoredAction(
-      '[aria-label="Close" i][role="button"], button[aria-label="Close" i]',
-      220,
+    const hasDismissAction = hasTopAnchoredAction(
+      [
+        '[aria-label="Close" i][role="button"]',
+        'button[aria-label="Close" i]',
+        '[aria-label="Back" i][role="button"]',
+        'button[aria-label="Back" i]',
+        '[aria-label*="Go back" i][role="button"]',
+        'button[aria-label*="Go back" i]',
+      ].join(", "),
+      -160,
+      260,
     );
-    if (!hasClose) {
+    if (!hasDismissAction) {
       return false;
     }
 
     const hasDownload = hasTopAnchoredAction(
-      '[aria-label*="Download" i][role="button"], button[aria-label*="Download" i]',
+      [
+        '[aria-label*="Download" i][role="button"]',
+        'button[aria-label*="Download" i]',
+        '[aria-label*="Save" i][role="button"]',
+        'button[aria-label*="Save" i]',
+      ].join(", "),
+      -160,
+      260,
+      0.35,
     );
     const hasShare = hasTopAnchoredAction(
-      '[aria-label*="Share" i][role="button"], button[aria-label*="Share" i]',
+      [
+        '[aria-label*="Share" i][role="button"]',
+        'button[aria-label*="Share" i]',
+        '[aria-label*="Forward" i][role="button"]',
+        'button[aria-label*="Forward" i]',
+      ].join(", "),
+      -160,
+      260,
+      0.35,
     );
 
-    // Treat as media viewer only when close + at least one media action is visible.
-    return hasDownload || hasShare;
+    // E2EE chats can momentarily render media controls above the cropped top edge;
+    // fall back to viewport-scale media detection when action buttons are clipped.
+    return hasDownload || hasShare || hasLargeViewportMedia();
   };
 
-  const clearMarkedMediaActions = (): void => {
-    for (const node of pinnedMediaActionNodes) {
+  const setPinnedStyle = (
+    node: HTMLElement,
+    property: string,
+    value: string,
+  ): void => {
+    let originalStyles = pinnedMediaActionOriginalStyles.get(node);
+    if (!originalStyles) {
+      originalStyles = new Map();
+      pinnedMediaActionOriginalStyles.set(node, originalStyles);
+    }
+
+    if (!originalStyles.has(property)) {
+      const existingValue = node.style.getPropertyValue(property);
+      const existingPriority = node.style.getPropertyPriority(property);
+      originalStyles.set(property, {
+        hadValue: existingValue.length > 0,
+        value: existingValue,
+        priority: existingPriority,
+      });
+    }
+
+    node.style.setProperty(property, value, "important");
+  };
+
+  const restorePinnedStyles = (node: HTMLElement): void => {
+    const originalStyles = pinnedMediaActionOriginalStyles.get(node);
+    if (!originalStyles) {
       for (const property of pinnedStyleProperties) {
         node.style.removeProperty(property);
       }
+      return;
+    }
+
+    for (const property of pinnedStyleProperties) {
+      const snapshot = originalStyles.get(property);
+      if (!snapshot) {
+        node.style.removeProperty(property);
+        continue;
+      }
+
+      if (snapshot.hadValue) {
+        node.style.setProperty(property, snapshot.value, snapshot.priority);
+      } else {
+        node.style.removeProperty(property);
+      }
+    }
+
+    pinnedMediaActionOriginalStyles.delete(node);
+  };
+
+  const clearMarkedMediaActions = (): void => {
+    document.documentElement.classList.remove(MEDIA_LEFT_DISMISS_CLASS);
+
+    for (const node of pinnedMediaActionNodes) {
+      restorePinnedStyles(node);
     }
     pinnedMediaActionNodes.clear();
 
@@ -188,74 +303,268 @@ ipcRenderer.on(
 
   const pinMediaAction = (
     node: HTMLElement,
-    topPx: number,
-    rightPx: number,
+    anchor: "left" | "right",
+    offsetPx: number,
+    topOffsetPx = MEDIA_ACTION_TOP_OFFSET,
   ): void => {
-    node.style.setProperty("position", "fixed", "important");
-    node.style.setProperty("top", `${topPx}px`, "important");
-    node.style.setProperty("right", `${rightPx}px`, "important");
-    node.style.setProperty("left", "auto", "important");
-    node.style.setProperty("margin", "0", "important");
-    node.style.setProperty("transform", "none", "important");
-    node.style.setProperty("z-index", "2147483647", "important");
+    setPinnedStyle(node, "position", "fixed");
+    setPinnedStyle(node, "top", `${topOffsetPx}px`);
+    setPinnedStyle(node, "margin", "0");
+    setPinnedStyle(node, "transform", "none");
+    setPinnedStyle(node, "z-index", "2147483647");
+    setPinnedStyle(node, "pointer-events", "auto");
+    setPinnedStyle(node, "-webkit-app-region", NON_DRAG_APP_REGION);
+
+    if (anchor === "right") {
+      const scrollbarWidth = Math.max(
+        0,
+        window.innerWidth - document.documentElement.clientWidth,
+      );
+      const effectiveRight = Math.max(0, offsetPx - scrollbarWidth);
+      setPinnedStyle(node, "right", `${effectiveRight}px`);
+      setPinnedStyle(node, "left", "auto");
+    } else {
+      setPinnedStyle(node, "left", `${offsetPx}px`);
+      setPinnedStyle(node, "right", "auto");
+    }
+
     pinnedMediaActionNodes.add(node);
   };
 
-  const pickTopRightAction = (
+  const unpinMediaAction = (node: HTMLElement): void => {
+    restorePinnedStyles(node);
+    pinnedMediaActionNodes.delete(node);
+  };
+
+  const isPinnedActionHitVisible = (node: HTMLElement): boolean => {
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 6 || rect.height < 6) return false;
+
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+    const topNode = document.elementFromPoint(x, y);
+    if (!(topNode instanceof Element)) return false;
+    return topNode === node || node.contains(topNode);
+  };
+
+  const pinMediaActionWithValidation = (
+    node: HTMLElement,
+    anchor: "left" | "right",
+    offsetPx: number,
+    topOffsetPx = MEDIA_ACTION_TOP_OFFSET,
+  ): boolean => {
+    pinMediaAction(node, anchor, offsetPx, topOffsetPx);
+    if (isPinnedActionHitVisible(node)) {
+      return true;
+    }
+
+    unpinMediaAction(node);
+    return false;
+  };
+
+  const resolveInteractiveActionNode = (node: HTMLElement): HTMLElement => {
+    const interactive = node.closest(
+      'button, [role="button"], a[href], [tabindex]'
+    );
+    if (interactive instanceof HTMLElement) {
+      return interactive;
+    }
+    return node;
+  };
+
+  type ActionCandidate = {
+    node: HTMLElement;
+    rect: DOMRect;
+    area: number;
+  };
+
+  const collectActionCandidates = (
     selectors: string[],
-    minRightFraction = 0.45,
-  ): HTMLElement | null => {
+    excludedNodes: Set<HTMLElement>,
+  ): ActionCandidate[] => {
     const nodes = new Set<HTMLElement>();
     for (const selector of selectors) {
       const matches = document.querySelectorAll(selector) as NodeListOf<HTMLElement>;
       for (const match of Array.from(matches)) {
-        nodes.add(match);
+        const resolved = resolveInteractiveActionNode(match);
+        if (excludedNodes.has(resolved)) continue;
+        nodes.add(resolved);
       }
     }
 
-    const candidates: { node: HTMLElement; top: number; right: number }[] = [];
+    const candidates: ActionCandidate[] = [];
     for (const node of nodes) {
       const style = window.getComputedStyle(node);
       if (style.display === "none" || style.visibility === "hidden") continue;
+
       const rect = node.getBoundingClientRect();
       if (rect.width < 6 || rect.height < 6) continue;
-      if (rect.top < -12 || rect.top > 220) continue;
-      if (rect.right < window.innerWidth * minRightFraction) continue;
-      candidates.push({ node, top: rect.top, right: rect.right });
+      if (rect.top < -200 || rect.top > 300) continue;
+      if (
+        rect.width > MAX_ACTION_NODE_DIMENSION ||
+        rect.height > MAX_ACTION_NODE_DIMENSION
+      ) {
+        continue;
+      }
+
+      candidates.push({
+        node,
+        rect,
+        area: rect.width * rect.height,
+      });
     }
 
+    return candidates;
+  };
+
+  const rankRightActionCandidates = (
+    selectors: string[],
+    excludedNodes: Set<HTMLElement>,
+    minRightFraction = 0.35,
+  ): ActionCandidate[] => {
+    const candidates = collectActionCandidates(selectors, excludedNodes).filter(
+      (candidate) => candidate.rect.right >= window.innerWidth * minRightFraction,
+    );
+
     candidates.sort((a, b) => {
-      if (a.right !== b.right) return b.right - a.right;
-      return a.top - b.top;
+      if (a.rect.right !== b.rect.right) return b.rect.right - a.rect.right;
+      if (a.rect.top !== b.rect.top) return a.rect.top - b.rect.top;
+      return a.area - b.area;
     });
-    return candidates[0]?.node ?? null;
+
+    return candidates;
+  };
+
+  const rankEdgeCloseCandidates = (
+    selectors: string[],
+    excludedNodes: Set<HTMLElement>,
+  ): ActionCandidate[] => {
+    const candidates = collectActionCandidates(selectors, excludedNodes);
+
+    candidates.sort((a, b) => {
+      const aLeftDist = Math.abs(a.rect.left);
+      const aRightDist = Math.abs(window.innerWidth - a.rect.right);
+      const bLeftDist = Math.abs(b.rect.left);
+      const bRightDist = Math.abs(window.innerWidth - b.rect.right);
+      const aEdgeDist = Math.min(aLeftDist, aRightDist);
+      const bEdgeDist = Math.min(bLeftDist, bRightDist);
+
+      if (aEdgeDist !== bEdgeDist) return aEdgeDist - bEdgeDist;
+      if (a.rect.top !== b.rect.top) return a.rect.top - b.rect.top;
+      return a.area - b.area;
+    });
+
+    return candidates;
   };
 
   const markMediaActions = (): void => {
     clearMarkedMediaActions();
 
-    const downloadNode = pickTopRightAction([
-      '[aria-label*="Download" i][role="button"]',
-      'button[aria-label*="Download" i]',
-      '[aria-label*="Download" i]',
-    ]);
-    if (downloadNode) {
-      downloadNode.classList.add(MEDIA_DOWNLOAD_ACTION_CLASS);
-      pinMediaAction(downloadNode, 8, 16);
+    const selectedNodes = new Set<HTMLElement>();
+    let usingRightDismissLayout = true;
+    let pinnedTopOffset = MEDIA_ACTION_TOP_OFFSET;
+    let mirroredEdgeGap = MEDIA_ACTION_CLOSE_LEFT_OFFSET;
+
+    const closeCandidates = rankEdgeCloseCandidates(
+      [
+        '[aria-label="Close" i][role="button"]',
+        'button[aria-label="Close" i]',
+        '[aria-label*="Go back" i][role="button"]',
+        'button[aria-label*="Go back" i]',
+        '[aria-label="Back" i][role="button"]',
+        'button[aria-label="Back" i]',
+      ],
+      selectedNodes,
+    );
+
+    for (const candidate of closeCandidates) {
+      const closeNode = candidate.node;
+      const leftDistance = Math.max(0, Math.round(candidate.rect.left));
+      const rightDistance = Math.max(
+        0,
+        Math.round(window.innerWidth - candidate.rect.right),
+      );
+      const isRightDismiss = rightDistance < leftDistance;
+
+      if (!isPinnedActionHitVisible(closeNode)) {
+        continue;
+      }
+
+      closeNode.classList.add(MEDIA_CLOSE_ACTION_CLASS);
+      selectedNodes.add(closeNode);
+      usingRightDismissLayout = isRightDismiss;
+      pinnedTopOffset = Math.max(
+        MEDIA_ACTION_TOP_OFFSET,
+        Math.round(candidate.rect.top),
+      );
+      mirroredEdgeGap = Math.max(
+        MEDIA_ACTION_CLOSE_LEFT_OFFSET,
+        isRightDismiss ? rightDistance : leftDistance,
+      );
+
+      if (!isRightDismiss) {
+        document.documentElement.classList.add(MEDIA_LEFT_DISMISS_CLASS);
+      }
+      break;
     }
 
-    const shareNode = pickTopRightAction([
-      '[aria-label*="Share" i][role="button"]',
-      'button[aria-label*="Share" i]',
-      '[aria-label*="Share" i]',
-      '[aria-label*="Forward" i][role="button"]',
-      'button[aria-label*="Forward" i]',
-      '[aria-label*="Forward" i]',
-    ]);
-    if (shareNode) {
-      shareNode.classList.add(MEDIA_SHARE_ACTION_CLASS);
-      pinMediaAction(shareNode, 8, 64);
-    }
+    const downloadOffset = usingRightDismissLayout
+      ? mirroredEdgeGap + 48
+      : mirroredEdgeGap;
+    const shareOffset = usingRightDismissLayout
+      ? mirroredEdgeGap + 96
+      : mirroredEdgeGap + 48;
+
+    const applyPinnedRightAction = (
+      selectors: string[],
+      className: string,
+      offset: number,
+    ): void => {
+      const candidates = rankRightActionCandidates(selectors, selectedNodes);
+      for (const candidate of candidates) {
+        const node = candidate.node;
+        node.classList.add(className);
+        const pinned = pinMediaActionWithValidation(
+          node,
+          "right",
+          offset,
+          pinnedTopOffset,
+        );
+        if (pinned) {
+          selectedNodes.add(node);
+          return;
+        }
+        node.classList.remove(className);
+      }
+    };
+
+    applyPinnedRightAction(
+      [
+        '[aria-label*="Download" i][role="button"]',
+        'button[aria-label*="Download" i]',
+        '[aria-label*="Download" i]',
+        '[aria-label*="Save" i][role="button"]',
+        'button[aria-label*="Save" i]',
+        '[aria-label*="Save" i]',
+      ],
+      MEDIA_DOWNLOAD_ACTION_CLASS,
+      downloadOffset,
+    );
+
+    applyPinnedRightAction(
+      [
+        '[aria-label*="Share" i][role="button"]',
+        'button[aria-label*="Share" i]',
+        '[aria-label*="Share" i]',
+        '[aria-label*="Forward" i][role="button"]',
+        'button[aria-label*="Forward" i]',
+        '[aria-label*="Forward" i]',
+      ],
+      MEDIA_SHARE_ACTION_CLASS,
+      shareOffset,
+    );
   };
 
   const resolveMode = (): MessagesViewportMode =>
@@ -394,6 +703,9 @@ ipcRenderer.on(
       html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label*="Notifications" i],
       html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label*="Account controls and settings" i],
       html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Your profile" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Facebook" i],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="/"],
+      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="https://www.facebook.com/"],
       html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href*="/notifications/"],
       html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="/messages/"] {
         display: none !important;
@@ -401,35 +713,12 @@ ipcRenderer.on(
         pointer-events: none !important;
       }
 
-      /* Keep media controls clustered on the right edge. */
-      html.${MEDIA_CLEAN_CLASS} .${MEDIA_CLOSE_ACTION_CLASS} {
-        position: fixed !important;
-        top: 8px !important;
-        right: 16px !important;
-        left: auto !important;
-        margin: 0 !important;
-        transform: none !important;
-        z-index: 2147483647 !important;
-      }
-
-      html.${MEDIA_CLEAN_CLASS} .${MEDIA_DOWNLOAD_ACTION_CLASS} {
-        position: fixed !important;
-        top: 10px !important;
-        right: 64px !important;
-        left: auto !important;
-        margin: 0 !important;
-        transform: none !important;
-        z-index: 2147483647 !important;
-      }
-
+      /* Never let detected media actions fall into a drag region. */
+      html.${MEDIA_CLEAN_CLASS} .${MEDIA_CLOSE_ACTION_CLASS},
+      html.${MEDIA_CLEAN_CLASS} .${MEDIA_DOWNLOAD_ACTION_CLASS},
       html.${MEDIA_CLEAN_CLASS} .${MEDIA_SHARE_ACTION_CLASS} {
-        position: fixed !important;
-        top: 10px !important;
-        right: 112px !important;
-        left: auto !important;
-        margin: 0 !important;
-        transform: none !important;
-        z-index: 2147483647 !important;
+        pointer-events: auto !important;
+        -webkit-app-region: ${NON_DRAG_APP_REGION} !important;
       }
     `;
     document.head.appendChild(style);
@@ -506,6 +795,29 @@ ipcRenderer.on(
       attributeFilter: ["class", "style", "role"],
     });
   };
+
+  const applyForcedMediaOverlayVisible = (visible: boolean | null): void => {
+    forcedMediaOverlayVisible = typeof visible === "boolean" ? visible : null;
+    mediaOverlayVisible = detectMediaOverlayVisible();
+    scheduleViewportStateSend(true);
+    scheduleApply();
+  };
+
+  (window as typeof window & {
+    __mdSetForcedMediaOverlayVisible?: (visible: boolean | null) => void;
+  }).__mdSetForcedMediaOverlayVisible = (visible: boolean | null) => {
+    applyForcedMediaOverlayVisible(visible);
+  };
+
+  window.addEventListener("message", (event: MessageEvent) => {
+    const payload = event.data;
+    if (!payload || typeof payload !== "object") return;
+    if (payload.type !== "md-force-media-overlay-visible") return;
+
+    const visible =
+      typeof payload.visible === "boolean" ? payload.visible : null;
+    applyForcedMediaOverlayVisible(visible);
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
