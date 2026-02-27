@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.0-beta.13] - 2026-02-27
+
+### Added
+
+- **Issue #45 diagnostics and easy tester log export** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Added detailed media-overlay debug telemetry in preload + main process (route transitions, computed media signals, forced state-off events, and class/state snapshots)
+  - Persist debug stream to `media-overlay-debug.ndjson` in the app logs directory
+  - Added `Help → Export Issue #45 Debug Report…` to generate a single JSON report containing environment details + recent debug timeline
+  - Added `Help → Open Logs Folder` for quick access when attaching raw logs
+
+### Changed
+
+- Expanded non-E2EE regression coverage in `scripts/test-issue45-thread-open-close-extensive-gui.js`:
+  - deep sidebar scan for older non-E2EE threads
+  - explicit E2EE vs non-E2EE URL classification in summary output
+  - close-then-switch-chat validation timing for the reported delayed top-bar reappearance pattern
+
+### Internal
+
+- Added auto-updater lifecycle markers to debug timeline to help rule in/out upgrade-state interactions during repro sessions
+
 ## [1.3.0-beta.12] - 2026-02-26
 
 ### Fixed

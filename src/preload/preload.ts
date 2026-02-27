@@ -93,6 +93,29 @@ ipcRenderer.on(
   const MEDIA_ACTION_TOP_OFFSET = 8;
   const MEDIA_ACTION_CLOSE_LEFT_OFFSET = 16;
   const MAX_ACTION_NODE_DIMENSION = 160;
+  const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
+  const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
+
+  const dismissActionSelectors = [
+    '[aria-label="Close" i][role="button"]',
+    'button[aria-label="Close" i]',
+    '[aria-label="Back" i][role="button"]',
+    'button[aria-label="Back" i]',
+    '[aria-label*="Go back" i][role="button"]',
+    'button[aria-label*="Go back" i]',
+  ];
+  const mediaDownloadSelectors = [
+    '[aria-label*="Download" i][role="button"]',
+    'button[aria-label*="Download" i]',
+    '[aria-label*="Save" i][role="button"]',
+    'button[aria-label*="Save" i]',
+  ];
+  const mediaShareSelectors = [
+    '[aria-label*="Share" i][role="button"]',
+    'button[aria-label*="Share" i]',
+    '[aria-label*="Forward" i][role="button"]',
+    'button[aria-label*="Forward" i]',
+  ];
 
   let pendingApply = false;
   let pendingSend = false;
@@ -104,6 +127,7 @@ ipcRenderer.on(
   let viewportStateSendTimer: number | null = null;
   let lastSentViewportState: { visible: boolean; url: string } | null = null;
   let lastViewportMode: MessagesViewportMode | null = null;
+  let lastMediaOverlayDebugSentAt = 0;
   const mediaActionClasses = [
     MEDIA_CLOSE_ACTION_CLASS,
     MEDIA_DOWNLOAD_ACTION_CLASS,
@@ -160,6 +184,162 @@ ipcRenderer.on(
     return false;
   };
 
+  const countTopAnchoredActions = (
+    selector: string,
+    minTop = -120,
+    maxTop = 220,
+    minRightFraction = 0,
+  ): number => {
+    const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
+    let count = 0;
+    for (const node of nodes) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 6 || rect.height < 6) continue;
+      if (rect.top < minTop || rect.top > maxTop) continue;
+      if (minRightFraction > 0 && rect.right < window.innerWidth * minRightFraction) {
+        continue;
+      }
+
+      count += 1;
+    }
+
+    return count;
+  };
+
+  const hasLargeViewportMedia = (): boolean => {
+    const nodes = Array.from(document.querySelectorAll("img, video")) as HTMLElement[];
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+
+    for (const node of nodes) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 180 && rect.height < 180) continue;
+      if (rect.width * rect.height < 50000) continue;
+      if (rect.bottom < 24 || rect.top > window.innerHeight - 24) continue;
+
+      const containsCenter =
+        centerX >= rect.left &&
+        centerX <= rect.right &&
+        centerY >= rect.top &&
+        centerY <= rect.bottom;
+      if (!containsCenter) continue;
+
+      return true;
+    }
+
+    return false;
+  };
+
+  const isMessagesThreadSubtabRoute = (path: string): boolean =>
+    /^\/messages\/(?:e2ee\/)?t\/[^/]+\/(media|files|links|search)(?:\/|$)/.test(path);
+
+  type MediaOverlaySignals = {
+    path: string;
+    modeFromPath: MessagesViewportMode;
+    threadSubtabRoute: boolean;
+    hasDismissAction: boolean;
+    dismissCount: number;
+    hasDownloadAction: boolean;
+    downloadCount: number;
+    hasShareAction: boolean;
+    shareCount: number;
+    hasLargeMedia: boolean;
+  };
+
+  const collectMediaOverlaySignals = (): MediaOverlaySignals => {
+    const path = window.location.pathname.toLowerCase();
+    const modeFromPath = resolveViewportMode({
+      urlPath: path,
+      mediaOverlayVisible: false,
+    });
+
+    const dismissSelector = dismissActionSelectors.join(", ");
+    const downloadSelector = mediaDownloadSelectors.join(", ");
+    const shareSelector = mediaShareSelectors.join(", ");
+
+    const dismissCount = countTopAnchoredActions(dismissSelector, -160, 260);
+    const downloadCount = countTopAnchoredActions(downloadSelector, -160, 260, 0.35);
+    const shareCount = countTopAnchoredActions(shareSelector, -160, 260, 0.35);
+
+    return {
+      path,
+      modeFromPath,
+      threadSubtabRoute: isMessagesThreadSubtabRoute(path),
+      hasDismissAction: dismissCount > 0,
+      dismissCount,
+      hasDownloadAction: downloadCount > 0,
+      downloadCount,
+      hasShareAction: shareCount > 0,
+      shareCount,
+      hasLargeMedia: hasLargeViewportMedia(),
+    };
+  };
+
+  const evaluateMediaOverlayVisible = (signals: MediaOverlaySignals): boolean => {
+    if (signals.modeFromPath === "media") {
+      return true;
+    }
+
+    if (signals.threadSubtabRoute) {
+      return false;
+    }
+
+    if (!signals.hasDismissAction) {
+      return false;
+    }
+
+    // Treat as media overlay only when dismiss + explicit media actions +
+    // viewport-scale centered media are present. This avoids stale false-positives
+    // after close where toolbar actions may still briefly exist in chat surfaces.
+    return (
+      (signals.hasDownloadAction || signals.hasShareAction) &&
+      signals.hasLargeMedia
+    );
+  };
+
+  const sendMediaOverlayDebug = (
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    const now = Date.now();
+    const force = extra.force === true;
+    if (!force && now - lastMediaOverlayDebugSentAt < MEDIA_OVERLAY_DEBUG_COOLDOWN_MS) {
+      return;
+    }
+
+    lastMediaOverlayDebugSentAt = now;
+
+    try {
+      const signals = collectMediaOverlaySignals();
+      const computedVisible = evaluateMediaOverlayVisible(signals);
+      ipcRenderer.send(MEDIA_OVERLAY_DEBUG_CHANNEL, {
+        timestamp: now,
+        reason,
+        url: window.location.href,
+        forcedVisible: forcedMediaOverlayVisible,
+        trackedVisible: mediaOverlayVisible,
+        computedVisible,
+        signals,
+        classes: {
+          mediaClean: document.documentElement.classList.contains(MEDIA_CLEAN_CLASS),
+          activeCrop: document.documentElement.classList.contains(ACTIVE_CLASS),
+          leftDismiss: document.documentElement.classList.contains(
+            MEDIA_LEFT_DISMISS_CLASS,
+          ),
+        },
+        ...extra,
+      });
+    } catch {
+      // Ignore debug telemetry failures.
+    }
+  };
+
   const detectMediaOverlayVisible = (): boolean => {
     if (forcedMediaOverlayVisible !== null) {
       return forcedMediaOverlayVisible;
@@ -167,57 +347,8 @@ ipcRenderer.on(
 
     if (!isFacebookHost()) return false;
 
-    const path = window.location.pathname.toLowerCase();
-    const modeFromPath = resolveViewportMode({
-      urlPath: path,
-      mediaOverlayVisible: false,
-    });
-    if (modeFromPath === "media") {
-      return true;
-    }
-
-    const hasDismissAction = hasTopAnchoredAction(
-      [
-        '[aria-label="Close" i][role="button"]',
-        'button[aria-label="Close" i]',
-        '[aria-label="Back" i][role="button"]',
-        'button[aria-label="Back" i]',
-        '[aria-label*="Go back" i][role="button"]',
-        'button[aria-label*="Go back" i]',
-      ].join(", "),
-      -160,
-      260,
-    );
-    if (!hasDismissAction) {
-      return false;
-    }
-
-    const hasDownload = hasTopAnchoredAction(
-      [
-        '[aria-label*="Download" i][role="button"]',
-        'button[aria-label*="Download" i]',
-        '[aria-label*="Save" i][role="button"]',
-        'button[aria-label*="Save" i]',
-      ].join(", "),
-      -160,
-      260,
-      0.35,
-    );
-    const hasShare = hasTopAnchoredAction(
-      [
-        '[aria-label*="Share" i][role="button"]',
-        'button[aria-label*="Share" i]',
-        '[aria-label*="Forward" i][role="button"]',
-        'button[aria-label*="Forward" i]',
-      ].join(", "),
-      -160,
-      260,
-      0.35,
-    );
-
-    // Treat as media overlay only when dismiss + at least one explicit media action
-    // is visible. This avoids stale false-positives after closing media.
-    return hasDownload || hasShare;
+    const signals = collectMediaOverlaySignals();
+    return evaluateMediaOverlayVisible(signals);
   };
 
   const setPinnedStyle = (
@@ -626,6 +757,10 @@ ipcRenderer.on(
 
       lastSentViewportState = payload;
       ipcRenderer.send("media-viewer-state", payload);
+      sendMediaOverlayDebug("viewport-state-send", {
+        force,
+        sentVisible: payload.visible,
+      });
     }, VIEWPORT_STATE_SEND_DEBOUNCE_MS);
   };
 
@@ -715,8 +850,14 @@ ipcRenderer.on(
 
     const mode = resolveMode();
     if (mode !== lastViewportMode) {
+      const previousMode = lastViewportMode;
       lastViewportMode = mode;
       scheduleViewportStateSend(true);
+      sendMediaOverlayDebug("viewport-mode-change", {
+        force: true,
+        previousMode,
+        nextMode: mode,
+      });
     }
 
     if (mode === "media") {
@@ -749,10 +890,16 @@ ipcRenderer.on(
 
     mediaOverlayTransitionTimer = window.setTimeout(() => {
       mediaOverlayTransitionTimer = null;
+      const previousVisible = mediaOverlayVisible;
       const nextVisible = detectMediaOverlayVisible();
-      if (nextVisible === mediaOverlayVisible) return;
+      if (nextVisible === previousVisible) return;
 
       mediaOverlayVisible = nextVisible;
+      sendMediaOverlayDebug("recheck-visible-change", {
+        force: true,
+        previousVisible,
+        nextVisible,
+      });
       scheduleViewportStateSend(true);
       scheduleApply();
     }, MEDIA_OVERLAY_TRANSITION_MS);
@@ -782,8 +929,15 @@ ipcRenderer.on(
   };
 
   const applyForcedMediaOverlayVisible = (visible: boolean | null): void => {
+    const previousForced = forcedMediaOverlayVisible;
     forcedMediaOverlayVisible = typeof visible === "boolean" ? visible : null;
     mediaOverlayVisible = detectMediaOverlayVisible();
+    sendMediaOverlayDebug("forced-overlay-update", {
+      force: true,
+      previousForced,
+      nextForced: forcedMediaOverlayVisible,
+      resultingVisible: mediaOverlayVisible,
+    });
     scheduleViewportStateSend(true);
     scheduleApply();
   };
@@ -808,12 +962,20 @@ ipcRenderer.on(
     document.addEventListener("DOMContentLoaded", () => {
       startObservers();
       mediaOverlayVisible = detectMediaOverlayVisible();
+      sendMediaOverlayDebug("dom-content-loaded", {
+        force: true,
+        visible: mediaOverlayVisible,
+      });
       scheduleApply();
       scheduleViewportStateSend(true);
     });
   } else {
     startObservers();
     mediaOverlayVisible = detectMediaOverlayVisible();
+    sendMediaOverlayDebug("init-ready", {
+      force: true,
+      visible: mediaOverlayVisible,
+    });
     scheduleApply();
     scheduleViewportStateSend(true);
   }
@@ -822,7 +984,13 @@ ipcRenderer.on(
   window.setInterval(() => {
     const currentUrl = window.location.href;
     if (currentUrl !== lastUrl) {
+      const previousUrl = lastUrl;
       lastUrl = currentUrl;
+      sendMediaOverlayDebug("url-change", {
+        force: true,
+        previousUrl,
+        nextUrl: currentUrl,
+      });
       scheduleMediaOverlayRecheck();
       scheduleApply();
       scheduleViewportStateSend(true);
@@ -830,10 +998,12 @@ ipcRenderer.on(
   }, 300);
 
   window.addEventListener("pageshow", () => {
+    sendMediaOverlayDebug("pageshow", { force: true });
     scheduleMediaOverlayRecheck();
     scheduleApply();
   });
   window.addEventListener("resize", () => {
+    sendMediaOverlayDebug("resize");
     scheduleMediaOverlayRecheck();
     scheduleApply();
   });

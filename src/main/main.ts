@@ -183,6 +183,133 @@ let applyContentViewBoundsHandler: (() => void) | null = null;
 let lastMessagesUnreadCount = 0;
 const mediaViewerVisibleByWebContentsId = new Map<number, boolean>();
 
+type MediaOverlayDebugEvent = {
+  timestamp: number;
+  source: "main" | "preload";
+  event: string;
+  webContentsId?: number;
+  url?: string;
+  [key: string]: unknown;
+};
+
+const MAX_MEDIA_OVERLAY_DEBUG_EVENTS = 3000;
+const mediaOverlayDebugEvents: MediaOverlayDebugEvent[] = [];
+
+function getMediaOverlayDebugLogPath(): string {
+  return path.join(app.getPath("logs"), "media-overlay-debug.ndjson");
+}
+
+function pushMediaOverlayDebugEvent(event: MediaOverlayDebugEvent): void {
+  mediaOverlayDebugEvents.push(event);
+  if (mediaOverlayDebugEvents.length > MAX_MEDIA_OVERLAY_DEBUG_EVENTS) {
+    mediaOverlayDebugEvents.splice(
+      0,
+      mediaOverlayDebugEvents.length - MAX_MEDIA_OVERLAY_DEBUG_EVENTS,
+    );
+  }
+
+  try {
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(getMediaOverlayDebugLogPath(), `${JSON.stringify(event)}\n`);
+  } catch {
+    // Ignore debug log write failures.
+  }
+}
+
+function readTailLinesFromFile(filePath: string, maxLines: number): string[] {
+  if (!fs.existsSync(filePath)) return [];
+
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    if (lines.length <= maxLines) return lines;
+    return lines.slice(lines.length - maxLines);
+  } catch {
+    return [];
+  }
+}
+
+async function exportIssue45DebugReport(): Promise<void> {
+  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
+  const defaultFileName = `messenger-issue45-debug-${timestamp}.json`;
+  const defaultPath = path.join(app.getPath("desktop"), defaultFileName);
+
+  const saveDialogOptions: Electron.SaveDialogOptions = {
+    title: "Export Issue #45 Debug Report",
+    defaultPath,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  };
+  const saveResult = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, saveDialogOptions)
+    : await dialog.showSaveDialog(saveDialogOptions);
+
+  if (saveResult.canceled || !saveResult.filePath) {
+    return;
+  }
+
+  const debugLogPath = getMediaOverlayDebugLogPath();
+  const report = {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: APP_DISPLAY_NAME,
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      isBetaVersion,
+      isDev,
+      uptimeMs: Date.now() - appStartTime,
+    },
+    paths: {
+      userData: app.getPath("userData"),
+      logs: app.getPath("logs"),
+      mediaOverlayDebugLog: debugLogPath,
+    },
+    currentState: {
+      mediaViewerVisibleByWebContentsId: Array.from(
+        mediaViewerVisibleByWebContentsId.entries(),
+      ),
+      currentMessengerUrl: getMessengerWebContents()?.getURL() || null,
+    },
+    inMemoryEvents: mediaOverlayDebugEvents,
+    ndjsonTail: readTailLinesFromFile(debugLogPath, 2000),
+  };
+
+  try {
+    fs.writeFileSync(saveResult.filePath, JSON.stringify(report, null, 2), "utf8");
+  } catch (error) {
+    const errorDialogOptions: Electron.MessageBoxOptions = {
+      type: "error",
+      title: "Export Failed",
+      message: "Could not write debug report.",
+      detail: String((error as Error)?.message || error),
+    };
+    if (mainWindow) {
+      await dialog.showMessageBox(mainWindow, errorDialogOptions);
+    } else {
+      await dialog.showMessageBox(errorDialogOptions);
+    }
+    return;
+  }
+
+  const doneDialogOptions: Electron.MessageBoxOptions = {
+    type: "info",
+    title: "Debug Report Exported",
+    message: "Issue #45 debug report exported successfully.",
+    detail: saveResult.filePath,
+    buttons: ["Show in Folder", "OK"],
+    defaultId: 0,
+    cancelId: 1,
+  };
+  const done = mainWindow
+    ? await dialog.showMessageBox(mainWindow, doneDialogOptions)
+    : await dialog.showMessageBox(doneDialogOptions);
+
+  if (done.response === 0) {
+    shell.showItemInFolder(saveResult.filePath);
+  }
+}
+
 function stripLeadingUnreadCount(title: string): string {
   const normalized = (title || "").replace(/^\(\d+\)\s*/, "").trim();
   return normalized || APP_DISPLAY_NAME;
@@ -315,6 +442,20 @@ if (process.platform === "win32") {
 const userDataPath = path.join(app.getPath("appData"), APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
+
+pushMediaOverlayDebugEvent({
+  timestamp: Date.now(),
+  source: "main",
+  event: "app-start",
+  url: "",
+  appVersion,
+  platform: process.platform,
+  arch: process.arch,
+  isDev,
+  isBetaVersion,
+  userDataPath: app.getPath("userData"),
+  logsPath: app.getPath("logs"),
+});
 
 const windowStateFile = path.join(app.getPath("userData"), "window-state.json");
 const movePromptFile = path.join(
@@ -3269,6 +3410,14 @@ function createWindow(source: string = "unknown"): void {
           "[ContentView] Forced media viewer state off after navigation:",
           url,
         );
+        pushMediaOverlayDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "forced-state-off-did-navigate",
+          webContentsId: contentView.webContents.id,
+          url,
+          nextVisible: false,
+        });
       }
 
       applyContentViewBounds();
@@ -3313,6 +3462,14 @@ function createWindow(source: string = "unknown"): void {
           "[ContentView] Forced media viewer state off after in-page navigation:",
           url,
         );
+        pushMediaOverlayDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "forced-state-off-did-navigate-in-page",
+          webContentsId: contentView.webContents.id,
+          url,
+          nextVisible: false,
+        });
       }
 
       applyContentViewBounds();
@@ -4053,6 +4210,14 @@ function createWindow(source: string = "unknown"): void {
           "[MainWindow] Forced media viewer state off after navigation:",
           url,
         );
+        pushMediaOverlayDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "forced-state-off-mainwindow-did-navigate",
+          webContentsId: mainWindow.webContents.id,
+          url,
+          nextVisible: false,
+        });
       }
 
       console.log(
@@ -4095,6 +4260,14 @@ function createWindow(source: string = "unknown"): void {
           "[MainWindow] Forced media viewer state off after in-page navigation:",
           url,
         );
+        pushMediaOverlayDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "forced-state-off-mainwindow-did-navigate-in-page",
+          webContentsId: mainWindow.webContents.id,
+          url,
+          nextVisible: false,
+        });
       }
 
       console.log("[MainWindow] In-page navigation to:", url);
@@ -5913,6 +6086,23 @@ function createApplicationMenu(): void {
     },
   };
 
+  const exportIssue45DebugReportMenuItem: Electron.MenuItemConstructorOptions = {
+    label: "Export Issue #45 Debug Report…",
+    click: () => {
+      void exportIssue45DebugReport();
+    },
+  };
+
+  const openLogsFolderMenuItem: Electron.MenuItemConstructorOptions = {
+    label: "Open Logs Folder",
+    click: () => {
+      const logsPath = app.getPath("logs");
+      shell.openPath(logsPath).catch(() => {
+        shell.showItemInFolder(logsPath);
+      });
+    },
+  };
+
   // XWayland mode toggle for Linux Wayland users (for screen sharing compatibility)
   const xwaylandMenuItem: Electron.MenuItemConstructorOptions | null =
     process.platform === "linux"
@@ -6233,6 +6423,9 @@ function createApplicationMenu(): void {
           },
           { type: "separator" },
           viewOnGitHubMenuItem,
+          { type: "separator" },
+          exportIssue45DebugReportMenuItem,
+          openLogsFolderMenuItem,
         ],
       },
       // Include Develop menu in dev mode or for beta testers
@@ -6355,6 +6548,9 @@ function createApplicationMenu(): void {
         checkUpdatesMenuItem,
         updateFrequencySubmenu,
         notificationSettingsMenuItem,
+        { type: "separator" },
+        exportIssue45DebugReportMenuItem,
+        openLogsFolderMenuItem,
         // XWayland mode option for Linux users (for screen sharing compatibility)
         ...(xwaylandMenuItem
           ? [{ type: "separator" as const }, xwaylandMenuItem]
@@ -6515,10 +6711,45 @@ function setupIpcHandlers(): void {
       console.log(
         `[ContentView] Media viewer state updated: visible=${visible}, url=${urlForLog}`,
       );
+      pushMediaOverlayDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "media-viewer-state",
+        webContentsId: event.sender.id,
+        previousVisible: previous,
+        nextVisible: visible,
+        url: urlForLog,
+      });
 
       applyContentViewBoundsHandler?.();
     },
   );
+
+  ipcMain.on("media-overlay-debug", (event, payload) => {
+    const now = Date.now();
+    const basePayload =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : {};
+
+    pushMediaOverlayDebugEvent({
+      timestamp:
+        typeof basePayload.timestamp === "number"
+          ? basePayload.timestamp
+          : now,
+      source: "preload",
+      event:
+        typeof basePayload.reason === "string"
+          ? basePayload.reason
+          : "media-overlay-debug",
+      webContentsId: event.sender.id,
+      url:
+        typeof basePayload.url === "string"
+          ? basePayload.url
+          : event.sender.getURL(),
+      ...basePayload,
+    });
+  });
 
   // Handle incoming call - bring window to foreground
   // This is triggered when Messenger shows an incoming call popup
@@ -8900,6 +9131,12 @@ function setupAutoUpdater(): void {
     autoUpdater.on("update-available", (info) => {
       const version = info?.version || "unknown";
       console.log("[AutoUpdater] Update available:", version);
+      pushMediaOverlayDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "auto-updater-update-available",
+        version,
+      });
       showUpdateAvailableDialog(version);
     });
 
@@ -8921,6 +9158,11 @@ function setupAutoUpdater(): void {
 
     autoUpdater.on("update-not-available", () => {
       console.log("[AutoUpdater] No update available");
+      pushMediaOverlayDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "auto-updater-update-not-available",
+      });
       if (!manualUpdateCheckInProgress) {
         return;
       }
@@ -8938,6 +9180,12 @@ function setupAutoUpdater(): void {
     autoUpdater.on("update-downloaded", async (info) => {
       const version = info?.version || pendingUpdateVersion || "";
       console.log("[AutoUpdater] Update downloaded:", version);
+      pushMediaOverlayDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "auto-updater-update-downloaded",
+        version,
+      });
       hideDownloadProgress();
       updateDownloadedAndReady = true;
 
@@ -8950,6 +9198,12 @@ function setupAutoUpdater(): void {
 
     autoUpdater.on("error", (err: unknown) => {
       console.error("[AutoUpdater] error", err);
+      pushMediaOverlayDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "auto-updater-error",
+        detail: String((err as Error)?.message || err),
+      });
       hideDownloadProgress();
     });
 
