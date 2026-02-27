@@ -87,8 +87,8 @@ ipcRenderer.on(
   const MIN_HEADER_HEIGHT = DEFAULT_HEADER_HEIGHT;
   const MAX_HEADER_HEIGHT = 120;
   const HEADER_SEND_DEBOUNCE_MS = 120;
-  const MEDIA_OVERLAY_TRANSITION_MS = 120;
-  const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 80;
+  const MEDIA_OVERLAY_TRANSITION_MS = 50;
+  const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 30;
   const NON_DRAG_APP_REGION = "no-drag";
   const MEDIA_ACTION_TOP_OFFSET = 8;
   const MEDIA_ACTION_CLOSE_LEFT_OFFSET = 16;
@@ -883,6 +883,26 @@ ipcRenderer.on(
     }
   };
 
+  const applyComputedMediaOverlayVisibility = (
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): boolean => {
+    const previousVisible = mediaOverlayVisible;
+    const nextVisible = detectMediaOverlayVisible();
+    if (nextVisible === previousVisible) return false;
+
+    mediaOverlayVisible = nextVisible;
+    sendMediaOverlayDebug(reason, {
+      force: true,
+      previousVisible,
+      nextVisible,
+      ...extra,
+    });
+    scheduleViewportStateSend(true);
+    scheduleApply();
+    return true;
+  };
+
   const scheduleMediaOverlayRecheck = (): void => {
     if (mediaOverlayTransitionTimer !== null) {
       clearTimeout(mediaOverlayTransitionTimer);
@@ -890,19 +910,25 @@ ipcRenderer.on(
 
     mediaOverlayTransitionTimer = window.setTimeout(() => {
       mediaOverlayTransitionTimer = null;
-      const previousVisible = mediaOverlayVisible;
-      const nextVisible = detectMediaOverlayVisible();
-      if (nextVisible === previousVisible) return;
-
-      mediaOverlayVisible = nextVisible;
-      sendMediaOverlayDebug("recheck-visible-change", {
-        force: true,
-        previousVisible,
-        nextVisible,
-      });
-      scheduleViewportStateSend(true);
-      scheduleApply();
+      applyComputedMediaOverlayVisibility("recheck-visible-change");
     }, MEDIA_OVERLAY_TRANSITION_MS);
+  };
+
+  const isDismissActionTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    return target.closest(dismissActionSelectors.join(", ")) !== null;
+  };
+
+  const scheduleDismissFastPathChecks = (trigger: string): void => {
+    const delays = [0, 20, 52, 96];
+    for (const delay of delays) {
+      window.setTimeout(() => {
+        applyComputedMediaOverlayVisibility("dismiss-fast-path", {
+          trigger,
+          delay,
+        });
+      }, delay);
+    }
   };
 
   const scheduleApply = (): void => {
@@ -957,6 +983,25 @@ ipcRenderer.on(
       typeof payload.visible === "boolean" ? payload.visible : null;
     applyForcedMediaOverlayVisible(visible);
   });
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!isDismissActionTarget(event.target)) return;
+      scheduleDismissFastPathChecks("dismiss-click");
+    },
+    { passive: true, capture: true },
+  );
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (!isDismissActionTarget(event.target)) return;
+      scheduleDismissFastPathChecks("dismiss-key");
+    },
+    { passive: true, capture: true },
+  );
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {

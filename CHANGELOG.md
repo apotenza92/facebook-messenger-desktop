@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.14] - 2026-02-27
+
+### Changed
+
+- **Issue #45: faster but reliable media close recovery timing polish** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Tuned media-overlay transition debounce for quicker post-close cleanup while preserving stability across route/layout variants
+  - Added/adjusted dismiss-action fast-path recheck timings so E2EE close behavior feels closer to non-E2EE without reintroducing stale media state
+
+### Validation
+
+- Re-ran regression checks after timing adjustments:
+  - `npm run test:issues`
+  - `npm run test:issue45:close:return:gui` (multiple runs)
+  - `npm run test:issue45:thread:extensive:gui` (multiple runs)
+
 ## [1.3.0-beta.13] - 2026-02-27
 
 ### Added
