@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "1.3.0-beta.11",
+  "version": "1.3.0-beta.12",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -36,6 +36,7 @@
     "test:issue45:media-history:gui": "node scripts/scan-issue45-media-history-gui.js",
     "test:issue45:real:resize:gui": "node scripts/capture-issue45-live-real-resize-gui.js",
     "test:issue45:real:flow:resize:gui": "node scripts/capture-issue45-real-flow-resize-gui.js",
+    "test:issue45:close:return:gui": "node scripts/test-issue45-close-return-gui.js",
     "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts",
     "ralphy": "PATH=\"$PWD/scripts:$PATH\" ~/code/ralphy/ralphy.sh --codex --prd PRD.md",
     "ralphy:dry": "PATH=\"$PWD/scripts:$PATH\" ~/code/ralphy/ralphy.sh --codex --prd PRD.md --dry-run"

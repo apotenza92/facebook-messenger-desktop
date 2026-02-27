@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.0-beta.12] - 2026-02-26
+
+### Fixed
+
+- **Issue #45: Facebook top bar could remain visible after closing non-E2EE media viewer** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Tightened media-overlay detection in preload to require explicit media actions (dismiss + download/share) so closed media does not keep stale media state
+  - Added main-process guard to force media-viewer state off on return navigation to normal `/messages/...` routes and re-apply chat crop immediately
+  - Added close-return regression coverage for real media flows (`npm run test:issue45:close:return:gui`)
+- **Suppress non-message Facebook activity popups while preserving call popups**
+  - Added policy-level detection for global Facebook social activity notifications (likes/comments/tags/friend requests, etc.)
+  - Suppress only likely social/activity payloads with Facebook-shell titles
+  - Explicitly keep call-like notifications allowed (`calling you`, `is calling`, etc.) to avoid interfering with incoming video/audio call behavior
+
+### Added
+
+- Notification policy regression assertions in `scripts/test-issues-regressions.ts`:
+  - non-message Facebook activity payloads are suppressed
+  - direct message payloads are not suppressed
+  - incoming call payloads are not suppressed
+
 ## [1.3.0-beta.11] - 2026-02-26
 
 ### Fixed

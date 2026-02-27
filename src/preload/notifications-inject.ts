@@ -36,6 +36,10 @@
       unreadRows: NotificationCandidate[],
     ) => NotificationMatchResult;
     createNotificationDeduper: (ttlMs?: number) => NotificationDeduper;
+    isLikelyGlobalFacebookNotification: (payload: {
+      title: string;
+      body: string;
+    }) => boolean;
   };
 
   // Call detection patterns - these phrases indicate an incoming call
@@ -96,7 +100,8 @@
     if (
       policy &&
       typeof policy.resolveNativeNotificationTarget === 'function' &&
-      typeof policy.createNotificationDeduper === 'function'
+      typeof policy.createNotificationDeduper === 'function' &&
+      typeof policy.isLikelyGlobalFacebookNotification === 'function'
     ) {
       return policy as NotificationDecisionPolicyApi;
     }
@@ -607,6 +612,19 @@
         if (!policy) {
           // Fail-closed if policy script is unavailable to avoid muted leaks.
           log('Native notification policy unavailable - suppressing', { title });
+          return;
+        }
+
+        if (
+          policy.isLikelyGlobalFacebookNotification({
+            title: String(title),
+            body: String(body),
+          })
+        ) {
+          log('Native notification suppressed - non-message Facebook activity', {
+            title,
+            body,
+          });
           return;
         }
 

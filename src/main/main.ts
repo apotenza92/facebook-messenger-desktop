@@ -917,6 +917,13 @@ function isMessagesMediaPopupUrl(input: string): boolean {
   }
 }
 
+function shouldForceMediaViewerStateOff(url: string): boolean {
+  if (!isMessagesRoute(url)) return false;
+  if (isMessagesMediaViewerRoute(url)) return false;
+  if (isMessagesMediaPopupUrl(url)) return false;
+  return true;
+}
+
 // Generate custom login page that opens Facebook in system browser
 // This allows password managers and passkeys to work natively
 function getCustomLoginPageURL(): string {
@@ -3252,6 +3259,18 @@ function createWindow(source: string = "unknown"): void {
 
     // Handle navigation events to inject disclaimer on page changes
     contentView.webContents.on("did-navigate", async (event, url) => {
+      if (
+        contentView &&
+        shouldForceMediaViewerStateOff(url) &&
+        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true
+      ) {
+        mediaViewerVisibleByWebContentsId.set(contentView.webContents.id, false);
+        console.log(
+          "[ContentView] Forced media viewer state off after navigation:",
+          url,
+        );
+      }
+
       applyContentViewBounds();
       console.log(
         "[ContentView] did-navigate:",
@@ -3284,6 +3303,18 @@ function createWindow(source: string = "unknown"): void {
     });
 
     contentView.webContents.on("did-navigate-in-page", async (event, url) => {
+      if (
+        contentView &&
+        shouldForceMediaViewerStateOff(url) &&
+        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true
+      ) {
+        mediaViewerVisibleByWebContentsId.set(contentView.webContents.id, false);
+        console.log(
+          "[ContentView] Forced media viewer state off after in-page navigation:",
+          url,
+        );
+      }
+
       applyContentViewBounds();
       console.log("[ContentView] In-page navigation to:", url);
 
@@ -4012,6 +4043,18 @@ function createWindow(source: string = "unknown"): void {
 
     // Handle navigation events to inject disclaimer on page changes
     mainWindow.webContents.on("did-navigate", async (event, url) => {
+      if (
+        mainWindow &&
+        shouldForceMediaViewerStateOff(url) &&
+        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) === true
+      ) {
+        mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
+        console.log(
+          "[MainWindow] Forced media viewer state off after navigation:",
+          url,
+        );
+      }
+
       console.log(
         "[MainWindow] did-navigate:",
         url,
@@ -4042,6 +4085,18 @@ function createWindow(source: string = "unknown"): void {
     });
 
     mainWindow.webContents.on("did-navigate-in-page", async (event, url) => {
+      if (
+        mainWindow &&
+        shouldForceMediaViewerStateOff(url) &&
+        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) === true
+      ) {
+        mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
+        console.log(
+          "[MainWindow] Forced media viewer state off after in-page navigation:",
+          url,
+        );
+      }
+
       console.log("[MainWindow] In-page navigation to:", url);
 
       // Track Facebook auth flow via SPA navigation

@@ -86,6 +86,11 @@ const runNotificationPolicyTests = () => {
     typeof notificationDecisionPolicy.createNotificationDeduper === "function",
     "notification decision policy missing createNotificationDeduper",
   );
+  assert(
+    typeof notificationDecisionPolicy.isLikelyGlobalFacebookNotification ===
+      "function",
+    "notification decision policy missing isLikelyGlobalFacebookNotification",
+  );
 
   const mutedMatch = notificationDecisionPolicy.resolveNativeNotificationTarget(
     {
@@ -195,6 +200,39 @@ const runNotificationPolicyTests = () => {
     directMatch.muted,
     false,
     "#46 direct conversation should not be muted",
+  );
+
+  const globalSocialSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "Facebook",
+      body: "Sam commented on your post",
+    });
+  assertEqual(
+    globalSocialSuppressed,
+    true,
+    "#46 should suppress non-message Facebook activity notifications",
+  );
+
+  const directMessageNotSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "Taylor",
+      body: "Are you free tonight?",
+    });
+  assertEqual(
+    directMessageNotSuppressed,
+    false,
+    "#46 should not suppress normal message notifications",
+  );
+
+  const incomingCallNotSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "Facebook",
+      body: "Alex is calling you",
+    });
+  assertEqual(
+    incomingCallNotSuppressed,
+    false,
+    "#46 should not suppress incoming call notifications",
   );
 
   const deduper = notificationDecisionPolicy.createNotificationDeduper(5000);

@@ -160,21 +160,6 @@ ipcRenderer.on(
     return false;
   };
 
-  const hasLargeViewportMedia = (): boolean => {
-    const nodes = Array.from(document.querySelectorAll("img, video")) as HTMLElement[];
-    for (const node of nodes) {
-      const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") continue;
-
-      const rect = node.getBoundingClientRect();
-      if (rect.width < 180 && rect.height < 180) continue;
-      if (rect.width * rect.height < 50000) continue;
-      if (rect.bottom < 24 || rect.top > window.innerHeight - 24) continue;
-      return true;
-    }
-    return false;
-  };
-
   const detectMediaOverlayVisible = (): boolean => {
     if (forcedMediaOverlayVisible !== null) {
       return forcedMediaOverlayVisible;
@@ -230,9 +215,9 @@ ipcRenderer.on(
       0.35,
     );
 
-    // E2EE chats can momentarily render media controls above the cropped top edge;
-    // fall back to viewport-scale media detection when action buttons are clipped.
-    return hasDownload || hasShare || hasLargeViewportMedia();
+    // Treat as media overlay only when dismiss + at least one explicit media action
+    // is visible. This avoids stale false-positives after closing media.
+    return hasDownload || hasShare;
   };
 
   const setPinnedStyle = (

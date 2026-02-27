@@ -33,6 +33,7 @@ type NotificationDecisionPolicyApi = {
     unreadRows: NotificationCandidate[],
   ) => NotificationMatchResult;
   createNotificationDeduper: (ttlMs?: number) => NotificationDeduper;
+  isLikelyGlobalFacebookNotification: (payload: NotificationPayload) => boolean;
 };
 
 const MIN_CONFIDENCE = 0.55;
@@ -209,6 +210,59 @@ function resolveNativeNotificationTarget(
   };
 }
 
+const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
+  /commented on your/i,
+  /reacted to your/i,
+  /liked your/i,
+  /shared your/i,
+  /mentioned you in/i,
+  /tagged you/i,
+  /friend request/i,
+  /accepted your friend request/i,
+  /new friend suggestion/i,
+  /is live now/i,
+  /posted in/i,
+  /new post in/i,
+  /invited you/i,
+  /birthday/i,
+  /new notification/i,
+  /new notifications/i,
+];
+
+const CALL_BODY_PATTERNS: RegExp[] = [
+  /calling you/i,
+  /incoming (video |audio )?call/i,
+  /is calling/i,
+  /video call from/i,
+  /audio call from/i,
+  /wants to call/i,
+];
+
+function isLikelyGlobalFacebookNotification(payload: NotificationPayload): boolean {
+  const title = normalizeText(payload.title);
+  const body = normalizeText(payload.body);
+
+  if (!title && !body) return false;
+
+  if (CALL_BODY_PATTERNS.some((pattern) => pattern.test(body))) {
+    return false;
+  }
+
+  const titleIsFacebookShell =
+    title === "facebook" ||
+    title.startsWith("facebook ") ||
+    title === "meta" ||
+    title.startsWith("meta ");
+
+  const hasSocialSignal = GLOBAL_SOCIAL_BODY_PATTERNS.some((pattern) =>
+    pattern.test(body),
+  );
+
+  // Only suppress when we have both a Facebook-shell title and a strong
+  // social/activity signal to avoid dropping real Messenger chat alerts.
+  return titleIsFacebookShell && hasSocialSignal;
+}
+
 function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
   const ttl = Math.max(100, Math.floor(ttlMs));
   const seenByConversation = new Map<string, number>();
@@ -230,6 +284,7 @@ function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
 const policyApi: NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget,
   createNotificationDeduper,
+  isLikelyGlobalFacebookNotification,
 };
 
 (globalThis as any).__mdNotificationDecisionPolicy = policyApi;
