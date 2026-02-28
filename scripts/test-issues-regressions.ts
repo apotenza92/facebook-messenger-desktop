@@ -91,50 +91,55 @@ const runNotificationPolicyTests = () => {
       "function",
     "notification decision policy missing isLikelyGlobalFacebookNotification",
   );
-
-  const mutedMatch = notificationDecisionPolicy.resolveNativeNotificationTarget(
-    {
-      title: "Project Squad",
-      body: "Alex: shipped the fix",
-    },
-    [
-      {
-        href: "/t/group-project",
-        title: "Project Squad",
-        body: "Alex: shipped the fix",
-        muted: true,
-        unread: true,
-      },
-      {
-        href: "/t/alex",
-        title: "Alex",
-        body: "shipped the fix",
-        muted: false,
-        unread: true,
-      },
-    ],
-  );
-  assertEqual(
-    mutedMatch.ambiguous,
-    false,
-    "#46 muted-group case should resolve to a single candidate",
-  );
-  assertEqual(
-    mutedMatch.matchedHref,
-    "/t/group-project",
-    "#46 muted-group case matched wrong conversation",
-  );
-  assertEqual(
-    mutedMatch.muted,
-    true,
-    "#46 muted-group case should mark result as muted",
+  assert(
+    typeof notificationDecisionPolicy.classifyCallNotification === "function",
+    "notification decision policy missing classifyCallNotification",
   );
 
-  const ambiguousMatch =
+  const mutedIndividualMatch =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
         title: "Alex",
-        body: "Alex sent a message in Project Squad",
+        body: "Can you review this?",
+      },
+      [
+        {
+          href: "/t/alex",
+          title: "Alex",
+          body: "Can you review this?",
+          muted: true,
+          unread: true,
+        },
+        {
+          href: "/t/group-project",
+          title: "Project Squad",
+          body: "Alex sent a message",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    mutedIndividualMatch.ambiguous,
+    false,
+    "#46 muted individual should resolve to a single candidate",
+  );
+  assertEqual(
+    mutedIndividualMatch.matchedHref,
+    "/t/alex",
+    "#46 muted individual matched wrong conversation",
+  );
+  assertEqual(
+    mutedIndividualMatch.muted,
+    true,
+    "#46 muted individual should mark result as muted",
+  );
+
+  const mutedConflictMatch =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Alex",
+        body: "sent a message",
       },
       [
         {
@@ -148,20 +153,64 @@ const runNotificationPolicyTests = () => {
           href: "/t/group-project",
           title: "Project Squad",
           body: "Alex sent a message",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    mutedConflictMatch.ambiguous,
+    true,
+    "#46 sender-title + muted group alternative should fail closed",
+  );
+  assertEqual(
+    mutedConflictMatch.reason,
+    "muted-conflict",
+    "#46 sender-title + muted group alternative should return muted-conflict reason",
+  );
+  assertEqual(
+    typeof mutedConflictMatch.matchedHref,
+    "undefined",
+    "#46 muted-conflict should not resolve a matchedHref",
+  );
+
+  const mutedGroupTitleMatch =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Project Squad",
+        body: "Alex: shipped the fix",
+      },
+      [
+        {
+          href: "/t/group-project",
+          title: "Project Squad",
+          body: "Alex: shipped the fix",
+          muted: true,
+          unread: true,
+        },
+        {
+          href: "/t/alex",
+          title: "Alex",
+          body: "shipped the fix",
           muted: false,
           unread: true,
         },
       ],
     );
   assertEqual(
-    ambiguousMatch.ambiguous,
-    true,
-    "#46 sender/group overlap should be treated as ambiguous",
+    mutedGroupTitleMatch.ambiguous,
+    false,
+    "#46 muted group-title case should resolve to a single candidate",
   );
   assertEqual(
-    typeof ambiguousMatch.matchedHref,
-    "undefined",
-    "#46 ambiguous resolution should fail closed with no matchedHref",
+    mutedGroupTitleMatch.matchedHref,
+    "/t/group-project",
+    "#46 muted group-title case matched wrong conversation",
+  );
+  assertEqual(
+    mutedGroupTitleMatch.muted,
+    true,
+    "#46 muted group-title case should mark result as muted",
   );
 
   const directMatch = notificationDecisionPolicy.resolveNativeNotificationTarget(
@@ -224,6 +273,28 @@ const runNotificationPolicyTests = () => {
     "#46 should not suppress normal message notifications",
   );
 
+  const callClassifierBodyCase =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Facebook",
+      body: "Alex is calling you",
+    });
+  assertEqual(
+    callClassifierBodyCase.isIncomingCall,
+    true,
+    "#46 call classifier should detect body-based incoming calls",
+  );
+
+  const callClassifierTitleCase =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Incoming video call",
+      body: "",
+    });
+  assertEqual(
+    callClassifierTitleCase.isIncomingCall,
+    true,
+    "#46 call classifier should detect title-based incoming calls",
+  );
+
   const incomingCallNotSuppressed =
     notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
       title: "Facebook",
@@ -232,7 +303,7 @@ const runNotificationPolicyTests = () => {
   assertEqual(
     incomingCallNotSuppressed,
     false,
-    "#46 should not suppress incoming call notifications",
+    "#46 should not globally suppress incoming call notifications",
   );
 
   const deduper = notificationDecisionPolicy.createNotificationDeduper(5000);

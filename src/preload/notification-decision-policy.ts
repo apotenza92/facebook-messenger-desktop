@@ -20,11 +20,18 @@ type NotificationMatchResult = {
     | "matched"
     | "no-candidates"
     | "low-confidence"
-    | "ambiguous-candidates";
+    | "ambiguous-candidates"
+    | "muted-conflict";
 };
 
 type NotificationDeduper = {
   shouldSuppress: (href: string, nowMs?: number) => boolean;
+};
+
+type NotificationCallClassification = {
+  isIncomingCall: boolean;
+  reason: "incoming-call-pattern" | "not-call";
+  matchedPattern?: string;
 };
 
 type NotificationDecisionPolicyApi = {
@@ -34,10 +41,19 @@ type NotificationDecisionPolicyApi = {
   ) => NotificationMatchResult;
   createNotificationDeduper: (ttlMs?: number) => NotificationDeduper;
   isLikelyGlobalFacebookNotification: (payload: NotificationPayload) => boolean;
+  classifyCallNotification: (
+    payload: NotificationPayload,
+  ) => NotificationCallClassification;
 };
 
 const MIN_CONFIDENCE = 0.55;
 const AMBIGUITY_DELTA = 0.14;
+const MUTED_CONFLICT_SCORE_FLOOR = 0.25;
+const TERSE_SENDER_BODY_PATTERNS: RegExp[] = [
+  /^(?:[a-z0-9.'_-]+\s+)?sent (?:you )?a message$/i,
+  /^(?:[a-z0-9.'_-]+\s+)?new message$/i,
+  /^(?:[a-z0-9.'_-]+\s+)?sent (?:an? )?(?:photo|video|attachment|gif|sticker)$/i,
+];
 
 function normalizeText(value: string): string {
   return (value || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -67,6 +83,21 @@ function tokenOverlapRatio(a: string[], b: string[]): number {
 function clampScore(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
+}
+
+function isTerseSenderTitlePayload(payload: NotificationPayload): boolean {
+  const payloadBody = normalizeText(payload.body);
+  if (!payloadBody) return true;
+  return TERSE_SENDER_BODY_PATTERNS.some((pattern) => pattern.test(payloadBody));
+}
+
+function createMutedConflictResult(confidence: number): NotificationMatchResult {
+  return {
+    confidence,
+    ambiguous: true,
+    muted: true,
+    reason: "muted-conflict",
+  };
 }
 
 function computeCandidateScore(
@@ -143,8 +174,6 @@ function resolveNativeNotificationTarget(
 
   const top = scored[0];
   const second = scored[1];
-  const payloadTitle = normalizeText(payload.title);
-  const payloadBody = normalizeText(payload.body);
 
   if (!top || top.score < MIN_CONFIDENCE) {
     return {
@@ -153,6 +182,33 @@ function resolveNativeNotificationTarget(
       muted: false,
       reason: "low-confidence",
     };
+  }
+
+  const payloadTitle = normalizeText(payload.title);
+  const payloadBody = normalizeText(payload.body);
+  const topTitle = normalizeText(top.candidate.title);
+  const topLooksLikeSenderTitle =
+    Boolean(payloadTitle) && Boolean(topTitle) && payloadTitle === topTitle;
+  const terseSenderPayload = topLooksLikeSenderTitle && isTerseSenderTitlePayload(payload);
+
+  for (const alternative of scored.slice(1)) {
+    if (!alternative.candidate.muted || top.candidate.muted) continue;
+    const alternativeTitle = normalizeText(alternative.candidate.title);
+    const alternativeBody = normalizeText(alternative.candidate.body);
+    if (!alternativeTitle || alternativeTitle === topTitle) continue;
+
+    const explicitMutedGroupReference =
+      payloadBody.includes(`in ${alternativeTitle}`) &&
+      alternative.score >= MIN_CONFIDENCE - 0.1;
+    const terseMutedGroupConflict =
+      terseSenderPayload &&
+      alternative.score >= MUTED_CONFLICT_SCORE_FLOOR &&
+      Boolean(payloadTitle) &&
+      alternativeBody.includes(payloadTitle);
+
+    if (explicitMutedGroupReference || terseMutedGroupConflict) {
+      return createMutedConflictResult(top.score);
+    }
   }
 
   if (second) {
@@ -170,6 +226,9 @@ function resolveNativeNotificationTarget(
       topTitle === payloadTitle &&
       second.score >= MIN_CONFIDENCE - 0.1
     ) {
+      if (second.candidate.muted) {
+        return createMutedConflictResult(top.score);
+      }
       return {
         confidence: top.score,
         ambiguous: true,
@@ -183,6 +242,9 @@ function resolveNativeNotificationTarget(
       secondTitle === payloadTitle &&
       second.score >= MIN_CONFIDENCE - 0.1
     ) {
+      if (top.candidate.muted) {
+        return createMutedConflictResult(top.score);
+      }
       return {
         confidence: top.score,
         ambiguous: true,
@@ -193,6 +255,9 @@ function resolveNativeNotificationTarget(
   }
 
   if (second && top.score - second.score < AMBIGUITY_DELTA) {
+    if (top.candidate.muted || second.candidate.muted) {
+      return createMutedConflictResult(top.score);
+    }
     return {
       confidence: top.score,
       ambiguous: true,
@@ -238,13 +303,33 @@ const CALL_BODY_PATTERNS: RegExp[] = [
   /wants to call/i,
 ];
 
+function classifyCallNotification(
+  payload: NotificationPayload,
+): NotificationCallClassification {
+  const combined = `${normalizeText(payload.title)} ${normalizeText(payload.body)}`.trim();
+  if (!combined) {
+    return { isIncomingCall: false, reason: "not-call" };
+  }
+
+  const matchedPattern = CALL_BODY_PATTERNS.find((pattern) => pattern.test(combined));
+  if (!matchedPattern) {
+    return { isIncomingCall: false, reason: "not-call" };
+  }
+
+  return {
+    isIncomingCall: true,
+    reason: "incoming-call-pattern",
+    matchedPattern: matchedPattern.source,
+  };
+}
+
 function isLikelyGlobalFacebookNotification(payload: NotificationPayload): boolean {
   const title = normalizeText(payload.title);
   const body = normalizeText(payload.body);
 
   if (!title && !body) return false;
 
-  if (CALL_BODY_PATTERNS.some((pattern) => pattern.test(body))) {
+  if (classifyCallNotification(payload).isIncomingCall) {
     return false;
   }
 
@@ -285,6 +370,7 @@ const policyApi: NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget,
   createNotificationDeduper,
   isLikelyGlobalFacebookNotification,
+  classifyCallNotification,
 };
 
 (globalThis as any).__mdNotificationDecisionPolicy = policyApi;

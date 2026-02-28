@@ -30,6 +30,11 @@
   type NotificationDeduper = {
     shouldSuppress: (href: string, nowMs?: number) => boolean;
   };
+  type NotificationCallClassification = {
+    isIncomingCall: boolean;
+    reason: string;
+    matchedPattern?: string;
+  };
   type NotificationDecisionPolicyApi = {
     resolveNativeNotificationTarget: (
       payload: { title: string; body: string },
@@ -40,22 +45,10 @@
       title: string;
       body: string;
     }) => boolean;
-  };
-
-  // Call detection patterns - these phrases indicate an incoming call
-  const callPatterns = [
-    /calling you/i,
-    /incoming (video |audio )?call/i,
-    /is calling/i,
-    /video call from/i,
-    /audio call from/i,
-    /wants to call/i,
-  ];
-
-  // Check if text indicates an incoming call
-  const isCallNotification = (title: string, body: string): boolean => {
-    const combined = `${title} ${body}`;
-    return callPatterns.some((pattern) => pattern.test(combined));
+    classifyCallNotification: (payload: {
+      title: string;
+      body: string;
+    }) => NotificationCallClassification;
   };
 
   // Signal the main process to bring the window to foreground for incoming call
@@ -101,11 +94,36 @@
       policy &&
       typeof policy.resolveNativeNotificationTarget === 'function' &&
       typeof policy.createNotificationDeduper === 'function' &&
-      typeof policy.isLikelyGlobalFacebookNotification === 'function'
+      typeof policy.isLikelyGlobalFacebookNotification === 'function' &&
+      typeof policy.classifyCallNotification === 'function'
     ) {
       return policy as NotificationDecisionPolicyApi;
     }
     return null;
+  };
+
+  const classifyCallPayload = (
+    title: string,
+    body: string,
+  ): NotificationCallClassification => {
+    const policy = getNotificationDecisionPolicy();
+    if (!policy) {
+      return { isIncomingCall: false, reason: 'policy-unavailable' };
+    }
+
+    return policy.classifyCallNotification({
+      title: String(title),
+      body: String(body),
+    });
+  };
+
+  const normalizeCallDedupeKey = (title: string, body: string): string => {
+    const normalized = `${title} ${body}`
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    return `native:call:${normalized}`;
   };
 
   // ============================================================================
@@ -231,11 +249,23 @@
   };
 
   // Send notification via bridge or postMessage
-  const sendNotification = (title: string, body: string, source: string, icon?: string, href?: string) => {
+  const sendNotification = (
+    title: string,
+    body: string,
+    source: string,
+    icon?: string,
+    href?: string,
+    callClassification?: NotificationCallClassification,
+  ) => {
     log(`=== SENDING NOTIFICATION [${source}] ===`, { title, body: body.slice(0, 50), href });
 
-    // Check if this is an incoming call notification - bring window to foreground
-    if (isCallNotification(title, body)) {
+    const callResult = callClassification || classifyCallPayload(title, body);
+    if (callResult.isIncomingCall) {
+      log('Notification classified as incoming call', {
+        source,
+        reason: callResult.reason,
+        matchedPattern: callResult.matchedPattern,
+      });
       signalIncomingCall();
     }
 
@@ -589,7 +619,56 @@
 
         log('=== NATIVE NOTIFICATION INTERCEPTED ===', { id: this._id, title, body });
 
-        // CRITICAL: Suppress notifications during settling period AND initial startup
+        const policy = getNotificationDecisionPolicy();
+        if (!policy) {
+          // Fail-closed if policy script is unavailable to avoid muted leaks.
+          log('Native notification policy unavailable - suppressing', { title });
+          return;
+        }
+
+        const nativePayload = {
+          title: String(title),
+          body: String(body),
+        };
+        const callClassification = policy.classifyCallNotification(nativePayload);
+        if (callClassification.isIncomingCall) {
+          const bodyStr = String(body).slice(0, 100);
+          const callDedupeKey = normalizeCallDedupeKey(
+            nativePayload.title,
+            nativePayload.body,
+          );
+          if (hasAlreadyNotified(callDedupeKey, bodyStr)) {
+            log('Native call notification deduplicated', {
+              title,
+              dedupeKey: callDedupeKey,
+            });
+            return;
+          }
+          if (nativeConversationDeduper?.shouldSuppress(callDedupeKey)) {
+            log('Native call notification suppressed by TTL deduper', {
+              title,
+              dedupeKey: callDedupeKey,
+            });
+            return;
+          }
+          recordNotification(callDedupeKey, bodyStr);
+          log('Native notification classified as incoming call - bypassing mute matching', {
+            title,
+            reason: callClassification.reason,
+            matchedPattern: callClassification.matchedPattern,
+          });
+          sendNotification(
+            nativePayload.title,
+            nativePayload.body,
+            'NATIVE_CALL',
+            options?.icon as string,
+            undefined,
+            callClassification,
+          );
+          return;
+        }
+
+        // CRITICAL: Suppress non-call notifications during settling period AND initial startup
         // Messenger often fires batched notifications for old messages when the app loads
         const timeSinceStart = Date.now() - appStartTime;
         if (isSettling || timeSinceStart < NATIVE_NOTIFICATION_SUPPRESS_MS) {
@@ -601,26 +680,12 @@
           return;
         }
 
-        const bodyStr = String(body).slice(0, 100);
-
         if (!canSendNotification()) {
           log('Native notification skipped outside messages route', { title });
           return;
         }
 
-        const policy = getNotificationDecisionPolicy();
-        if (!policy) {
-          // Fail-closed if policy script is unavailable to avoid muted leaks.
-          log('Native notification policy unavailable - suppressing', { title });
-          return;
-        }
-
-        if (
-          policy.isLikelyGlobalFacebookNotification({
-            title: String(title),
-            body: String(body),
-          })
-        ) {
+        if (policy.isLikelyGlobalFacebookNotification(nativePayload)) {
           log('Native notification suppressed - non-message Facebook activity', {
             title,
             body,
@@ -628,6 +693,7 @@
           return;
         }
 
+        const bodyStr = String(body).slice(0, 100);
         const sidebar = findSidebarElement();
         if (!sidebar) {
           log('Native notification skipped - sidebar unavailable', { title });
@@ -636,27 +702,27 @@
 
         const rows = Array.from(sidebar.querySelectorAll(selectors.conversationRow));
         const rowByHref = new Map<string, Element>();
-        const unreadCandidates: NotificationCandidate[] = [];
+        const conversationCandidates: NotificationCandidate[] = [];
 
         for (const row of rows) {
-          if (!isConversationUnread(row)) continue;
           const info = extractConversationInfo(row);
           if (!info) continue;
 
+          const unread = isConversationUnread(row);
           const normalizedHref = normalizeConversationKey(info.href);
           rowByHref.set(normalizedHref, row);
-          unreadCandidates.push({
+          conversationCandidates.push({
             href: normalizedHref,
             title: info.title,
             body: info.body,
             muted: isConversationMuted(row),
-            unread: true,
+            unread,
           });
         }
 
         const match = policy.resolveNativeNotificationTarget(
           { title: String(title), body: String(body) },
-          unreadCandidates,
+          conversationCandidates,
         );
         log('Native notification match', match);
 
@@ -681,6 +747,14 @@
         const matchedRow = rowByHref.get(normalizedHref);
         if (!matchedRow) {
           log('Native notification match had no unread row - suppressing', {
+            title,
+            href: normalizedHref,
+          });
+          return;
+        }
+
+        if (!isConversationUnread(matchedRow)) {
+          log('Native notification matched read conversation - suppressing', {
             title,
             href: normalizedHref,
           });

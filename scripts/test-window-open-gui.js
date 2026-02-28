@@ -118,7 +118,15 @@ async function triggerWindowOpen(electronApp, url) {
 }
 
 async function triggerAboutBlankThenNavigate(electronApp, targetUrl) {
-  await electronApp.evaluate(async ({ BrowserWindow }, nextUrl) => {
+  await triggerAboutBlankNavigationSequence(electronApp, [targetUrl]);
+}
+
+async function triggerAboutBlankNavigationSequence(
+  electronApp,
+  navigationUrls,
+  hopDelayMs = 120,
+) {
+  await electronApp.evaluate(async ({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) throw new Error('No main window');
 
@@ -127,13 +135,6 @@ async function triggerAboutBlankThenNavigate(electronApp, targetUrl) {
     const script = `(() => {
       const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
       if (!popup) return;
-      setTimeout(() => {
-        try {
-          popup.location.href = ${JSON.stringify(nextUrl)};
-        } catch {
-          // ignore
-        }
-      }, 120);
     })();`;
 
     try {
@@ -141,17 +142,49 @@ async function triggerAboutBlankThenNavigate(electronApp, targetUrl) {
     } catch {
       // Ignore result errors; open handler side effects are what we assert.
     }
-  }, targetUrl);
+  });
+
+  await wait(hopDelayMs);
+
+  for (const targetUrl of navigationUrls) {
+    await electronApp.evaluate(async ({ BrowserWindow }, nextUrl) => {
+      const windows = BrowserWindow.getAllWindows();
+      const mainWindow =
+        windows.find((win) => win.getBrowserViews().length > 0) || windows[0];
+      const childWindow = [...windows]
+        .reverse()
+        .find((win) => win !== mainWindow && !win.isDestroyed());
+      if (!childWindow) {
+        throw new Error('No child window to navigate');
+      }
+
+      try {
+        await childWindow.webContents.executeJavaScript(
+          `window.location.href = ${JSON.stringify(nextUrl)};`,
+          true,
+        );
+      } catch {
+        // Ignore aborted navigations; side effects are asserted separately.
+      }
+    }, targetUrl);
+    await wait(hopDelayMs);
+  }
 }
 
 async function runCase(electronApp, testCase) {
   const before = await readState(electronApp);
-  if (testCase.bootstrapViaAboutBlank) {
+  if (Array.isArray(testCase.bootstrapNavigationSequence)) {
+    await triggerAboutBlankNavigationSequence(
+      electronApp,
+      testCase.bootstrapNavigationSequence,
+      testCase.bootstrapHopDelayMs,
+    );
+  } else if (testCase.bootstrapViaAboutBlank) {
     await triggerAboutBlankThenNavigate(electronApp, testCase.url);
   } else {
     await triggerWindowOpen(electronApp, testCase.url);
   }
-  await wait(800);
+  await wait(typeof testCase.waitAfterMs === 'number' ? testCase.waitAfterMs : 800);
   const after = await readState(electronApp);
 
   const newWindows = after.childWindowCount - before.childWindowCount;
@@ -213,6 +246,27 @@ async function run() {
         url: 'https://www.facebook.com/messages/t/1234567890',
         bootstrapViaAboutBlank: true,
         expected: { newWindows: 1 },
+      },
+      {
+        name: 'About:blank multi-hop bootstrap (messages -> messages -> call) stays in child window',
+        url: 'https://www.facebook.com/videochat/',
+        bootstrapNavigationSequence: [
+          'https://www.facebook.com/messages/t/1111111111',
+          'https://www.facebook.com/messages/t/2222222222',
+          'https://www.facebook.com/videochat/',
+        ],
+        waitAfterMs: 1200,
+        expected: { newWindows: 1 },
+      },
+      {
+        name: 'About:blank bootstrap external escape is blocked and routed external',
+        url: 'https://example.com/',
+        bootstrapNavigationSequence: [
+          'https://www.facebook.com/messages/t/1234567890',
+          'https://example.com/',
+        ],
+        waitAfterMs: 1200,
+        expected: { newWindows: 0, externalUrl: 'https://example.com/' },
       },
       {
         name: 'Facebook thread URL opens in-app (no child window)',

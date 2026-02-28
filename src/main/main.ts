@@ -177,6 +177,8 @@ const DEFAULT_MESSAGES_TOP_CROP = 56;
 const MIN_MESSAGES_TOP_CROP = DEFAULT_MESSAGES_TOP_CROP;
 const MAX_MESSAGES_TOP_CROP = 120;
 const MESSAGES_TOP_SEAM_TRIM = 0;
+const ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS = 3;
+const ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS = 15_000;
 
 let dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 let applyContentViewBoundsHandler: (() => void) | null = null;
@@ -370,6 +372,27 @@ function normalizeMessagesTopCrop(value: unknown): number | null {
     MIN_MESSAGES_TOP_CROP,
     Math.min(MAX_MESSAGES_TOP_CROP, Math.round(parsed)),
   );
+}
+
+function getAllowedChildBootstrapSiteKey(
+  input: string,
+): "facebook.com" | "messenger.com" | null {
+  try {
+    const parsed = new URL(input);
+    const hostname = parsed.hostname.toLowerCase();
+
+    if (isFacebookHost(hostname)) {
+      return "facebook.com";
+    }
+
+    if (hostname === "messenger.com" || hostname.endsWith(".messenger.com")) {
+      return "messenger.com";
+    }
+  } catch {
+    // Ignore parse failures and treat as non-bootstrap URL.
+  }
+
+  return null;
 }
 
 // Detect if this is a beta app installation
@@ -3035,11 +3058,13 @@ function createWindow(source: string = "unknown"): void {
       });
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
-      // Some Messenger call flows bootstrap a pop-up as about:blank and then navigate
-      // to a messages thread before transitioning into the actual RTC URL.
-      // Allow exactly this first same-site navigation so call windows don't get stuck blank.
+      // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
+      // multiple same-site hops before reaching the final RTC URL.
+      // Allow a bounded bootstrap window, then fall back to strict routing.
       const childOpenedAsAboutBlank = details.url === "about:blank";
-      let allowedInitialBootstrapNavigation = false;
+      const bootstrapWindowStartedAt = Date.now();
+      let bootstrapNavigationCount = 0;
+      let bootstrapSiteKey: "facebook.com" | "messenger.com" | null = null;
 
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
@@ -3051,17 +3076,33 @@ function createWindow(source: string = "unknown"): void {
           return;
         }
 
-        if (
-          childOpenedAsAboutBlank &&
-          !allowedInitialBootstrapNavigation &&
-          isFacebookOrMessengerUrl(navigationUrl)
-        ) {
-          allowedInitialBootstrapNavigation = true;
-          console.log(
-            "[Window] Allowing initial about:blank child bootstrap navigation:",
-            navigationUrl,
-          );
-          return;
+        if (childOpenedAsAboutBlank) {
+          const elapsedMs = Date.now() - bootstrapWindowStartedAt;
+          const withinBootstrapWindow =
+            elapsedMs <= ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS;
+          const withinBootstrapNavigationBudget =
+            bootstrapNavigationCount <
+            ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS;
+          const navigationSiteKey =
+            getAllowedChildBootstrapSiteKey(navigationUrl);
+          const isSameBootstrapSite =
+            navigationSiteKey !== null &&
+            (bootstrapSiteKey === null ||
+              bootstrapSiteKey === navigationSiteKey);
+
+          if (
+            withinBootstrapWindow &&
+            withinBootstrapNavigationBudget &&
+            isSameBootstrapSite
+          ) {
+            bootstrapNavigationCount += 1;
+            bootstrapSiteKey = navigationSiteKey;
+            console.log(
+              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${elapsedMs}ms):`,
+              navigationUrl,
+            );
+            return;
+          }
         }
 
         const navigationAction = decideWindowOpenAction(navigationUrl);
@@ -3805,11 +3846,13 @@ function createWindow(source: string = "unknown"): void {
       });
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
-      // Some Messenger call flows bootstrap a pop-up as about:blank and then navigate
-      // to a messages thread before transitioning into the actual RTC URL.
-      // Allow exactly this first same-site navigation so call windows don't get stuck blank.
+      // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
+      // multiple same-site hops before reaching the final RTC URL.
+      // Allow a bounded bootstrap window, then fall back to strict routing.
       const childOpenedAsAboutBlank = details.url === "about:blank";
-      let allowedInitialBootstrapNavigation = false;
+      const bootstrapWindowStartedAt = Date.now();
+      let bootstrapNavigationCount = 0;
+      let bootstrapSiteKey: "facebook.com" | "messenger.com" | null = null;
 
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
@@ -3821,17 +3864,33 @@ function createWindow(source: string = "unknown"): void {
           return;
         }
 
-        if (
-          childOpenedAsAboutBlank &&
-          !allowedInitialBootstrapNavigation &&
-          isFacebookOrMessengerUrl(navigationUrl)
-        ) {
-          allowedInitialBootstrapNavigation = true;
-          console.log(
-            "[Window] Allowing initial about:blank child bootstrap navigation:",
-            navigationUrl,
-          );
-          return;
+        if (childOpenedAsAboutBlank) {
+          const elapsedMs = Date.now() - bootstrapWindowStartedAt;
+          const withinBootstrapWindow =
+            elapsedMs <= ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS;
+          const withinBootstrapNavigationBudget =
+            bootstrapNavigationCount <
+            ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS;
+          const navigationSiteKey =
+            getAllowedChildBootstrapSiteKey(navigationUrl);
+          const isSameBootstrapSite =
+            navigationSiteKey !== null &&
+            (bootstrapSiteKey === null ||
+              bootstrapSiteKey === navigationSiteKey);
+
+          if (
+            withinBootstrapWindow &&
+            withinBootstrapNavigationBudget &&
+            isSameBootstrapSite
+          ) {
+            bootstrapNavigationCount += 1;
+            bootstrapSiteKey = navigationSiteKey;
+            console.log(
+              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${elapsedMs}ms):`,
+              navigationUrl,
+            );
+            return;
+          }
         }
 
         const navigationAction = decideWindowOpenAction(navigationUrl);

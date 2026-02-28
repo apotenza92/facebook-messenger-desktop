@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "1.3.0-beta.14",
+  "version": "1.3.0-beta.15",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -23,7 +23,9 @@
     "dist:linux:x64": "npm run build && electron-builder --config electron-builder.config.js --linux --x64 --publish=never",
     "dist:all": "npm run build && electron-builder --config electron-builder.config.js --mac --win --linux --publish=never",
     "test:notification": "node -r ./scripts/register-ts.js scripts/test-notification-click.ts",
-    "test:issues": "node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts",
+    "test:issues:deterministic": "node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts",
+    "test:issues:e2e": "node scripts/test-window-open-gui.js",
+    "test:issues": "npm run test:issues:deterministic && npm run test:issues:e2e",
     "test:window-open": "node -r ./scripts/register-ts.js scripts/test-window-open-policy.ts",
     "test:issue45:gui": "node scripts/test-issue45-gui.js",
     "test:issue45:buttons:gui": "node scripts/test-issue45-buttons-resize-gui.js",

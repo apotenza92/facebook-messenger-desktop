@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0-beta.15] - 2026-02-28
+
+### Fixed
+
+- **Issue #46: muted group notifications could still leak in sender/group ambiguity cases** ([#46](https://github.com/apotenza92/facebook-messenger-desktop/issues/46))
+  - Tightened notification target policy to fail closed with explicit `muted-conflict` classification when sender-style payloads can also map to muted group conversations
+  - Expanded deterministic regression coverage for muted individual, muted group-title, and sender/group overlap scenarios
+- **Issue #47: incoming audio/video call popup could fail to appear in latest beta flows** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Hardened about:blank child-window bootstrap handling to allow a bounded multi-hop same-site call startup sequence before strict popup routing resumes
+  - Routed incoming call notification classification through the policy API and ensured call notifications are not blocked by message-only mute matching
+  - Added GUI regression coverage for multi-hop about:blank call bootstrap and external escape routing
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.14] - 2026-02-27
 
 ### Changed
