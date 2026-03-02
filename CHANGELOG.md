@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.0-beta.16] - 2026-03-02
+
+### Fixed
+
+- **Issue #47: incoming call top-gap lifecycle regressions** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Kept incoming-call overlay hint state scoped to the active Messenger webContents and added watchdog/load/navigation recovery so stale hint states are cleared reliably.
+  - Added explicit incoming-call ended/declined signal path from injected page observers to clear overlay hint/crop state immediately when call controls disappear.
+  - Prevented incoming-call overlays from being misclassified as media overlay mode, avoiding persistent top-gap layout artifacts.
+- **Issue #47: outgoing call popup startup routing delays** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Refined about:blank child-window bootstrap policy to support bounded trusted intermediate hops used by Facebook call startup flows while maintaining strict routing controls for non-call destinations.
+  - Added stronger policy + GUI regression coverage for outgoing call bootstrap sequences (`call-safe -> thread -> call`, trusted intermediate hops, expiry/negative cases).
+- **Incoming call notification polish**
+  - Improved caller-name extraction/formatting and dedupe key stability across DOM/native call signal paths to reduce duplicate/ugly notification text.
+- **Dev stability**
+  - Guarded stdout/stderr broken-pipe (`EPIPE`) cases during local/dev harness shutdown so interrupted piped runs no longer throw uncaught exceptions.
+
+### Validation
+
+- `npm run build`
+- `npm run test:window-open`
+- `npm run test:issues`
+- `npm run test:release`
+
 ## [1.3.0-beta.15] - 2026-02-28
 
 ### Fixed

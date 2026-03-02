@@ -32,7 +32,11 @@ assets/tray/        # System tray icons
 
 **Beta releases** (e.g., `1.2.3-beta.1`): May be released without explicit permission.
 
-**Stable releases** (e.g., `1.2.3`): Always ask and wait for explicit user confirmation before running `./scripts/release.sh`.
+**Stable releases** (e.g., `1.2.3`): Always ask and wait for explicit user confirmation before running `./scripts/release.sh`. The script now enforces this by requiring you to type `yes do it` exactly for stable versions.
+
+**Stable dry runs**: `./scripts/release.sh 1.2.3 --dry-run` still requires `yes do it`.
+
+**Beta/prerelease releases** (e.g., `1.2.3-beta.1`): Exempt from the `yes do it` prompt and can run normally (including `--dry-run`).
 
 **Safe without asking**: commits, pushing to main, updating CHANGELOG.md/package.json, running local builds, beta releases.
 

@@ -36,6 +36,25 @@ import {
   shouldOpenInApp,
   decideWindowOpenAction,
 } from "./url-policy";
+import {
+  ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
+  shouldAllowAboutBlankChildBootstrapNavigation,
+} from "./about-blank-bootstrap-policy";
+import {
+  applyIncomingCallOverlayHintSignal,
+  clearIncomingCallOverlayHintState,
+  collectStaleIncomingCallOverlayHintIds,
+  parseIncomingCallOverlayHintVisible,
+  shouldAcceptIncomingCallOverlayHintSender,
+  type IncomingCallOverlayHintPayload,
+  type IncomingCallOverlayHintState,
+} from "./incoming-call-overlay-policy";
+import {
+  INCOMING_CALL_NO_KEY_MAP_KEY,
+  applyIncomingCallWindowFocus,
+  decideIncomingCallNativeNotification,
+  type IncomingCallIpcPayload,
+} from "./incoming-call-ipc-policy";
 import { autoUpdater } from "electron-updater";
 
 // On Linux AppImage: fork and detach from terminal so the command returns immediately
@@ -112,6 +131,39 @@ const isDev =
   (!app.isPackaged && !process.env.FLATPAK_ID) ||
   process.env.NODE_ENV === "development";
 
+const isBrokenPipeError = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const err = error as NodeJS.ErrnoException;
+  return err.code === "EPIPE" || /write\s+EPIPE/i.test(String(err.message || ""));
+};
+
+const installPipeErrorGuards = (): void => {
+  const swallowStreamError = (error: unknown) => {
+    if (isBrokenPipeError(error)) {
+      return;
+    }
+
+    setImmediate(() => {
+      throw error;
+    });
+  };
+
+  process.stdout?.on?.("error", swallowStreamError);
+  process.stderr?.on?.("error", swallowStreamError);
+
+  process.on("uncaughtException", (error) => {
+    if (isBrokenPipeError(error)) {
+      return;
+    }
+
+    setImmediate(() => {
+      throw error;
+    });
+  });
+};
+
+installPipeErrorGuards();
+
 const appStartTime = Date.now();
 console.log(
   `[App] Starting at ${appStartTime} on ${process.platform} ${process.arch}`,
@@ -168,6 +220,8 @@ let isCreatingWindow = false; // Guard against race conditions during window cre
 let lastShowWindowTime = 0; // Debounce for showMainWindow to prevent double window on Linux
 let appReady = false; // Flag to indicate app is fully initialized (window created)
 let pendingShowWindow = false; // Queue second-instance events that arrive before app is ready
+const incomingCallNotificationByKey = new Map<string, number>();
+let lastNoKeyIncomingCallNotificationAt = 0;
 type MenuBarMode = "always" | "hover" | "never";
 let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
@@ -177,13 +231,55 @@ const DEFAULT_MESSAGES_TOP_CROP = 56;
 const MIN_MESSAGES_TOP_CROP = DEFAULT_MESSAGES_TOP_CROP;
 const MAX_MESSAGES_TOP_CROP = 120;
 const MESSAGES_TOP_SEAM_TRIM = 0;
-const ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS = 3;
-const ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS = 15_000;
+const INCOMING_CALL_OVERLAY_HINT_TTL_MS = 30_000;
+const INCOMING_CALL_OVERLAY_WATCHDOG_INTERVAL_MS = 5_000;
 
 let dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 let applyContentViewBoundsHandler: (() => void) | null = null;
 let lastMessagesUnreadCount = 0;
 const mediaViewerVisibleByWebContentsId = new Map<number, boolean>();
+const incomingCallOverlayVisibleByWebContentsId = new Map<number, boolean>();
+const incomingCallOverlayLastHintAtByWebContentsId = new Map<number, number>();
+const incomingCallOverlayHintState: IncomingCallOverlayHintState = {
+  visibleByWebContentsId: incomingCallOverlayVisibleByWebContentsId,
+  lastHintAtByWebContentsId: incomingCallOverlayLastHintAtByWebContentsId,
+};
+let incomingCallOverlayWatchdogTimer: NodeJS.Timeout | null = null;
+
+function formatIncomingCallCaller(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+
+  const cleaned = raw
+    .replace(/[|•·]+/g, " ")
+    .replace(/\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi, " ")
+    .replace(/\b(incoming|video|audio|call|from|on|messenger|facebook)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return null;
+
+  const words = cleaned.split(" ").filter(Boolean);
+  const compact: string[] = [];
+  for (const word of words) {
+    if (
+      compact.length === 0 ||
+      compact[compact.length - 1].toLowerCase() !== word.toLowerCase()
+    ) {
+      compact.push(word);
+    }
+  }
+
+  if (compact.length % 2 === 0 && compact.length > 0) {
+    const half = compact.length / 2;
+    const firstHalf = compact.slice(0, half).join(" ").toLowerCase();
+    const secondHalf = compact.slice(half).join(" ").toLowerCase();
+    if (firstHalf === secondHalf) {
+      return compact.slice(0, half).join(" ").slice(0, 80);
+    }
+  }
+
+  return compact.join(" ").slice(0, 80) || null;
+}
 
 type MediaOverlayDebugEvent = {
   timestamp: number;
@@ -270,6 +366,12 @@ async function exportIssue45DebugReport(): Promise<void> {
     currentState: {
       mediaViewerVisibleByWebContentsId: Array.from(
         mediaViewerVisibleByWebContentsId.entries(),
+      ),
+      incomingCallOverlayVisibleByWebContentsId: Array.from(
+        incomingCallOverlayVisibleByWebContentsId.entries(),
+      ),
+      incomingCallOverlayLastHintAtByWebContentsId: Array.from(
+        incomingCallOverlayLastHintAtByWebContentsId.entries(),
       ),
       currentMessengerUrl: getMessengerWebContents()?.getURL() || null,
     },
@@ -372,27 +474,6 @@ function normalizeMessagesTopCrop(value: unknown): number | null {
     MIN_MESSAGES_TOP_CROP,
     Math.min(MAX_MESSAGES_TOP_CROP, Math.round(parsed)),
   );
-}
-
-function getAllowedChildBootstrapSiteKey(
-  input: string,
-): "facebook.com" | "messenger.com" | null {
-  try {
-    const parsed = new URL(input);
-    const hostname = parsed.hostname.toLowerCase();
-
-    if (isFacebookHost(hostname)) {
-      return "facebook.com";
-    }
-
-    if (hostname === "messenger.com" || hostname.endsWith(".messenger.com")) {
-      return "messenger.com";
-    }
-  } catch {
-    // Ignore parse failures and treat as non-bootstrap URL.
-  }
-
-  return null;
 }
 
 // Detect if this is a beta app installation
@@ -1086,6 +1167,115 @@ function shouldForceMediaViewerStateOff(url: string): boolean {
   if (isMessagesMediaViewerRoute(url)) return false;
   if (isMessagesMediaPopupUrl(url)) return false;
   return true;
+}
+
+function maybeRecoverMediaViewerStateAfterIncomingCallClear(
+  webContentsId: number,
+  urlForLog: string,
+  eventName: string,
+): void {
+  if (
+    shouldForceMediaViewerStateOff(urlForLog) &&
+    mediaViewerVisibleByWebContentsId.get(webContentsId) === true
+  ) {
+    mediaViewerVisibleByWebContentsId.set(webContentsId, false);
+    pushMediaOverlayDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: eventName,
+      webContentsId,
+      url: urlForLog,
+    });
+  }
+}
+
+function clearIncomingCallOverlayStateForWebContents(
+  webContents: Electron.WebContents,
+  reason: string,
+  eventName: string,
+): boolean {
+  const transition = clearIncomingCallOverlayHintState(
+    incomingCallOverlayHintState,
+    webContents.id,
+  );
+  if (!transition.changed) {
+    return false;
+  }
+
+  const urlForLog = webContents.getURL();
+  console.log(
+    `[ContentView] Incoming call overlay hint reset (${reason}), url=${urlForLog}`,
+  );
+  pushMediaOverlayDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: eventName,
+    webContentsId: webContents.id,
+    url: urlForLog,
+    previousVisible: transition.previousVisible,
+    nextVisible: false,
+    reason,
+  });
+
+  maybeRecoverMediaViewerStateAfterIncomingCallClear(
+    webContents.id,
+    urlForLog,
+    "media-viewer-state-recovered-after-incoming-call",
+  );
+
+  return true;
+}
+
+function runIncomingCallOverlayWatchdogTick(): void {
+  const now = Date.now();
+  const staleIds = collectStaleIncomingCallOverlayHintIds(
+    incomingCallOverlayHintState,
+    now,
+    INCOMING_CALL_OVERLAY_HINT_TTL_MS,
+  );
+
+  if (staleIds.length === 0) {
+    return;
+  }
+
+  const activeMessengerContents = getMessengerWebContents();
+  const activeMessengerContentsId = activeMessengerContents?.id ?? null;
+
+  for (const staleId of staleIds) {
+    if (activeMessengerContents && staleId === activeMessengerContentsId) {
+      const wasCleared = clearIncomingCallOverlayStateForWebContents(
+        activeMessengerContents,
+        "watchdog-stale-timeout",
+        "incoming-call-overlay-hint-watchdog-timeout",
+      );
+      if (wasCleared) {
+        applyContentViewBoundsHandler?.();
+      }
+      continue;
+    }
+
+    clearIncomingCallOverlayHintState(incomingCallOverlayHintState, staleId);
+  }
+}
+
+function ensureIncomingCallOverlayWatchdog(): void {
+  if (incomingCallOverlayWatchdogTimer !== null) {
+    return;
+  }
+
+  incomingCallOverlayWatchdogTimer = setInterval(
+    runIncomingCallOverlayWatchdogTick,
+    INCOMING_CALL_OVERLAY_WATCHDOG_INTERVAL_MS,
+  );
+}
+
+function stopIncomingCallOverlayWatchdog(): void {
+  if (incomingCallOverlayWatchdogTimer === null) {
+    return;
+  }
+
+  clearInterval(incomingCallOverlayWatchdogTimer);
+  incomingCallOverlayWatchdogTimer = null;
 }
 
 // Generate custom login page that opens Facebook in system browser
@@ -2631,6 +2821,8 @@ function createWindow(source: string = "unknown"): void {
   const mainWindowWebContentsId = mainWindow.webContents.id;
   let contentViewWebContentsId: number | null = null;
 
+  ensureIncomingCallOverlayWatchdog();
+
   // Explicitly set window icon for Windows/Linux taskbar (production only)
   // Dev mode uses default Electron icon for consistency across platforms
   if (!isMac && !isDev) {
@@ -2676,13 +2868,17 @@ function createWindow(source: string = "unknown"): void {
     const currentUrl = contentView.webContents.getURL();
     const mediaOverlayVisible =
       mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true;
-    // Keep crop scoped to core /messages chat routes. Media viewers need
-    // their native top controls (close/download/share) visible.
+    const incomingCallOverlayVisible =
+      incomingCallOverlayVisibleByWebContentsId.get(contentView.webContents.id) ===
+      true;
+    // Keep crop scoped to core /messages chat routes. Media viewers and incoming
+    // call overlays need their native controls visible.
     const isMessagesCropRoute =
       isMessagesRoute(currentUrl) &&
       !isMessagesMediaViewerRoute(currentUrl) &&
       !isMessagesMediaPopupUrl(currentUrl) &&
-      !mediaOverlayVisible;
+      !mediaOverlayVisible &&
+      !incomingCallOverlayVisible;
     const crop = isMessagesCropRoute ? dynamicMessagesTopCrop : 0;
     const seamTrim = isMessagesCropRoute ? MESSAGES_TOP_SEAM_TRIM : 0;
     contentView.setBounds({
@@ -3059,12 +3255,13 @@ function createWindow(source: string = "unknown"): void {
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
       // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
-      // multiple same-site hops before reaching the final RTC URL.
+      // multiple trusted-domain hops (facebook.com <-> messenger.com) before
+      // reaching the final RTC URL.
       // Allow a bounded bootstrap window, then fall back to strict routing.
       const childOpenedAsAboutBlank = details.url === "about:blank";
       const bootstrapWindowStartedAt = Date.now();
       let bootstrapNavigationCount = 0;
-      let bootstrapSiteKey: "facebook.com" | "messenger.com" | null = null;
+      let sawCallSafeBootstrapNavigation = false;
 
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
@@ -3076,36 +3273,35 @@ function createWindow(source: string = "unknown"): void {
           return;
         }
 
-        if (childOpenedAsAboutBlank) {
-          const elapsedMs = Date.now() - bootstrapWindowStartedAt;
-          const withinBootstrapWindow =
-            elapsedMs <= ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS;
-          const withinBootstrapNavigationBudget =
-            bootstrapNavigationCount <
-            ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS;
-          const navigationSiteKey =
-            getAllowedChildBootstrapSiteKey(navigationUrl);
-          const isSameBootstrapSite =
-            navigationSiteKey !== null &&
-            (bootstrapSiteKey === null ||
-              bootstrapSiteKey === navigationSiteKey);
+        const navigationAction = decideWindowOpenAction(navigationUrl);
 
-          if (
-            withinBootstrapWindow &&
-            withinBootstrapNavigationBudget &&
-            isSameBootstrapSite
-          ) {
+        if (childOpenedAsAboutBlank) {
+          const bootstrapDecision =
+            shouldAllowAboutBlankChildBootstrapNavigation(
+              navigationUrl,
+              navigationAction,
+              bootstrapWindowStartedAt,
+              bootstrapNavigationCount,
+              sawCallSafeBootstrapNavigation,
+            );
+
+          if (bootstrapDecision.allowed) {
             bootstrapNavigationCount += 1;
-            bootstrapSiteKey = navigationSiteKey;
+            if (bootstrapDecision.allowedBy === "call-safe-action") {
+              sawCallSafeBootstrapNavigation = true;
+            }
             console.log(
-              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${elapsedMs}ms):`,
+              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, by=${bootstrapDecision.allowedBy}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
               navigationUrl,
             );
             return;
           }
-        }
 
-        const navigationAction = decideWindowOpenAction(navigationUrl);
+          console.log(
+            `[Window] Blocking about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, action=${navigationAction}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
+            navigationUrl,
+          );
+        }
 
         if (navigationAction === "allow-child-window") {
           return;
@@ -3353,6 +3549,13 @@ function createWindow(source: string = "unknown"): void {
     // Inject notification override script after page loads
     contentView.webContents.on("did-finish-load", async () => {
       const currentUrl = contentView?.webContents.getURL() || "";
+      if (contentView) {
+        clearIncomingCallOverlayStateForWebContents(
+          contentView.webContents,
+          "did-finish-load",
+          "incoming-call-overlay-hint-reset-did-finish-load",
+        );
+      }
       applyContentViewBounds();
       console.log(
         "[ContentView] Page loaded:",
@@ -3441,6 +3644,14 @@ function createWindow(source: string = "unknown"): void {
 
     // Handle navigation events to inject disclaimer on page changes
     contentView.webContents.on("did-navigate", async (event, url) => {
+      if (contentView) {
+        clearIncomingCallOverlayStateForWebContents(
+          contentView.webContents,
+          "did-navigate",
+          "incoming-call-overlay-hint-reset-did-navigate",
+        );
+      }
+
       if (
         contentView &&
         shouldForceMediaViewerStateOff(url) &&
@@ -3493,6 +3704,14 @@ function createWindow(source: string = "unknown"): void {
     });
 
     contentView.webContents.on("did-navigate-in-page", async (event, url) => {
+      if (contentView) {
+        clearIncomingCallOverlayStateForWebContents(
+          contentView.webContents,
+          "did-navigate-in-page",
+          "incoming-call-overlay-hint-reset-did-navigate-in-page",
+        );
+      }
+
       if (
         contentView &&
         shouldForceMediaViewerStateOff(url) &&
@@ -3847,12 +4066,13 @@ function createWindow(source: string = "unknown"): void {
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
       // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
-      // multiple same-site hops before reaching the final RTC URL.
+      // multiple trusted-domain hops (facebook.com <-> messenger.com) before
+      // reaching the final RTC URL.
       // Allow a bounded bootstrap window, then fall back to strict routing.
       const childOpenedAsAboutBlank = details.url === "about:blank";
       const bootstrapWindowStartedAt = Date.now();
       let bootstrapNavigationCount = 0;
-      let bootstrapSiteKey: "facebook.com" | "messenger.com" | null = null;
+      let sawCallSafeBootstrapNavigation = false;
 
       childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
         console.log(
@@ -3864,36 +4084,35 @@ function createWindow(source: string = "unknown"): void {
           return;
         }
 
-        if (childOpenedAsAboutBlank) {
-          const elapsedMs = Date.now() - bootstrapWindowStartedAt;
-          const withinBootstrapWindow =
-            elapsedMs <= ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS;
-          const withinBootstrapNavigationBudget =
-            bootstrapNavigationCount <
-            ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS;
-          const navigationSiteKey =
-            getAllowedChildBootstrapSiteKey(navigationUrl);
-          const isSameBootstrapSite =
-            navigationSiteKey !== null &&
-            (bootstrapSiteKey === null ||
-              bootstrapSiteKey === navigationSiteKey);
+        const navigationAction = decideWindowOpenAction(navigationUrl);
 
-          if (
-            withinBootstrapWindow &&
-            withinBootstrapNavigationBudget &&
-            isSameBootstrapSite
-          ) {
+        if (childOpenedAsAboutBlank) {
+          const bootstrapDecision =
+            shouldAllowAboutBlankChildBootstrapNavigation(
+              navigationUrl,
+              navigationAction,
+              bootstrapWindowStartedAt,
+              bootstrapNavigationCount,
+              sawCallSafeBootstrapNavigation,
+            );
+
+          if (bootstrapDecision.allowed) {
             bootstrapNavigationCount += 1;
-            bootstrapSiteKey = navigationSiteKey;
+            if (bootstrapDecision.allowedBy === "call-safe-action") {
+              sawCallSafeBootstrapNavigation = true;
+            }
             console.log(
-              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${elapsedMs}ms):`,
+              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, by=${bootstrapDecision.allowedBy}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
               navigationUrl,
             );
             return;
           }
-        }
 
-        const navigationAction = decideWindowOpenAction(navigationUrl);
+          console.log(
+            `[Window] Blocking about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, action=${navigationAction}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
+            navigationUrl,
+          );
+        }
 
         if (navigationAction === "allow-child-window") {
           return;
@@ -4182,6 +4401,13 @@ function createWindow(source: string = "unknown"): void {
 
     mainWindow.webContents.on("did-finish-load", async () => {
       const currentUrl = mainWindow?.webContents.getURL() || "";
+      if (mainWindow) {
+        clearIncomingCallOverlayStateForWebContents(
+          mainWindow.webContents,
+          "did-finish-load-mainwindow",
+          "incoming-call-overlay-hint-reset-mainwindow-did-finish-load",
+        );
+      }
       console.log(
         "[MainWindow] Page loaded:",
         currentUrl,
@@ -4259,6 +4485,14 @@ function createWindow(source: string = "unknown"): void {
 
     // Handle navigation events to inject disclaimer on page changes
     mainWindow.webContents.on("did-navigate", async (event, url) => {
+      if (mainWindow) {
+        clearIncomingCallOverlayStateForWebContents(
+          mainWindow.webContents,
+          "did-navigate-mainwindow",
+          "incoming-call-overlay-hint-reset-mainwindow-did-navigate",
+        );
+      }
+
       if (
         mainWindow &&
         shouldForceMediaViewerStateOff(url) &&
@@ -4309,6 +4543,14 @@ function createWindow(source: string = "unknown"): void {
     });
 
     mainWindow.webContents.on("did-navigate-in-page", async (event, url) => {
+      if (mainWindow) {
+        clearIncomingCallOverlayStateForWebContents(
+          mainWindow.webContents,
+          "did-navigate-in-page-mainwindow",
+          "incoming-call-overlay-hint-reset-mainwindow-did-navigate-in-page",
+        );
+      }
+
       if (
         mainWindow &&
         shouldForceMediaViewerStateOff(url) &&
@@ -4367,8 +4609,13 @@ function createWindow(source: string = "unknown"): void {
   mainWindow.on("closed", () => {
     if (contentViewWebContentsId !== null) {
       mediaViewerVisibleByWebContentsId.delete(contentViewWebContentsId);
+      incomingCallOverlayVisibleByWebContentsId.delete(contentViewWebContentsId);
+      incomingCallOverlayLastHintAtByWebContentsId.delete(contentViewWebContentsId);
     }
     mediaViewerVisibleByWebContentsId.delete(mainWindowWebContentsId);
+    incomingCallOverlayVisibleByWebContentsId.delete(mainWindowWebContentsId);
+    incomingCallOverlayLastHintAtByWebContentsId.delete(mainWindowWebContentsId);
+    stopIncomingCallOverlayWatchdog();
     // Window is already destroyed at this point, just clean up references
     contentView = null;
     applyContentViewBoundsHandler = null;
@@ -6784,6 +7031,72 @@ function setupIpcHandlers(): void {
     },
   );
 
+  ipcMain.on(
+    "incoming-call-overlay-hint",
+    (event, payload: IncomingCallOverlayHintPayload) => {
+      const targetContents = getMessengerWebContents();
+      const activeMessengerWebContentsId = targetContents?.id ?? null;
+      if (
+        !targetContents ||
+        event.sender !== targetContents ||
+        !shouldAcceptIncomingCallOverlayHintSender(
+          event.sender.id,
+          activeMessengerWebContentsId,
+        )
+      ) {
+        return;
+      }
+
+      const visible = parseIncomingCallOverlayHintVisible(payload);
+      const transition = applyIncomingCallOverlayHintSignal(
+        incomingCallOverlayHintState,
+        event.sender.id,
+        visible,
+        Date.now(),
+      );
+      if (!transition.changed) {
+        return;
+      }
+
+      const urlForLog = event.sender.getURL();
+      console.log(
+        `[ContentView] Incoming call overlay hint updated: visible=${visible}, url=${urlForLog}`,
+      );
+      pushMediaOverlayDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "incoming-call-overlay-hint",
+        webContentsId: event.sender.id,
+        url: urlForLog,
+        previousVisible: transition.previousVisible,
+        nextVisible: transition.nextVisible,
+        reason:
+          typeof payload === "object" && payload && typeof payload.reason === "string"
+            ? payload.reason
+            : undefined,
+      });
+
+      if (visible) {
+        // Incoming-call overlays can be misclassified as media overlays by
+        // preload heuristics. Force media state off on chat routes so we don't
+        // leave call-layout gap artifacts behind.
+        maybeRecoverMediaViewerStateAfterIncomingCallClear(
+          event.sender.id,
+          urlForLog,
+          "media-viewer-state-forced-off-incoming-call",
+        );
+      } else {
+        maybeRecoverMediaViewerStateAfterIncomingCallClear(
+          event.sender.id,
+          urlForLog,
+          "media-viewer-state-recovered-after-incoming-call",
+        );
+      }
+
+      applyContentViewBoundsHandler?.();
+    },
+  );
+
   ipcMain.on("media-overlay-debug", (event, payload) => {
     const now = Date.now();
     const basePayload =
@@ -6812,25 +7125,69 @@ function setupIpcHandlers(): void {
 
   // Handle incoming call - bring window to foreground
   // This is triggered when Messenger shows an incoming call popup
-  ipcMain.on("incoming-call", () => {
-    console.log("[IPC] Incoming call detected - bringing window to foreground");
+  ipcMain.on(
+    "incoming-call",
+    (_event, payload?: IncomingCallIpcPayload) => {
+      console.log("[IPC] Incoming call detected - bringing window to foreground", {
+        dedupeKey: payload?.dedupeKey,
+        caller: payload?.caller,
+        source: payload?.source,
+      });
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      // Restore if minimized
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      // Show the window (unhides if hidden)
-      mainWindow.show();
-      // Focus the window to bring it to foreground
-      mainWindow.focus();
+      const focusedWindow = applyIncomingCallWindowFocus(
+        mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+      );
 
       // On macOS, also bounce the dock icon to get user attention
-      if (process.platform === "darwin" && app.dock) {
+      if (focusedWindow.focused && process.platform === "darwin" && app.dock) {
         app.dock.bounce("critical");
       }
-    }
-  });
+
+      // Always emit a native incoming-call notification in addition to any
+      // Messenger/web notifications, but dedupe repeated detections of the same
+      // ringing event by key. For no-key detections, also apply a tiny jitter
+      // guard to avoid duplicate bursts from closely timed observers.
+      const decision = decideIncomingCallNativeNotification({
+        payload,
+        now: Date.now(),
+        notificationByKey: incomingCallNotificationByKey,
+        lastNoKeyIncomingCallNotificationAt,
+      });
+
+      if (!decision.shouldNotify) {
+        console.log("[IPC] Incoming call native notification deduplicated", {
+          callKey: decision.callKey,
+          reason: decision.reason,
+        });
+        return;
+      }
+
+      if (notificationHandler) {
+        incomingCallNotificationByKey.set(
+          decision.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
+          decision.now,
+        );
+        if (decision.callKey === null) {
+          lastNoKeyIncomingCallNotificationAt = decision.now;
+        }
+        const caller = formatIncomingCallCaller(payload?.caller);
+        notificationHandler.showNotification({
+          title: "Incoming call",
+          body: caller
+            ? `${caller} is calling you on Messenger`
+            : "Someone is calling you on Messenger",
+          tag: decision.callKey
+            ? `incoming-call:${decision.callKey}`
+            : `incoming-call:${decision.now}`,
+          silent: false,
+        });
+        console.log("[IPC] Incoming call native notification shown", {
+          callKey: decision.callKey,
+          caller,
+        });
+      }
+    },
+  );
 
   // Note: Menu bar hover is now handled natively via autoHideMenuBar
   // Press Alt to show menu bar, click away or Esc to hide

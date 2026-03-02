@@ -69,3 +69,13 @@ export function resolveViewportMode(
 export function shouldApplyMessagesCrop(input: ResolveViewportModeInput): boolean {
   return resolveViewportMode(input) === "chat";
 }
+
+export function resolveMediaViewerStateVisible(input: {
+  mediaOverlayVisible: boolean;
+  incomingCallOverlayVisible: boolean;
+}): boolean {
+  // The media-viewer-state IPC channel is consumed by main-process media routing
+  // and must remain scoped to media overlays only.
+  // Incoming-call overlays are tracked on a separate hint channel.
+  return input.mediaOverlayVisible;
+}

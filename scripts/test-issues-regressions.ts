@@ -1,10 +1,17 @@
 type ViewportMode = "chat" | "media" | "other";
 
 const {
+  resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
 } = require("../src/preload/messages-viewport-policy");
 const notificationDecisionPolicy = require("../src/preload/notification-decision-policy.ts");
+const incomingCallOverlayPolicy = require("../src/main/incoming-call-overlay-policy.ts");
+const incomingCallIpcPolicy = require("../src/main/incoming-call-ipc-policy.ts");
+const {
+  isMessagesRoute,
+  isMessagesMediaViewerRoute,
+} = require("../src/main/url-policy");
 
 const assert = (condition: boolean, message: string) => {
   if (!condition) {
@@ -18,6 +25,38 @@ const assertEqual = <T>(actual: T, expected: T, message: string) => {
       `${message}\n  expected: ${String(expected)}\n  actual:   ${String(actual)}`,
     );
   }
+};
+
+const isMessagesMediaPopupUrl = (url: string): boolean => {
+  if (!url) return false;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) return false;
+
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return (
+      path === "/messages/attachment_preview" ||
+      path.startsWith("/messages/attachment_preview/") ||
+      path === "/messages/media_viewer" ||
+      path.startsWith("/messages/media_viewer/")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const shouldApplyMainCrop = (input: {
+  url: string;
+  mediaViewerVisible: boolean;
+  incomingCallOverlayVisible: boolean;
+}): boolean => {
+  return (
+    isMessagesRoute(input.url) &&
+    !isMessagesMediaViewerRoute(input.url) &&
+    !isMessagesMediaPopupUrl(input.url) &&
+    !input.mediaViewerVisible &&
+    !input.incomingCallOverlayVisible
+  );
 };
 
 const runViewportPolicyTests = () => {
@@ -75,6 +114,373 @@ const runViewportPolicyTests = () => {
       `#45 sequence stale crop state at step ${index + 1}`,
     );
   });
+
+  // Incoming-call overlays must not contaminate media-viewer IPC state.
+  assertEqual(
+    resolveMediaViewerStateVisible({
+      mediaOverlayVisible: false,
+      incomingCallOverlayVisible: true,
+    }),
+    false,
+    "#47 incoming-call overlay should not force media-viewer-state visible",
+  );
+  assertEqual(
+    resolveMediaViewerStateVisible({
+      mediaOverlayVisible: true,
+      incomingCallOverlayVisible: false,
+    }),
+    true,
+    "#47 real media overlay should continue forcing media-viewer-state visible",
+  );
+};
+
+const runIncomingCallOverlayLifecycleTests = () => {
+  assert(
+    typeof incomingCallOverlayPolicy.parseIncomingCallOverlayHintVisible ===
+      "function",
+    "incoming call overlay policy missing parseIncomingCallOverlayHintVisible",
+  );
+  assert(
+    typeof incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal ===
+      "function",
+    "incoming call overlay policy missing applyIncomingCallOverlayHintSignal",
+  );
+  assert(
+    typeof incomingCallOverlayPolicy.clearIncomingCallOverlayHintState ===
+      "function",
+    "incoming call overlay policy missing clearIncomingCallOverlayHintState",
+  );
+  assert(
+    typeof incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds ===
+      "function",
+    "incoming call overlay policy missing collectStaleIncomingCallOverlayHintIds",
+  );
+  assert(
+    typeof incomingCallOverlayPolicy.shouldAcceptIncomingCallOverlayHintSender ===
+      "function",
+    "incoming call overlay policy missing sender guard helper",
+  );
+
+  const state = {
+    visibleByWebContentsId: new Map<number, boolean>(),
+    lastHintAtByWebContentsId: new Map<number, number>(),
+  };
+  const webContentsId = 41;
+  const activeSenderId = 41;
+  const otherSenderId = 73;
+
+  assertEqual(
+    incomingCallOverlayPolicy.shouldAcceptIncomingCallOverlayHintSender(
+      activeSenderId,
+      activeSenderId,
+    ),
+    true,
+    "#47 incoming-call hint should accept active messenger sender",
+  );
+  assertEqual(
+    incomingCallOverlayPolicy.shouldAcceptIncomingCallOverlayHintSender(
+      otherSenderId,
+      activeSenderId,
+    ),
+    false,
+    "#47 incoming-call hint should reject non-active sender",
+  );
+
+  const chatUrl = "https://www.facebook.com/messages/t/123";
+  assertEqual(
+    shouldApplyMainCrop({
+      url: chatUrl,
+      mediaViewerVisible: false,
+      incomingCallOverlayVisible: false,
+    }),
+    true,
+    "#47 main crop should be enabled before incoming-call hint",
+  );
+
+  const t0 = 1_000;
+  const incomingCallStart = incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+    state,
+    webContentsId,
+    true,
+    t0,
+  );
+  assertEqual(
+    incomingCallStart.changed,
+    true,
+    "#47 incoming-call true hint should transition visibility",
+  );
+  assertEqual(
+    shouldApplyMainCrop({
+      url: chatUrl,
+      mediaViewerVisible: false,
+      incomingCallOverlayVisible:
+        state.visibleByWebContentsId.get(webContentsId) === true,
+    }),
+    false,
+    "#47 main crop should be disabled while incoming-call hint is visible",
+  );
+
+  const heartbeat = incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+    state,
+    webContentsId,
+    true,
+    t0 + 12_000,
+  );
+  assertEqual(
+    heartbeat.changed,
+    false,
+    "#47 incoming-call heartbeat should refresh timestamp without toggling visibility",
+  );
+
+  const staleTooEarly = incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds(
+    state,
+    t0 + 12_000 + 29_999,
+    30_000,
+  );
+  assertEqual(
+    staleTooEarly.includes(webContentsId),
+    false,
+    "#47 watchdog should not expire recent incoming-call heartbeat state",
+  );
+
+  const incomingCallEnd = incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+    state,
+    webContentsId,
+    false,
+    t0 + 13_000,
+  );
+  assertEqual(
+    incomingCallEnd.changed,
+    true,
+    "#47 incoming-call false hint should restore visibility state",
+  );
+  assertEqual(
+    shouldApplyMainCrop({
+      url: chatUrl,
+      mediaViewerVisible: false,
+      incomingCallOverlayVisible:
+        state.visibleByWebContentsId.get(webContentsId) === true,
+    }),
+    true,
+    "#47 main crop should be restored after incoming-call hint clears",
+  );
+
+  incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+    state,
+    webContentsId,
+    true,
+    t0 + 30_000,
+  );
+  const staleIds = incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds(
+    state,
+    t0 + 60_001,
+    30_000,
+  );
+  assertEqual(
+    staleIds.includes(webContentsId),
+    true,
+    "#47 watchdog should identify stale incoming-call hint state",
+  );
+
+  const staleReset = incomingCallOverlayPolicy.clearIncomingCallOverlayHintState(
+    state,
+    webContentsId,
+  );
+  assertEqual(
+    staleReset.changed,
+    true,
+    "#47 watchdog/navigation reset should clear stale incoming-call state",
+  );
+  assertEqual(
+    shouldApplyMainCrop({
+      url: chatUrl,
+      mediaViewerVisible: false,
+      incomingCallOverlayVisible:
+        state.visibleByWebContentsId.get(webContentsId) === true,
+    }),
+    true,
+    "#47 crop should be restored after stale incoming-call state recovery",
+  );
+};
+
+const runIncomingCallIpcPolicyTests = () => {
+  assert(
+    typeof incomingCallIpcPolicy.applyIncomingCallWindowFocus === "function",
+    "incoming call IPC policy missing applyIncomingCallWindowFocus",
+  );
+  assert(
+    typeof incomingCallIpcPolicy.decideIncomingCallNativeNotification ===
+      "function",
+    "incoming call IPC policy missing decideIncomingCallNativeNotification",
+  );
+
+  const focusEvents: string[] = [];
+  const focusResult = incomingCallIpcPolicy.applyIncomingCallWindowFocus({
+    isMinimized: () => true,
+    restore: () => focusEvents.push("restore"),
+    show: () => focusEvents.push("show"),
+    focus: () => focusEvents.push("focus"),
+  });
+  assertEqual(
+    focusResult.focused,
+    true,
+    "incoming-call IPC should focus an available window",
+  );
+  assertEqual(
+    focusResult.restoredFromMinimized,
+    true,
+    "incoming-call IPC should report restore when minimized",
+  );
+  assertEqual(
+    focusEvents.join(","),
+    "restore,show,focus",
+    "incoming-call IPC should restore then show/focus minimized windows",
+  );
+
+  const directFocusEvents: string[] = [];
+  const directFocusResult = incomingCallIpcPolicy.applyIncomingCallWindowFocus({
+    isMinimized: () => false,
+    restore: () => directFocusEvents.push("restore"),
+    show: () => directFocusEvents.push("show"),
+    focus: () => directFocusEvents.push("focus"),
+  });
+  assertEqual(
+    directFocusResult.restoredFromMinimized,
+    false,
+    "incoming-call IPC should not restore non-minimized windows",
+  );
+  assertEqual(
+    directFocusEvents.join(","),
+    "show,focus",
+    "incoming-call IPC should show/focus non-minimized windows",
+  );
+
+  const noWindowResult = incomingCallIpcPolicy.applyIncomingCallWindowFocus(null);
+  assertEqual(
+    noWindowResult.focused,
+    false,
+    "incoming-call IPC should safely handle missing windows",
+  );
+
+  const baseNow = 100_000;
+  const map = new Map<string, number>([["stale-key", baseNow - 80_000]]);
+  let lastNoKeyAt = 0;
+
+  const firstKeyed = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: { dedupeKey: " call-123 " },
+    now: baseNow,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    firstKeyed.shouldNotify,
+    true,
+    "incoming-call IPC should allow first keyed notification",
+  );
+  assertEqual(
+    firstKeyed.callKey,
+    "call-123",
+    "incoming-call IPC should normalize dedupe key",
+  );
+
+  map.set(firstKeyed.callKey, firstKeyed.now);
+
+  const duplicateKeyed = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: { dedupeKey: "call-123" },
+    now: baseNow + 3_000,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    duplicateKeyed.shouldNotify,
+    false,
+    "incoming-call IPC should dedupe repeat keyed notifications",
+  );
+  assertEqual(
+    duplicateKeyed.reason,
+    "same-key",
+    "incoming-call IPC should report same-key dedupe reason",
+  );
+
+  const ttlMs = incomingCallIpcPolicy.INCOMING_CALL_KEY_TTL_MS;
+  const noKeyCooldownMs = incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_COOLDOWN_MS;
+
+  const keyedAfterTtl = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: { dedupeKey: "call-123" },
+    now: firstKeyed.now + ttlMs + 5,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    keyedAfterTtl.shouldNotify,
+    true,
+    "incoming-call IPC should allow keyed notification after TTL",
+  );
+  assertEqual(
+    map.has("stale-key"),
+    false,
+    "incoming-call IPC should clean stale dedupe keys",
+  );
+
+  const noKeyFirst = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: {},
+    now: baseNow + ttlMs + 10_000,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    noKeyFirst.shouldNotify,
+    true,
+    "incoming-call IPC should allow first no-key notification",
+  );
+  map.set(incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_MAP_KEY, noKeyFirst.now);
+  lastNoKeyAt = noKeyFirst.now;
+
+  const noKeyJitter = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: {},
+    now: noKeyFirst.now + incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_JITTER_GUARD_MS - 1,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    noKeyJitter.shouldNotify,
+    false,
+    "incoming-call IPC should suppress no-key jitter bursts",
+  );
+  assertEqual(
+    noKeyJitter.reason,
+    "no-key-jitter-window",
+    "incoming-call IPC should report no-key jitter dedupe reason",
+  );
+
+  const noKeyCooldown = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: {},
+    now: noKeyFirst.now + incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_JITTER_GUARD_MS + 50,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    noKeyCooldown.shouldNotify,
+    false,
+    "incoming-call IPC should suppress no-key cooldown duplicates",
+  );
+  assertEqual(
+    noKeyCooldown.reason,
+    "no-key-cooldown",
+    "incoming-call IPC should report no-key cooldown dedupe reason",
+  );
+
+  const noKeyAfterCooldown = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: {},
+    now: noKeyFirst.now + noKeyCooldownMs + 5,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+  });
+  assertEqual(
+    noKeyAfterCooldown.shouldNotify,
+    true,
+    "incoming-call IPC should allow no-key notification after cooldown",
+  );
 };
 
 const runNotificationPolicyTests = () => {
@@ -326,13 +732,15 @@ const runNotificationPolicyTests = () => {
 
 const run = () => {
   runViewportPolicyTests();
+  runIncomingCallOverlayLifecycleTests();
+  runIncomingCallIpcPolicyTests();
   runNotificationPolicyTests();
-  console.log("PASS #45/#46 deterministic regression tests");
+  console.log("PASS deterministic regression tests");
 };
 
 try {
   run();
 } catch (error) {
-  console.error("FAIL #45/#46 regression tests failed:", error);
+  console.error("FAIL deterministic regression tests failed:", error);
   process.exit(1);
 }

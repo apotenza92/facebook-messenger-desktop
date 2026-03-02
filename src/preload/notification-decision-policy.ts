@@ -48,7 +48,7 @@ type NotificationDecisionPolicyApi = {
 
 const MIN_CONFIDENCE = 0.55;
 const AMBIGUITY_DELTA = 0.14;
-const MUTED_CONFLICT_SCORE_FLOOR = 0.25;
+const MUTED_CONFLICT_SCORE_FLOOR = 0.20;
 const TERSE_SENDER_BODY_PATTERNS: RegExp[] = [
   /^(?:[a-z0-9.'_-]+\s+)?sent (?:you )?a message$/i,
   /^(?:[a-z0-9.'_-]+\s+)?new message$/i,
@@ -205,14 +205,20 @@ function resolveNativeNotificationTarget(
       alternative.score >= MUTED_CONFLICT_SCORE_FLOOR &&
       Boolean(payloadTitle) &&
       alternativeBody.includes(payloadTitle);
+    // If the muted group's sidebar preview contains the notification body verbatim,
+    // the notification almost certainly originated from that muted group even when
+    // the sender also has an unmuted 1:1 DM (which would otherwise win the score race).
+    const mutedGroupPreviewContainsBody =
+      payloadBody.length >= 6 &&
+      alternativeBody.length > 0 &&
+      alternativeBody.includes(payloadBody);
 
-    if (explicitMutedGroupReference || terseMutedGroupConflict) {
+    if (explicitMutedGroupReference || terseMutedGroupConflict || mutedGroupPreviewContainsBody) {
       return createMutedConflictResult(top.score);
     }
   }
 
   if (second) {
-    const topTitle = normalizeText(top.candidate.title);
     const secondTitle = normalizeText(second.candidate.title);
     const bodyReferencesSecondGroup =
       Boolean(secondTitle) && payloadBody.includes(`in ${secondTitle}`);

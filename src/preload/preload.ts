@@ -1,9 +1,22 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   MessagesViewportMode,
+  resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
 } from "./messages-viewport-policy";
+
+function sendIncomingCallOverlayHint(visible: boolean, reason: string): void {
+  ipcRenderer.send("incoming-call-overlay-hint", { visible, reason });
+  try {
+    window.postMessage(
+      { type: "md-incoming-call-overlay-hint", visible, reason },
+      "*",
+    );
+  } catch {
+    // Ignore postMessage failures
+  }
+}
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -78,6 +91,7 @@ ipcRenderer.on(
   const STYLE_ID = "md-fb-messages-viewport-fix-style";
   const ACTIVE_CLASS = "md-fb-messages-viewport-fix";
   const MEDIA_CLEAN_CLASS = "md-fb-media-viewer-clean";
+  const INCOMING_CALL_CLEAN_CLASS = "md-fb-incoming-call-clean";
   const MEDIA_LEFT_DISMISS_CLASS = "md-fb-media-dismiss-left";
   const MEDIA_CLOSE_ACTION_CLASS = "md-fb-media-action-close";
   const MEDIA_DOWNLOAD_ACTION_CLASS = "md-fb-media-action-download";
@@ -116,6 +130,21 @@ ipcRenderer.on(
     '[aria-label*="Forward" i][role="button"]',
     'button[aria-label*="Forward" i]',
   ];
+  const incomingCallAnswerSelectors = [
+    '[aria-label*="Answer" i]',
+    '[aria-label*="Accept call" i]',
+    '[aria-label*="Join call" i]',
+    '[aria-label*="Accept video call" i]',
+    '[aria-label*="Accept audio call" i]',
+  ];
+  const incomingCallDeclineSelectors = [
+    '[aria-label*="Decline" i]',
+    '[aria-label*="Ignore call" i]',
+    '[aria-label*="Decline call" i]',
+  ];
+  const INCOMING_CALL_HINT_MIN_STICKY_MS = 1200;
+  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 900;
+  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 8000;
 
   let pendingApply = false;
   let pendingSend = false;
@@ -123,6 +152,10 @@ ipcRenderer.on(
   let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let mediaOverlayVisible = false;
   let forcedMediaOverlayVisible: boolean | null = null;
+  let incomingCallOverlayHintActive = false;
+  let incomingCallHintActivatedAt = 0;
+  let incomingCallLastDetectedAt = 0;
+  let incomingCallDetectedSinceHint = false;
   let mediaOverlayTransitionTimer: number | null = null;
   let viewportStateSendTimer: number | null = null;
   let lastSentViewportState: { visible: boolean; url: string } | null = null;
@@ -161,28 +194,53 @@ ipcRenderer.on(
     }
   };
 
-  const hasTopAnchoredAction = (
-    selector: string,
-    minTop = -120,
-    maxTop = 220,
-    minRightFraction = 0,
-  ): boolean => {
-    const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
-    for (const node of nodes) {
-      const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") continue;
-
-      const rect = node.getBoundingClientRect();
-      if (rect.width < 6 || rect.height < 6) continue;
-      if (rect.top < minTop || rect.top > maxTop) continue;
-      if (minRightFraction > 0 && rect.right < window.innerWidth * minRightFraction) {
-        continue;
-      }
-
-      return true;
+  const isAriaVisible = (el: Element | null): boolean => {
+    if (!el) return false;
+    if (el.closest('[aria-hidden="true"]') || el.closest('[hidden]')) {
+      return false;
     }
-    return false;
+
+    const target = el instanceof HTMLElement ? el : null;
+    if (!target) return true;
+    const style = window.getComputedStyle(target);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+
+    const rect = target.getBoundingClientRect();
+    if (rect.width < 4 || rect.height < 4) {
+      return false;
+    }
+
+    // Require the control to intersect viewport; hidden/off-canvas remnants
+    // can otherwise keep incoming-call state stuck true.
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      return false;
+    }
+
+    const opacity = Number.parseFloat(style.opacity || "1");
+    if (Number.isFinite(opacity) && opacity <= 0.01) {
+      return false;
+    }
+
+    return true;
   };
+
+  const detectIncomingCallOverlayVisible = (): boolean => {
+    if (!isFacebookHost()) return false;
+
+    const answerEl = document.querySelector(incomingCallAnswerSelectors.join(", "));
+    const declineEl = document.querySelector(
+      incomingCallDeclineSelectors.join(", "),
+    );
+
+    return isAriaVisible(answerEl) && isAriaVisible(declineEl);
+  };
+
+  const getViewportOverlayVisible = (): boolean =>
+    mediaOverlayVisible ||
+    incomingCallOverlayHintActive ||
+    detectIncomingCallOverlayVisible();
 
   const countTopAnchoredActions = (
     selector: string,
@@ -318,6 +376,7 @@ ipcRenderer.on(
     try {
       const signals = collectMediaOverlaySignals();
       const computedVisible = evaluateMediaOverlayVisible(signals);
+      const incomingCallOverlayVisible = detectIncomingCallOverlayVisible();
       ipcRenderer.send(MEDIA_OVERLAY_DEBUG_CHANNEL, {
         timestamp: now,
         reason,
@@ -325,6 +384,13 @@ ipcRenderer.on(
         forcedVisible: forcedMediaOverlayVisible,
         trackedVisible: mediaOverlayVisible,
         computedVisible,
+        incomingCallOverlayVisible,
+        incomingCallOverlayHintActive,
+        effectiveOverlayVisible:
+          computedVisible ||
+          incomingCallOverlayVisible ||
+          incomingCallOverlayHintActive ||
+          forcedMediaOverlayVisible === true,
         signals,
         classes: {
           mediaClean: document.documentElement.classList.contains(MEDIA_CLEAN_CLASS),
@@ -346,6 +412,12 @@ ipcRenderer.on(
     }
 
     if (!isFacebookHost()) return false;
+
+    // Incoming-call overlays can resemble media overlays (dim backdrop + top actions).
+    // Never treat them as media mode, or we can hide/move call controls.
+    if (incomingCallOverlayHintActive || detectIncomingCallOverlayVisible()) {
+      return false;
+    }
 
     const signals = collectMediaOverlaySignals();
     return evaluateMediaOverlayVisible(signals);
@@ -744,8 +816,15 @@ ipcRenderer.on(
 
     viewportStateSendTimer = window.setTimeout(() => {
       viewportStateSendTimer = null;
+      // IMPORTANT: `media-viewer-state` is consumed by main to toggle the
+      // media-overlay crop bypass. Keep this channel scoped to media-only state.
+      // Incoming-call overlays are tracked separately via incoming-call-overlay-hint.
       const payload = {
-        visible: mediaOverlayVisible,
+        visible: resolveMediaViewerStateVisible({
+          mediaOverlayVisible,
+          incomingCallOverlayVisible:
+            incomingCallOverlayHintActive || detectIncomingCallOverlayVisible(),
+        }),
         url: window.location.href,
       };
       const unchanged =
@@ -760,6 +839,9 @@ ipcRenderer.on(
       sendMediaOverlayDebug("viewport-state-send", {
         force,
         sentVisible: payload.visible,
+        incomingCallOverlayVisible: detectIncomingCallOverlayVisible(),
+        incomingCallOverlayHintActive,
+        effectiveOverlayVisible: getViewportOverlayVisible(),
       });
     }, VIEWPORT_STATE_SEND_DEBOUNCE_MS);
   };
@@ -833,6 +915,28 @@ ipcRenderer.on(
         pointer-events: none !important;
       }
 
+      /* Incoming call overlay: keep Facebook top banner hidden while preserving
+         call controls rendered in the page body/overlay layer. */
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] {
+        height: 0 !important;
+        min-height: 0 !important;
+        max-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+
+      /* Collapse residual top spacing Facebook leaves when the global header
+         is hidden, so incoming-call overlay doesn't show a blank top gap. */
+      html.${INCOMING_CALL_CLEAN_CLASS} body > div[id^="mount_"],
+      html.${INCOMING_CALL_CLEAN_CLASS} body > div[id^="mount_"] > div,
+      html.${INCOMING_CALL_CLEAN_CLASS} [data-pagelet="root"] {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+      }
+
       /* Never let detected media actions fall into a drag region. */
       html.${MEDIA_CLEAN_CLASS} .${MEDIA_CLOSE_ACTION_CLASS},
       html.${MEDIA_CLEAN_CLASS} .${MEDIA_DOWNLOAD_ACTION_CLASS},
@@ -860,7 +964,43 @@ ipcRenderer.on(
       });
     }
 
-    if (mode === "media") {
+    const detectedIncomingCallOverlayVisible = detectIncomingCallOverlayVisible();
+    const now = Date.now();
+
+    if (detectedIncomingCallOverlayVisible) {
+      incomingCallLastDetectedAt = now;
+      if (incomingCallOverlayHintActive) {
+        incomingCallDetectedSinceHint = true;
+      }
+    }
+
+    if (
+      incomingCallOverlayHintActive &&
+      !detectedIncomingCallOverlayVisible &&
+      incomingCallHintActivatedAt > 0
+    ) {
+      const activeForMs = now - incomingCallHintActivatedAt;
+      const missingForMs =
+        incomingCallLastDetectedAt > 0 ? now - incomingCallLastDetectedAt : activeForMs;
+
+      const shouldClearAfterVisibleControls =
+        incomingCallDetectedSinceHint &&
+        activeForMs >= INCOMING_CALL_HINT_MIN_STICKY_MS &&
+        missingForMs >= INCOMING_CALL_HINT_MISSING_CLEAR_MS;
+      const shouldClearNeverDetectedHint =
+        !incomingCallDetectedSinceHint &&
+        activeForMs >= INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS;
+
+      if (shouldClearAfterVisibleControls || shouldClearNeverDetectedHint) {
+        const reason = shouldClearAfterVisibleControls
+          ? "incoming-call-controls-missing"
+          : "incoming-call-hint-stale";
+        applyIncomingCallOverlayHint(false, reason);
+        sendIncomingCallOverlayHint(false, reason);
+      }
+    }
+
+    if (mode === "media" && !detectedIncomingCallOverlayVisible && !incomingCallOverlayHintActive) {
       document.documentElement.classList.add(MEDIA_CLEAN_CLASS);
       markMediaActions();
     } else {
@@ -868,12 +1008,22 @@ ipcRenderer.on(
       clearMarkedMediaActions();
     }
 
-    if (
+    const incomingCallOverlayVisible =
+      incomingCallOverlayHintActive || detectedIncomingCallOverlayVisible;
+    if (incomingCallOverlayVisible) {
+      document.documentElement.classList.add(INCOMING_CALL_CLEAN_CLASS);
+    } else {
+      document.documentElement.classList.remove(INCOMING_CALL_CLEAN_CLASS);
+    }
+
+    const shouldCropMessagesViewport =
+      !incomingCallOverlayVisible &&
       shouldApplyMessagesCrop({
         urlPath: window.location.pathname,
-        mediaOverlayVisible,
-      })
-    ) {
+        mediaOverlayVisible: getViewportOverlayVisible(),
+      });
+
+    if (shouldCropMessagesViewport) {
       document.documentElement.classList.add(ACTIVE_CLASS);
       setHeaderHeight(measureHeaderHeight());
       scheduleHeaderHeightSend();
@@ -945,6 +1095,7 @@ ipcRenderer.on(
     const observer = new MutationObserver(() => {
       scheduleMediaOverlayRecheck();
       scheduleApply();
+      scheduleViewportStateSend();
     });
     observer.observe(document.body, {
       childList: true,
@@ -968,20 +1119,72 @@ ipcRenderer.on(
     scheduleApply();
   };
 
+  const applyIncomingCallOverlayHint = (
+    visible: boolean,
+    reason: string,
+  ): void => {
+    const previous = incomingCallOverlayHintActive;
+    if (previous === visible) {
+      // Preserve original activation timestamp while active; no state transition.
+      return;
+    }
+
+    incomingCallOverlayHintActive = visible;
+    if (visible) {
+      incomingCallHintActivatedAt = Date.now();
+      incomingCallLastDetectedAt = 0;
+      incomingCallDetectedSinceHint = false;
+    } else {
+      incomingCallHintActivatedAt = 0;
+      incomingCallLastDetectedAt = 0;
+      incomingCallDetectedSinceHint = false;
+    }
+
+    sendMediaOverlayDebug("incoming-call-overlay-hint", {
+      force: true,
+      previous,
+      next: incomingCallOverlayHintActive,
+      reason,
+    });
+    scheduleViewportStateSend(true);
+    scheduleApply();
+  };
+
   (window as typeof window & {
     __mdSetForcedMediaOverlayVisible?: (visible: boolean | null) => void;
+    __mdSetIncomingCallOverlayHint?: (visible: boolean, reason?: string) => void;
   }).__mdSetForcedMediaOverlayVisible = (visible: boolean | null) => {
     applyForcedMediaOverlayVisible(visible);
+  };
+
+  (window as typeof window & {
+    __mdSetIncomingCallOverlayHint?: (visible: boolean, reason?: string) => void;
+  }).__mdSetIncomingCallOverlayHint = (
+    visible: boolean,
+    reason = "window-hook",
+  ) => {
+    applyIncomingCallOverlayHint(Boolean(visible), reason);
   };
 
   window.addEventListener("message", (event: MessageEvent) => {
     const payload = event.data;
     if (!payload || typeof payload !== "object") return;
-    if (payload.type !== "md-force-media-overlay-visible") return;
 
-    const visible =
-      typeof payload.visible === "boolean" ? payload.visible : null;
-    applyForcedMediaOverlayVisible(visible);
+    if (payload.type === "md-force-media-overlay-visible") {
+      const visible =
+        typeof payload.visible === "boolean" ? payload.visible : null;
+      applyForcedMediaOverlayVisible(visible);
+      return;
+    }
+
+    if (payload.type === "md-incoming-call-overlay-hint") {
+      const visible = payload.visible === true;
+      const reason =
+        typeof payload.reason === "string"
+          ? payload.reason
+          : "message-event";
+      applyIncomingCallOverlayHint(visible, reason);
+    }
   });
 
   document.addEventListener(
@@ -1071,6 +1274,105 @@ ipcRenderer.on(
 
   // Execute the bridge listener in the page context
   // This runs after the page loads, so we'll inject it via main process
+
+  let incomingCallOverlayHintTimer: number | null = null;
+  let incomingCallOverlayHintHeartbeatTimer: number | null = null;
+  const INCOMING_CALL_OVERLAY_HINT_RECHECK_MS = 12_000;
+  const INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS = 4_000;
+  const incomingCallAnswerSelectors = [
+    '[aria-label*="Answer" i]',
+    '[aria-label*="Accept call" i]',
+    '[aria-label*="Join call" i]',
+    '[aria-label*="Accept video call" i]',
+    '[aria-label*="Accept audio call" i]',
+  ];
+  const incomingCallDeclineSelectors = [
+    '[aria-label*="Decline" i]',
+    '[aria-label*="Ignore call" i]',
+    '[aria-label*="Decline call" i]',
+  ];
+
+  const isElementVisible = (el: Element | null): boolean => {
+    if (!el) return false;
+
+    const target = el instanceof HTMLElement ? el : null;
+    if (!target) return false;
+
+    if (target.closest('[aria-hidden="true"]') || target.closest('[hidden]')) {
+      return false;
+    }
+
+    const style = window.getComputedStyle(target);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+
+    const rect = target.getBoundingClientRect();
+    return rect.width >= 4 && rect.height >= 4;
+  };
+
+  const detectIncomingCallOverlayVisibleForHint = (): boolean => {
+    const answerEl = document.querySelector(incomingCallAnswerSelectors.join(", "));
+    const declineEl = document.querySelector(incomingCallDeclineSelectors.join(", "));
+    return isElementVisible(answerEl) && isElementVisible(declineEl);
+  };
+
+  const clearIncomingCallOverlayHintTimers = (): void => {
+    if (incomingCallOverlayHintTimer !== null) {
+      clearTimeout(incomingCallOverlayHintTimer);
+      incomingCallOverlayHintTimer = null;
+    }
+
+    if (incomingCallOverlayHintHeartbeatTimer !== null) {
+      clearInterval(incomingCallOverlayHintHeartbeatTimer);
+      incomingCallOverlayHintHeartbeatTimer = null;
+    }
+  };
+
+  const scheduleIncomingCallOverlayHintRecheck = (reason: string): void => {
+    if (incomingCallOverlayHintTimer !== null) {
+      clearTimeout(incomingCallOverlayHintTimer);
+    }
+
+    incomingCallOverlayHintTimer = window.setTimeout(() => {
+      incomingCallOverlayHintTimer = null;
+      if (detectIncomingCallOverlayVisibleForHint()) {
+        sendIncomingCallOverlayHint(true, `${reason}-refresh`);
+        scheduleIncomingCallOverlayHintRecheck("incoming-call-timeout");
+        return;
+      }
+
+      sendIncomingCallOverlayHint(false, "incoming-call-timeout-clear");
+      clearIncomingCallOverlayHintTimers();
+    }, INCOMING_CALL_OVERLAY_HINT_RECHECK_MS);
+  };
+
+  const ensureIncomingCallOverlayHintHeartbeat = (): void => {
+    if (incomingCallOverlayHintHeartbeatTimer !== null) {
+      return;
+    }
+
+    incomingCallOverlayHintHeartbeatTimer = window.setInterval(() => {
+      if (detectIncomingCallOverlayVisibleForHint()) {
+        sendIncomingCallOverlayHint(true, "incoming-call-heartbeat");
+        scheduleIncomingCallOverlayHintRecheck("incoming-call-heartbeat");
+        return;
+      }
+
+      sendIncomingCallOverlayHint(false, "incoming-call-heartbeat-clear");
+      clearIncomingCallOverlayHintTimers();
+    }, INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS);
+  };
+
+  window.addEventListener("beforeunload", () => {
+    const hadTimers =
+      incomingCallOverlayHintTimer !== null ||
+      incomingCallOverlayHintHeartbeatTimer !== null;
+    clearIncomingCallOverlayHintTimers();
+    if (hadTimers) {
+      sendIncomingCallOverlayHint(false, "incoming-call-beforeunload");
+    }
+  });
 
   // Also listen for messages (fallback)
   window.addEventListener("message", (event: MessageEvent) => {
@@ -1184,10 +1486,52 @@ ipcRenderer.on(
         }
       } else if (event.data.type === "electron-incoming-call") {
         // Handle incoming call detection from page context
+        const incomingCallDataRaw =
+          event.data && typeof event.data.data === "object" && event.data.data
+            ? event.data.data
+            : {};
+        const incomingCallData = {
+          dedupeKey:
+            typeof incomingCallDataRaw.dedupeKey === "string"
+              ? incomingCallDataRaw.dedupeKey
+              : undefined,
+          caller:
+            typeof incomingCallDataRaw.caller === "string"
+              ? incomingCallDataRaw.caller
+              : undefined,
+          source:
+            typeof incomingCallDataRaw.source === "string"
+              ? incomingCallDataRaw.source
+              : undefined,
+        };
+
         console.log(
           "[Preload Bridge] Incoming call detected - signaling main process",
+          incomingCallData,
         );
-        ipcRenderer.send("incoming-call");
+        ipcRenderer.send("incoming-call", incomingCallData);
+
+        // Force-disable header crop so in-page incoming call controls stay visible
+        // while Messenger animates in. Keep revalidating visibility before clearing.
+        sendIncomingCallOverlayHint(true, "incoming-call-detected");
+        ensureIncomingCallOverlayHintHeartbeat();
+        scheduleIncomingCallOverlayHintRecheck("incoming-call-detected");
+      } else if (event.data.type === "electron-incoming-call-ended") {
+        const incomingCallEndedRaw =
+          event.data && typeof event.data.data === "object" && event.data.data
+            ? event.data.data
+            : {};
+        const endedReason =
+          typeof incomingCallEndedRaw.reason === "string"
+            ? incomingCallEndedRaw.reason
+            : "incoming-call-ended";
+
+        console.log(
+          "[Preload Bridge] Incoming call ended - clearing overlay hint",
+          { reason: endedReason },
+        );
+        clearIncomingCallOverlayHintTimers();
+        sendIncomingCallOverlayHint(false, `incoming-call-ended:${endedReason}`);
       } else if (event.data.type === "electron-recount-badge") {
         // Handle badge recount request from injected script (issue #38)
         console.log(

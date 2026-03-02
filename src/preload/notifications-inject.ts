@@ -51,10 +51,118 @@
     }) => NotificationCallClassification;
   };
 
-  // Signal the main process to bring the window to foreground for incoming call
-  const signalIncomingCall = () => {
-    log('=== INCOMING CALL DETECTED - Bringing window to foreground ===');
-    window.postMessage({ type: 'electron-incoming-call' }, '*');
+  type IncomingCallSignalPayload = {
+    dedupeKey?: string;
+    caller?: string;
+    source?: string;
+  };
+
+  const normalizeIncomingCallKey = (raw: string): string =>
+    String(raw)
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[^a-z0-9 :/_\-.]/g, '')
+      .trim()
+      .slice(0, 180);
+
+  const extractIncomingCallerName = (text: string): string | undefined => {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return undefined;
+
+    const withWordBreaks = normalized.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+    const patterns = [
+      /\b([^\n]{1,120}?)\s+is calling\b/i,
+      /\bincoming\s+(?:video\s+|audio\s+)?call\s+from\s+([^\n]{1,120}?)(?:\.|$)/i,
+      /\b([^\n]{1,120}?)\s+wants to\s+(?:video\s+)?call\b/i,
+    ];
+
+    const dedupeRepeatedWords = (input: string): string => {
+      const words = input.split(' ').filter(Boolean);
+      if (words.length < 2) return input;
+
+      // Collapse adjacent duplicate words.
+      const compact: string[] = [];
+      for (const word of words) {
+        if (compact.length === 0 || compact[compact.length - 1].toLowerCase() !== word.toLowerCase()) {
+          compact.push(word);
+        }
+      }
+
+      // Collapse repeated full name halves: "Michael Potenza Michael Potenza".
+      if (compact.length % 2 === 0) {
+        const half = compact.length / 2;
+        const firstHalf = compact.slice(0, half).join(' ').toLowerCase();
+        const secondHalf = compact.slice(half).join(' ').toLowerCase();
+        if (firstHalf === secondHalf) {
+          return compact.slice(0, half).join(' ');
+        }
+      }
+
+      return compact.join(' ');
+    };
+
+    const sanitize = (input: string): string => {
+      let value = String(input)
+        .replace(/[|•·]+/g, ' ')
+        .replace(/\b(incoming|video|audio|call|from|end-to-end encrypted|decline|accept|join|ignore|cancel|messenger|facebook)\b/gi, ' ')
+        .replace(/^[:\-\s]+|[:\-\s]+$/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Collapse immediate repeated chunks (e.g. "Michael PotenzaMichael Potenza")
+      const repeatedChunk = value.match(/^(.{2,60}?)\1+$/i);
+      if (repeatedChunk?.[1]) {
+        value = repeatedChunk[1].trim();
+      }
+
+      // Collapse repeated phrase with separator (e.g. "Michael Potenza Michael Potenza")
+      const repeatedPhrase = value.match(/^(.{2,60}?)\s+\1$/i);
+      if (repeatedPhrase?.[1]) {
+        value = repeatedPhrase[1].trim();
+      }
+
+      value = dedupeRepeatedWords(value);
+      return value;
+    };
+
+    for (const sourceText of [withWordBreaks, normalized]) {
+      for (const pattern of patterns) {
+        const match = sourceText.match(pattern);
+        const candidate = sanitize(match?.[1] || '');
+        if (candidate.length >= 2) {
+          const words = candidate.split(' ').filter(Boolean);
+          return words.slice(0, 4).join(' ').slice(0, 80);
+        }
+      }
+
+      let fallbackMatch: RegExpMatchArray | null = null;
+      try {
+        fallbackMatch = sourceText.match(
+          /\b([\p{L}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}][\p{L}\p{M}'’.-]*){0,3})\b/u,
+        );
+      } catch {
+        fallbackMatch = sourceText.match(
+          /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b/,
+        );
+      }
+      const fallbackCandidate = sanitize(fallbackMatch?.[1] || '');
+      if (fallbackCandidate.length >= 2) {
+        return fallbackCandidate.slice(0, 80);
+      }
+    }
+
+    return undefined;
+  };
+
+  const signalIncomingCall = (payload: IncomingCallSignalPayload = {}) => {
+    log('=== INCOMING CALL DETECTED - Bringing window to foreground ===', payload);
+    window.postMessage({ type: 'electron-incoming-call', data: payload }, '*');
+  };
+
+  const signalIncomingCallEnded = (reason: string) => {
+    log('=== INCOMING CALL ENDED/DECLINED DETECTED ===', { reason });
+    window.postMessage({ type: 'electron-incoming-call-ended', data: { reason } }, '*');
   };
 
   // Selectors for Messenger's DOM structure (these may need updates as Messenger changes)
@@ -165,6 +273,15 @@
     }
   };
 
+  const buildIncomingCallDedupeKey = (rawRoute?: string): string => {
+    const route = normalizeConversationKey(
+      typeof rawRoute === 'string' && rawRoute.trim().length > 0
+        ? rawRoute
+        : (window.location.pathname || '/'),
+    );
+    return normalizeIncomingCallKey(`call:${route}`);
+  };
+
   // Clear notification records for conversations that are no longer unread
   // This allows new notifications to be sent when new messages arrive in the same conversation
   const clearReadConversationRecords = () => {
@@ -260,18 +377,34 @@
     log(`=== SENDING NOTIFICATION [${source}] ===`, { title, body: body.slice(0, 50), href });
 
     const callResult = callClassification || classifyCallPayload(title, body);
+    let effectiveTitle = String(title);
+    let effectiveBody = String(body);
+
     if (callResult.isIncomingCall) {
+      const callKey = buildIncomingCallDedupeKey(href);
+      const caller = extractIncomingCallerName(`${title} ${body}`);
       log('Notification classified as incoming call', {
         source,
         reason: callResult.reason,
         matchedPattern: callResult.matchedPattern,
+        callKey,
+        caller,
       });
-      signalIncomingCall();
+      signalIncomingCall({
+        dedupeKey: callKey,
+        caller,
+        source: `notification:${source}`,
+      });
+
+      effectiveTitle = 'Incoming call';
+      effectiveBody = caller
+        ? `${caller} is calling you on Messenger`
+        : 'Someone is calling you on Messenger';
     }
 
     const notificationData = {
-      title: String(title),
-      body: String(body),
+      title: effectiveTitle,
+      body: effectiveBody,
       id: Date.now() + Math.random(),
       icon,
       silent: false,
@@ -1230,22 +1363,46 @@
     // Track if we've already signaled for the current call to avoid repeated signals
     let lastCallSignalTime = 0;
     const CALL_SIGNAL_DEBOUNCE_MS = 5000; // Don't signal more than once every 5 seconds
+    // Throttle attribute-mutation checks — class changes fire constantly in React apps
+    let lastAttributeScanTime = 0;
+    const ATTRIBUTE_SCAN_THROTTLE_MS = 500;
+    // Skip isCallPopupElement subtree-walks on large containers (direct child limit)
+    const MAX_CALL_POPUP_CHILD_COUNT = 200;
+    let hasActiveIncomingCallUi = false;
 
-    // Selectors and patterns that indicate an incoming call popup
+    const hasVisibleIncomingCallUi = (): boolean => {
+      const hasVisibleAnswerControl = Array.from(
+        document.querySelectorAll(
+          '[aria-label*="Answer" i], [aria-label*="Accept call" i], [aria-label*="Join call" i], [aria-label*="Accept video call" i], [aria-label*="Accept audio call" i]',
+        ),
+      ).some((el) => isAriaVisible(el));
+      const hasVisibleDeclineControl = Array.from(
+        document.querySelectorAll(
+          '[aria-label*="Decline" i], [aria-label*="Ignore call" i], [aria-label*="Decline call" i]',
+        ),
+      ).some((el) => isAriaVisible(el));
+      return hasVisibleAnswerControl && hasVisibleDeclineControl;
+    };
+
+    // Selectors and patterns that indicate an incoming call popup.
+    // Use CSS Selectors Level 4 case-insensitive flag (supported in Chromium 49+).
     // Messenger's call UI typically contains:
     // - "Answer" or "Accept" button
     // - "Decline" or "Ignore" button
     // - Video/audio call icons
     // - Caller's profile picture with calling animation
     const callPopupSelectors = [
-      // Buttons with call-related aria-labels
-      '[aria-label*="Answer"]',
-      '[aria-label*="Decline"]',
-      '[aria-label*="Accept call"]',
-      '[aria-label*="Ignore call"]',
-      '[aria-label*="Accept video call"]',
-      '[aria-label*="Accept audio call"]',
-      // Text content patterns
+      // Buttons with call-related aria-labels (case-insensitive)
+      '[aria-label*="Answer" i]',
+      '[aria-label*="Decline" i]',
+      '[aria-label*="Accept call" i]',
+      '[aria-label*="Ignore call" i]',
+      '[aria-label*="Accept video call" i]',
+      '[aria-label*="Accept audio call" i]',
+      '[aria-label*="Join call" i]',
+      '[aria-label*="Join video" i]',
+      '[aria-label*="Join audio" i]',
+      // data-testid patterns (kept narrow to avoid matching unrelated quiz/event UI)
       '[data-testid*="incoming"]',
       '[data-testid*="call"]',
     ];
@@ -1256,14 +1413,41 @@
       /is calling/i,
       /calling you/i,
       /wants to (video )?call/i,
+      /join (the )?(video |audio )?call/i,
+      /video call (has )?started/i,
+      /audio call (has )?started/i,
     ];
+
+    const buildIncomingCallPayloadFromElement = (
+      element: Element,
+      source: string,
+    ): IncomingCallSignalPayload => {
+      const textSample = (element.textContent || '').replace(/\s+/g, ' ').trim();
+      const caller = extractIncomingCallerName(textSample);
+      const route = normalizeConversationKey(window.location.pathname || '/');
+      const dedupeKey = buildIncomingCallDedupeKey(route);
+
+      return {
+        dedupeKey,
+        caller,
+        source,
+      };
+    };
 
     // Check if an element or its children contain call-related UI
     const isCallPopupElement = (element: Element): boolean => {
       // Check for call-related selectors
       for (const selector of callPopupSelectors) {
         try {
-          if (element.matches?.(selector) || element.querySelector?.(selector)) {
+          if (element.matches?.(selector) && isAriaVisible(element)) {
+            return true;
+          }
+
+          const matchedDescendants = element.querySelectorAll?.(selector);
+          if (
+            matchedDescendants &&
+            Array.from(matchedDescendants).some((candidate) => isAriaVisible(candidate))
+          ) {
             return true;
           }
         } catch {
@@ -1279,8 +1463,9 @@
           // Look for action buttons nearby
           const buttons = element.querySelectorAll('button, [role="button"]');
           for (const button of Array.from(buttons)) {
+            if (!isAriaVisible(button)) continue;
             const buttonLabel = button.getAttribute('aria-label') || button.textContent || '';
-            if (/answer|accept|decline|ignore/i.test(buttonLabel)) {
+            if (/answer|accept|decline|ignore|join|cancel/i.test(buttonLabel)) {
               return true;
             }
           }
@@ -1305,8 +1490,11 @@
         // Check if this element or its descendants indicate a call popup
         if (isCallPopupElement(element)) {
           log('Call popup detected in DOM - bringing window to foreground');
+          hasActiveIncomingCallUi = true;
           lastCallSignalTime = now;
-          signalIncomingCall();
+          signalIncomingCall(
+            buildIncomingCallPayloadFromElement(element, 'dom-node'),
+          );
           return;
         }
 
@@ -1315,31 +1503,114 @@
         for (const desc of Array.from(descendants)) {
           if (isCallPopupElement(desc)) {
             log('Call popup detected in descendant - bringing window to foreground');
+            hasActiveIncomingCallUi = true;
             lastCallSignalTime = now;
-            signalIncomingCall();
+            signalIncomingCall(
+              buildIncomingCallPayloadFromElement(desc, 'dom-descendant'),
+            );
             return;
           }
         }
       }
     };
 
-    // Observe the entire document for call popup additions
+    // Returns true when the element is not aria-hidden/hidden and is actually rendered.
+    // Used to distinguish a visible call popup from pre-rendered hidden controls.
+    const isAriaVisible = (el: Element | null): boolean => {
+      if (!el) return false;
+      if (el.closest('[aria-hidden="true"]') || el.closest('[hidden]')) {
+        return false;
+      }
+
+      const target = el instanceof HTMLElement ? el : null;
+      if (!target) return true;
+
+      const style = window.getComputedStyle(target);
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.opacity === '0' ||
+        style.pointerEvents === 'none'
+      ) {
+        return false;
+      }
+
+      const rect = target.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) {
+        return false;
+      }
+
+      return true;
+    };
+
+    // Observe the entire document for call popup additions AND attribute changes
+    // (Facebook sometimes reveals a pre-rendered overlay by toggling CSS classes).
     const callObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
-        if (mutation.addedNodes.length > 0) {
+        if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
           checkForCallPopup(mutation.addedNodes);
+        } else if (mutation.type === 'attributes') {
+          const changedEl = mutation.target as Element;
+          if (changedEl.nodeType !== Node.ELEMENT_NODE) continue;
+          const now = Date.now();
+          if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) continue;
+          // Throttle: class changes fire constantly in React — check at most twice/sec
+          if (now - lastAttributeScanTime < ATTRIBUTE_SCAN_THROTTLE_MS) continue;
+          lastAttributeScanTime = now;
+          // Skip large containers to bound the cost of querySelector subtree walks
+          if (changedEl.childElementCount <= MAX_CALL_POPUP_CHILD_COUNT && isCallPopupElement(changedEl)) {
+            log('Call popup detected via attribute change');
+            hasActiveIncomingCallUi = true;
+            lastCallSignalTime = now;
+            signalIncomingCall(
+              buildIncomingCallPayloadFromElement(changedEl, 'attribute-change'),
+            );
+          }
         }
       }
     });
 
-    // Start observing after the page has settled
+    // Start observing after the page has settled (reduced from 3000ms)
     setTimeout(() => {
       callObserver.observe(document.body, {
         childList: true,
         subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'hidden', 'aria-hidden'],
       });
       log('Call popup observer active');
-    }, 3000);
+
+      // Periodic fallback scan when the window is not focused.
+      // Catches call popups revealed via mechanisms the MutationObserver may miss
+      // (e.g. React portals, CSS-only show/hide not involving new DOM nodes).
+      // Requires BOTH an answer-type AND a decline-type element to be aria-visible
+      // simultaneously to avoid false positives from unrelated UI elements.
+      window.setInterval(() => {
+        const now = Date.now();
+        if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) return;
+        if (isWindowFocused()) return;
+
+        if (hasVisibleIncomingCallUi()) {
+          log('Periodic scan: incoming call UI detected (Answer + Decline both visible)');
+          hasActiveIncomingCallUi = true;
+          lastCallSignalTime = now;
+          signalIncomingCall({
+            dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
+            source: 'periodic-scan',
+          });
+        }
+      }, 5000);
+
+      // Fast end/decline detector: once an incoming call UI has been observed,
+      // clear overlay hint quickly when Answer/Decline controls disappear.
+      window.setInterval(() => {
+        if (!hasActiveIncomingCallUi) return;
+        if (hasVisibleIncomingCallUi()) return;
+
+        hasActiveIncomingCallUi = false;
+        signalIncomingCallEnded('controls-disappeared');
+      }, 1000);
+    }, 1000);
   };
 
   setupCallPopupObserver();
@@ -2068,6 +2339,5 @@
 
   log('Keyboard shortcuts initialized');
 
-  setupCallPopupObserver();
   log('Initialization complete');
 })(window, Notification);

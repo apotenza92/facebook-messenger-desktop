@@ -4,13 +4,40 @@ set -euo pipefail
 # Release script for Facebook Messenger Desktop
 # Creates a version tag and pushes it to trigger CI builds
 
-VERSION="${1:-}"
-
-if [ -z "$VERSION" ]; then
-  echo "Usage: ./scripts/release.sh <version>"
+print_usage() {
+  echo "Usage: ./scripts/release.sh <version> [--dry-run]"
   echo "Examples:"
   echo "  ./scripts/release.sh 1.2.3"
   echo "  ./scripts/release.sh 1.2.3-beta.1"
+  echo "  ./scripts/release.sh 1.2.3 --dry-run"
+}
+
+VERSION=""
+DRY_RUN=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)
+      DRY_RUN=true
+      ;;
+    -h|--help)
+      print_usage
+      exit 0
+      ;;
+    *)
+      if [ -z "$VERSION" ]; then
+        VERSION="$arg"
+      else
+        echo "Error: Unexpected argument '$arg'"
+        print_usage
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+if [ -z "$VERSION" ]; then
+  print_usage
   exit 1
 fi
 
@@ -20,10 +47,18 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
   exit 1
 fi
 
+IS_STABLE=false
+if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  IS_STABLE=true
+fi
+
 TAG="v$VERSION"
 
 echo "========================================"
 echo "Release: $TAG"
+if [ "$DRY_RUN" = true ]; then
+  echo "Mode: DRY RUN"
+fi
 echo "========================================"
 echo ""
 
@@ -67,6 +102,24 @@ fi
 
 echo "✓ Pre-flight checks passed"
 echo ""
+
+if [ "$IS_STABLE" = true ]; then
+  read -r -p "Type \"yes do it\" to continue: " STABLE_CONFIRMATION
+  if [ "$STABLE_CONFIRMATION" != "yes do it" ]; then
+    echo "Error: Stable releases require exact confirmation phrase."
+    exit 1
+  fi
+  echo "✓ Stable release confirmation accepted"
+  echo ""
+fi
+
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY RUN] Would create tag $TAG"
+  echo "[DRY RUN] Would push tag $TAG to origin"
+  echo ""
+  echo "✓ Dry run complete"
+  exit 0
+fi
 
 # Create the tag and push
 echo "Creating tag $TAG..."
