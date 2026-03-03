@@ -22,7 +22,12 @@ import * as https from "https";
 const execAsync = promisify(exec);
 import * as path from "path";
 import * as fs from "fs";
-import { NotificationHandler } from "./notification-handler";
+import {
+  NotificationHandler,
+  type NotificationData,
+  type NotificationSoundDecision,
+} from "./notification-handler";
+import { decideNotificationSoundPolicy } from "./notification-sound-policy";
 import { BadgeManager } from "./badge-manager";
 import { BackgroundService } from "./background-service";
 import {
@@ -222,6 +227,10 @@ let appReady = false; // Flag to indicate app is fully initialized (window creat
 let pendingShowWindow = false; // Queue second-instance events that arrive before app is ready
 const incomingCallNotificationByKey = new Map<string, number>();
 let lastNoKeyIncomingCallNotificationAt = 0;
+let isSystemSuspendedOrLocked = false;
+let cachedMacDoNotDisturbActive = false;
+let lastMacDoNotDisturbCheckMs = 0;
+const MAC_DO_NOT_DISTURB_CACHE_MS = 5_000;
 type MenuBarMode = "always" | "hover" | "never";
 let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
@@ -251,7 +260,10 @@ function formatIncomingCallCaller(raw: unknown): string | null {
 
   const cleaned = raw
     .replace(/[|•·]+/g, " ")
-    .replace(/\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi, " ")
+    .replace(
+      /\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi,
+      " ",
+    )
     .replace(/\b(incoming|video|audio|call|from|on|messenger|facebook)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -267,6 +279,36 @@ function formatIncomingCallCaller(raw: unknown): string | null {
     ) {
       compact.push(word);
     }
+  }
+
+  const normalizedCandidate = compact
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const genericLabels = new Set([
+    "profile",
+    "profile picture",
+    "picture",
+    "incoming call",
+    "video call",
+    "audio call",
+    "call",
+    "caller",
+    "unknown caller",
+    "messenger",
+    "facebook",
+    "someone",
+  ]);
+
+  if (
+    !normalizedCandidate ||
+    genericLabels.has(normalizedCandidate) ||
+    /^profile picture(?: of)?$/.test(normalizedCandidate)
+  ) {
+    return null;
   }
 
   if (compact.length % 2 === 0 && compact.length > 0) {
@@ -6876,6 +6918,109 @@ function createApplicationMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 
+function parseMacDoNotDisturbOutput(rawOutput: string): boolean | null {
+  const normalized = rawOutput.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    /\bdo\s*not\s*disturb\b\s*=\s*1\b/.test(normalized) ||
+    /\benabled\b\s*=\s*1\b/.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (
+    normalized === "0" ||
+    normalized === "false" ||
+    normalized === "no" ||
+    /\bdo\s*not\s*disturb\b\s*=\s*0\b/.test(normalized) ||
+    /\benabled\b\s*=\s*0\b/.test(normalized)
+  ) {
+    return false;
+  }
+
+  return null;
+}
+
+function readMacDoNotDisturbState(): boolean {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+
+  const now = Date.now();
+  if (now - lastMacDoNotDisturbCheckMs < MAC_DO_NOT_DISTURB_CACHE_MS) {
+    return cachedMacDoNotDisturbActive;
+  }
+
+  let detected: boolean | null = null;
+
+  try {
+    const value = systemPreferences.getUserDefault(
+      "doNotDisturb",
+      "boolean",
+    );
+    if (typeof value === "boolean") {
+      detected = value;
+    }
+  } catch {
+    // no-op; fall through to legacy defaults key.
+  }
+
+  if (detected === null) {
+    try {
+      const { execSync } = require("child_process");
+      const raw = String(
+        execSync(
+          "defaults -currentHost read com.apple.notificationcenterui doNotDisturb 2>/dev/null || true",
+          { encoding: "utf8" },
+        ),
+      );
+      detected = parseMacDoNotDisturbOutput(raw);
+    } catch {
+      // Ignore read failures; we'll keep the previous cached value.
+    }
+  }
+
+  if (detected !== null) {
+    cachedMacDoNotDisturbActive = detected;
+  }
+
+  lastMacDoNotDisturbCheckMs = now;
+  return cachedMacDoNotDisturbActive;
+}
+
+function isNotificationSoundSuppressedByPowerState(): boolean {
+  if (isSystemSuspendedOrLocked) {
+    return true;
+  }
+
+  try {
+    return powerMonitor.getSystemIdleState(1) === "locked";
+  } catch {
+    return isSystemSuspendedOrLocked;
+  }
+}
+
+function resolveNotificationSoundDecision(
+  data: NotificationData,
+): NotificationSoundDecision {
+  const hasFocusedWindow =
+    !!mainWindow &&
+    !mainWindow.isDestroyed() &&
+    mainWindow.isVisible() &&
+    mainWindow.isFocused();
+
+  return decideNotificationSoundPolicy({
+    requestedSilent: data.silent === true,
+    isSystemSuspendedOrLocked: isNotificationSoundSuppressedByPowerState(),
+    isDoNotDisturbActive: readMacDoNotDisturbState(),
+    isAppFocused: hasFocusedWindow,
+  });
+}
+
 type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
 
 function getMessengerWebContents(): Electron.WebContents | undefined {
@@ -6901,23 +7046,33 @@ function sendPowerStateToRenderer(state: PowerStateEvent): void {
 }
 
 function setupPowerMonitor(): void {
+  try {
+    isSystemSuspendedOrLocked = powerMonitor.getSystemIdleState(1) === "locked";
+  } catch {
+    isSystemSuspendedOrLocked = false;
+  }
+
   powerMonitor.on("suspend", () => {
     console.log("[PowerMonitor] System suspend detected");
+    isSystemSuspendedOrLocked = true;
     sendPowerStateToRenderer("suspend");
   });
 
   powerMonitor.on("resume", () => {
     console.log("[PowerMonitor] System resume detected");
+    isSystemSuspendedOrLocked = false;
     sendPowerStateToRenderer("resume");
   });
 
   powerMonitor.on("lock-screen", () => {
     console.log("[PowerMonitor] Screen locked");
+    isSystemSuspendedOrLocked = true;
     sendPowerStateToRenderer("lock-screen");
   });
 
   powerMonitor.on("unlock-screen", () => {
     console.log("[PowerMonitor] Screen unlocked");
+    isSystemSuspendedOrLocked = false;
     sendPowerStateToRenderer("unlock-screen");
   });
 }
@@ -6936,6 +7091,8 @@ function setupIpcHandlers(): void {
       notificationHandler = new NotificationHandler(
         () => mainWindow,
         APP_DISPLAY_NAME,
+        undefined,
+        resolveNotificationSoundDecision,
       );
       notificationHandler.showNotification(data);
     }
@@ -9689,6 +9846,8 @@ app.whenReady().then(async () => {
   notificationHandler = new NotificationHandler(
     () => mainWindow,
     APP_DISPLAY_NAME,
+    undefined,
+    resolveNotificationSoundDecision,
   );
   badgeManager = new BadgeManager();
   badgeManager.setWindowGetter(() => mainWindow);

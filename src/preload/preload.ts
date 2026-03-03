@@ -1277,8 +1277,12 @@ ipcRenderer.on(
 
   let incomingCallOverlayHintTimer: number | null = null;
   let incomingCallOverlayHintHeartbeatTimer: number | null = null;
+  let incomingCallOverlayHintStartedAt = 0;
+  let incomingCallOverlayHintLastVisibleAt = 0;
   const INCOMING_CALL_OVERLAY_HINT_RECHECK_MS = 12_000;
   const INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS = 4_000;
+  const INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS = 20_000;
+  const INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS = 15_000;
   const incomingCallAnswerSelectors = [
     '[aria-label*="Answer" i]',
     '[aria-label*="Accept call" i]',
@@ -1343,6 +1347,24 @@ ipcRenderer.on(
     }
   };
 
+  const shouldKeepIncomingCallOverlayHintActive = (now: number): boolean => {
+    if (incomingCallOverlayHintStartedAt > 0) {
+      const sinceStart = now - incomingCallOverlayHintStartedAt;
+      if (sinceStart < INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS) {
+        return true;
+      }
+    }
+
+    if (incomingCallOverlayHintLastVisibleAt > 0) {
+      const sinceVisible = now - incomingCallOverlayHintLastVisibleAt;
+      if (sinceVisible < INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   const scheduleIncomingCallOverlayHintRecheck = (reason: string): void => {
     if (incomingCallOverlayHintTimer !== null) {
       clearTimeout(incomingCallOverlayHintTimer);
@@ -1350,13 +1372,23 @@ ipcRenderer.on(
 
     incomingCallOverlayHintTimer = window.setTimeout(() => {
       incomingCallOverlayHintTimer = null;
+      const now = Date.now();
       if (detectIncomingCallOverlayVisibleForHint()) {
+        incomingCallOverlayHintLastVisibleAt = now;
         sendIncomingCallOverlayHint(true, `${reason}-refresh`);
         scheduleIncomingCallOverlayHintRecheck("incoming-call-timeout");
         return;
       }
 
+      if (shouldKeepIncomingCallOverlayHintActive(now)) {
+        sendIncomingCallOverlayHint(true, `${reason}-hold`);
+        scheduleIncomingCallOverlayHintRecheck("incoming-call-timeout");
+        return;
+      }
+
       sendIncomingCallOverlayHint(false, "incoming-call-timeout-clear");
+      incomingCallOverlayHintStartedAt = 0;
+      incomingCallOverlayHintLastVisibleAt = 0;
       clearIncomingCallOverlayHintTimers();
     }, INCOMING_CALL_OVERLAY_HINT_RECHECK_MS);
   };
@@ -1367,13 +1399,23 @@ ipcRenderer.on(
     }
 
     incomingCallOverlayHintHeartbeatTimer = window.setInterval(() => {
+      const now = Date.now();
       if (detectIncomingCallOverlayVisibleForHint()) {
+        incomingCallOverlayHintLastVisibleAt = now;
         sendIncomingCallOverlayHint(true, "incoming-call-heartbeat");
         scheduleIncomingCallOverlayHintRecheck("incoming-call-heartbeat");
         return;
       }
 
+      if (shouldKeepIncomingCallOverlayHintActive(now)) {
+        sendIncomingCallOverlayHint(true, "incoming-call-heartbeat-hold");
+        scheduleIncomingCallOverlayHintRecheck("incoming-call-heartbeat-hold");
+        return;
+      }
+
       sendIncomingCallOverlayHint(false, "incoming-call-heartbeat-clear");
+      incomingCallOverlayHintStartedAt = 0;
+      incomingCallOverlayHintLastVisibleAt = 0;
       clearIncomingCallOverlayHintTimers();
     }, INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS);
   };
@@ -1383,6 +1425,8 @@ ipcRenderer.on(
       incomingCallOverlayHintTimer !== null ||
       incomingCallOverlayHintHeartbeatTimer !== null;
     clearIncomingCallOverlayHintTimers();
+    incomingCallOverlayHintStartedAt = 0;
+    incomingCallOverlayHintLastVisibleAt = 0;
     if (hadTimers) {
       sendIncomingCallOverlayHint(false, "incoming-call-beforeunload");
     }
@@ -1526,7 +1570,11 @@ ipcRenderer.on(
         ipcRenderer.send("incoming-call", incomingCallData);
 
         // Force-disable header crop so in-page incoming call controls stay visible
-        // while Messenger animates in. Keep revalidating visibility before clearing.
+        // while Messenger animates in. Keep hint sticky for a grace window even if
+        // controls temporarily disappear during UI reflows.
+        const now = Date.now();
+        incomingCallOverlayHintStartedAt = now;
+        incomingCallOverlayHintLastVisibleAt = now;
         sendIncomingCallOverlayHint(true, "incoming-call-detected");
         ensureIncomingCallOverlayHintHeartbeat();
         scheduleIncomingCallOverlayHintRecheck("incoming-call-detected");
@@ -1545,6 +1593,8 @@ ipcRenderer.on(
           { reason: endedReason },
         );
         clearIncomingCallOverlayHintTimers();
+        incomingCallOverlayHintStartedAt = 0;
+        incomingCallOverlayHintLastVisibleAt = 0;
         sendIncomingCallOverlayHint(false, `incoming-call-ended:${endedReason}`);
       } else if (event.data.type === "electron-recount-badge") {
         // Handle badge recount request from injected script (issue #38)
