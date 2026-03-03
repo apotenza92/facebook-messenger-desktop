@@ -67,6 +67,10 @@ The script automatically:
 
 - [ ] Code changes completed and tested
 - [ ] Run `npm run test:issues` to verify #45/#46 regressions are covered
+- [ ] **For call-related fixes/issues:** run live GUI call validation with real accounts:
+  - Incoming-call validation: **Michael → Alex** (ensure Alex sees stable incoming overlay/controls + notification behavior)
+  - Outgoing-call validation: **Alex → Michael** (ensure popup/window routing and remote incoming ring behavior)
+  - Use `node scripts/test-call-flows-gui.js` with authenticated sessions/profiles when possible, and report results explicitly in release notes/PR summary.
 - [ ] Update `CHANGELOG.md` with version and changes
 - [ ] Update `package.json` version number
 - [ ] Commit and push changes to `main`
