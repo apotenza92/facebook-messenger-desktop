@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.18] - 2026-03-03
+
+### Fixed
+
+- **Issue #47: incoming-call UI could still collapse after a few seconds in live flows** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Made incoming-call overlay hint handling in preload sticky with a minimum hold window + miss-grace window so temporary Messenger UI/control reflows no longer clear the hint too aggressively.
+  - Prevented heartbeat/recheck timers from force-clearing hint state immediately on transient missing controls; hint now persists unless disappearance is sustained.
+- **Incoming call notification caller text hardening**
+  - Added main-process caller sanitization fallback to drop generic labels (`Profile picture`, `Someone`, etc.) so notifications now fall back to `Someone is calling you on Messenger` instead of awkward placeholder names.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+
 ## [1.3.0-beta.17] - 2026-03-03
 
 ### Fixed

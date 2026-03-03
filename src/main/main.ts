@@ -25,9 +25,7 @@ import * as fs from "fs";
 import {
   NotificationHandler,
   type NotificationData,
-  type NotificationSoundDecision,
 } from "./notification-handler";
-import { decideNotificationSoundPolicy } from "./notification-sound-policy";
 import { BadgeManager } from "./badge-manager";
 import { BackgroundService } from "./background-service";
 import {
@@ -6992,35 +6990,6 @@ function readMacDoNotDisturbState(): boolean {
   return cachedMacDoNotDisturbActive;
 }
 
-function isNotificationSoundSuppressedByPowerState(): boolean {
-  if (isSystemSuspendedOrLocked) {
-    return true;
-  }
-
-  try {
-    return powerMonitor.getSystemIdleState(1) === "locked";
-  } catch {
-    return isSystemSuspendedOrLocked;
-  }
-}
-
-function resolveNotificationSoundDecision(
-  data: NotificationData,
-): NotificationSoundDecision {
-  const hasFocusedWindow =
-    !!mainWindow &&
-    !mainWindow.isDestroyed() &&
-    mainWindow.isVisible() &&
-    mainWindow.isFocused();
-
-  return decideNotificationSoundPolicy({
-    requestedSilent: data.silent === true,
-    isSystemSuspendedOrLocked: isNotificationSoundSuppressedByPowerState(),
-    isDoNotDisturbActive: readMacDoNotDisturbState(),
-    isAppFocused: hasFocusedWindow,
-  });
-}
-
 type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
 
 function getMessengerWebContents(): Electron.WebContents | undefined {
@@ -7091,8 +7060,6 @@ function setupIpcHandlers(): void {
       notificationHandler = new NotificationHandler(
         () => mainWindow,
         APP_DISPLAY_NAME,
-        undefined,
-        resolveNotificationSoundDecision,
       );
       notificationHandler.showNotification(data);
     }
@@ -9846,8 +9813,6 @@ app.whenReady().then(async () => {
   notificationHandler = new NotificationHandler(
     () => mainWindow,
     APP_DISPLAY_NAME,
-    undefined,
-    resolveNotificationSoundDecision,
   );
   badgeManager = new BadgeManager();
   badgeManager.setWindowGetter(() => mainWindow);
