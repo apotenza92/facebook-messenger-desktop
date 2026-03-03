@@ -1,6 +1,7 @@
 const { _electron: electron, chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -114,6 +115,168 @@ async function isBrowserAuthenticated(page) {
       authenticated: !/facebook\.com\/login/i.test(url) && !hasLoginForm,
     };
   });
+}
+
+function readOnePasswordFacebookCredentials({ item, vault }) {
+  const args = ['item', 'get', item, '--format', 'json'];
+  if (vault && String(vault).trim()) {
+    args.push('--vault', String(vault).trim());
+  }
+
+  let output;
+  try {
+    output = execFileSync('op', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    const detail =
+      (error && error.stderr && String(error.stderr).trim()) ||
+      (error && error.message) ||
+      'unknown 1Password CLI error';
+    throw new Error(
+      `Unable to read 1Password item \"${item}\". Ensure \`op signin\` succeeded in this tmux/session. Detail: ${detail}`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(String(output));
+  } catch {
+    throw new Error(`Failed to parse 1Password item JSON for \"${item}\".`);
+  }
+
+  const fields = Array.isArray(parsed.fields) ? parsed.fields : [];
+
+  const pickFieldValue = (predicate) => {
+    const field = fields.find(predicate);
+    if (!field) return undefined;
+    if (typeof field.value === 'string' && field.value.trim()) return field.value.trim();
+    return undefined;
+  };
+
+  const username = pickFieldValue(
+    (field) =>
+      field.purpose === 'USERNAME' ||
+      /user(name)?|email|login/i.test(`${field.label || ''} ${field.id || ''}`),
+  );
+
+  const password = pickFieldValue(
+    (field) => field.purpose === 'PASSWORD' || /pass(word)?/i.test(`${field.label || ''} ${field.id || ''}`),
+  );
+
+  const otp = pickFieldValue(
+    (field) => field.type === 'OTP' || /otp|one[- ]time|totp|2fa|auth/i.test(`${field.label || ''} ${field.id || ''}`),
+  );
+
+  if (!username || !password) {
+    throw new Error(
+      `1Password item \"${item}\" is missing username/password fields.`,
+    );
+  }
+
+  return { username, password, otp };
+}
+
+async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
+  console.log(`[Setup] Michael session unauthenticated, attempting 1Password login via item: ${item}`);
+
+  const credentials = readOnePasswordFacebookCredentials({ item, vault });
+
+  await page.goto('https://www.facebook.com/login.php?next=https%3A%2F%2Fwww.facebook.com%2Fmessages%2F', {
+    waitUntil: 'domcontentloaded',
+  });
+
+  await page.locator('input[name="email"]').first().fill(credentials.username);
+  await page.locator('input[name="pass"]').first().fill(credentials.password);
+
+  let submitClicked = false;
+
+  try {
+    await page.locator('input[name="pass"]').first().press('Enter', { timeout: 1500 });
+    submitClicked = true;
+  } catch {
+    // fallback to explicit button click
+  }
+
+  if (!submitClicked) {
+    const submitSelectors = [
+      'button[name="login"]',
+      '#loginbutton',
+      'button[type="submit"]',
+      'input[name="login"]',
+      'input[type="submit"]',
+    ];
+    for (const selector of submitSelectors) {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) === 0) continue;
+      try {
+        await locator.click({ timeout: 1500 });
+        submitClicked = true;
+        break;
+      } catch {
+        // try next selector
+      }
+    }
+  }
+
+  if (!submitClicked) {
+    throw new Error('Could not submit Facebook login form in Michael session.');
+  }
+
+  await page.waitForLoadState('domcontentloaded');
+  await wait(1500);
+
+  const needsOtp = await page.evaluate(() => {
+    return Boolean(
+      document.querySelector(
+        'input[name="approvals_code"], input[name="code"], input[autocomplete="one-time-code"]',
+      ),
+    );
+  });
+
+  if (needsOtp) {
+    if (!credentials.otp) {
+      throw new Error(
+        'Facebook requested OTP but 1Password item has no OTP field configured.',
+      );
+    }
+
+    const otpInput = page
+      .locator(
+        'input[name="approvals_code"], input[name="code"], input[autocomplete="one-time-code"]',
+      )
+      .first();
+    await otpInput.fill(credentials.otp);
+
+    const otpSubmitSelectors = [
+      'button[type="submit"]',
+      'input[type="submit"]',
+      '[name="submit[Continue]"]',
+    ];
+    for (const selector of otpSubmitSelectors) {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) === 0) continue;
+      try {
+        await locator.click({ timeout: 1500 });
+        break;
+      } catch {
+        // try next selector
+      }
+    }
+
+    await page.waitForLoadState('domcontentloaded');
+    await wait(1500);
+  }
+
+  const authState = await isBrowserAuthenticated(page);
+  if (!authState.authenticated) {
+    throw new Error(
+      `Michael 1Password login did not complete. Current URL: ${authState.url}`,
+    );
+  }
+
+  console.log('[Setup] Michael login via 1Password succeeded.');
 }
 
 function buildIncomingVisibleScript() {
@@ -296,12 +459,13 @@ async function run() {
   const alexThreadUrl = process.env.ALEX_THREAD_URL || threadUrl;
   const michaelThreadUrl = process.env.MICHAEL_THREAD_URL || threadUrl;
 
-  const michaelProfileDir = process.env.MICHAEL_PROFILE_DIR;
-  if (!michaelProfileDir) {
-    throw new Error(
-      'MICHAEL_PROFILE_DIR is required (Playwright persistent profile for Michael account).',
-    );
-  }
+  const michaelProfileDir =
+    process.env.MICHAEL_PROFILE_DIR ||
+    path.join(__dirname, '../.tmp/playwright-michael-profile');
+  const opFacebookItem = String(process.env.OP_FACEBOOK_ITEM || 'Dad Facebook');
+  const opVault = process.env.OP_VAULT || '';
+  const autoLoginMichaelWithOp =
+    String(process.env.MICHAEL_AUTOLOGIN_WITH_OP || 'true').toLowerCase() !== 'false';
 
   let electronApp;
   let michaelContext;
@@ -312,6 +476,9 @@ async function run() {
     console.log(`Alex URL: ${alexThreadUrl}`);
     console.log(`Michael URL: ${michaelThreadUrl}`);
     console.log(`Michael profile: ${michaelProfileDir}`);
+    console.log(
+      `Michael auto-login with 1Password: ${autoLoginMichaelWithOp ? `enabled (${opFacebookItem})` : 'disabled'}`,
+    );
 
     electronApp = await electron.launch({
       args: [appEntry],
@@ -322,6 +489,8 @@ async function run() {
     });
 
     await wait(4000);
+
+    fs.mkdirSync(michaelProfileDir, { recursive: true });
 
     michaelContext = await chromium.launchPersistentContext(michaelProfileDir, {
       headless: false,
@@ -335,14 +504,24 @@ async function run() {
     await wait(1500);
 
     const alexAuth = await isElectronAuthenticated(electronApp);
-    const michaelAuth = await isBrowserAuthenticated(michaelPage);
+    let michaelAuth = await isBrowserAuthenticated(michaelPage);
 
     if (!alexAuth.authenticated) {
       throw new Error(`Alex app session is not authenticated. Current URL: ${alexAuth.url}`);
     }
+
+    if (!michaelAuth.authenticated && autoLoginMichaelWithOp) {
+      await attemptMichaelLoginWithOnePassword(michaelPage, {
+        item: opFacebookItem,
+        vault: opVault,
+      });
+      michaelAuth = await isBrowserAuthenticated(michaelPage);
+    }
+
     if (!michaelAuth.authenticated) {
       throw new Error(
-        `Michael browser session is not authenticated (profile likely not logged in). Current URL: ${michaelAuth.url}`,
+        `Michael browser session is not authenticated. Current URL: ${michaelAuth.url}. ` +
+          `Either pre-login this profile or enable MICHAEL_AUTOLOGIN_WITH_OP=true with OP access.`,
       );
     }
 
