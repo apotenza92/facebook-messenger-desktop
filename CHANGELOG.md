@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0-beta.17] - 2026-03-03
+
+### Fixed
+
+- **Issue #47: incoming-call overlay no longer collapses immediately after appearing** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Added grace + confirmation windows before treating call controls as disappeared, preventing 0.5s flicker from transient Messenger UI reflows.
+  - Tracked last-seen incoming-call controls and only emit `incoming-call-ended` after sustained control absence.
+- **Incoming call notification caller text fallback cleanup**
+  - Filtered generic labels (e.g. `Profile picture`) from caller-name extraction so native notifications avoid awkward `Profile picture is calling you...` text.
+  - Improved incoming-call overlay hint visibility checks to scan all matching Answer/Decline controls (not just first match), reducing false clears.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+
 ## [1.3.0-beta.16] - 2026-03-02
 
 ### Fixed
