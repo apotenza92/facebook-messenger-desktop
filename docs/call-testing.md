@@ -25,6 +25,7 @@ node scripts/test-call-flows-gui.js
 - `MICHAEL_AUTOLOGIN_WITH_OP` (optional): `true`/`false` (default `true`).
 - `OP_FACEBOOK_ITEM` (optional): 1Password item title for Michael credentials. Default: `Dad Facebook`.
 - `OP_VAULT` (optional): Vault name/UUID when item lookup needs explicit vault.
+- `MICHAEL_MANUAL_LOGIN_TIMEOUT_MS` (optional): How long to wait for manual login/challenge completion if auto-login doesn’t finish. Default: `180000`.
 
 ## 1Password + tmux flow (recommended)
 
@@ -61,4 +62,5 @@ The script will auto-login Michael with 1Password if the profile is not already 
 - Alex side runs in the Electron app under test.
 - Michael side runs in Playwright Chromium persistent context.
 - Incoming test includes a stability assertion to catch quick overlay collapse/flicker regressions.
-- The tmux `keepalive` window pings `op whoami` periodically to reduce idle-session expiry.
+- Facebook may require manual checkpoint/2FA/captcha even after credentials are auto-filled; keep the Michael browser window open and complete prompts when needed.
+- The tmux `keepalive` window pings `op signin`/`op whoami` periodically to reduce idle-session expiry.

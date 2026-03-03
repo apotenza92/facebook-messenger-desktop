@@ -192,33 +192,52 @@ async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
   await page.locator('input[name="email"]').first().fill(credentials.username);
   await page.locator('input[name="pass"]').first().fill(credentials.password);
 
-  let submitClicked = false;
-
-  try {
-    await page.locator('input[name="pass"]').first().press('Enter', { timeout: 1500 });
-    submitClicked = true;
-  } catch {
-    // fallback to explicit button click
-  }
-
-  if (!submitClicked) {
-    const submitSelectors = [
+  let submitClicked = await page.evaluate(() => {
+    const selectors = [
       'button[name="login"]',
       '#loginbutton',
       'button[type="submit"]',
       'input[name="login"]',
       'input[type="submit"]',
+      '[role="button"][aria-label*="log in" i]',
+      '[role="button"][aria-label*="login" i]',
     ];
-    for (const selector of submitSelectors) {
-      const locator = page.locator(selector).first();
-      if ((await locator.count()) === 0) continue;
-      try {
-        await locator.click({ timeout: 1500 });
-        submitClicked = true;
-        break;
-      } catch {
-        // try next selector
+
+    const isVisible = (el) => {
+      if (!el || !(el instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+        return false;
       }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 4 && rect.height > 4;
+    };
+
+    for (const selector of selectors) {
+      const candidates = Array.from(document.querySelectorAll(selector));
+      for (const el of candidates) {
+        const disabled = el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true';
+        if (disabled || !isVisible(el)) continue;
+        el.click();
+        return true;
+      }
+    }
+
+    const form = document.querySelector('form');
+    if (form) {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      return true;
+    }
+
+    return false;
+  });
+
+  if (!submitClicked) {
+    try {
+      await page.locator('input[name="pass"]').first().press('Enter', { timeout: 1500 });
+      submitClicked = true;
+    } catch {
+      // ignore
     }
   }
 
@@ -279,6 +298,26 @@ async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
   }
 
   console.log('[Setup] Michael login via 1Password succeeded.');
+}
+
+async function waitForMichaelManualLogin(page, timeoutMs) {
+  const waitMs = Math.max(0, Number(timeoutMs || 0));
+  if (waitMs <= 0) return false;
+
+  console.log(
+    `[Setup] Waiting up to ${waitMs}ms for manual Michael login completion (solve any checkpoint/2FA in browser window)...`,
+  );
+
+  const started = Date.now();
+  while (Date.now() - started < waitMs) {
+    const auth = await isBrowserAuthenticated(page);
+    if (auth.authenticated) {
+      return true;
+    }
+    await wait(2000);
+  }
+
+  return false;
 }
 
 function buildIncomingVisibleScript() {
@@ -468,6 +507,9 @@ async function run() {
   const opVault = process.env.OP_VAULT || '';
   const autoLoginMichaelWithOp =
     String(process.env.MICHAEL_AUTOLOGIN_WITH_OP || 'true').toLowerCase() !== 'false';
+  const michaelManualLoginTimeoutMs = Number(
+    process.env.MICHAEL_MANUAL_LOGIN_TIMEOUT_MS || 180000,
+  );
 
   let electronApp;
   let michaelContext;
@@ -481,6 +523,7 @@ async function run() {
     console.log(
       `Michael auto-login with 1Password: ${autoLoginMichaelWithOp ? `enabled (${opFacebookItem})` : 'disabled'}`,
     );
+    console.log(`Michael manual-login fallback timeout: ${michaelManualLoginTimeoutMs}ms`);
 
     electronApp = await electron.launch({
       args: [appEntry],
@@ -513,17 +556,33 @@ async function run() {
     }
 
     if (!michaelAuth.authenticated && autoLoginMichaelWithOp) {
-      await attemptMichaelLoginWithOnePassword(michaelPage, {
-        item: opFacebookItem,
-        vault: opVault,
-      });
+      try {
+        await attemptMichaelLoginWithOnePassword(michaelPage, {
+          item: opFacebookItem,
+          vault: opVault,
+        });
+      } catch (error) {
+        console.log(
+          `[Setup] Michael 1Password auto-login did not complete: ${error?.message || error}`,
+        );
+      }
       michaelAuth = await isBrowserAuthenticated(michaelPage);
+    }
+
+    if (!michaelAuth.authenticated) {
+      const manualOk = await waitForMichaelManualLogin(
+        michaelPage,
+        michaelManualLoginTimeoutMs,
+      );
+      if (manualOk) {
+        michaelAuth = await isBrowserAuthenticated(michaelPage);
+      }
     }
 
     if (!michaelAuth.authenticated) {
       throw new Error(
         `Michael browser session is not authenticated. Current URL: ${michaelAuth.url}. ` +
-          `Either pre-login this profile or enable MICHAEL_AUTOLOGIN_WITH_OP=true with OP access.`,
+          `Either pre-login this profile or keep manual login window open until authenticated.`,
       );
     }
 
