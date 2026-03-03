@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0-beta.19] - 2026-03-03
+
+### Fixed
+
+- **Issue #47: incoming-call controls could still disappear while title continued showing caller** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Extended incoming-call visibility detection to include title-based call signals (`is calling`, `calling you`, `incoming call`) so transient control DOM changes don't collapse incoming-call mode mid-ring.
+  - Tuned preload hint-clearing thresholds to avoid aggressive false clears when Messenger briefly reflows call UI.
+  - Hardened manual incoming-call-ended handling so soft end signals are deferred while call signals are still active.
+- **Incoming call native notification persistence + caller text cleanup**
+  - Added incoming-call notification reminder loop (with stale timeout + explicit end handling) so system notifications can persist while call is still ringing.
+  - Added NotificationHandler-level caller-body sanitization fallback to suppress generic placeholders like `Profile picture is calling...`.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+
 ## [1.3.0-beta.18] - 2026-03-03
 
 ### Fixed

@@ -11,21 +11,81 @@ export interface NotificationData {
   href?: string; // Conversation URL for click-to-navigate
 }
 
+export interface NotificationSoundDecision {
+  silent: boolean;
+  reasons?: string[];
+}
+
+export type NotificationSoundDecisionResolver = (
+  data: NotificationData,
+) => NotificationSoundDecision | null | undefined;
+
 export class NotificationHandler {
   private activeNotifications: Map<string, Notification> = new Map();
   private getMainWindow: () => BrowserWindow | null;
   private appDisplayName: string;
   private createNotification: (options: Electron.NotificationConstructorOptions) => Notification;
+  private resolveSoundDecision?: NotificationSoundDecisionResolver;
+
+  private isGenericIncomingCallerLabel(input: string): boolean {
+    const normalized = String(input || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!normalized) return true;
+
+    const generic = new Set([
+      'profile',
+      'profile picture',
+      'picture',
+      'incoming call',
+      'video call',
+      'audio call',
+      'call',
+      'caller',
+      'unknown caller',
+      'messenger',
+      'facebook',
+      'someone',
+    ]);
+
+    return generic.has(normalized) || /^profile picture(?: of)?$/.test(normalized);
+  }
+
+  private sanitizeIncomingCallBody(body: string): string {
+    const trimmed = String(body || '').replace(/\s+/g, ' ').trim();
+    if (!trimmed) {
+      return 'Someone is calling you on Messenger';
+    }
+
+    const callerMatch = trimmed.match(/^(.+?)\s+is\s+calling\s+you(?:\s+on\s+messenger)?\.?$/i);
+    if (callerMatch?.[1]) {
+      if (this.isGenericIncomingCallerLabel(callerMatch[1])) {
+        return 'Someone is calling you on Messenger';
+      }
+      return trimmed;
+    }
+
+    if (/profile picture|unknown caller|\bcaller\b/i.test(trimmed)) {
+      return 'Someone is calling you on Messenger';
+    }
+
+    return trimmed;
+  }
 
   constructor(
     getMainWindow: () => BrowserWindow | null,
     appDisplayName: string = 'Messenger',
     createNotification: (options: Electron.NotificationConstructorOptions) => Notification = (options) =>
       new Notification(options),
+    resolveSoundDecision?: NotificationSoundDecisionResolver,
   ) {
     this.getMainWindow = getMainWindow;
     this.appDisplayName = appDisplayName;
     this.createNotification = createNotification;
+    this.resolveSoundDecision = resolveSoundDecision;
   }
 
   showNotification(data: NotificationData): void {
@@ -36,10 +96,39 @@ export class NotificationHandler {
 
     console.log('[NotificationHandler] Showing notification:', { title: data.title, body: data.body, href: data.href });
 
+    const normalizedTitle = String(data.title || '').trim();
+    const normalizedBody =
+      /incoming\s+call/i.test(normalizedTitle) ||
+      /is\s+calling\s+you/i.test(String(data.body || ''))
+        ? this.sanitizeIncomingCallBody(String(data.body || ''))
+        : String(data.body || '');
+
+    const normalizedData: NotificationData = {
+      ...data,
+      title: normalizedTitle,
+      body: normalizedBody,
+    };
+
+    const requestedSilent = normalizedData.silent === true;
+    const soundDecision = this.resolveSoundDecision
+      ? this.resolveSoundDecision(normalizedData)
+      : null;
+    const effectiveSilent = soundDecision?.silent ?? requestedSilent;
+
+    if (!requestedSilent && effectiveSilent && soundDecision?.reasons?.length) {
+      console.log('[NotificationHandler] Suppressing notification sound', {
+        title: normalizedData.title,
+        reasons: soundDecision.reasons,
+      });
+    }
+
     const notificationOptions: Electron.NotificationConstructorOptions = {
-      title: data.title,
-      body: data.body,
-      silent: data.silent || false,
+      title: normalizedData.title,
+      body: normalizedData.body,
+      silent: effectiveSilent,
+      ...(normalizedData.requireInteraction === true
+        ? { timeoutType: 'never' as const }
+        : {}),
     };
 
     if (data.icon) {

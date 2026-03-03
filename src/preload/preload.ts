@@ -142,9 +142,14 @@ ipcRenderer.on(
     '[aria-label*="Ignore call" i]',
     '[aria-label*="Decline call" i]',
   ];
-  const INCOMING_CALL_HINT_MIN_STICKY_MS = 1200;
-  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 900;
-  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 8000;
+  const incomingCallTitlePatterns = [
+    /\bis\s+calling\b/i,
+    /\bcalling\s+you\b/i,
+    /\bincoming\s+(?:video\s+|audio\s+)?call\b/i,
+  ];
+  const INCOMING_CALL_HINT_MIN_STICKY_MS = 4000;
+  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 3500;
+  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 60000;
 
   let pendingApply = false;
   let pendingSend = false;
@@ -226,6 +231,12 @@ ipcRenderer.on(
     return true;
   };
 
+  const hasIncomingCallTitleSignal = (): boolean => {
+    const title = String(document.title || "").replace(/\s+/g, " ").trim();
+    if (!title) return false;
+    return incomingCallTitlePatterns.some((pattern) => pattern.test(title));
+  };
+
   const detectIncomingCallOverlayVisible = (): boolean => {
     if (!isFacebookHost()) return false;
 
@@ -234,7 +245,8 @@ ipcRenderer.on(
       incomingCallDeclineSelectors.join(", "),
     );
 
-    return isAriaVisible(answerEl) && isAriaVisible(declineEl);
+    const controlsVisible = isAriaVisible(answerEl) && isAriaVisible(declineEl);
+    return controlsVisible || hasIncomingCallTitleSignal();
   };
 
   const getViewportOverlayVisible = (): boolean =>
@@ -1325,6 +1337,17 @@ ipcRenderer.on(
       isElementVisible(el),
     );
 
+  const hasIncomingCallTitleSignalForHint = (): boolean => {
+    const title = String(document.title || "").replace(/\s+/g, " ").trim();
+    if (!title) return false;
+    const patterns = [
+      /\bis\s+calling\b/i,
+      /\bcalling\s+you\b/i,
+      /\bincoming\s+(?:video\s+|audio\s+)?call\b/i,
+    ];
+    return patterns.some((pattern) => pattern.test(title));
+  };
+
   const detectIncomingCallOverlayVisibleForHint = (): boolean => {
     const hasVisibleAnswerControl = hasVisibleElementForSelectors(
       incomingCallAnswerSelectors,
@@ -1332,7 +1355,10 @@ ipcRenderer.on(
     const hasVisibleDeclineControl = hasVisibleElementForSelectors(
       incomingCallDeclineSelectors,
     );
-    return hasVisibleAnswerControl && hasVisibleDeclineControl;
+    return (
+      (hasVisibleAnswerControl && hasVisibleDeclineControl) ||
+      hasIncomingCallTitleSignalForHint()
+    );
   };
 
   const clearIncomingCallOverlayHintTimers = (): void => {
@@ -1588,14 +1614,40 @@ ipcRenderer.on(
             ? incomingCallEndedRaw.reason
             : "incoming-call-ended";
 
-        console.log(
-          "[Preload Bridge] Incoming call ended - clearing overlay hint",
-          { reason: endedReason },
-        );
-        clearIncomingCallOverlayHintTimers();
-        incomingCallOverlayHintStartedAt = 0;
-        incomingCallOverlayHintLastVisibleAt = 0;
-        sendIncomingCallOverlayHint(false, `incoming-call-ended:${endedReason}`);
+        const now = Date.now();
+        const overlayStillVisible = detectIncomingCallOverlayVisibleForHint();
+        const softEndSignal = /controls-disappeared/i.test(endedReason);
+
+        try {
+          ipcRenderer.send("incoming-call-ended", { reason: endedReason });
+        } catch {
+          /* intentionally empty */
+        }
+
+        if (
+          softEndSignal &&
+          (overlayStillVisible || shouldKeepIncomingCallOverlayHintActive(now))
+        ) {
+          if (overlayStillVisible) {
+            incomingCallOverlayHintLastVisibleAt = now;
+          }
+          console.log(
+            "[Preload Bridge] Incoming call end signal deferred (overlay still/sticky)",
+            { reason: endedReason, overlayStillVisible },
+          );
+          sendIncomingCallOverlayHint(true, `incoming-call-ended-deferred:${endedReason}`);
+          ensureIncomingCallOverlayHintHeartbeat();
+          scheduleIncomingCallOverlayHintRecheck("incoming-call-ended-deferred");
+        } else {
+          console.log(
+            "[Preload Bridge] Incoming call ended - clearing overlay hint",
+            { reason: endedReason, overlayStillVisible },
+          );
+          clearIncomingCallOverlayHintTimers();
+          incomingCallOverlayHintStartedAt = 0;
+          incomingCallOverlayHintLastVisibleAt = 0;
+          sendIncomingCallOverlayHint(false, `incoming-call-ended:${endedReason}`);
+        }
       } else if (event.data.type === "electron-recount-badge") {
         // Handle badge recount request from injected script (issue #38)
         console.log(

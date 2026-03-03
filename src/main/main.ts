@@ -225,6 +225,12 @@ let appReady = false; // Flag to indicate app is fully initialized (window creat
 let pendingShowWindow = false; // Queue second-instance events that arrive before app is ready
 const incomingCallNotificationByKey = new Map<string, number>();
 let lastNoKeyIncomingCallNotificationAt = 0;
+let activeIncomingCallNotificationTag: string | null = null;
+let activeIncomingCallNotificationBody: string | null = null;
+let activeIncomingCallNotificationSeenAt = 0;
+let incomingCallNotificationReminderTimer: NodeJS.Timeout | null = null;
+const INCOMING_CALL_NOTIFICATION_REMINDER_MS = 12_000;
+const INCOMING_CALL_NOTIFICATION_STALE_MS = 120_000;
 let isSystemSuspendedOrLocked = false;
 let cachedMacDoNotDisturbActive = false;
 let lastMacDoNotDisturbCheckMs = 0;
@@ -319,6 +325,59 @@ function formatIncomingCallCaller(raw: unknown): string | null {
   }
 
   return compact.join(" ").slice(0, 80) || null;
+}
+
+function stopIncomingCallNotificationReminder(closeActive: boolean): void {
+  if (incomingCallNotificationReminderTimer !== null) {
+    clearInterval(incomingCallNotificationReminderTimer);
+    incomingCallNotificationReminderTimer = null;
+  }
+
+  if (closeActive && notificationHandler && activeIncomingCallNotificationTag) {
+    notificationHandler.closeNotification(activeIncomingCallNotificationTag);
+  }
+
+  activeIncomingCallNotificationTag = null;
+  activeIncomingCallNotificationBody = null;
+  activeIncomingCallNotificationSeenAt = 0;
+}
+
+function refreshIncomingCallNotificationReminder(
+  tag: string,
+  body: string,
+  now: number,
+): void {
+  activeIncomingCallNotificationTag = tag;
+  activeIncomingCallNotificationBody = body;
+  activeIncomingCallNotificationSeenAt = now;
+
+  if (incomingCallNotificationReminderTimer !== null) {
+    return;
+  }
+
+  incomingCallNotificationReminderTimer = setInterval(() => {
+    if (
+      !notificationHandler ||
+      !activeIncomingCallNotificationTag ||
+      !activeIncomingCallNotificationBody
+    ) {
+      return;
+    }
+
+    const ageMs = Date.now() - activeIncomingCallNotificationSeenAt;
+    if (ageMs > INCOMING_CALL_NOTIFICATION_STALE_MS) {
+      stopIncomingCallNotificationReminder(true);
+      return;
+    }
+
+    notificationHandler.showNotification({
+      title: "Incoming call",
+      body: activeIncomingCallNotificationBody,
+      tag: activeIncomingCallNotificationTag,
+      silent: false,
+      requireInteraction: true,
+    });
+  }, INCOMING_CALL_NOTIFICATION_REMINDER_MS);
 }
 
 type MediaOverlayDebugEvent = {
@@ -7295,23 +7354,43 @@ function setupIpcHandlers(): void {
           lastNoKeyIncomingCallNotificationAt = decision.now;
         }
         const caller = formatIncomingCallCaller(payload?.caller);
+        const notificationBody = caller
+          ? `${caller} is calling you on Messenger`
+          : "Someone is calling you on Messenger";
+        const notificationTag = decision.callKey
+          ? `incoming-call:${decision.callKey}`
+          : `incoming-call:${decision.now}`;
+
         notificationHandler.showNotification({
           title: "Incoming call",
-          body: caller
-            ? `${caller} is calling you on Messenger`
-            : "Someone is calling you on Messenger",
-          tag: decision.callKey
-            ? `incoming-call:${decision.callKey}`
-            : `incoming-call:${decision.now}`,
+          body: notificationBody,
+          tag: notificationTag,
           silent: false,
+          requireInteraction: true,
         });
+
+        refreshIncomingCallNotificationReminder(
+          notificationTag,
+          notificationBody,
+          decision.now,
+        );
+
         console.log("[IPC] Incoming call native notification shown", {
           callKey: decision.callKey,
           caller,
+          notificationTag,
         });
       }
     },
   );
+
+  ipcMain.on("incoming-call-ended", (_event, payload?: { reason?: string }) => {
+    console.log("[IPC] Incoming call ended signal received", {
+      reason: payload?.reason,
+      activeTag: activeIncomingCallNotificationTag,
+    });
+    stopIncomingCallNotificationReminder(true);
+  });
 
   // Note: Menu bar hover is now handled natively via autoHideMenuBar
   // Press Alt to show menu bar, click away or Esc to hide
@@ -9908,6 +9987,9 @@ app.on("before-quit", () => {
 
   // Stop menu bar hover detection
   stopMenuBarHoverDetection();
+
+  // Stop any active incoming-call notification reminders
+  stopIncomingCallNotificationReminder(false);
 
   // Close download progress window if open
   hideDownloadProgress();
