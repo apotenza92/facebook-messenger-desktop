@@ -147,9 +147,9 @@ ipcRenderer.on(
     /\bcalling\s+you\b/i,
     /\bincoming\s+(?:video\s+|audio\s+)?call\b/i,
   ];
-  const INCOMING_CALL_HINT_MIN_STICKY_MS = 4000;
-  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 3500;
-  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 60000;
+  const INCOMING_CALL_HINT_MIN_STICKY_MS = 1500;
+  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 1000;
+  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 5000;
 
   let pendingApply = false;
   let pendingSend = false;
@@ -1291,10 +1291,10 @@ ipcRenderer.on(
   let incomingCallOverlayHintHeartbeatTimer: number | null = null;
   let incomingCallOverlayHintStartedAt = 0;
   let incomingCallOverlayHintLastVisibleAt = 0;
-  const INCOMING_CALL_OVERLAY_HINT_RECHECK_MS = 12_000;
-  const INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS = 4_000;
-  const INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS = 20_000;
-  const INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS = 15_000;
+  const INCOMING_CALL_OVERLAY_HINT_RECHECK_MS = 1_200;
+  const INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS = 1_000;
+  const INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS = 1_500;
+  const INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS = 1_000;
   const incomingCallAnswerSelectors = [
     '[aria-label*="Answer" i]',
     '[aria-label*="Accept call" i]',
@@ -1624,10 +1624,7 @@ ipcRenderer.on(
           /* intentionally empty */
         }
 
-        if (
-          softEndSignal &&
-          (overlayStillVisible || shouldKeepIncomingCallOverlayHintActive(now))
-        ) {
+        if (softEndSignal && overlayStillVisible) {
           if (overlayStillVisible) {
             incomingCallOverlayHintLastVisibleAt = now;
           }

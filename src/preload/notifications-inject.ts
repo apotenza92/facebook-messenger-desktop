@@ -1406,8 +1406,8 @@
     let hasActiveIncomingCallUi = false;
     let lastIncomingCallUiSeenAt = 0;
     let missingIncomingCallUiSince: number | null = null;
-    const CALL_END_GRACE_MS = 6000;
-    const CALL_END_CONFIRMATION_MS = 2000;
+    const CALL_END_GRACE_MS = 2500;
+    const CALL_END_CONFIRMATION_MS = 1000;
 
     const hasVisibleIncomingCallUi = (): boolean => {
       const hasVisibleAnswerControl = Array.from(

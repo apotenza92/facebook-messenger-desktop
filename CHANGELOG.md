@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0-beta.20] - 2026-03-03
+
+### Fixed
+
+- **Issue #47: incoming-call controls/overlay could still vanish mid-ring or linger after a missed call** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Retuned incoming-call hint heartbeat/recheck windows so transient Messenger control reflows keep the incoming-call state alive while ringing, but stale hint state now clears much faster after the call ends.
+  - Reduced incoming-call end grace/confirmation timing in the injected observer so missed/ended calls emit end signals sooner.
+  - Reduced fallback hold durations so the top empty strip after missed/ended calls is removed sooner.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+
 ## [1.3.0-beta.19] - 2026-03-03
 
 ### Fixed
