@@ -190,7 +190,23 @@ jobs:
         timeout-minutes: 5
 
       - name: Build distributables
-        run: npm run dist:linux
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "Linux build attempt ${attempt}/3"
+            if npm run dist:linux; then
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "Linux build failed (attempt ${attempt}/3). Retrying after cleanup..."
+              rm -rf release
+              sleep $((attempt * 20))
+            fi
+          done
+
+          echo "Linux build failed after 3 attempts"
+          exit 1
         timeout-minutes: 60
 
       - name: Backup stable yml files before beta build
@@ -203,9 +219,24 @@ jobs:
       - name: Build beta-channel artifacts for stable release
         if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
         run: |
+          set -euo pipefail
           # Run electron-builder directly without npm run build (which cleans the release folder)
           # The TypeScript was already compiled in the previous step
-          npx electron-builder --config electron-builder.config.js --linux --publish=never
+          for attempt in 1 2 3; do
+            echo "Linux beta-channel build attempt ${attempt}/3"
+            if npx electron-builder --config electron-builder.config.js --linux --publish=never; then
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "Linux beta-channel build failed (attempt ${attempt}/3). Retrying after cleanup..."
+              rm -rf release
+              sleep $((attempt * 20))
+            fi
+          done
+
+          echo "Linux beta-channel build failed after 3 attempts"
+          exit 1
         timeout-minutes: 60
         env:
           FORCE_BETA_BUILD: "true"
