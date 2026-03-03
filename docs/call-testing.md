@@ -36,20 +36,17 @@ node scripts/test-call-flows-gui.js
 ./scripts/start-call-test-tmux.sh call-test --no-attach
 ```
 
-2. In tmux `auth` window, sign in once and share session token with tmux env:
+2. In tmux `auth` window, sign in once:
 
 ```bash
-OP_SESSION="$(op signin --raw)"
-export OP_SESSION
-tmux set-environment -g OP_SESSION "$OP_SESSION"
+op signin
 op whoami
 ```
 
 3. In tmux `runner` window, run live test:
 
 ```bash
-line="$(tmux show-environment -g OP_SESSION)"
-export OP_SESSION="${line#OP_SESSION=}"
+op signin >/dev/null && \
 MICHAEL_PROFILE_DIR="$PWD/.tmp/playwright-michael-profile" \
 OP_FACEBOOK_ITEM="Dad Facebook" \
 CALL_THREAD_URL="https://www.facebook.com/messages/t/<thread-id>" \

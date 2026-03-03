@@ -16,18 +16,17 @@ if tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
 fi
 
 tmux new-session -d -s "${SESSION_NAME}" -n auth -c "${ROOT_DIR}"
-tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Run once to sign in + share token with tmux:'" C-m
-tmux send-keys -t "${SESSION_NAME}:auth" "echo 'OP_SESSION=\"\$(op signin --raw)\" && export OP_SESSION && tmux set-environment -g OP_SESSION \"\$OP_SESSION\"'" C-m
+tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Run once in this pane: op signin'" C-m
 tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Verify: op whoami'" C-m
-tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Item check: op item get \"Dad Facebook\" --format json > /dev/null && echo ok'" C-m
+tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Item check: op signin >/dev/null && op item get \"Dad Facebook\" --format json >/dev/null && echo ok'" C-m
 
 tmux new-window -t "${SESSION_NAME}" -n keepalive -c "${ROOT_DIR}"
-tmux send-keys -t "${SESSION_NAME}:keepalive" "echo '[keepalive] Pinging 1Password every ${KEEPALIVE_SECONDS}s to avoid idle expiry'" C-m
-tmux send-keys -t "${SESSION_NAME}:keepalive" "while true; do line=\"\$(tmux show-environment -g OP_SESSION 2>/dev/null || true)\"; if [[ \"\$line\" == OP_SESSION=* ]]; then export OP_SESSION=\"\${line#OP_SESSION=}\"; fi; if op whoami >/dev/null 2>&1; then echo \"[\$(date +%H:%M:%S)] op ok\"; else echo \"[\$(date +%H:%M:%S)] op not signed in\"; fi; sleep ${KEEPALIVE_SECONDS}; done" C-m
+tmux send-keys -t "${SESSION_NAME}:keepalive" "echo '[keepalive] Re-signing/checking every ${KEEPALIVE_SECONDS}s (app integration)'" C-m
+tmux send-keys -t "${SESSION_NAME}:keepalive" "while true; do if op signin >/dev/null 2>&1 && op whoami >/dev/null 2>&1; then echo \"[\$(date +%H:%M:%S)] op ok\"; else echo \"[\$(date +%H:%M:%S)] op not signed in\"; fi; sleep ${KEEPALIVE_SECONDS}; done" C-m
 
 tmux new-window -t "${SESSION_NAME}" -n runner -c "${ROOT_DIR}"
 tmux send-keys -t "${SESSION_NAME}:runner" "echo '[runner] Example:'" C-m
-tmux send-keys -t "${SESSION_NAME}:runner" "echo 'line=\"\$(tmux show-environment -g OP_SESSION)\"; export OP_SESSION=\"\${line#OP_SESSION=}\"; MICHAEL_PROFILE_DIR=\"$ROOT_DIR/.tmp/playwright-michael-profile\" OP_FACEBOOK_ITEM=\"Dad Facebook\" CALL_TEST_MODE=both node scripts/test-call-flows-gui.js'" C-m
+tmux send-keys -t "${SESSION_NAME}:runner" "echo 'op signin >/dev/null && MICHAEL_PROFILE_DIR=\"$ROOT_DIR/.tmp/playwright-michael-profile\" OP_FACEBOOK_ITEM=\"Dad Facebook\" CALL_TEST_MODE=both node scripts/test-call-flows-gui.js'" C-m
 
 tmux select-window -t "${SESSION_NAME}:auth"
 

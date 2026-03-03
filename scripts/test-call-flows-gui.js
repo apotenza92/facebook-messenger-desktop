@@ -118,14 +118,16 @@ async function isBrowserAuthenticated(page) {
 }
 
 function readOnePasswordFacebookCredentials({ item, vault }) {
-  const args = ['item', 'get', item, '--format', 'json'];
-  if (vault && String(vault).trim()) {
-    args.push('--vault', String(vault).trim());
-  }
+  const escapedItem = JSON.stringify(String(item));
+  const escapedVault = vault && String(vault).trim() ? JSON.stringify(String(vault).trim()) : '';
+
+  const command = escapedVault
+    ? `op signin >/dev/null && op item get ${escapedItem} --vault ${escapedVault} --format json`
+    : `op signin >/dev/null && op item get ${escapedItem} --format json`;
 
   let output;
   try {
-    output = execFileSync('op', args, {
+    output = execFileSync('/bin/bash', ['-lc', command], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -135,7 +137,7 @@ function readOnePasswordFacebookCredentials({ item, vault }) {
       (error && error.message) ||
       'unknown 1Password CLI error';
     throw new Error(
-      `Unable to read 1Password item \"${item}\". Ensure \`op signin\` succeeded in this tmux/session. Detail: ${detail}`,
+      `Unable to read 1Password item \"${item}\". Ensure 1Password app integration is enabled and authorize when prompted. Detail: ${detail}`,
     );
   }
 
