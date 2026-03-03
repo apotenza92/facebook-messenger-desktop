@@ -1303,7 +1303,12 @@ ipcRenderer.on(
     }
 
     const style = window.getComputedStyle(target);
-    if (style.display === "none" || style.visibility === "hidden") {
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.opacity === "0" ||
+      style.pointerEvents === "none"
+    ) {
       return false;
     }
 
@@ -1311,10 +1316,19 @@ ipcRenderer.on(
     return rect.width >= 4 && rect.height >= 4;
   };
 
+  const hasVisibleElementForSelectors = (selectors: string[]): boolean =>
+    Array.from(document.querySelectorAll(selectors.join(", "))).some((el) =>
+      isElementVisible(el),
+    );
+
   const detectIncomingCallOverlayVisibleForHint = (): boolean => {
-    const answerEl = document.querySelector(incomingCallAnswerSelectors.join(", "));
-    const declineEl = document.querySelector(incomingCallDeclineSelectors.join(", "));
-    return isElementVisible(answerEl) && isElementVisible(declineEl);
+    const hasVisibleAnswerControl = hasVisibleElementForSelectors(
+      incomingCallAnswerSelectors,
+    );
+    const hasVisibleDeclineControl = hasVisibleElementForSelectors(
+      incomingCallDeclineSelectors,
+    );
+    return hasVisibleAnswerControl && hasVisibleDeclineControl;
   };
 
   const clearIncomingCallOverlayHintTimers = (): void => {

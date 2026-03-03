@@ -126,11 +126,46 @@
       return value;
     };
 
+    const isGenericCallerLabel = (input: string): boolean => {
+      const normalizedInput = String(input || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!normalizedInput) return true;
+
+      const genericLabels = new Set([
+        'profile',
+        'profile picture',
+        'picture',
+        'incoming call',
+        'video call',
+        'audio call',
+        'call',
+        'caller',
+        'unknown caller',
+        'messenger',
+        'facebook',
+        'someone',
+      ]);
+
+      if (genericLabels.has(normalizedInput)) {
+        return true;
+      }
+
+      if (/^profile picture(?: of)?$/.test(normalizedInput)) {
+        return true;
+      }
+
+      return false;
+    };
+
     for (const sourceText of [withWordBreaks, normalized]) {
       for (const pattern of patterns) {
         const match = sourceText.match(pattern);
         const candidate = sanitize(match?.[1] || '');
-        if (candidate.length >= 2) {
+        if (candidate.length >= 2 && !isGenericCallerLabel(candidate)) {
           const words = candidate.split(' ').filter(Boolean);
           return words.slice(0, 4).join(' ').slice(0, 80);
         }
@@ -147,7 +182,7 @@
         );
       }
       const fallbackCandidate = sanitize(fallbackMatch?.[1] || '');
-      if (fallbackCandidate.length >= 2) {
+      if (fallbackCandidate.length >= 2 && !isGenericCallerLabel(fallbackCandidate)) {
         return fallbackCandidate.slice(0, 80);
       }
     }
@@ -1369,6 +1404,10 @@
     // Skip isCallPopupElement subtree-walks on large containers (direct child limit)
     const MAX_CALL_POPUP_CHILD_COUNT = 200;
     let hasActiveIncomingCallUi = false;
+    let lastIncomingCallUiSeenAt = 0;
+    let missingIncomingCallUiSince: number | null = null;
+    const CALL_END_GRACE_MS = 6000;
+    const CALL_END_CONFIRMATION_MS = 2000;
 
     const hasVisibleIncomingCallUi = (): boolean => {
       const hasVisibleAnswerControl = Array.from(
@@ -1491,6 +1530,8 @@
         if (isCallPopupElement(element)) {
           log('Call popup detected in DOM - bringing window to foreground');
           hasActiveIncomingCallUi = true;
+          lastIncomingCallUiSeenAt = now;
+          missingIncomingCallUiSince = null;
           lastCallSignalTime = now;
           signalIncomingCall(
             buildIncomingCallPayloadFromElement(element, 'dom-node'),
@@ -1504,6 +1545,8 @@
           if (isCallPopupElement(desc)) {
             log('Call popup detected in descendant - bringing window to foreground');
             hasActiveIncomingCallUi = true;
+            lastIncomingCallUiSeenAt = now;
+            missingIncomingCallUiSince = null;
             lastCallSignalTime = now;
             signalIncomingCall(
               buildIncomingCallPayloadFromElement(desc, 'dom-descendant'),
@@ -1561,6 +1604,8 @@
           if (changedEl.childElementCount <= MAX_CALL_POPUP_CHILD_COUNT && isCallPopupElement(changedEl)) {
             log('Call popup detected via attribute change');
             hasActiveIncomingCallUi = true;
+            lastIncomingCallUiSeenAt = now;
+            missingIncomingCallUiSince = null;
             lastCallSignalTime = now;
             signalIncomingCall(
               buildIncomingCallPayloadFromElement(changedEl, 'attribute-change'),
@@ -1593,6 +1638,8 @@
         if (hasVisibleIncomingCallUi()) {
           log('Periodic scan: incoming call UI detected (Answer + Decline both visible)');
           hasActiveIncomingCallUi = true;
+          lastIncomingCallUiSeenAt = now;
+          missingIncomingCallUiSince = null;
           lastCallSignalTime = now;
           signalIncomingCall({
             dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
@@ -1601,13 +1648,34 @@
         }
       }, 5000);
 
-      // Fast end/decline detector: once an incoming call UI has been observed,
-      // clear overlay hint quickly when Answer/Decline controls disappear.
+      // End/decline detector: once an incoming call UI has been observed,
+      // clear overlay hint only after a grace window and a second confirmation pass.
+      // This avoids flicker when Messenger briefly reflows/animates controls.
       window.setInterval(() => {
         if (!hasActiveIncomingCallUi) return;
-        if (hasVisibleIncomingCallUi()) return;
+
+        const now = Date.now();
+        if (hasVisibleIncomingCallUi()) {
+          lastIncomingCallUiSeenAt = now;
+          missingIncomingCallUiSince = null;
+          return;
+        }
+
+        if (now - lastIncomingCallUiSeenAt < CALL_END_GRACE_MS) {
+          return;
+        }
+
+        if (missingIncomingCallUiSince === null) {
+          missingIncomingCallUiSince = now;
+          return;
+        }
+
+        if (now - missingIncomingCallUiSince < CALL_END_CONFIRMATION_MS) {
+          return;
+        }
 
         hasActiveIncomingCallUi = false;
+        missingIncomingCallUiSince = null;
         signalIncomingCallEnded('controls-disappeared');
       }, 1000);
     }, 1000);
