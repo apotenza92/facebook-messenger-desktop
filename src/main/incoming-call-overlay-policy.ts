@@ -1,3 +1,5 @@
+import { isMessagesRoute } from "./url-policy";
+
 export type IncomingCallOverlayHintPayload =
   | { visible?: boolean; reason?: string }
   | boolean;
@@ -88,4 +90,10 @@ export function collectStaleIncomingCallOverlayHintIds(
   }
 
   return stale;
+}
+
+export function shouldResetIncomingCallOverlayOnNavigation(url: string): boolean {
+  // Keep incoming-call hint while remaining inside Messages routes.
+  // Facebook can emit in-page route updates during incoming-call animation.
+  return !isMessagesRoute(url);
 }

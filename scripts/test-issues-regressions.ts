@@ -160,6 +160,11 @@ const runIncomingCallOverlayLifecycleTests = () => {
       "function",
     "incoming call overlay policy missing sender guard helper",
   );
+  assert(
+    typeof incomingCallOverlayPolicy.shouldResetIncomingCallOverlayOnNavigation ===
+      "function",
+    "incoming call overlay policy missing navigation-reset helper",
+  );
 
   const state = {
     visibleByWebContentsId: new Map<number, boolean>(),
@@ -187,6 +192,19 @@ const runIncomingCallOverlayLifecycleTests = () => {
   );
 
   const chatUrl = "https://www.facebook.com/messages/t/123";
+  assertEqual(
+    incomingCallOverlayPolicy.shouldResetIncomingCallOverlayOnNavigation(chatUrl),
+    false,
+    "#47 incoming-call overlay should not reset on in-messages navigation",
+  );
+  assertEqual(
+    incomingCallOverlayPolicy.shouldResetIncomingCallOverlayOnNavigation(
+      "https://www.facebook.com/settings",
+    ),
+    true,
+    "#47 incoming-call overlay should reset when leaving messages routes",
+  );
+
   assertEqual(
     shouldApplyMainCrop({
       url: chatUrl,

@@ -49,6 +49,7 @@ import {
   collectStaleIncomingCallOverlayHintIds,
   parseIncomingCallOverlayHintVisible,
   shouldAcceptIncomingCallOverlayHintSender,
+  shouldResetIncomingCallOverlayOnNavigation,
   type IncomingCallOverlayHintPayload,
   type IncomingCallOverlayHintState,
 } from "./incoming-call-overlay-policy";
@@ -3743,7 +3744,7 @@ function createWindow(source: string = "unknown"): void {
 
     // Handle navigation events to inject disclaimer on page changes
     contentView.webContents.on("did-navigate", async (event, url) => {
-      if (contentView) {
+      if (contentView && shouldResetIncomingCallOverlayOnNavigation(url)) {
         clearIncomingCallOverlayStateForWebContents(
           contentView.webContents,
           "did-navigate",
@@ -3803,7 +3804,7 @@ function createWindow(source: string = "unknown"): void {
     });
 
     contentView.webContents.on("did-navigate-in-page", async (event, url) => {
-      if (contentView) {
+      if (contentView && shouldResetIncomingCallOverlayOnNavigation(url)) {
         clearIncomingCallOverlayStateForWebContents(
           contentView.webContents,
           "did-navigate-in-page",
@@ -4584,7 +4585,7 @@ function createWindow(source: string = "unknown"): void {
 
     // Handle navigation events to inject disclaimer on page changes
     mainWindow.webContents.on("did-navigate", async (event, url) => {
-      if (mainWindow) {
+      if (mainWindow && shouldResetIncomingCallOverlayOnNavigation(url)) {
         clearIncomingCallOverlayStateForWebContents(
           mainWindow.webContents,
           "did-navigate-mainwindow",
@@ -4642,7 +4643,7 @@ function createWindow(source: string = "unknown"): void {
     });
 
     mainWindow.webContents.on("did-navigate-in-page", async (event, url) => {
-      if (mainWindow) {
+      if (mainWindow && shouldResetIncomingCallOverlayOnNavigation(url)) {
         clearIncomingCallOverlayStateForWebContents(
           mainWindow.webContents,
           "did-navigate-in-page-mainwindow",

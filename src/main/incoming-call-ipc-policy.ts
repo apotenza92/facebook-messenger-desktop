@@ -1,4 +1,4 @@
-export const INCOMING_CALL_KEY_TTL_MS = 45_000;
+export const INCOMING_CALL_KEY_TTL_MS = 12_000;
 export const INCOMING_CALL_NO_KEY_COOLDOWN_MS = 10_000;
 export const INCOMING_CALL_NO_KEY_JITTER_GUARD_MS = 400;
 export const INCOMING_CALL_NO_KEY_MAP_KEY = "__no-key__";

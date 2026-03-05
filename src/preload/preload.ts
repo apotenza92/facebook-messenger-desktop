@@ -927,21 +927,24 @@ ipcRenderer.on(
         pointer-events: none !important;
       }
 
-      /* Incoming call overlay: keep Facebook top banner hidden while preserving
-         call controls rendered in the page body/overlay layer. */
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] {
-        height: 0 !important;
-        min-height: 0 !important;
-        max-height: 0 !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        overflow: hidden !important;
-        opacity: 0 !important;
+      /* Incoming call overlay: hide only Facebook global chrome controls,
+         not the entire banner container (call controls can be hosted there). */
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Menu" i],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Messenger" i],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label*="Notifications" i],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label*="Account controls and settings" i],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Your profile" i],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Facebook" i],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href="/"],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href="https://www.facebook.com/"],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href*="/notifications/"],
+      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href="/messages/"] {
+        display: none !important;
+        visibility: hidden !important;
         pointer-events: none !important;
       }
 
-      /* Collapse residual top spacing Facebook leaves when the global header
-         is hidden, so incoming-call overlay doesn't show a blank top gap. */
+      /* Collapse residual top spacing Facebook leaves while incoming call UI is active. */
       html.${INCOMING_CALL_CLEAN_CLASS} body > div[id^="mount_"],
       html.${INCOMING_CALL_CLEAN_CLASS} body > div[id^="mount_"] > div,
       html.${INCOMING_CALL_CLEAN_CLASS} [data-pagelet="root"] {

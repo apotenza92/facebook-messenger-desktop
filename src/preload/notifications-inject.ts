@@ -195,10 +195,7 @@
     window.postMessage({ type: 'electron-incoming-call', data: payload }, '*');
   };
 
-  const signalIncomingCallEnded = (reason: string) => {
-    log('=== INCOMING CALL ENDED/DECLINED DETECTED ===', { reason });
-    window.postMessage({ type: 'electron-incoming-call-ended', data: { reason } }, '*');
-  };
+
 
   // Selectors for Messenger's DOM structure (these may need updates as Messenger changes)
   const selectors = {
@@ -1403,11 +1400,6 @@
     const ATTRIBUTE_SCAN_THROTTLE_MS = 500;
     // Skip isCallPopupElement subtree-walks on large containers (direct child limit)
     const MAX_CALL_POPUP_CHILD_COUNT = 200;
-    let hasActiveIncomingCallUi = false;
-    let lastIncomingCallUiSeenAt = 0;
-    let missingIncomingCallUiSince: number | null = null;
-    const CALL_END_GRACE_MS = 2500;
-    const CALL_END_CONFIRMATION_MS = 1000;
 
     const hasVisibleIncomingCallUi = (): boolean => {
       const hasVisibleAnswerControl = Array.from(
@@ -1529,9 +1521,6 @@
         // Check if this element or its descendants indicate a call popup
         if (isCallPopupElement(element)) {
           log('Call popup detected in DOM - bringing window to foreground');
-          hasActiveIncomingCallUi = true;
-          lastIncomingCallUiSeenAt = now;
-          missingIncomingCallUiSince = null;
           lastCallSignalTime = now;
           signalIncomingCall(
             buildIncomingCallPayloadFromElement(element, 'dom-node'),
@@ -1544,9 +1533,6 @@
         for (const desc of Array.from(descendants)) {
           if (isCallPopupElement(desc)) {
             log('Call popup detected in descendant - bringing window to foreground');
-            hasActiveIncomingCallUi = true;
-            lastIncomingCallUiSeenAt = now;
-            missingIncomingCallUiSince = null;
             lastCallSignalTime = now;
             signalIncomingCall(
               buildIncomingCallPayloadFromElement(desc, 'dom-descendant'),
@@ -1603,9 +1589,6 @@
           // Skip large containers to bound the cost of querySelector subtree walks
           if (changedEl.childElementCount <= MAX_CALL_POPUP_CHILD_COUNT && isCallPopupElement(changedEl)) {
             log('Call popup detected via attribute change');
-            hasActiveIncomingCallUi = true;
-            lastIncomingCallUiSeenAt = now;
-            missingIncomingCallUiSince = null;
             lastCallSignalTime = now;
             signalIncomingCall(
               buildIncomingCallPayloadFromElement(changedEl, 'attribute-change'),
@@ -1637,9 +1620,6 @@
 
         if (hasVisibleIncomingCallUi()) {
           log('Periodic scan: incoming call UI detected (Answer + Decline both visible)');
-          hasActiveIncomingCallUi = true;
-          lastIncomingCallUiSeenAt = now;
-          missingIncomingCallUiSince = null;
           lastCallSignalTime = now;
           signalIncomingCall({
             dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
@@ -1648,36 +1628,6 @@
         }
       }, 5000);
 
-      // End/decline detector: once an incoming call UI has been observed,
-      // clear overlay hint only after a grace window and a second confirmation pass.
-      // This avoids flicker when Messenger briefly reflows/animates controls.
-      window.setInterval(() => {
-        if (!hasActiveIncomingCallUi) return;
-
-        const now = Date.now();
-        if (hasVisibleIncomingCallUi()) {
-          lastIncomingCallUiSeenAt = now;
-          missingIncomingCallUiSince = null;
-          return;
-        }
-
-        if (now - lastIncomingCallUiSeenAt < CALL_END_GRACE_MS) {
-          return;
-        }
-
-        if (missingIncomingCallUiSince === null) {
-          missingIncomingCallUiSince = now;
-          return;
-        }
-
-        if (now - missingIncomingCallUiSince < CALL_END_CONFIRMATION_MS) {
-          return;
-        }
-
-        hasActiveIncomingCallUi = false;
-        missingIncomingCallUiSince = null;
-        signalIncomingCallEnded('controls-disappeared');
-      }, 1000);
     }, 1000);
   };
 

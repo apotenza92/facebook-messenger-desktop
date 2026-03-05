@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0-beta.21] - 2026-03-05
+
+### Fixed
+
+- **Issue #47: incoming call Answer/Decline popup could appear briefly then disappear** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Stopped clearing incoming-call overlay state on normal in-Messages navigation churn (`did-navigate` / `did-navigate-in-page`), which Facebook can emit during call UI animation.
+  - Kept incoming-call reset behavior only when leaving Messages routes, preventing 1-second popup collapse while preserving cleanup on real route exits.
+  - Removed aggressive call-ended auto-clear path based solely on transient control disappearance to avoid false end detection during Messenger reflow.
+- **Incoming call notification consistency**
+  - Reduced keyed incoming-call notification dedupe TTL from 45s to 12s so repeated real call attempts are less likely to be silently suppressed during tester retests.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+
 ## [1.3.0-beta.20] - 2026-03-03
 
 ### Fixed
