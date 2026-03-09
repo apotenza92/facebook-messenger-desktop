@@ -427,11 +427,6 @@
         callKey,
         caller,
       });
-      signalIncomingCall({
-        dedupeKey: callKey,
-        caller,
-        source: `notification:${source}`,
-      });
 
       effectiveTitle = 'Incoming call';
       effectiveBody = caller
@@ -1769,11 +1764,15 @@
           markIncomingCallUiVisible(now);
 
           if (now - lastCallSignalTime >= CALL_SIGNAL_DEBOUNCE_MS && !isWindowFocused()) {
+            const caller = extractIncomingCallerFromVisibleUi();
+            if (!caller) {
+              return;
+            }
             log('Periodic scan: incoming call UI detected');
             lastCallSignalTime = now;
             signalIncomingCall({
               dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
-              caller: extractIncomingCallerFromVisibleUi(),
+              caller,
               source: 'periodic-scan',
             });
           }

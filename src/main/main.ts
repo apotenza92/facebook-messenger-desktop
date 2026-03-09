@@ -57,6 +57,7 @@ import {
   INCOMING_CALL_NO_KEY_MAP_KEY,
   applyIncomingCallWindowFocus,
   decideIncomingCallNativeNotification,
+  decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
 } from "./incoming-call-ipc-policy";
 import { autoUpdater } from "electron-updater";
@@ -7312,11 +7313,23 @@ function setupIpcHandlers(): void {
   ipcMain.on(
     "incoming-call",
     (_event, payload?: IncomingCallIpcPayload) => {
+      const escalation = decideIncomingCallSignalEscalation(payload);
       console.log("[IPC] Incoming call detected - bringing window to foreground", {
         dedupeKey: payload?.dedupeKey,
         caller: payload?.caller,
         source: payload?.source,
+        escalation: escalation.reason,
       });
+
+      if (!escalation.shouldEscalate) {
+        console.log("[IPC] Incoming call signal ignored as low-confidence", {
+          dedupeKey: payload?.dedupeKey,
+          caller: payload?.caller,
+          source: payload?.source,
+          reason: escalation.reason,
+        });
+        return;
+      }
 
       const focusedWindow = applyIncomingCallWindowFocus(
         mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,

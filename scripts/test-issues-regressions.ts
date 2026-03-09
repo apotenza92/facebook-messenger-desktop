@@ -418,6 +418,42 @@ const runIncomingCallIpcPolicyTests = () => {
       "function",
     "incoming call IPC policy missing decideIncomingCallNativeNotification",
   );
+  assert(
+    typeof incomingCallIpcPolicy.decideIncomingCallSignalEscalation ===
+      "function",
+    "incoming call IPC policy missing decideIncomingCallSignalEscalation",
+  );
+
+  const notificationOnlyEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      source: "notification:NATIVE_CALL",
+    });
+  assertEqual(
+    notificationOnlyEscalation.shouldEscalate,
+    false,
+    "#47 notification-only call signals should not arm incoming-call reminder state",
+  );
+
+  const periodicScanWithoutCallerEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      source: "periodic-scan",
+    });
+  assertEqual(
+    periodicScanWithoutCallerEscalation.shouldEscalate,
+    false,
+    "#47 periodic-scan call signals without a caller should not arm incoming-call reminder state",
+  );
+
+  const domSignalEscalation = incomingCallIpcPolicy.decideIncomingCallSignalEscalation(
+    {
+      source: "dom-node",
+    },
+  );
+  assertEqual(
+    domSignalEscalation.shouldEscalate,
+    true,
+    "#47 explicit DOM call signals should still arm incoming-call reminder state",
+  );
 
   const focusEvents: string[] = [];
   const focusResult = incomingCallIpcPolicy.applyIncomingCallWindowFocus({

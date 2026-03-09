@@ -22,6 +22,14 @@ export type IncomingCallNativeNotificationDecision = {
   now: number;
 };
 
+export type IncomingCallSignalEscalationDecision = {
+  shouldEscalate: boolean;
+  reason:
+    | "escalate"
+    | "notification-only-source"
+    | "periodic-scan-without-caller";
+};
+
 export type IncomingCallWindowFocusTarget = {
   isMinimized: () => boolean;
   restore: () => void;
@@ -54,6 +62,34 @@ export function applyIncomingCallWindowFocus(
   target.focus();
 
   return { focused: true, restoredFromMinimized };
+}
+
+export function decideIncomingCallSignalEscalation(
+  payload?: IncomingCallIpcPayload,
+): IncomingCallSignalEscalationDecision {
+  const source =
+    typeof payload?.source === "string" ? payload.source.trim().toLowerCase() : "";
+  const caller =
+    typeof payload?.caller === "string" ? payload.caller.trim() : "";
+
+  if (source.startsWith("notification:")) {
+    return {
+      shouldEscalate: false,
+      reason: "notification-only-source",
+    };
+  }
+
+  if (source === "periodic-scan" && caller.length === 0) {
+    return {
+      shouldEscalate: false,
+      reason: "periodic-scan-without-caller",
+    };
+  }
+
+  return {
+    shouldEscalate: true,
+    reason: "escalate",
+  };
 }
 
 export function decideIncomingCallNativeNotification(params: {

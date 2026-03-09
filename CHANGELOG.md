@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0-beta.23] - 2026-03-09
+
+### Fixed
+
+- **Issue #47: incoming-call reminder could still false-trigger with no real incoming call** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Stopped notification-only call classifications from arming the repeating incoming-call reminder/focus path in the main process.
+  - Required the fallback periodic call scan to extract a real caller before it can escalate into incoming-call state, preventing generic `Someone is calling you...` reminders from low-confidence DOM noise.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+
 ## [1.3.0-beta.22] - 2026-03-09
 
 ### Fixed
