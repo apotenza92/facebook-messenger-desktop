@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0-beta.22] - 2026-03-09
+
+### Fixed
+
+- **Issue #47: incoming-call UI could still collapse when Messenger reflowed call chrome** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Broadened incoming-call visibility detection to keep the call state alive from real overlay/dialog/banner signals instead of requiring only a narrow Answer+Decline snapshot.
+  - Refreshed incoming-call hint heartbeat timestamps while the hint stays active so preload no longer expires the overlay using the original activation window.
+  - Restored a conservative end-of-call observer that clears stale call state only after the visible call UI has been gone long enough to confirm the call actually ended.
+- **Issue #47: outgoing or off-device call status could spam incoming-call notifications** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Excluded sidebar/navigation statuses like `Ongoing Call...`, joined-call state, started-call state, and ended-call state from incoming-call notification classification.
+  - Prevented chat-list/sidebar call status rows from being treated as in-page incoming-call popup signals.
+  - Allowed repeated detections of the same real ringing call to upgrade an existing generic system notification with the caller name instead of staying stuck on `Someone is calling you...`.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+
 ## [1.3.0-beta.21] - 2026-03-05
 
 ### Fixed

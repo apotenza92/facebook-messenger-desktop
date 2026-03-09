@@ -8,6 +8,7 @@
   },
   "include": [
     "./preload.ts",
+    "./incoming-call-overlay-hint-policy.ts",
     "./messages-viewport-policy.ts",
     "./notification-decision-policy.ts",
     "./notifications-inject.ts",

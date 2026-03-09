@@ -5,6 +5,169 @@ import {
   resolveViewportMode,
   shouldApplyMessagesCrop,
 } from "./messages-viewport-policy";
+import {
+  getIncomingCallHintClearReason,
+  shouldKeepIncomingCallHintActive,
+  shouldTreatIncomingCallUiAsVisible,
+} from "./incoming-call-overlay-hint-policy";
+
+const incomingCallAnswerSelectors = [
+  '[aria-label*="Answer" i]',
+  '[aria-label*="Accept call" i]',
+  '[aria-label*="Join call" i]',
+  '[aria-label*="Accept video call" i]',
+  '[aria-label*="Accept audio call" i]',
+];
+
+const incomingCallDeclineSelectors = [
+  '[aria-label*="Decline" i]',
+  '[aria-label*="Ignore call" i]',
+  '[aria-label*="Decline call" i]',
+];
+
+const incomingCallJoinSelectors = [
+  '[aria-label*="Join call" i]',
+  '[aria-label*="Join video" i]',
+  '[aria-label*="Join audio" i]',
+];
+
+const incomingCallSoftSignalSelectors = [
+  '[data-testid*="incoming"]',
+  '[data-testid*="call"]',
+  '[aria-label*="calling" i]',
+  '[aria-label*="incoming call" i]',
+  '[aria-label*="video call" i]',
+  '[aria-label*="audio call" i]',
+];
+
+const incomingCallTextPatterns = [
+  /\bis\s+calling\b/i,
+  /\bcalling\s+you\b/i,
+  /\bincoming\s+(?:video\s+|audio\s+)?call\b/i,
+  /\bwants\s+to\s+(?:video\s+)?call\b/i,
+  /\bjoin\s+(?:the\s+)?(?:video\s+|audio\s+)?call\b/i,
+  /\b(?:video|audio)\s+call\s+(?:has\s+)?started\b/i,
+];
+
+const nonIncomingCallTextPatterns = [
+  /\bongoing call\b/i,
+  /\byou started (?:an? )?(?:video\s+|audio\s+)?call\b/i,
+  /\bstarted (?:an? )?(?:video\s+|audio\s+)?call\b/i,
+  /\bjoined (?:the\s+)?(?:video\s+|audio\s+)?call\b/i,
+  /\bcall ended\b/i,
+];
+
+const incomingCallSignalContainerSelectors = [
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  '[role="banner"]',
+  '[data-testid*="incoming"]',
+  '[data-testid*="call"]',
+];
+
+const incomingCallSidebarExclusionSelectors = [
+  '[role="navigation"]',
+  '[role="grid"][aria-label*="Chats" i]',
+  '[aria-label="Chats" i]',
+];
+
+function isSidebarCallStatusElement(el: Element): boolean {
+  return (
+    incomingCallSidebarExclusionSelectors.some(
+      (selector) => el.closest(selector) !== null,
+    ) || /\bongoing call\b/i.test(String(el.textContent || ""))
+  );
+}
+
+function queryVisibleElements(
+  selectors: string[],
+  isVisible: (el: Element | null) => boolean,
+): Element[] {
+  const results: Element[] = [];
+  const seen = new Set<Element>();
+
+  for (const selector of selectors) {
+    let matches: NodeListOf<Element>;
+    try {
+      matches = document.querySelectorAll(selector);
+    } catch {
+      continue;
+    }
+
+    for (const match of Array.from(matches)) {
+      if (seen.has(match) || !isVisible(match) || isSidebarCallStatusElement(match)) {
+        continue;
+      }
+      seen.add(match);
+      results.push(match);
+    }
+  }
+
+  return results;
+}
+
+function hasIncomingCallTitleSignal(title: string): boolean {
+  const normalizedTitle = String(title || "").replace(/\s+/g, " ").trim();
+  if (!normalizedTitle) return false;
+  if (nonIncomingCallTextPatterns.some((pattern) => pattern.test(normalizedTitle))) {
+    return false;
+  }
+  return incomingCallTextPatterns.some((pattern) => pattern.test(normalizedTitle));
+}
+
+function hasIncomingCallTextSignal(
+  isVisible: (el: Element | null) => boolean,
+): boolean {
+  const candidates = queryVisibleElements(
+    incomingCallSignalContainerSelectors,
+    isVisible,
+  );
+
+  for (const candidate of candidates) {
+    const text = String(candidate.textContent || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 400) {
+      continue;
+    }
+
+    if (nonIncomingCallTextPatterns.some((pattern) => pattern.test(text))) {
+      continue;
+    }
+
+    if (incomingCallTextPatterns.some((pattern) => pattern.test(text))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function detectIncomingCallUiVisible(
+  isVisible: (el: Element | null) => boolean,
+): boolean {
+  const answerVisible = queryVisibleElements(incomingCallAnswerSelectors, isVisible)
+    .length > 0;
+  const declineVisible = queryVisibleElements(
+    incomingCallDeclineSelectors,
+    isVisible,
+  ).length > 0;
+  const joinVisible = queryVisibleElements(incomingCallJoinSelectors, isVisible)
+    .length > 0;
+  const selectorSignal = queryVisibleElements(
+    incomingCallSoftSignalSelectors,
+    isVisible,
+  ).length > 0;
+  const titleSignal = hasIncomingCallTitleSignal(document.title);
+  const textSignal = hasIncomingCallTextSignal(isVisible);
+
+  return shouldTreatIncomingCallUiAsVisible({
+    answerVisible,
+    declineVisible,
+    joinVisible,
+    titleSignal,
+    selectorSignal,
+    textSignal,
+  });
+}
 
 function sendIncomingCallOverlayHint(visible: boolean, reason: string): void {
   ipcRenderer.send("incoming-call-overlay-hint", { visible, reason });
@@ -130,26 +293,9 @@ ipcRenderer.on(
     '[aria-label*="Forward" i][role="button"]',
     'button[aria-label*="Forward" i]',
   ];
-  const incomingCallAnswerSelectors = [
-    '[aria-label*="Answer" i]',
-    '[aria-label*="Accept call" i]',
-    '[aria-label*="Join call" i]',
-    '[aria-label*="Accept video call" i]',
-    '[aria-label*="Accept audio call" i]',
-  ];
-  const incomingCallDeclineSelectors = [
-    '[aria-label*="Decline" i]',
-    '[aria-label*="Ignore call" i]',
-    '[aria-label*="Decline call" i]',
-  ];
-  const incomingCallTitlePatterns = [
-    /\bis\s+calling\b/i,
-    /\bcalling\s+you\b/i,
-    /\bincoming\s+(?:video\s+|audio\s+)?call\b/i,
-  ];
-  const INCOMING_CALL_HINT_MIN_STICKY_MS = 1500;
-  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 1000;
-  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 5000;
+  const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
+  const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
+  const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 10_000;
 
   let pendingApply = false;
   let pendingSend = false;
@@ -231,22 +377,9 @@ ipcRenderer.on(
     return true;
   };
 
-  const hasIncomingCallTitleSignal = (): boolean => {
-    const title = String(document.title || "").replace(/\s+/g, " ").trim();
-    if (!title) return false;
-    return incomingCallTitlePatterns.some((pattern) => pattern.test(title));
-  };
-
   const detectIncomingCallOverlayVisible = (): boolean => {
     if (!isFacebookHost()) return false;
-
-    const answerEl = document.querySelector(incomingCallAnswerSelectors.join(", "));
-    const declineEl = document.querySelector(
-      incomingCallDeclineSelectors.join(", "),
-    );
-
-    const controlsVisible = isAriaVisible(answerEl) && isAriaVisible(declineEl);
-    return controlsVisible || hasIncomingCallTitleSignal();
+    return detectIncomingCallUiVisible(isAriaVisible);
   };
 
   const getViewportOverlayVisible = (): boolean =>
@@ -997,19 +1130,16 @@ ipcRenderer.on(
       const activeForMs = now - incomingCallHintActivatedAt;
       const missingForMs =
         incomingCallLastDetectedAt > 0 ? now - incomingCallLastDetectedAt : activeForMs;
+      const reason = getIncomingCallHintClearReason({
+        activeForMs,
+        missingForMs,
+        detectedSinceHint: incomingCallDetectedSinceHint,
+        minStickyMs: INCOMING_CALL_HINT_MIN_STICKY_MS,
+        missingClearMs: INCOMING_CALL_HINT_MISSING_CLEAR_MS,
+        maxWithoutDetectionMs: INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS,
+      });
 
-      const shouldClearAfterVisibleControls =
-        incomingCallDetectedSinceHint &&
-        activeForMs >= INCOMING_CALL_HINT_MIN_STICKY_MS &&
-        missingForMs >= INCOMING_CALL_HINT_MISSING_CLEAR_MS;
-      const shouldClearNeverDetectedHint =
-        !incomingCallDetectedSinceHint &&
-        activeForMs >= INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS;
-
-      if (shouldClearAfterVisibleControls || shouldClearNeverDetectedHint) {
-        const reason = shouldClearAfterVisibleControls
-          ? "incoming-call-controls-missing"
-          : "incoming-call-hint-stale";
+      if (reason) {
         applyIncomingCallOverlayHint(false, reason);
         sendIncomingCallOverlayHint(false, reason);
       }
@@ -1140,7 +1270,14 @@ ipcRenderer.on(
   ): void => {
     const previous = incomingCallOverlayHintActive;
     if (previous === visible) {
-      // Preserve original activation timestamp while active; no state transition.
+      if (visible) {
+        const now = Date.now();
+        if (incomingCallHintActivatedAt <= 0) {
+          incomingCallHintActivatedAt = now;
+        }
+        incomingCallLastDetectedAt = now;
+        incomingCallDetectedSinceHint = true;
+      }
       return;
     }
 
@@ -1296,20 +1433,8 @@ ipcRenderer.on(
   let incomingCallOverlayHintLastVisibleAt = 0;
   const INCOMING_CALL_OVERLAY_HINT_RECHECK_MS = 1_200;
   const INCOMING_CALL_OVERLAY_HINT_HEARTBEAT_MS = 1_000;
-  const INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS = 1_500;
-  const INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS = 1_000;
-  const incomingCallAnswerSelectors = [
-    '[aria-label*="Answer" i]',
-    '[aria-label*="Accept call" i]',
-    '[aria-label*="Join call" i]',
-    '[aria-label*="Accept video call" i]',
-    '[aria-label*="Accept audio call" i]',
-  ];
-  const incomingCallDeclineSelectors = [
-    '[aria-label*="Decline" i]',
-    '[aria-label*="Ignore call" i]',
-    '[aria-label*="Decline call" i]',
-  ];
+  const INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS = 4_000;
+  const INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS = 2_000;
 
   const isElementVisible = (el: Element | null): boolean => {
     if (!el) return false;
@@ -1335,33 +1460,8 @@ ipcRenderer.on(
     return rect.width >= 4 && rect.height >= 4;
   };
 
-  const hasVisibleElementForSelectors = (selectors: string[]): boolean =>
-    Array.from(document.querySelectorAll(selectors.join(", "))).some((el) =>
-      isElementVisible(el),
-    );
-
-  const hasIncomingCallTitleSignalForHint = (): boolean => {
-    const title = String(document.title || "").replace(/\s+/g, " ").trim();
-    if (!title) return false;
-    const patterns = [
-      /\bis\s+calling\b/i,
-      /\bcalling\s+you\b/i,
-      /\bincoming\s+(?:video\s+|audio\s+)?call\b/i,
-    ];
-    return patterns.some((pattern) => pattern.test(title));
-  };
-
   const detectIncomingCallOverlayVisibleForHint = (): boolean => {
-    const hasVisibleAnswerControl = hasVisibleElementForSelectors(
-      incomingCallAnswerSelectors,
-    );
-    const hasVisibleDeclineControl = hasVisibleElementForSelectors(
-      incomingCallDeclineSelectors,
-    );
-    return (
-      (hasVisibleAnswerControl && hasVisibleDeclineControl) ||
-      hasIncomingCallTitleSignalForHint()
-    );
+    return detectIncomingCallUiVisible(isElementVisible);
   };
 
   const clearIncomingCallOverlayHintTimers = (): void => {
@@ -1377,21 +1477,21 @@ ipcRenderer.on(
   };
 
   const shouldKeepIncomingCallOverlayHintActive = (now: number): boolean => {
-    if (incomingCallOverlayHintStartedAt > 0) {
-      const sinceStart = now - incomingCallOverlayHintStartedAt;
-      if (sinceStart < INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS) {
-        return true;
-      }
-    }
+    const sinceStart =
+      incomingCallOverlayHintStartedAt > 0
+        ? now - incomingCallOverlayHintStartedAt
+        : Number.POSITIVE_INFINITY;
+    const sinceVisible =
+      incomingCallOverlayHintLastVisibleAt > 0
+        ? now - incomingCallOverlayHintLastVisibleAt
+        : Number.POSITIVE_INFINITY;
 
-    if (incomingCallOverlayHintLastVisibleAt > 0) {
-      const sinceVisible = now - incomingCallOverlayHintLastVisibleAt;
-      if (sinceVisible < INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS) {
-        return true;
-      }
-    }
-
-    return false;
+    return shouldKeepIncomingCallHintActive({
+      sinceStartMs: sinceStart,
+      sinceVisibleMs: sinceVisible,
+      minHoldMs: INCOMING_CALL_OVERLAY_HINT_MIN_HOLD_MS,
+      missGraceMs: INCOMING_CALL_OVERLAY_HINT_MISS_GRACE_MS,
+    });
   };
 
   const scheduleIncomingCallOverlayHintRecheck = (reason: string): void => {

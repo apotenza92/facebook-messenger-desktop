@@ -195,6 +195,11 @@
     window.postMessage({ type: 'electron-incoming-call', data: payload }, '*');
   };
 
+  const signalIncomingCallEnded = (reason: string) => {
+    log('=== INCOMING CALL ENDED/DECLINED DETECTED ===', { reason });
+    window.postMessage({ type: 'electron-incoming-call-ended', data: { reason } }, '*');
+  };
+
 
 
   // Selectors for Messenger's DOM structure (these may need updates as Messenger changes)
@@ -1400,20 +1405,55 @@
     const ATTRIBUTE_SCAN_THROTTLE_MS = 500;
     // Skip isCallPopupElement subtree-walks on large containers (direct child limit)
     const MAX_CALL_POPUP_CHILD_COUNT = 200;
+    let hasActiveIncomingCallUi = false;
+    let lastIncomingCallUiSeenAt = 0;
+    let missingIncomingCallUiSince: number | null = null;
+    let confirmedVisibleIncomingCallUi = false;
+    const CALL_END_GRACE_MS = 6000;
+    const CALL_END_CONFIRMATION_MS = 2000;
 
-    const hasVisibleIncomingCallUi = (): boolean => {
-      const hasVisibleAnswerControl = Array.from(
-        document.querySelectorAll(
-          '[aria-label*="Answer" i], [aria-label*="Accept call" i], [aria-label*="Join call" i], [aria-label*="Accept video call" i], [aria-label*="Accept audio call" i]',
-        ),
-      ).some((el) => isAriaVisible(el));
-      const hasVisibleDeclineControl = Array.from(
-        document.querySelectorAll(
-          '[aria-label*="Decline" i], [aria-label*="Ignore call" i], [aria-label*="Decline call" i]',
-        ),
-      ).some((el) => isAriaVisible(el));
-      return hasVisibleAnswerControl && hasVisibleDeclineControl;
-    };
+    const incomingCallAnswerSelectors = [
+      '[aria-label*="Answer" i]',
+      '[aria-label*="Accept call" i]',
+      '[aria-label*="Join call" i]',
+      '[aria-label*="Accept video call" i]',
+      '[aria-label*="Accept audio call" i]',
+    ];
+
+    const incomingCallDeclineSelectors = [
+      '[aria-label*="Decline" i]',
+      '[aria-label*="Ignore call" i]',
+      '[aria-label*="Decline call" i]',
+    ];
+
+    const incomingCallJoinSelectors = [
+      '[aria-label*="Join call" i]',
+      '[aria-label*="Join video" i]',
+      '[aria-label*="Join audio" i]',
+    ];
+
+    const incomingCallSoftSignalSelectors = [
+      '[data-testid*="incoming"]',
+      '[data-testid*="call"]',
+      '[aria-label*="calling" i]',
+      '[aria-label*="incoming call" i]',
+      '[aria-label*="video call" i]',
+      '[aria-label*="audio call" i]',
+    ];
+
+    const incomingCallSignalContainerSelectors = [
+      '[role="dialog"]',
+      '[aria-modal="true"]',
+      '[role="banner"]',
+      '[data-testid*="incoming"]',
+      '[data-testid*="call"]',
+    ];
+
+    const incomingCallSidebarExclusionSelectors = [
+      '[role="navigation"]',
+      '[role="grid"][aria-label*="Chats" i]',
+      '[aria-label="Chats" i]',
+    ];
 
     // Selectors and patterns that indicate an incoming call popup.
     // Use CSS Selectors Level 4 case-insensitive flag (supported in Chromium 49+).
@@ -1449,6 +1489,14 @@
       /audio call (has )?started/i,
     ];
 
+    const nonIncomingCallTextPatterns = [
+      /\bongoing call\b/i,
+      /\byou started (?:an? )?(?:video |audio )?call\b/i,
+      /\bstarted (?:an? )?(?:video |audio )?call\b/i,
+      /\bjoined (?:the )?(?:video |audio )?call\b/i,
+      /\bcall ended\b/i,
+    ];
+
     const buildIncomingCallPayloadFromElement = (
       element: Element,
       source: string,
@@ -1465,8 +1513,109 @@
       };
     };
 
+    const markIncomingCallUiVisible = (now: number): void => {
+      hasActiveIncomingCallUi = true;
+      confirmedVisibleIncomingCallUi = true;
+      lastIncomingCallUiSeenAt = now;
+      missingIncomingCallUiSince = null;
+    };
+
+    const isSidebarCallStatusElement = (el: Element): boolean => {
+      return (
+        incomingCallSidebarExclusionSelectors.some((selector) => el.closest(selector) !== null) ||
+        /\bongoing call\b/i.test(String(el.textContent || ''))
+      );
+    };
+
+    const queryVisibleElements = (selectors: string[]): Element[] => {
+      const results: Element[] = [];
+      const seen = new Set<Element>();
+
+      for (const selector of selectors) {
+        let matches: NodeListOf<Element>;
+        try {
+          matches = document.querySelectorAll(selector);
+        } catch {
+          continue;
+        }
+
+        for (const match of Array.from(matches)) {
+          if (seen.has(match) || !isAriaVisible(match) || isSidebarCallStatusElement(match)) {
+            continue;
+          }
+          seen.add(match);
+          results.push(match);
+        }
+      }
+
+      return results;
+    };
+
+    const hasIncomingCallTitleSignal = (): boolean => {
+      const title = String(document.title || '').replace(/\s+/g, ' ').trim();
+      if (!title) return false;
+      if (nonIncomingCallTextPatterns.some((pattern) => pattern.test(title))) {
+        return false;
+      }
+      return callTextPatterns.some((pattern) => pattern.test(title));
+    };
+
+    const hasIncomingCallTextSignal = (): boolean => {
+      const candidates = queryVisibleElements(incomingCallSignalContainerSelectors);
+      for (const candidate of candidates) {
+        const text = String(candidate.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!text || text.length > 400) {
+          continue;
+        }
+
+        if (nonIncomingCallTextPatterns.some((pattern) => pattern.test(text))) {
+          continue;
+        }
+
+        if (callTextPatterns.some((pattern) => pattern.test(text))) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    const extractIncomingCallerFromVisibleUi = (): string | undefined => {
+      const candidates = queryVisibleElements(incomingCallSignalContainerSelectors);
+      for (const candidate of candidates) {
+        const text = String(candidate.textContent || '').replace(/\s+/g, ' ').trim();
+        const caller = extractIncomingCallerName(text);
+        if (caller) {
+          return caller;
+        }
+      }
+
+      return extractIncomingCallerName(document.title || '');
+    };
+
+    const hasVisibleIncomingCallUi = (): boolean => {
+      const answerVisible = queryVisibleElements(incomingCallAnswerSelectors).length > 0;
+      const declineVisible = queryVisibleElements(incomingCallDeclineSelectors).length > 0;
+      const joinVisible = queryVisibleElements(incomingCallJoinSelectors).length > 0;
+      const selectorSignal = queryVisibleElements(incomingCallSoftSignalSelectors).length > 0;
+      const titleSignal = hasIncomingCallTitleSignal();
+      const textSignal = hasIncomingCallTextSignal();
+
+      return (
+        (answerVisible && declineVisible) ||
+        (answerVisible && joinVisible) ||
+        selectorSignal ||
+        titleSignal ||
+        textSignal
+      );
+    };
+
     // Check if an element or its children contain call-related UI
     const isCallPopupElement = (element: Element): boolean => {
+      if (isSidebarCallStatusElement(element)) {
+        return false;
+      }
+
       // Check for call-related selectors
       for (const selector of callPopupSelectors) {
         try {
@@ -1521,6 +1670,7 @@
         // Check if this element or its descendants indicate a call popup
         if (isCallPopupElement(element)) {
           log('Call popup detected in DOM - bringing window to foreground');
+          markIncomingCallUiVisible(now);
           lastCallSignalTime = now;
           signalIncomingCall(
             buildIncomingCallPayloadFromElement(element, 'dom-node'),
@@ -1533,6 +1683,7 @@
         for (const desc of Array.from(descendants)) {
           if (isCallPopupElement(desc)) {
             log('Call popup detected in descendant - bringing window to foreground');
+            markIncomingCallUiVisible(now);
             lastCallSignalTime = now;
             signalIncomingCall(
               buildIncomingCallPayloadFromElement(desc, 'dom-descendant'),
@@ -1589,6 +1740,7 @@
           // Skip large containers to bound the cost of querySelector subtree walks
           if (changedEl.childElementCount <= MAX_CALL_POPUP_CHILD_COUNT && isCallPopupElement(changedEl)) {
             log('Call popup detected via attribute change');
+            markIncomingCallUiVisible(now);
             lastCallSignalTime = now;
             signalIncomingCall(
               buildIncomingCallPayloadFromElement(changedEl, 'attribute-change'),
@@ -1611,21 +1763,45 @@
       // Periodic fallback scan when the window is not focused.
       // Catches call popups revealed via mechanisms the MutationObserver may miss
       // (e.g. React portals, CSS-only show/hide not involving new DOM nodes).
-      // Requires BOTH an answer-type AND a decline-type element to be aria-visible
-      // simultaneously to avoid false positives from unrelated UI elements.
       window.setInterval(() => {
         const now = Date.now();
-        if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) return;
-        if (isWindowFocused()) return;
-
         if (hasVisibleIncomingCallUi()) {
-          log('Periodic scan: incoming call UI detected (Answer + Decline both visible)');
-          lastCallSignalTime = now;
-          signalIncomingCall({
-            dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
-            source: 'periodic-scan',
-          });
+          markIncomingCallUiVisible(now);
+
+          if (now - lastCallSignalTime >= CALL_SIGNAL_DEBOUNCE_MS && !isWindowFocused()) {
+            log('Periodic scan: incoming call UI detected');
+            lastCallSignalTime = now;
+            signalIncomingCall({
+              dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
+              caller: extractIncomingCallerFromVisibleUi(),
+              source: 'periodic-scan',
+            });
+          }
+          return;
         }
+
+        if (!hasActiveIncomingCallUi || !confirmedVisibleIncomingCallUi) {
+          return;
+        }
+
+        if (now - lastIncomingCallUiSeenAt < CALL_END_GRACE_MS) {
+          return;
+        }
+
+        if (missingIncomingCallUiSince === null) {
+          missingIncomingCallUiSince = now;
+          return;
+        }
+
+        if (now - missingIncomingCallUiSince < CALL_END_CONFIRMATION_MS) {
+          return;
+        }
+
+        hasActiveIncomingCallUi = false;
+        confirmedVisibleIncomingCallUi = false;
+        lastIncomingCallUiSeenAt = 0;
+        missingIncomingCallUiSince = null;
+        signalIncomingCallEnded('controls-disappeared');
       }, 5000);
 
     }, 1000);

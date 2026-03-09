@@ -5,6 +5,7 @@ const {
   resolveViewportMode,
   shouldApplyMessagesCrop,
 } = require("../src/preload/messages-viewport-policy");
+const incomingCallHintPolicy = require("../src/preload/incoming-call-overlay-hint-policy.ts");
 const notificationDecisionPolicy = require("../src/preload/notification-decision-policy.ts");
 const incomingCallOverlayPolicy = require("../src/main/incoming-call-overlay-policy.ts");
 const incomingCallIpcPolicy = require("../src/main/incoming-call-ipc-policy.ts");
@@ -318,6 +319,92 @@ const runIncomingCallOverlayLifecycleTests = () => {
     }),
     true,
     "#47 crop should be restored after stale incoming-call state recovery",
+  );
+};
+
+const runIncomingCallHintPolicyTests = () => {
+  assert(
+    typeof incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible ===
+      "function",
+    "incoming call hint policy missing shouldTreatIncomingCallUiAsVisible",
+  );
+  assert(
+    typeof incomingCallHintPolicy.shouldKeepIncomingCallHintActive ===
+      "function",
+    "incoming call hint policy missing shouldKeepIncomingCallHintActive",
+  );
+  assert(
+    typeof incomingCallHintPolicy.getIncomingCallHintClearReason === "function",
+    "incoming call hint policy missing getIncomingCallHintClearReason",
+  );
+
+  assertEqual(
+    incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible({
+      answerVisible: false,
+      declineVisible: false,
+      joinVisible: false,
+      titleSignal: false,
+      selectorSignal: true,
+      textSignal: false,
+    }),
+    true,
+    "#47 soft selector signal should keep incoming-call hint visible",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible({
+      answerVisible: false,
+      declineVisible: false,
+      joinVisible: false,
+      titleSignal: false,
+      selectorSignal: false,
+      textSignal: true,
+    }),
+    true,
+    "#47 call text signal should keep incoming-call hint visible",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldKeepIncomingCallHintActive({
+      sinceStartMs: 3_500,
+      sinceVisibleMs: 2_500,
+      minHoldMs: 4_000,
+      missGraceMs: 2_000,
+    }),
+    true,
+    "#47 hint hold should survive short Messenger reflow gaps",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldKeepIncomingCallHintActive({
+      sinceStartMs: 4_500,
+      sinceVisibleMs: 2_500,
+      minHoldMs: 4_000,
+      missGraceMs: 2_000,
+    }),
+    false,
+    "#47 hint hold should end once hold and grace windows both expire",
+  );
+  assertEqual(
+    incomingCallHintPolicy.getIncomingCallHintClearReason({
+      activeForMs: 4_500,
+      missingForMs: 2_500,
+      detectedSinceHint: true,
+      minStickyMs: 4_000,
+      missingClearMs: 2_000,
+      maxWithoutDetectionMs: 10_000,
+    }),
+    "incoming-call-controls-missing",
+    "#47 visible-call clear should wait for wider missing-controls window",
+  );
+  assertEqual(
+    incomingCallHintPolicy.getIncomingCallHintClearReason({
+      activeForMs: 9_500,
+      missingForMs: 9_500,
+      detectedSinceHint: false,
+      minStickyMs: 4_000,
+      missingClearMs: 2_000,
+      maxWithoutDetectionMs: 10_000,
+    }),
+    null,
+    "#47 never-detected hint should not clear before stale timeout",
   );
 };
 
@@ -719,6 +806,17 @@ const runNotificationPolicyTests = () => {
     "#46 call classifier should detect title-based incoming calls",
   );
 
+  const ongoingCallClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Messenger",
+      body: "Ongoing Call...",
+    });
+  assertEqual(
+    ongoingCallClassifier.isIncomingCall,
+    false,
+    "#47 call classifier should reject ongoing-call status rows",
+  );
+
   const incomingCallNotSuppressed =
     notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
       title: "Facebook",
@@ -751,6 +849,7 @@ const runNotificationPolicyTests = () => {
 const run = () => {
   runViewportPolicyTests();
   runIncomingCallOverlayLifecycleTests();
+  runIncomingCallHintPolicyTests();
   runIncomingCallIpcPolicyTests();
   runNotificationPolicyTests();
   console.log("PASS deterministic regression tests");

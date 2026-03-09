@@ -30,7 +30,7 @@ type NotificationDeduper = {
 
 type NotificationCallClassification = {
   isIncomingCall: boolean;
-  reason: "incoming-call-pattern" | "not-call";
+  reason: "incoming-call-pattern" | "non-incoming-call-status" | "not-call";
   matchedPattern?: string;
 };
 
@@ -309,12 +309,31 @@ const CALL_BODY_PATTERNS: RegExp[] = [
   /wants to call/i,
 ];
 
+const NON_INCOMING_CALL_PATTERNS: RegExp[] = [
+  /ongoing call/i,
+  /\byou started (?:an? )?(?:video |audio )?call\b/i,
+  /\bstarted (?:an? )?(?:video |audio )?call\b/i,
+  /\bjoined (?:the )?(?:video |audio )?call\b/i,
+  /\bcall ended\b/i,
+];
+
 function classifyCallNotification(
   payload: NotificationPayload,
 ): NotificationCallClassification {
   const combined = `${normalizeText(payload.title)} ${normalizeText(payload.body)}`.trim();
   if (!combined) {
     return { isIncomingCall: false, reason: "not-call" };
+  }
+
+  const excludedPattern = NON_INCOMING_CALL_PATTERNS.find((pattern) =>
+    pattern.test(combined),
+  );
+  if (excludedPattern) {
+    return {
+      isIncomingCall: false,
+      reason: "non-incoming-call-status",
+      matchedPattern: excludedPattern.source,
+    };
   }
 
   const matchedPattern = CALL_BODY_PATTERNS.find((pattern) => pattern.test(combined));

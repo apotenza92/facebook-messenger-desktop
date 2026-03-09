@@ -7337,8 +7337,35 @@ function setupIpcHandlers(): void {
         notificationByKey: incomingCallNotificationByKey,
         lastNoKeyIncomingCallNotificationAt,
       });
+      const caller = formatIncomingCallCaller(payload?.caller);
+      const notificationBody = caller
+        ? `${caller} is calling you on Messenger`
+        : "Someone is calling you on Messenger";
+      const notificationTag = decision.callKey
+        ? `incoming-call:${decision.callKey}`
+        : `incoming-call:${decision.now}`;
 
       if (!decision.shouldNotify) {
+        if (
+          notificationHandler &&
+          caller &&
+          activeIncomingCallNotificationTag === notificationTag &&
+          activeIncomingCallNotificationBody !== notificationBody
+        ) {
+          notificationHandler.showNotification({
+            title: "Incoming call",
+            body: notificationBody,
+            tag: notificationTag,
+            silent: false,
+            requireInteraction: true,
+          });
+          refreshIncomingCallNotificationReminder(
+            notificationTag,
+            notificationBody,
+            decision.now,
+          );
+        }
+
         console.log("[IPC] Incoming call native notification deduplicated", {
           callKey: decision.callKey,
           reason: decision.reason,
@@ -7354,13 +7381,6 @@ function setupIpcHandlers(): void {
         if (decision.callKey === null) {
           lastNoKeyIncomingCallNotificationAt = decision.now;
         }
-        const caller = formatIncomingCallCaller(payload?.caller);
-        const notificationBody = caller
-          ? `${caller} is calling you on Messenger`
-          : "Someone is calling you on Messenger";
-        const notificationTag = decision.callKey
-          ? `incoming-call:${decision.callKey}`
-          : `incoming-call:${decision.now}`;
 
         notificationHandler.showNotification({
           title: "Incoming call",
