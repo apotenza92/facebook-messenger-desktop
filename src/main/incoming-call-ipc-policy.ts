@@ -1,3 +1,10 @@
+import {
+  type IncomingCallEscalationDecision,
+  type IncomingCallEvidence,
+  buildIncomingCallEvidence,
+  shouldEscalateIncomingCallEvidence,
+} from "../shared/incoming-call-evidence";
+
 export const INCOMING_CALL_KEY_TTL_MS = 12_000;
 export const INCOMING_CALL_NO_KEY_COOLDOWN_MS = 10_000;
 export const INCOMING_CALL_NO_KEY_JITTER_GUARD_MS = 400;
@@ -7,6 +14,8 @@ export type IncomingCallIpcPayload = {
   dedupeKey?: string;
   caller?: string;
   source?: string;
+  evidence?: IncomingCallEvidence;
+  recoveryActive?: boolean;
 };
 
 export type IncomingCallNotificationDecisionReason =
@@ -22,13 +31,7 @@ export type IncomingCallNativeNotificationDecision = {
   now: number;
 };
 
-export type IncomingCallSignalEscalationDecision = {
-  shouldEscalate: boolean;
-  reason:
-    | "escalate"
-    | "notification-only-source"
-    | "periodic-scan-without-caller";
-};
+export type IncomingCallSignalEscalationDecision = IncomingCallEscalationDecision;
 
 export type IncomingCallWindowFocusTarget = {
   isMinimized: () => boolean;
@@ -67,29 +70,19 @@ export function applyIncomingCallWindowFocus(
 export function decideIncomingCallSignalEscalation(
   payload?: IncomingCallIpcPayload,
 ): IncomingCallSignalEscalationDecision {
-  const source =
-    typeof payload?.source === "string" ? payload.source.trim().toLowerCase() : "";
-  const caller =
-    typeof payload?.caller === "string" ? payload.caller.trim() : "";
+  const evidence = payload?.evidence
+    ? payload.evidence
+    : buildIncomingCallEvidence({
+        source: payload?.source,
+        caller: payload?.caller,
+        dedupeKey: payload?.dedupeKey,
+        recoveryActive: payload?.recoveryActive,
+      });
 
-  if (source.startsWith("notification:")) {
-    return {
-      shouldEscalate: false,
-      reason: "notification-only-source",
-    };
-  }
-
-  if (source === "periodic-scan" && caller.length === 0) {
-    return {
-      shouldEscalate: false,
-      reason: "periodic-scan-without-caller",
-    };
-  }
-
-  return {
-    shouldEscalate: true,
-    reason: "escalate",
-  };
+  return shouldEscalateIncomingCallEvidence({
+    evidence,
+    recoveryActive: payload?.recoveryActive,
+  });
 }
 
 export function decideIncomingCallNativeNotification(params: {

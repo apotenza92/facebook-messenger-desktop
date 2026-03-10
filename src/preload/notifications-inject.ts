@@ -34,6 +34,7 @@
     isIncomingCall: boolean;
     reason: string;
     matchedPattern?: string;
+    usedTitleOnly?: boolean;
   };
   type NotificationDecisionPolicyApi = {
     resolveNativeNotificationTarget: (
@@ -55,6 +56,26 @@
     dedupeKey?: string;
     caller?: string;
     source?: string;
+    recoveryActive?: boolean;
+    evidence?: IncomingCallEvidence;
+  };
+
+  type IncomingCallEvidenceSource =
+    | 'dom-explicit'
+    | 'dom-soft'
+    | 'periodic-scan'
+    | 'native-notification';
+  type IncomingCallEvidenceConfidence = 'high' | 'medium' | 'low';
+  type IncomingCallEvidence = {
+    source: IncomingCallEvidenceSource;
+    confidence: IncomingCallEvidenceConfidence;
+    caller?: string;
+    dedupeKey?: string;
+    hasVisibleControls: boolean;
+    matchedPattern?: string;
+    capturedAt: number;
+    recoveryActive?: boolean;
+    threadKey?: string;
   };
 
   const normalizeIncomingCallKey = (raw: string): string =>
@@ -190,8 +211,39 @@
     return undefined;
   };
 
+  const emitIncomingCallDebug = (
+    event: string,
+    payload?: Record<string, unknown>,
+  ) => {
+    try {
+      window.postMessage(
+        {
+          type: 'electron-incoming-call-debug',
+          data: {
+            timestamp: Date.now(),
+            event,
+            ...payload,
+          },
+        },
+        '*',
+      );
+    } catch {
+      // Ignore postMessage failures.
+    }
+  };
+
   const signalIncomingCall = (payload: IncomingCallSignalPayload = {}) => {
     log('=== INCOMING CALL DETECTED - Bringing window to foreground ===', payload);
+    emitIncomingCallDebug('incoming-call-signal', {
+      caller: payload.caller,
+      dedupeKey: payload.dedupeKey,
+      source: payload.source,
+      confidence: payload.evidence?.confidence,
+      hasVisibleControls: payload.evidence?.hasVisibleControls,
+      matchedPattern: payload.evidence?.matchedPattern,
+      recoveryActive: payload.recoveryActive === true,
+      url: window.location.href,
+    });
     window.postMessage({ type: 'electron-incoming-call', data: payload }, '*');
   };
 
@@ -231,6 +283,150 @@
         '*',
       );
     } catch { /* intentionally empty */ }
+  };
+
+  const INCOMING_CALL_RECOVERY_SETTLING_MS = 10_000;
+  const INCOMING_CALL_CORROBORATION_WINDOW_MS = 8_000;
+  let incomingCallRecoveryUntil = 0;
+  let sawOfflineSinceLastOnline = false;
+  let lastCorroboratedIncomingCallEvidence: IncomingCallEvidence | null = null;
+
+  const isIncomingCallRecoveryActive = (now = Date.now()): boolean =>
+    now < incomingCallRecoveryUntil;
+
+  const startIncomingCallRecoveryWindow = (
+    reason: string,
+    durationMs = INCOMING_CALL_RECOVERY_SETTLING_MS,
+  ): void => {
+    const now = Date.now();
+    incomingCallRecoveryUntil = Math.max(
+      incomingCallRecoveryUntil,
+      now + Math.max(1000, Math.floor(durationMs)),
+    );
+    emitIncomingCallDebug('incoming-call-recovery-started', {
+      reason,
+      recoveryUntil: incomingCallRecoveryUntil,
+      url: window.location.href,
+    });
+  };
+
+  const buildIncomingCallEvidence = (params: {
+    source: IncomingCallEvidenceSource;
+    caller?: string;
+    dedupeKey?: string;
+    hasVisibleControls?: boolean;
+    matchedPattern?: string;
+    confidence?: IncomingCallEvidenceConfidence;
+    capturedAt?: number;
+    threadKey?: string;
+  }): IncomingCallEvidence => {
+    const capturedAt =
+      typeof params.capturedAt === 'number' && Number.isFinite(params.capturedAt)
+        ? params.capturedAt
+        : Date.now();
+    const recoveryActive = isIncomingCallRecoveryActive(capturedAt);
+
+    let confidence = params.confidence;
+    if (!confidence) {
+      if (params.source === 'dom-explicit') {
+        confidence = 'high';
+      } else if (params.source === 'dom-soft') {
+        confidence = 'medium';
+      } else if (params.source === 'periodic-scan') {
+        confidence = params.caller ? 'medium' : 'low';
+      } else {
+        confidence = 'low';
+      }
+    }
+
+    return {
+      source: params.source,
+      confidence,
+      caller:
+        typeof params.caller === 'string' && params.caller.trim().length > 0
+          ? params.caller.trim()
+          : undefined,
+      dedupeKey:
+        typeof params.dedupeKey === 'string' && params.dedupeKey.trim().length > 0
+          ? params.dedupeKey.trim()
+          : undefined,
+      hasVisibleControls: params.hasVisibleControls === true,
+      matchedPattern:
+        typeof params.matchedPattern === 'string' &&
+        params.matchedPattern.trim().length > 0
+          ? params.matchedPattern.trim()
+          : undefined,
+      capturedAt,
+      recoveryActive,
+      threadKey:
+        typeof params.threadKey === 'string' && params.threadKey.trim().length > 0
+          ? params.threadKey.trim()
+          : undefined,
+    };
+  };
+
+  const shouldPromoteIncomingCallEvidence = (
+    evidence: IncomingCallEvidence,
+  ): { shouldPromote: boolean; reason: string } => {
+    if (evidence.recoveryActive && evidence.source !== 'dom-explicit') {
+      return { shouldPromote: false, reason: 'recovery-requires-explicit-dom' };
+    }
+
+    if (evidence.confidence === 'low') {
+      return { shouldPromote: false, reason: 'low-confidence-evidence' };
+    }
+
+    return { shouldPromote: true, reason: 'promote' };
+  };
+
+  const rememberIncomingCallEvidence = (evidence: IncomingCallEvidence): void => {
+    if (evidence.confidence === 'low') {
+      return;
+    }
+
+    lastCorroboratedIncomingCallEvidence = evidence;
+    emitIncomingCallDebug('incoming-call-evidence-recorded', {
+      evidenceSource: evidence.source,
+      confidence: evidence.confidence,
+      caller: evidence.caller,
+      dedupeKey: evidence.dedupeKey,
+      hasVisibleControls: evidence.hasVisibleControls,
+      matchedPattern: evidence.matchedPattern,
+      recoveryActive: evidence.recoveryActive === true,
+      url: window.location.href,
+    });
+  };
+
+  const getRecentCorroboratedIncomingCallEvidence = (
+    params: { dedupeKey?: string; caller?: string; now?: number } = {},
+  ): IncomingCallEvidence | null => {
+    const now =
+      typeof params.now === 'number' && Number.isFinite(params.now)
+        ? params.now
+        : Date.now();
+    const evidence = lastCorroboratedIncomingCallEvidence;
+    if (!evidence) return null;
+    if (now - evidence.capturedAt > INCOMING_CALL_CORROBORATION_WINDOW_MS) {
+      return null;
+    }
+
+    const dedupeKey = String(params.dedupeKey || '').trim();
+    const caller = String(params.caller || '').trim().toLowerCase();
+    const evidenceCaller = String(evidence.caller || '').trim().toLowerCase();
+
+    if (dedupeKey && evidence.dedupeKey && dedupeKey === evidence.dedupeKey) {
+      return evidence;
+    }
+
+    if (caller && evidenceCaller && caller === evidenceCaller) {
+      return evidence;
+    }
+
+    if (!dedupeKey && !caller) {
+      return evidence;
+    }
+
+    return null;
   };
 
   const getNotificationDecisionPolicy = (): NotificationDecisionPolicyApi | null => {
@@ -409,34 +605,12 @@
     source: string,
     icon?: string,
     href?: string,
-    callClassification?: NotificationCallClassification,
   ) => {
     log(`=== SENDING NOTIFICATION [${source}] ===`, { title, body: body.slice(0, 50), href });
 
-    const callResult = callClassification || classifyCallPayload(title, body);
-    let effectiveTitle = String(title);
-    let effectiveBody = String(body);
-
-    if (callResult.isIncomingCall) {
-      const callKey = buildIncomingCallDedupeKey(href);
-      const caller = extractIncomingCallerName(`${title} ${body}`);
-      log('Notification classified as incoming call', {
-        source,
-        reason: callResult.reason,
-        matchedPattern: callResult.matchedPattern,
-        callKey,
-        caller,
-      });
-
-      effectiveTitle = 'Incoming call';
-      effectiveBody = caller
-        ? `${caller} is calling you on Messenger`
-        : 'Someone is calling you on Messenger';
-    }
-
     const notificationData = {
-      title: effectiveTitle,
-      body: effectiveBody,
+      title: String(title),
+      body: String(body),
       id: Date.now() + Math.random(),
       icon,
       silent: false,
@@ -751,6 +925,7 @@
       log('Power state change received', { state, timestamp: eventData?.timestamp });
 
       if (state === 'resume' || state === 'unlock-screen') {
+        startIncomingCallRecoveryWindow(state);
         startSettlingPeriod({
           reason: state,
           durationMs: RESUME_SETTLING_MS,
@@ -760,6 +935,28 @@
         isSettling = true;
       }
       return;
+    }
+  });
+
+  window.addEventListener('offline', () => {
+    sawOfflineSinceLastOnline = true;
+    emitIncomingCallDebug('network-offline', { url: window.location.href });
+  });
+
+  window.addEventListener('online', () => {
+    emitIncomingCallDebug('network-online', {
+      url: window.location.href,
+      hadPriorOffline: sawOfflineSinceLastOnline,
+    });
+
+    if (sawOfflineSinceLastOnline) {
+      startIncomingCallRecoveryWindow('online');
+      startSettlingPeriod({
+        reason: 'online-recovery',
+        durationMs: RESUME_SETTLING_MS,
+        includeFresh: false,
+      });
+      sawOfflineSinceLastOnline = false;
     }
   });
 
@@ -797,39 +994,89 @@
         };
         const callClassification = policy.classifyCallNotification(nativePayload);
         if (callClassification.isIncomingCall) {
+          const now = Date.now();
+          const routeKey = normalizeConversationKey(window.location.pathname || '/');
+          const dedupeKey = buildIncomingCallDedupeKey(routeKey);
+          const caller = extractIncomingCallerName(
+            `${nativePayload.title} ${nativePayload.body}`,
+          );
+          const corroboration = getRecentCorroboratedIncomingCallEvidence({
+            dedupeKey,
+            caller,
+            now,
+          });
+          const evidence = buildIncomingCallEvidence({
+            source: 'native-notification',
+            caller,
+            dedupeKey,
+            matchedPattern: callClassification.matchedPattern,
+            confidence: corroboration ? 'medium' : 'low',
+            capturedAt: now,
+            threadKey: routeKey,
+          });
+          const promotion = shouldPromoteIncomingCallEvidence(evidence);
+
+          emitIncomingCallDebug('incoming-call-native-notification', {
+            title: nativePayload.title,
+            matchedPattern: callClassification.matchedPattern,
+            caller,
+            dedupeKey,
+            confidence: evidence.confidence,
+            recoveryActive: evidence.recoveryActive === true,
+            corroboratedBy: corroboration?.source,
+            url: window.location.href,
+          });
+
+          if (!promotion.shouldPromote) {
+            log('Native call notification suppressed - no corroborated call UI evidence', {
+              title,
+              reason: promotion.reason,
+              dedupeKey,
+            });
+            emitIncomingCallDebug('incoming-call-native-notification-suppressed', {
+              reason: promotion.reason,
+              dedupeKey,
+              confidence: evidence.confidence,
+              recoveryActive: evidence.recoveryActive === true,
+              url: window.location.href,
+            });
+            return;
+          }
+
           const bodyStr = String(body).slice(0, 100);
-          const callDedupeKey = normalizeCallDedupeKey(
+          const nativeDedupeKey = normalizeCallDedupeKey(
             nativePayload.title,
             nativePayload.body,
           );
-          if (hasAlreadyNotified(callDedupeKey, bodyStr)) {
+          if (hasAlreadyNotified(nativeDedupeKey, bodyStr)) {
             log('Native call notification deduplicated', {
               title,
-              dedupeKey: callDedupeKey,
+              dedupeKey: nativeDedupeKey,
             });
             return;
           }
-          if (nativeConversationDeduper?.shouldSuppress(callDedupeKey)) {
+          if (nativeConversationDeduper?.shouldSuppress(nativeDedupeKey)) {
             log('Native call notification suppressed by TTL deduper', {
               title,
-              dedupeKey: callDedupeKey,
+              dedupeKey: nativeDedupeKey,
             });
             return;
           }
-          recordNotification(callDedupeKey, bodyStr);
-          log('Native notification classified as incoming call - bypassing mute matching', {
+
+          recordNotification(nativeDedupeKey, bodyStr);
+          log('Native notification corroborated by recent call UI evidence', {
             title,
             reason: callClassification.reason,
             matchedPattern: callClassification.matchedPattern,
+            corroboratedBy: corroboration?.source,
           });
-          sendNotification(
-            nativePayload.title,
-            nativePayload.body,
-            'NATIVE_CALL',
-            options?.icon as string,
-            undefined,
-            callClassification,
-          );
+          signalIncomingCall({
+            dedupeKey,
+            caller,
+            source: 'native-notification',
+            recoveryActive: evidence.recoveryActive,
+            evidence,
+          });
           return;
         }
 
@@ -1473,40 +1720,17 @@
       '[data-testid*="call"]',
     ];
 
-    // Text patterns that indicate incoming call UI
-    const callTextPatterns = [
-      /incoming (video |audio )?call/i,
-      /is calling/i,
-      /calling you/i,
-      /wants to (video )?call/i,
-      /join (the )?(video |audio )?call/i,
-      /video call (has )?started/i,
-      /audio call (has )?started/i,
-    ];
-
     const nonIncomingCallTextPatterns = [
       /\bongoing call\b/i,
       /\byou started (?:an? )?(?:video |audio )?call\b/i,
       /\bstarted (?:an? )?(?:video |audio )?call\b/i,
       /\bjoined (?:the )?(?:video |audio )?call\b/i,
       /\bcall ended\b/i,
+      /\bmissed (?:video |audio )?call\b/i,
+      /\bcall cancel(?:ed|led)\b/i,
+      /\banswered (?:on|with) another device\b/i,
+      /\banswered elsewhere\b/i,
     ];
-
-    const buildIncomingCallPayloadFromElement = (
-      element: Element,
-      source: string,
-    ): IncomingCallSignalPayload => {
-      const textSample = (element.textContent || '').replace(/\s+/g, ' ').trim();
-      const caller = extractIncomingCallerName(textSample);
-      const route = normalizeConversationKey(window.location.pathname || '/');
-      const dedupeKey = buildIncomingCallDedupeKey(route);
-
-      return {
-        dedupeKey,
-        caller,
-        source,
-      };
-    };
 
     const markIncomingCallUiVisible = (now: number): void => {
       hasActiveIncomingCallUi = true;
@@ -1546,18 +1770,13 @@
       return results;
     };
 
-    const hasIncomingCallTitleSignal = (): boolean => {
-      const title = String(document.title || '').replace(/\s+/g, ' ').trim();
-      if (!title) return false;
-      if (nonIncomingCallTextPatterns.some((pattern) => pattern.test(title))) {
-        return false;
-      }
-      return callTextPatterns.some((pattern) => pattern.test(title));
-    };
+    const queryVisibleContainers = (): Element[] =>
+      queryVisibleElements(incomingCallSignalContainerSelectors);
 
-    const hasIncomingCallTextSignal = (): boolean => {
-      const candidates = queryVisibleElements(incomingCallSignalContainerSelectors);
-      for (const candidate of candidates) {
+    const findVisiblePatternMatch = (
+      containers: Element[],
+    ): { matchedPattern?: string; caller?: string; textSignal: boolean } => {
+      for (const candidate of containers) {
         const text = String(candidate.textContent || '').replace(/\s+/g, ' ').trim();
         if (!text || text.length > 400) {
           continue;
@@ -1567,43 +1786,133 @@
           continue;
         }
 
-        if (callTextPatterns.some((pattern) => pattern.test(text))) {
-          return true;
+        const classification = classifyCallPayload('', text);
+        if (classification.isIncomingCall && !classification.usedTitleOnly) {
+          return {
+            textSignal: true,
+            matchedPattern: classification.matchedPattern,
+            caller: extractIncomingCallerName(text),
+          };
         }
       }
 
-      return false;
+      return { textSignal: false };
     };
 
-    const extractIncomingCallerFromVisibleUi = (): string | undefined => {
-      const candidates = queryVisibleElements(incomingCallSignalContainerSelectors);
-      for (const candidate of candidates) {
-        const text = String(candidate.textContent || '').replace(/\s+/g, ' ').trim();
-        const caller = extractIncomingCallerName(text);
-        if (caller) {
-          return caller;
-        }
-      }
-
-      return extractIncomingCallerName(document.title || '');
-    };
-
-    const hasVisibleIncomingCallUi = (): boolean => {
+    const getVisibleIncomingCallUiState = (): {
+      source?: IncomingCallEvidenceSource;
+      caller?: string;
+      matchedPattern?: string;
+      hasVisibleControls: boolean;
+      hasVisibleContainer: boolean;
+      selectorSignal: boolean;
+      textSignal: boolean;
+      titleSignal: boolean;
+    } => {
+      const visibleContainers = queryVisibleContainers();
+      const hasVisibleContainer = visibleContainers.length > 0;
       const answerVisible = queryVisibleElements(incomingCallAnswerSelectors).length > 0;
       const declineVisible = queryVisibleElements(incomingCallDeclineSelectors).length > 0;
       const joinVisible = queryVisibleElements(incomingCallJoinSelectors).length > 0;
-      const selectorSignal = queryVisibleElements(incomingCallSoftSignalSelectors).length > 0;
-      const titleSignal = hasIncomingCallTitleSignal();
-      const textSignal = hasIncomingCallTextSignal();
+      const hasVisibleControls =
+        (answerVisible && declineVisible) || (answerVisible && joinVisible);
+      const visibleSoftSignals = queryVisibleElements(incomingCallSoftSignalSelectors);
+      const selectorSignal =
+        hasVisibleContainer &&
+        visibleSoftSignals.some((el) =>
+          visibleContainers.some(
+            (container) =>
+              container === el || container.contains(el) || el.contains(container),
+          ),
+        );
+      const textMatch = findVisiblePatternMatch(visibleContainers);
+      const textSignal = textMatch.textSignal;
+      const titleClassification = classifyCallPayload(document.title || '', '');
+      const titleSignal =
+        hasVisibleContainer &&
+        titleClassification.isIncomingCall &&
+        titleClassification.usedTitleOnly === true &&
+        (selectorSignal || textSignal || hasVisibleControls);
+      const caller =
+        textMatch.caller ||
+        (hasVisibleContainer
+          ? extractIncomingCallerName(document.title || '')
+          : undefined);
 
-      return (
-        (answerVisible && declineVisible) ||
-        (answerVisible && joinVisible) ||
-        selectorSignal ||
-        titleSignal ||
-        textSignal
-      );
+      if (hasVisibleControls) {
+        return {
+          source: 'dom-explicit',
+          caller,
+          matchedPattern:
+            textMatch.matchedPattern || titleClassification.matchedPattern,
+          hasVisibleControls,
+          hasVisibleContainer,
+          selectorSignal,
+          textSignal,
+          titleSignal,
+        };
+      }
+
+      if (hasVisibleContainer && (selectorSignal || textSignal || titleSignal)) {
+        return {
+          source: 'dom-soft',
+          caller,
+          matchedPattern:
+            textMatch.matchedPattern || titleClassification.matchedPattern,
+          hasVisibleControls,
+          hasVisibleContainer,
+          selectorSignal,
+          textSignal,
+          titleSignal,
+        };
+      }
+
+      return {
+        hasVisibleControls,
+        hasVisibleContainer,
+        selectorSignal,
+        textSignal,
+        titleSignal,
+      };
     };
+
+    const buildIncomingCallPayload = (
+      source: IncomingCallEvidenceSource,
+      params: {
+        caller?: string;
+        matchedPattern?: string;
+        hasVisibleControls: boolean;
+        capturedAt?: number;
+      },
+    ): IncomingCallSignalPayload => {
+      const route = normalizeConversationKey(window.location.pathname || '/');
+      const dedupeKey = buildIncomingCallDedupeKey(route);
+      const evidence = buildIncomingCallEvidence({
+        source,
+        caller: params.caller,
+        dedupeKey,
+        hasVisibleControls: params.hasVisibleControls,
+        matchedPattern: params.matchedPattern,
+        capturedAt: params.capturedAt,
+        threadKey: route,
+      });
+
+      return {
+        dedupeKey,
+        caller: evidence.caller,
+        source: evidence.source,
+        recoveryActive: evidence.recoveryActive,
+        evidence,
+      };
+    };
+
+    const extractIncomingCallerFromVisibleUi = (): string | undefined => {
+      const uiState = getVisibleIncomingCallUiState();
+      return uiState.caller;
+    };
+
+    const hasVisibleIncomingCallUi = (): boolean =>
+      Boolean(getVisibleIncomingCallUiState().source);
 
     // Check if an element or its children contain call-related UI
     const isCallPopupElement = (element: Element): boolean => {
@@ -1630,21 +1939,20 @@
         }
       }
 
-      // Check text content for call patterns
-      const textContent = element.textContent || '';
-      for (const pattern of callTextPatterns) {
-        if (pattern.test(textContent)) {
-          // Make sure it's actually a call UI and not just a message about calls
-          // Look for action buttons nearby
-          const buttons = element.querySelectorAll('button, [role="button"]');
-          for (const button of Array.from(buttons)) {
-            if (!isAriaVisible(button)) continue;
-            const buttonLabel = button.getAttribute('aria-label') || button.textContent || '';
-            if (/answer|accept|decline|ignore|join|cancel/i.test(buttonLabel)) {
-              return true;
-            }
-          }
-        }
+      const visibleContainers = queryVisibleContainers();
+      if (visibleContainers.length === 0) {
+        return false;
+      }
+
+      if (
+        visibleContainers.some(
+          (container) =>
+            container === element ||
+            container.contains(element) ||
+            element.contains(container),
+        )
+      ) {
+        return Boolean(getVisibleIncomingCallUiState().source);
       }
 
       return false;
@@ -1664,12 +1972,21 @@
 
         // Check if this element or its descendants indicate a call popup
         if (isCallPopupElement(element)) {
+          const uiState = getVisibleIncomingCallUiState();
+          if (!uiState.source) {
+            continue;
+          }
           log('Call popup detected in DOM - bringing window to foreground');
           markIncomingCallUiVisible(now);
           lastCallSignalTime = now;
-          signalIncomingCall(
-            buildIncomingCallPayloadFromElement(element, 'dom-node'),
-          );
+          const payload = buildIncomingCallPayload(uiState.source, {
+            caller: uiState.caller,
+            matchedPattern: uiState.matchedPattern,
+            hasVisibleControls: uiState.hasVisibleControls,
+            capturedAt: now,
+          });
+          rememberIncomingCallEvidence(payload.evidence as IncomingCallEvidence);
+          signalIncomingCall(payload);
           return;
         }
 
@@ -1677,12 +1994,21 @@
         const descendants = element.querySelectorAll('*');
         for (const desc of Array.from(descendants)) {
           if (isCallPopupElement(desc)) {
+            const uiState = getVisibleIncomingCallUiState();
+            if (!uiState.source) {
+              continue;
+            }
             log('Call popup detected in descendant - bringing window to foreground');
             markIncomingCallUiVisible(now);
             lastCallSignalTime = now;
-            signalIncomingCall(
-              buildIncomingCallPayloadFromElement(desc, 'dom-descendant'),
-            );
+            const payload = buildIncomingCallPayload(uiState.source, {
+              caller: uiState.caller,
+              matchedPattern: uiState.matchedPattern,
+              hasVisibleControls: uiState.hasVisibleControls,
+              capturedAt: now,
+            });
+            rememberIncomingCallEvidence(payload.evidence as IncomingCallEvidence);
+            signalIncomingCall(payload);
             return;
           }
         }
@@ -1734,12 +2060,21 @@
           lastAttributeScanTime = now;
           // Skip large containers to bound the cost of querySelector subtree walks
           if (changedEl.childElementCount <= MAX_CALL_POPUP_CHILD_COUNT && isCallPopupElement(changedEl)) {
+            const uiState = getVisibleIncomingCallUiState();
+            if (!uiState.source) {
+              continue;
+            }
             log('Call popup detected via attribute change');
             markIncomingCallUiVisible(now);
             lastCallSignalTime = now;
-            signalIncomingCall(
-              buildIncomingCallPayloadFromElement(changedEl, 'attribute-change'),
-            );
+            const payload = buildIncomingCallPayload(uiState.source, {
+              caller: uiState.caller,
+              matchedPattern: uiState.matchedPattern,
+              hasVisibleControls: uiState.hasVisibleControls,
+              capturedAt: now,
+            });
+            rememberIncomingCallEvidence(payload.evidence as IncomingCallEvidence);
+            signalIncomingCall(payload);
           }
         }
       }
@@ -1760,21 +2095,33 @@
       // (e.g. React portals, CSS-only show/hide not involving new DOM nodes).
       window.setInterval(() => {
         const now = Date.now();
-        if (hasVisibleIncomingCallUi()) {
+        const uiState = getVisibleIncomingCallUiState();
+        if (uiState.source) {
           markIncomingCallUiVisible(now);
 
           if (now - lastCallSignalTime >= CALL_SIGNAL_DEBOUNCE_MS && !isWindowFocused()) {
-            const caller = extractIncomingCallerFromVisibleUi();
-            if (!caller) {
+            const payload = buildIncomingCallPayload('periodic-scan', {
+              caller: uiState.caller,
+              matchedPattern: uiState.matchedPattern,
+              hasVisibleControls: uiState.hasVisibleControls,
+              capturedAt: now,
+            });
+            const promotion = shouldPromoteIncomingCallEvidence(
+              payload.evidence as IncomingCallEvidence,
+            );
+            if (!promotion.shouldPromote) {
+              emitIncomingCallDebug('incoming-call-periodic-scan-suppressed', {
+                reason: promotion.reason,
+                confidence: payload.evidence?.confidence,
+                recoveryActive: payload.recoveryActive === true,
+                url: window.location.href,
+              });
               return;
             }
             log('Periodic scan: incoming call UI detected');
             lastCallSignalTime = now;
-            signalIncomingCall({
-              dedupeKey: buildIncomingCallDedupeKey(window.location.pathname || '/'),
-              caller,
-              source: 'periodic-scan',
-            });
+            rememberIncomingCallEvidence(payload.evidence as IncomingCallEvidence);
+            signalIncomingCall(payload);
           }
           return;
         }

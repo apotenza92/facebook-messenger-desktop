@@ -55,6 +55,10 @@ const nonIncomingCallTextPatterns = [
   /\bstarted (?:an? )?(?:video\s+|audio\s+)?call\b/i,
   /\bjoined (?:the\s+)?(?:video\s+|audio\s+)?call\b/i,
   /\bcall ended\b/i,
+  /\bmissed (?:video\s+|audio\s+)?call\b/i,
+  /\bcall cancel(?:ed|led)\b/i,
+  /\banswered (?:on|with) another device\b/i,
+  /\banswered elsewhere\b/i,
 ];
 
 const incomingCallSignalContainerSelectors = [
@@ -115,6 +119,12 @@ function hasIncomingCallTitleSignal(title: string): boolean {
   return incomingCallTextPatterns.some((pattern) => pattern.test(normalizedTitle));
 }
 
+function hasVisibleIncomingCallContainer(
+  isVisible: (el: Element | null) => boolean,
+): boolean {
+  return queryVisibleElements(incomingCallSignalContainerSelectors, isVisible).length > 0;
+}
+
 function hasIncomingCallTextSignal(
   isVisible: (el: Element | null) => boolean,
 ): boolean {
@@ -144,6 +154,7 @@ function hasIncomingCallTextSignal(
 function detectIncomingCallUiVisible(
   isVisible: (el: Element | null) => boolean,
 ): boolean {
+  const hasVisibleContainer = hasVisibleIncomingCallContainer(isVisible);
   const answerVisible = queryVisibleElements(incomingCallAnswerSelectors, isVisible)
     .length > 0;
   const declineVisible = queryVisibleElements(
@@ -155,9 +166,12 @@ function detectIncomingCallUiVisible(
   const selectorSignal = queryVisibleElements(
     incomingCallSoftSignalSelectors,
     isVisible,
-  ).length > 0;
-  const titleSignal = hasIncomingCallTitleSignal(document.title);
+  ).length > 0 && hasVisibleContainer;
   const textSignal = hasIncomingCallTextSignal(isVisible);
+  const titleSignal =
+    hasIncomingCallTitleSignal(document.title) &&
+    hasVisibleContainer &&
+    (selectorSignal || textSignal || answerVisible || declineVisible || joinVisible);
 
   return shouldTreatIncomingCallUiAsVisible({
     answerVisible,
@@ -309,6 +323,7 @@ ipcRenderer.on(
   let incomingCallDetectedSinceHint = false;
   let mediaOverlayTransitionTimer: number | null = null;
   let viewportStateSendTimer: number | null = null;
+  let viewportRecoveryTimerIds: number[] = [];
   let lastSentViewportState: { visible: boolean; url: string } | null = null;
   let lastViewportMode: MessagesViewportMode | null = null;
   let lastMediaOverlayDebugSentAt = 0;
@@ -1235,6 +1250,32 @@ ipcRenderer.on(
     }, 0);
   };
 
+  const scheduleViewportRecovery = (reason: string): void => {
+    for (const timerId of viewportRecoveryTimerIds) {
+      clearTimeout(timerId);
+    }
+    viewportRecoveryTimerIds = [];
+
+    const delays = [0, 120, 500, 1500];
+    for (const delay of delays) {
+      const timerId = window.setTimeout(() => {
+        viewportRecoveryTimerIds = viewportRecoveryTimerIds.filter(
+          (value) => value !== timerId,
+        );
+        sendMediaOverlayDebug("viewport-recovery", {
+          force: true,
+          reason,
+          delay,
+          url: window.location.href,
+        });
+        scheduleMediaOverlayRecheck();
+        scheduleApply();
+        scheduleViewportStateSend(true);
+      }, delay);
+      viewportRecoveryTimerIds.push(timerId);
+    }
+  };
+
   const startObservers = (): void => {
     if (!document.body) return;
     const observer = new MutationObserver(() => {
@@ -1402,10 +1443,28 @@ ipcRenderer.on(
     scheduleMediaOverlayRecheck();
     scheduleApply();
   });
+  window.addEventListener("online", () => {
+    scheduleViewportRecovery("online");
+  });
+  window.addEventListener("focus", () => {
+    scheduleViewportRecovery("window-focus");
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      scheduleViewportRecovery("visibility-visible");
+    }
+  });
   window.addEventListener("resize", () => {
     sendMediaOverlayDebug("resize");
     scheduleMediaOverlayRecheck();
     scheduleApply();
+  });
+
+  ipcRenderer.on("power-state", (_event, payload: { state?: string }) => {
+    const state = typeof payload?.state === "string" ? payload.state : "";
+    if (state === "resume" || state === "unlock-screen") {
+      scheduleViewportRecovery(`power-${state}`);
+    }
   });
 })();
 
@@ -1662,6 +1721,12 @@ ipcRenderer.on(
         } catch {
           /* intentionally empty */
         }
+      } else if (event.data.type === "electron-incoming-call-debug") {
+        try {
+          ipcRenderer.send("incoming-call-debug", event.data.data);
+        } catch {
+          /* intentionally empty */
+        }
       } else if (event.data.type === "electron-badge-update") {
         // Handle badge count updates from page context
         const count = event.data.count;
@@ -1690,6 +1755,12 @@ ipcRenderer.on(
             typeof incomingCallDataRaw.source === "string"
               ? incomingCallDataRaw.source
               : undefined,
+          recoveryActive: incomingCallDataRaw.recoveryActive === true,
+          evidence:
+            incomingCallDataRaw.evidence &&
+            typeof incomingCallDataRaw.evidence === "object"
+              ? incomingCallDataRaw.evidence
+              : undefined,
         };
 
         console.log(
@@ -1698,15 +1769,26 @@ ipcRenderer.on(
         );
         ipcRenderer.send("incoming-call", incomingCallData);
 
-        // Force-disable header crop so in-page incoming call controls stay visible
-        // while Messenger animates in. Keep hint sticky for a grace window even if
-        // controls temporarily disappear during UI reflows.
-        const now = Date.now();
-        incomingCallOverlayHintStartedAt = now;
-        incomingCallOverlayHintLastVisibleAt = now;
-        sendIncomingCallOverlayHint(true, "incoming-call-detected");
-        ensureIncomingCallOverlayHintHeartbeat();
-        scheduleIncomingCallOverlayHintRecheck("incoming-call-detected");
+        const evidence =
+          incomingCallData.evidence && typeof incomingCallData.evidence === "object"
+            ? incomingCallData.evidence
+            : null;
+
+        if (
+          evidence &&
+          evidence.confidence !== "low" &&
+          evidence.source !== "native-notification"
+        ) {
+          // Force-disable header crop so in-page incoming call controls stay visible
+          // while Messenger animates in. Keep hint sticky for a grace window even if
+          // controls temporarily disappear during UI reflows.
+          const now = Date.now();
+          incomingCallOverlayHintStartedAt = now;
+          incomingCallOverlayHintLastVisibleAt = now;
+          sendIncomingCallOverlayHint(true, "incoming-call-detected");
+          ensureIncomingCallOverlayHintHeartbeat();
+          scheduleIncomingCallOverlayHintRecheck("incoming-call-detected");
+        }
       } else if (event.data.type === "electron-incoming-call-ended") {
         const incomingCallEndedRaw =
           event.data && typeof event.data.data === "object" && event.data.data

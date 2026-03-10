@@ -9,6 +9,7 @@ const incomingCallHintPolicy = require("../src/preload/incoming-call-overlay-hin
 const notificationDecisionPolicy = require("../src/preload/notification-decision-policy.ts");
 const incomingCallOverlayPolicy = require("../src/main/incoming-call-overlay-policy.ts");
 const incomingCallIpcPolicy = require("../src/main/incoming-call-ipc-policy.ts");
+const incomingCallEvidence = require("../src/shared/incoming-call-evidence.ts");
 const {
   isMessagesRoute,
   isMessagesMediaViewerRoute,
@@ -455,6 +456,60 @@ const runIncomingCallIpcPolicyTests = () => {
     "#47 explicit DOM call signals should still arm incoming-call reminder state",
   );
 
+  const lowConfidenceEvidenceEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "native-notification",
+        confidence: "low",
+      }),
+    });
+  assertEqual(
+    lowConfidenceEvidenceEscalation.shouldEscalate,
+    false,
+    "#41 low-confidence native call evidence should not escalate",
+  );
+  assertEqual(
+    lowConfidenceEvidenceEscalation.reason,
+    "low-confidence-evidence",
+    "#41 low-confidence native call evidence should report suppression reason",
+  );
+
+  const recoverySoftEvidenceEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "dom-soft",
+        confidence: "medium",
+        recoveryActive: true,
+      }),
+      recoveryActive: true,
+    });
+  assertEqual(
+    recoverySoftEvidenceEscalation.shouldEscalate,
+    false,
+    "#41 recovery settling should suppress non-explicit incoming-call evidence",
+  );
+  assertEqual(
+    recoverySoftEvidenceEscalation.reason,
+    "recovery-requires-explicit-dom",
+    "#41 recovery settling should require explicit DOM call evidence",
+  );
+
+  const recoveryExplicitEvidenceEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "dom-explicit",
+        confidence: "high",
+        hasVisibleControls: true,
+        recoveryActive: true,
+      }),
+      recoveryActive: true,
+    });
+  assertEqual(
+    recoveryExplicitEvidenceEscalation.shouldEscalate,
+    true,
+    "#41 recovery settling should still allow explicit DOM call evidence",
+  );
+
   const focusEvents: string[] = [];
   const focusResult = incomingCallIpcPolicy.applyIncomingCallWindowFocus({
     isMinimized: () => true,
@@ -851,6 +906,50 @@ const runNotificationPolicyTests = () => {
     ongoingCallClassifier.isIncomingCall,
     false,
     "#47 call classifier should reject ongoing-call status rows",
+  );
+
+  const missedCallClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Messenger",
+      body: "Missed video call",
+    });
+  assertEqual(
+    missedCallClassifier.isIncomingCall,
+    false,
+    "#41 call classifier should reject missed-call history rows",
+  );
+
+  const cancelledCallClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Messenger",
+      body: "Call cancelled",
+    });
+  assertEqual(
+    cancelledCallClassifier.isIncomingCall,
+    false,
+    "#41 call classifier should reject cancelled-call history rows",
+  );
+
+  const answeredElsewhereClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Messenger",
+      body: "Answered on another device",
+    });
+  assertEqual(
+    answeredElsewhereClassifier.isIncomingCall,
+    false,
+    "#41 call classifier should reject answered-elsewhere status rows",
+  );
+
+  const titleOnlyClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Incoming video call",
+      body: "",
+    });
+  assertEqual(
+    titleOnlyClassifier.usedTitleOnly,
+    true,
+    "#41 title-only call classification should be marked as title-only evidence",
   );
 
   const incomingCallNotSuppressed =

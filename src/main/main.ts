@@ -60,6 +60,9 @@ import {
   decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
 } from "./incoming-call-ipc-policy";
+import {
+  type IncomingCallEvidence,
+} from "../shared/incoming-call-evidence";
 import { autoUpdater } from "electron-updater";
 
 // On Linux AppImage: fork and detach from terminal so the command returns immediately
@@ -426,6 +429,41 @@ function readTailLinesFromFile(filePath: string, maxLines: number): string[] {
     return lines.slice(lines.length - maxLines);
   } catch {
     return [];
+  }
+}
+
+type IncomingCallDebugEvent = {
+  timestamp: number;
+  event: string;
+  source: "main" | "preload";
+  webContentsId?: number;
+  url?: string;
+  [key: string]: unknown;
+};
+
+function shouldWriteIncomingCallDebugLog(): boolean {
+  return (
+    isDev ||
+    process.env.MESSENGER_INCOMING_CALL_DEBUG === "1" ||
+    process.env.MESSENGER_INCOMING_CALL_DEBUG === "true"
+  );
+}
+
+function getIncomingCallDebugLogPath(): string {
+  return path.join(app.getPath("logs"), "incoming-call-debug.ndjson");
+}
+
+function pushIncomingCallDebugEvent(event: IncomingCallDebugEvent): void {
+  if (!shouldWriteIncomingCallDebugLog()) {
+    return;
+  }
+
+  try {
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(getIncomingCallDebugLogPath(), `${JSON.stringify(event)}\n`);
+  } catch {
+    // Ignore debug log write failures.
   }
 }
 
@@ -7308,12 +7346,58 @@ function setupIpcHandlers(): void {
     });
   });
 
+  ipcMain.on("incoming-call-debug", (event, payload) => {
+    const basePayload =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : {};
+
+    pushIncomingCallDebugEvent({
+      timestamp:
+        typeof basePayload.timestamp === "number"
+          ? basePayload.timestamp
+          : Date.now(),
+      source: "preload",
+      event:
+        typeof basePayload.event === "string"
+          ? basePayload.event
+          : "incoming-call-debug",
+      webContentsId: event.sender.id,
+      url:
+        typeof basePayload.url === "string"
+          ? basePayload.url
+          : event.sender.getURL(),
+      ...basePayload,
+    });
+  });
+
   // Handle incoming call - bring window to foreground
   // This is triggered when Messenger shows an incoming call popup
   ipcMain.on(
     "incoming-call",
-    (_event, payload?: IncomingCallIpcPayload) => {
+    (event, payload?: IncomingCallIpcPayload) => {
       const escalation = decideIncomingCallSignalEscalation(payload);
+      const evidence = escalation.evidence as IncomingCallEvidence;
+      const now = Date.now();
+      const senderUrl = event.sender.getURL();
+
+      pushIncomingCallDebugEvent({
+        timestamp: now,
+        source: "main",
+        event: "incoming-call-signal",
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        dedupeKey: payload?.dedupeKey,
+        caller: payload?.caller,
+        rawSource: payload?.source,
+        evidenceSource: evidence.source,
+        confidence: evidence.confidence,
+        hasVisibleControls: evidence.hasVisibleControls,
+        matchedPattern: evidence.matchedPattern,
+        recoveryActive: evidence.recoveryActive === true,
+        escalation: escalation.reason,
+      });
+
       console.log("[IPC] Incoming call detected - bringing window to foreground", {
         dedupeKey: payload?.dedupeKey,
         caller: payload?.caller,
@@ -7327,6 +7411,17 @@ function setupIpcHandlers(): void {
           caller: payload?.caller,
           source: payload?.source,
           reason: escalation.reason,
+        });
+        pushIncomingCallDebugEvent({
+          timestamp: now,
+          source: "main",
+          event: "incoming-call-suppressed",
+          webContentsId: event.sender.id,
+          url: senderUrl,
+          reason: escalation.reason,
+          evidenceSource: evidence.source,
+          confidence: evidence.confidence,
+          recoveryActive: evidence.recoveryActive === true,
         });
         return;
       }
@@ -7346,7 +7441,7 @@ function setupIpcHandlers(): void {
       // guard to avoid duplicate bursts from closely timed observers.
       const decision = decideIncomingCallNativeNotification({
         payload,
-        now: Date.now(),
+        now,
         notificationByKey: incomingCallNotificationByKey,
         lastNoKeyIncomingCallNotificationAt,
       });
@@ -7383,6 +7478,17 @@ function setupIpcHandlers(): void {
           callKey: decision.callKey,
           reason: decision.reason,
         });
+        pushIncomingCallDebugEvent({
+          timestamp: now,
+          source: "main",
+          event: "incoming-call-notification-deduplicated",
+          webContentsId: event.sender.id,
+          url: senderUrl,
+          callKey: decision.callKey,
+          reason: decision.reason,
+          confidence: evidence.confidence,
+          evidenceSource: evidence.source,
+        });
         return;
       }
 
@@ -7414,12 +7520,33 @@ function setupIpcHandlers(): void {
           caller,
           notificationTag,
         });
+        pushIncomingCallDebugEvent({
+          timestamp: now,
+          source: "main",
+          event: "incoming-call-notification-shown",
+          webContentsId: event.sender.id,
+          url: senderUrl,
+          callKey: decision.callKey,
+          caller,
+          notificationTag,
+          confidence: evidence.confidence,
+          evidenceSource: evidence.source,
+        });
       }
     },
   );
 
-  ipcMain.on("incoming-call-ended", (_event, payload?: { reason?: string }) => {
+  ipcMain.on("incoming-call-ended", (event, payload?: { reason?: string }) => {
     console.log("[IPC] Incoming call ended signal received", {
+      reason: payload?.reason,
+      activeTag: activeIncomingCallNotificationTag,
+    });
+    pushIncomingCallDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "incoming-call-ended",
+      webContentsId: event.sender.id,
+      url: event.sender.getURL(),
       reason: payload?.reason,
       activeTag: activeIncomingCallNotificationTag,
     });

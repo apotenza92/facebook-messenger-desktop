@@ -32,6 +32,7 @@ type NotificationCallClassification = {
   isIncomingCall: boolean;
   reason: "incoming-call-pattern" | "non-incoming-call-status" | "not-call";
   matchedPattern?: string;
+  usedTitleOnly?: boolean;
 };
 
 type NotificationDecisionPolicyApi = {
@@ -306,6 +307,7 @@ const CALL_BODY_PATTERNS: RegExp[] = [
   /is calling/i,
   /video call from/i,
   /audio call from/i,
+  /wants to (video )?call/i,
   /wants to call/i,
 ];
 
@@ -315,14 +317,20 @@ const NON_INCOMING_CALL_PATTERNS: RegExp[] = [
   /\bstarted (?:an? )?(?:video |audio )?call\b/i,
   /\bjoined (?:the )?(?:video |audio )?call\b/i,
   /\bcall ended\b/i,
+  /\bmissed (?:video |audio )?call\b/i,
+  /\bcall cancel(?:ed|led)\b/i,
+  /\banswered (?:on|with) another device\b/i,
+  /\banswered elsewhere\b/i,
 ];
 
 function classifyCallNotification(
   payload: NotificationPayload,
 ): NotificationCallClassification {
-  const combined = `${normalizeText(payload.title)} ${normalizeText(payload.body)}`.trim();
+  const title = normalizeText(payload.title);
+  const body = normalizeText(payload.body);
+  const combined = `${title} ${body}`.trim();
   if (!combined) {
-    return { isIncomingCall: false, reason: "not-call" };
+    return { isIncomingCall: false, reason: "not-call", usedTitleOnly: false };
   }
 
   const excludedPattern = NON_INCOMING_CALL_PATTERNS.find((pattern) =>
@@ -333,19 +341,31 @@ function classifyCallNotification(
       isIncomingCall: false,
       reason: "non-incoming-call-status",
       matchedPattern: excludedPattern.source,
+      usedTitleOnly: false,
     };
   }
 
-  const matchedPattern = CALL_BODY_PATTERNS.find((pattern) => pattern.test(combined));
-  if (!matchedPattern) {
-    return { isIncomingCall: false, reason: "not-call" };
+  const bodyPattern = CALL_BODY_PATTERNS.find((pattern) => pattern.test(body));
+  if (bodyPattern) {
+    return {
+      isIncomingCall: true,
+      reason: "incoming-call-pattern",
+      matchedPattern: bodyPattern.source,
+      usedTitleOnly: false,
+    };
   }
 
-  return {
-    isIncomingCall: true,
-    reason: "incoming-call-pattern",
-    matchedPattern: matchedPattern.source,
-  };
+  const titlePattern = CALL_BODY_PATTERNS.find((pattern) => pattern.test(title));
+  if (titlePattern) {
+    return {
+      isIncomingCall: true,
+      reason: "incoming-call-pattern",
+      matchedPattern: titlePattern.source,
+      usedTitleOnly: true,
+    };
+  }
+
+  return { isIncomingCall: false, reason: "not-call", usedTitleOnly: false };
 }
 
 function isLikelyGlobalFacebookNotification(payload: NotificationPayload): boolean {

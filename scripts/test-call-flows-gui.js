@@ -7,6 +7,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const INCOMING_ANSWER_SELECTORS = [
   '[aria-label*="Answer" i]',
+  '[aria-label*="Accept" i]',
   '[aria-label*="Accept call" i]',
   '[aria-label*="Join call" i]',
   '[aria-label*="Accept video call" i]',
@@ -17,6 +18,38 @@ const INCOMING_DECLINE_SELECTORS = [
   '[aria-label*="Decline" i]',
   '[aria-label*="Ignore call" i]',
   '[aria-label*="Decline call" i]',
+];
+
+const IN_CALL_HANGUP_INCLUDE_PATTERNS = [
+  /end call/i,
+  /hang up/i,
+  /leave call/i,
+  /disconnect/i,
+];
+
+const IN_CALL_ACTIVE_INCLUDE_PATTERNS = [
+  /end call/i,
+  /hang up/i,
+  /leave call/i,
+  /disconnect/i,
+  /mute/i,
+  /unmute/i,
+  /turn off camera/i,
+  /turn on camera/i,
+  /speaker/i,
+];
+
+const TOP_BAR_CHROME_SELECTORS = [
+  '[role="banner"] [aria-label="Menu" i]',
+  '[role="banner"] [aria-label="Messenger" i]',
+  '[role="banner"] [aria-label*="Notifications" i]',
+  '[role="banner"] [aria-label*="Account controls and settings" i]',
+  '[role="banner"] [aria-label="Your profile" i]',
+  '[role="banner"] [aria-label="Facebook" i]',
+  '[role="banner"] a[href="/"]',
+  '[role="banner"] a[href="https://www.facebook.com/"]',
+  '[role="banner"] a[href*="/notifications/"]',
+  '[role="banner"] a[href="/messages/"]',
 ];
 
 const CALL_START_INCLUDE_PATTERNS = [
@@ -88,6 +121,73 @@ async function evaluateInElectronPage(electronApp, scriptBody) {
     },
     { script: scriptBody },
   );
+}
+
+async function evaluateInElectronWindows(electronApp, scriptBody) {
+  return electronApp.evaluate(
+    async ({ BrowserWindow }, { script }) => {
+      const wins = BrowserWindow.getAllWindows();
+      const results = [];
+
+      for (let index = 0; index < wins.length; index += 1) {
+        const win = wins[index];
+        const views = win.getBrowserViews();
+        const wc = views.length > 0 ? views[0].webContents : win.webContents;
+        try {
+          const value = await wc.executeJavaScript(script, true);
+          results.push({
+            index,
+            windowTitle: win.getTitle(),
+            windowVisible: win.isVisible(),
+            focused: win.isFocused(),
+            currentUrl: wc.getURL(),
+            value,
+          });
+        } catch (error) {
+          results.push({
+            index,
+            windowTitle: win.getTitle(),
+            windowVisible: win.isVisible(),
+            focused: win.isFocused(),
+            currentUrl: wc.getURL(),
+            error: String((error && error.message) || error),
+          });
+        }
+      }
+
+      return results;
+    },
+    { script: scriptBody },
+  );
+}
+
+async function evaluateInElectronWindowByIndex(electronApp, index, scriptBody) {
+  return electronApp.evaluate(
+    async ({ BrowserWindow }, { index: targetIndex, script }) => {
+      const win = BrowserWindow.getAllWindows()[targetIndex];
+      if (!win) {
+        throw new Error(`No Electron window at index ${targetIndex}`);
+      }
+      const views = win.getBrowserViews();
+      const wc = views.length > 0 ? views[0].webContents : win.webContents;
+      return wc.executeJavaScript(script, true);
+    },
+    { index, script: scriptBody },
+  );
+}
+
+async function readCapturedNotifications(electronApp) {
+  return electronApp.evaluate(() => {
+    return Array.isArray(globalThis.__mdNotificationEvents)
+      ? [...globalThis.__mdNotificationEvents]
+      : [];
+  });
+}
+
+async function clearCapturedNotifications(electronApp) {
+  await electronApp.evaluate(() => {
+    globalThis.__mdNotificationEvents = [];
+  });
 }
 
 async function isElectronAuthenticated(electronApp) {
@@ -300,6 +400,23 @@ async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
   console.log('[Setup] Michael login via 1Password succeeded.');
 }
 
+function attachDialogLogging(page, label) {
+  if (!page || page.__mdDialogLoggingAttached) return;
+  page.__mdDialogLoggingAttached = true;
+  page.on('dialog', async (dialog) => {
+    try {
+      console.log(`[Dialog] ${label}: ${dialog.type()} ${dialog.message()}`);
+    } catch {
+      /* intentionally empty */
+    }
+    try {
+      await dialog.dismiss();
+    } catch {
+      /* intentionally empty */
+    }
+  });
+}
+
 async function waitForMichaelManualLogin(page, timeoutMs) {
   const waitMs = Math.max(0, Number(timeoutMs || 0));
   if (waitMs <= 0) return false;
@@ -344,6 +461,80 @@ function buildIncomingVisibleScript() {
   })();`;
 }
 
+function buildCallSurfaceStateScript() {
+  const helpers = buildVisibilityHelpers();
+  return `(() => {
+    const isVisible = ${helpers.isVisibleSource};
+    const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const collectVisibleLabels = (elements) => {
+      const labels = [];
+      for (const el of elements) {
+        if (!isVisible(el)) continue;
+        const label = normalize(el.getAttribute('aria-label') || el.textContent || '');
+        if (!label) continue;
+        labels.push(label);
+      }
+      return Array.from(new Set(labels));
+    };
+    const hasVisible = (selectors) => {
+      const all = Array.from(document.querySelectorAll(selectors.join(', ')));
+      return all.some((el) => isVisible(el));
+    };
+
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
+    const visibleButtonLabels = collectVisibleLabels(buttons);
+    const answerSelectors = ${JSON.stringify(INCOMING_ANSWER_SELECTORS)};
+    const declineSelectors = ${JSON.stringify(INCOMING_DECLINE_SELECTORS)};
+    const hangupPatterns = ${JSON.stringify(IN_CALL_HANGUP_INCLUDE_PATTERNS.map((r) => r.source))}
+      .map((source) => new RegExp(source, 'i'));
+    const activePatterns = ${JSON.stringify(IN_CALL_ACTIVE_INCLUDE_PATTERNS.map((r) => r.source))}
+      .map((source) => new RegExp(source, 'i'));
+    const topBarSelectors = ${JSON.stringify(TOP_BAR_CHROME_SELECTORS)};
+
+    const hasAnswer = hasVisible(answerSelectors);
+    const hasDecline = hasVisible(declineSelectors);
+    const hasJoin = visibleButtonLabels.some((label) => /join call|join audio call|join video call/i.test(label));
+    const incomingVisible = (hasAnswer && hasDecline) || (hasAnswer && hasJoin);
+    const hangupLabels = visibleButtonLabels.filter((label) =>
+      hangupPatterns.some((pattern) => pattern.test(label)),
+    );
+    const activeLabels = visibleButtonLabels.filter((label) =>
+      activePatterns.some((pattern) => pattern.test(label)),
+    );
+
+    const topBarChromeVisibleLabels = collectVisibleLabels(
+      Array.from(document.querySelectorAll(topBarSelectors.join(', '))),
+    );
+
+    const root = document.querySelector('[data-pagelet="root"]');
+    const rootStyle = root instanceof HTMLElement ? window.getComputedStyle(root) : null;
+    const bodyText = normalize(document.body?.innerText || '');
+    const statusMatch = bodyText.match(
+      /(ongoing call|calling|ringing|call ended|call declined|no answer|busy|answered elsewhere)/i,
+    );
+
+    return {
+      url: window.location.href,
+      title: document.title,
+      incomingVisible,
+      hasAnswer,
+      hasDecline,
+      hasJoin,
+      canHangUp: hangupLabels.length > 0,
+      hasInCallControls: activeLabels.length > 0,
+      hangupLabels: hangupLabels.slice(0, 10),
+      activeLabels: activeLabels.slice(0, 20),
+      visibleButtonLabels: visibleButtonLabels.slice(0, 40),
+      incomingCallCleanClass: document.documentElement.classList.contains('md-fb-incoming-call-clean'),
+      topBarChromeVisible: topBarChromeVisibleLabels.length > 0,
+      topBarChromeVisibleLabels: topBarChromeVisibleLabels.slice(0, 20),
+      rootMarginTop: rootStyle ? rootStyle.marginTop : null,
+      rootPaddingTop: rootStyle ? rootStyle.paddingTop : null,
+      statusText: statusMatch ? statusMatch[0] : null,
+    };
+  })();`;
+}
+
 function buildClickCallStartScript() {
   return `(() => {
     const isVisible = ${buildVisibilityHelpers().isVisibleSource};
@@ -369,6 +560,31 @@ function buildClickCallStartScript() {
   })();`;
 }
 
+function buildThreadReadyScript() {
+  return `(() => {
+    const isVisible = ${buildVisibilityHelpers().isVisibleSource};
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
+    const visibleLabels = buttons
+      .filter((el) => isVisible(el))
+      .map((el) => (el.getAttribute('aria-label') || el.textContent || '').replace(/\\s+/g, ' ').trim())
+      .filter(Boolean);
+
+    const hasCallButtons = visibleLabels.some((label) =>
+      /start a voice call|start a video call|audio call|video chat|voice call/i.test(label),
+    );
+    const bodyText = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+    const hasPinPrompt = /enter your pin to restore your chat history|restore now|forgot pin/i.test(bodyText);
+
+    return {
+      url: window.location.href,
+      title: document.title,
+      hasCallButtons,
+      hasPinPrompt,
+      visibleLabels: visibleLabels.slice(0, 40),
+    };
+  })();`;
+}
+
 function buildClickDeclineScript() {
   return `(() => {
     const isVisible = ${buildVisibilityHelpers().isVisibleSource};
@@ -382,6 +598,87 @@ function buildClickDeclineScript() {
       return { clicked: true, label };
     }
     return { clicked: false, label: null };
+  })();`;
+}
+
+function buildClickAnswerScript() {
+  return `(() => {
+    const isVisible = ${buildVisibilityHelpers().isVisibleSource};
+    const selectors = ${JSON.stringify(INCOMING_ANSWER_SELECTORS)};
+    const all = Array.from(document.querySelectorAll(selectors.join(', ')));
+    for (const el of all) {
+      if (!isVisible(el)) continue;
+      const label = (el.getAttribute('aria-label') || el.textContent || '').replace(/\\s+/g, ' ').trim();
+      el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return { clicked: true, label };
+    }
+
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
+    for (const el of buttons) {
+      if (!isVisible(el)) continue;
+      const label = (el.getAttribute('aria-label') || el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!/answer|accept|accept call|join call|accept video call|accept audio call/i.test(label)) continue;
+      el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return { clicked: true, label };
+    }
+
+    return { clicked: false, label: null };
+  })();`;
+}
+
+function buildClickHangupScript() {
+  return `(() => {
+    const isVisible = ${buildVisibilityHelpers().isVisibleSource};
+    const includePatterns = ${JSON.stringify(
+      IN_CALL_HANGUP_INCLUDE_PATTERNS.map((r) => r.source),
+    )}.map((source) => new RegExp(source, 'i'));
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
+
+    for (const el of buttons) {
+      if (!isVisible(el)) continue;
+      const label = (el.getAttribute('aria-label') || el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!label) continue;
+      if (!includePatterns.some((re) => re.test(label))) continue;
+      el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return { clicked: true, label };
+    }
+
+    return { clicked: false, label: null };
+  })();`;
+}
+
+function buildSendMessageScript(message) {
+  return `(() => {
+    const isVisible = ${buildVisibilityHelpers().isVisibleSource};
+    const desiredMessage = ${JSON.stringify(message)};
+    const candidates = Array.from(
+      document.querySelectorAll(
+        'div[contenteditable=\"true\"][role=\"textbox\"], div[contenteditable=\"true\"][aria-label*=\"message\" i], div[contenteditable=\"true\"]'
+      ),
+    );
+
+    for (const el of candidates) {
+      if (!isVisible(el)) continue;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selection = window.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      document.execCommand('insertText', false, desiredMessage);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: desiredMessage, inputType: 'insertText' }));
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+      return { sent: true };
+    }
+
+    return { sent: false };
   })();`;
 }
 
@@ -410,8 +707,208 @@ async function verifyStableVisibility(checkFn, durationMs = 6000, intervalMs = 3
   return { ok: true, elapsedMs: Date.now() - startedAt };
 }
 
+async function waitForThreadReady(target, timeoutMs, description) {
+  const script = buildThreadReadyScript();
+  return waitFor(
+    async () => {
+      const state = await target.evaluate(script);
+      return state.hasCallButtons && !state.hasPinPrompt ? state : false;
+    },
+    timeoutMs,
+    1000,
+    description,
+  );
+}
+
+async function waitForElectronThreadReady(electronApp, timeoutMs, description) {
+  const script = buildThreadReadyScript();
+  return waitFor(
+    async () => {
+      const state = await evaluateInElectronPage(electronApp, script);
+      return state.hasCallButtons && !state.hasPinPrompt ? state : false;
+    },
+    timeoutMs,
+    1000,
+    description,
+  );
+}
+
+async function waitForNotificationPredicate(electronApp, predicate, timeoutMs, description) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const notifications = await readCapturedNotifications(electronApp);
+    if (predicate(notifications)) {
+      return { ok: true, notifications, elapsedMs: Date.now() - started };
+    }
+    await wait(250);
+  }
+  return {
+    ok: false,
+    notifications: await readCapturedNotifications(electronApp),
+    elapsedMs: Date.now() - started,
+    description,
+  };
+}
+
+async function getElectronCallSurfaceStates(electronApp) {
+  const results = await evaluateInElectronWindows(electronApp, buildCallSurfaceStateScript());
+  return results.filter((entry) => entry && !entry.error);
+}
+
+async function getPrimaryElectronCallSurfaceState(electronApp) {
+  const states = await getElectronCallSurfaceStates(electronApp);
+  return states.find((entry) => entry.index === 0) || null;
+}
+
+async function getBrowserCallSurfaceStates(context) {
+  const pages = context.pages();
+  return Promise.all(
+    pages.map(async (page, index) => {
+      try {
+        const value = await page.evaluate(buildCallSurfaceStateScript());
+        return {
+          index,
+          currentUrl: page.url(),
+          title: await page.title().catch(() => ''),
+          value,
+        };
+      } catch (error) {
+        return {
+          index,
+          currentUrl: page.url(),
+          error: String((error && error.message) || error),
+        };
+      }
+    }),
+  );
+}
+
+async function waitForElectronSurface(electronApp, predicate, timeoutMs, description) {
+  return waitFor(
+    async () => {
+      const states = await getElectronCallSurfaceStates(electronApp);
+      const match = states.find((entry) => predicate(entry.value));
+      return match ? { match, states } : false;
+    },
+    timeoutMs,
+    500,
+    description,
+  );
+}
+
+async function waitForPrimaryElectronSurface(electronApp, predicate, timeoutMs, description) {
+  return waitFor(
+    async () => {
+      const state = await getPrimaryElectronCallSurfaceState(electronApp);
+      return state && predicate(state.value) ? state : false;
+    },
+    timeoutMs,
+    500,
+    description,
+  );
+}
+
+async function waitForBrowserSurface(context, predicate, timeoutMs, description) {
+  return waitFor(
+    async () => {
+      const states = await getBrowserCallSurfaceStates(context);
+      const match = states.find((entry) => entry && !entry.error && predicate(entry.value));
+      return match ? { match, states } : false;
+    },
+    timeoutMs,
+    500,
+    description,
+  );
+}
+
+async function waitForBrowserNoCallSurface(context, timeoutMs, description) {
+  return waitFor(
+    async () => {
+      const states = await getBrowserCallSurfaceStates(context);
+      const active = states.find(
+        (entry) =>
+          entry &&
+          !entry.error &&
+          entry.value &&
+          (entry.value.canHangUp || entry.value.incomingVisible),
+      );
+      return active ? false : { states };
+    },
+    timeoutMs,
+    500,
+    description,
+  );
+}
+
+async function clickElectronWindowAction(electronApp, windowIndex, scriptBody) {
+  return evaluateInElectronWindowByIndex(electronApp, windowIndex, scriptBody);
+}
+
+async function clickBrowserPageAction(context, pageIndex, scriptBody) {
+  const page = context.pages()[pageIndex];
+  if (!page) {
+    throw new Error(`No browser page at index ${pageIndex}`);
+  }
+  return page.evaluate(scriptBody);
+}
+
+async function closeBrowserPagesMatching(context, predicate) {
+  const pages = context.pages();
+  for (const page of pages) {
+    if (!predicate(page.url())) continue;
+    await page.close().catch(() => {});
+  }
+}
+
+function describeSurface(prefix, entry) {
+  const state = entry?.value || {};
+  const location = entry.currentUrl || state.url || 'unknown';
+  const labels = Array.isArray(state.visibleButtonLabels) ? state.visibleButtonLabels.slice(0, 8).join(' | ') : '';
+  return `${prefix} window/page ${entry.index} @ ${location} incoming=${Boolean(state.incomingVisible)} inCall=${Boolean(state.hasInCallControls || state.canHangUp)} clean=${Boolean(state.incomingCallCleanClass)} topBarVisible=${Boolean(state.topBarChromeVisible)} labels=[${labels}]`;
+}
+
+function assertAlexIncomingTopBarState(entry) {
+  const state = entry?.value || {};
+  if (!state.incomingCallCleanClass) {
+    throw new Error(
+      `Alex incoming overlay did not apply the incoming-call clean class. State: ${JSON.stringify(state)}`,
+    );
+  }
+  if (state.topBarChromeVisible) {
+    throw new Error(
+      `Alex incoming overlay still showed Facebook top-bar chrome. State: ${JSON.stringify(state)}`,
+    );
+  }
+}
+
+async function waitForAlexCleanup(electronApp, timeoutMs, description) {
+  return waitForPrimaryElectronSurface(
+    electronApp,
+    (state) =>
+      Boolean(
+        state &&
+          !state.incomingVisible &&
+          !state.canHangUp &&
+          !state.incomingCallCleanClass,
+      ),
+    timeoutMs,
+    description,
+  );
+}
+
 async function runIncomingMichaelToAlex({ electronApp, michaelPage, timeoutMs }) {
   console.log('\n[Incoming] Michael -> Alex: triggering call from Michael web session...');
+
+  const threadReady = await waitForThreadReady(
+    michaelPage,
+    timeoutMs,
+    'Michael thread to expose call controls',
+  );
+  if (!threadReady.ok) {
+    throw new Error(
+      `Michael thread not ready for calling. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+    );
+  }
 
   const clickFromMichael = await michaelPage.evaluate(buildClickCallStartScript());
   if (!clickFromMichael.clicked) {
@@ -459,6 +956,17 @@ async function runIncomingMichaelToAlex({ electronApp, michaelPage, timeoutMs })
 async function runOutgoingAlexToMichael({ electronApp, michaelPage, timeoutMs }) {
   console.log('\n[Outgoing] Alex -> Michael: triggering call from Alex desktop app...');
 
+  const threadReady = await waitForThreadReady(
+    michaelPage,
+    timeoutMs,
+    'Michael thread to expose call controls before outgoing validation',
+  );
+  if (!threadReady.ok) {
+    throw new Error(
+      `Michael thread not ready for outgoing validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+    );
+  }
+
   const clickFromAlex = await evaluateInElectronPage(electronApp, buildClickCallStartScript());
   if (!clickFromAlex.clicked) {
     throw new Error('Failed to click call start button in Alex app');
@@ -485,6 +993,346 @@ async function runOutgoingAlexToMichael({ electronApp, michaelPage, timeoutMs })
   if (declineOnMichael.clicked) {
     console.log(`[Outgoing] Declined call on Michael side: ${declineOnMichael.label || 'Decline'}`);
   }
+}
+
+async function runMichaelToAlexAnsweredFlow({ electronApp, michaelPage, alexThreadUrl, timeoutMs }) {
+  const michaelContext = michaelPage.context();
+
+  console.log('\n[Answer Alex] Michael -> Alex: ring, answer on Alex, then hang up...');
+
+  const threadReady = await waitForThreadReady(
+    michaelPage,
+    timeoutMs,
+    'Michael thread to expose call controls before Alex-answer validation',
+  );
+  if (!threadReady.ok) {
+    throw new Error(
+      `Michael thread not ready before Alex-answer validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+    );
+  }
+
+  const clickFromMichael = await michaelPage.evaluate(buildClickCallStartScript());
+  if (!clickFromMichael.clicked) {
+    throw new Error('Failed to click call start button in Michael session for Alex-answer flow');
+  }
+  console.log(`[Answer Alex] Michael call button clicked: ${clickFromMichael.label}`);
+
+  const appeared = await waitForElectronSurface(
+    electronApp,
+    (state) => Boolean(state && state.incomingVisible),
+    timeoutMs,
+    'Alex incoming controls to appear for Alex-answer validation',
+  );
+  if (!appeared.ok) {
+    throw new Error(
+      `Alex incoming controls did not appear for Alex-answer validation. Last state: ${JSON.stringify(appeared.lastResult)}`,
+    );
+  }
+
+  console.log(describeSurface('[Answer Alex] Alex incoming surface', appeared.lastResult.match));
+  assertAlexIncomingTopBarState(appeared.lastResult.match);
+
+  const answerOnAlex = await clickElectronWindowAction(
+    electronApp,
+    appeared.lastResult.match.index,
+    buildClickAnswerScript(),
+  );
+  if (!answerOnAlex.clicked) {
+    throw new Error('Failed to answer call on Alex side');
+  }
+  console.log(`[Answer Alex] Answered on Alex: ${answerOnAlex.label}`);
+
+  const alexActive = await waitForElectronSurface(
+    electronApp,
+    (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
+    timeoutMs,
+    'Alex in-call controls after answering on Alex',
+  );
+  if (!alexActive.ok) {
+    throw new Error(
+      `Alex did not transition to in-call controls after answering. Last state: ${JSON.stringify(alexActive.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Alex] Alex active call surface', alexActive.lastResult.match));
+
+  const michaelActive = await waitForBrowserSurface(
+    michaelContext,
+    (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
+    timeoutMs,
+    'Michael in-call controls after Alex answered',
+  );
+  if (!michaelActive.ok) {
+    throw new Error(
+      `Michael did not show in-call controls after Alex answered. Last state: ${JSON.stringify(michaelActive.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Alex] Michael active call surface', michaelActive.lastResult.match));
+
+  const hangupOnAlex = await clickElectronWindowAction(
+    electronApp,
+    alexActive.lastResult.match.index,
+    buildClickHangupScript(),
+  );
+  if (!hangupOnAlex.clicked) {
+    throw new Error('Failed to hang up on Alex side after answering');
+  }
+  console.log(`[Answer Alex] Hung up on Alex: ${hangupOnAlex.label}`);
+
+  const alexCleanup = await waitForAlexCleanup(
+    electronApp,
+    Math.max(timeoutMs, 15000),
+    'Alex main window cleanup after Alex-side hangup',
+  );
+  if (!alexCleanup.ok) {
+    throw new Error(
+      `Alex main window did not clear incoming-call cleanup state after hangup. Last state: ${JSON.stringify(alexCleanup.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Alex] Alex post-hangup main surface', alexCleanup.lastResult));
+
+  await wait(1500);
+  const michaelStatesAfter = await getBrowserCallSurfaceStates(michaelContext);
+  const michaelStillActive = michaelStatesAfter.find(
+    (entry) => entry && !entry.error && entry.value && (entry.value.canHangUp || entry.value.incomingVisible),
+  );
+  if (michaelStillActive) {
+    throw new Error(
+      `Michael still showed active/ringing call UI after Alex hung up. State: ${JSON.stringify(michaelStillActive)}`,
+    );
+  }
+
+  await closeBrowserPagesMatching(michaelContext, (url) => /\/groupcall\//i.test(String(url || '')));
+  await ensureElectronOnUrl(electronApp, alexThreadUrl);
+  await waitForElectronThreadReady(
+    electronApp,
+    timeoutMs,
+    'Alex thread to restore call controls after Alex-answer hangup',
+  );
+}
+
+async function runAlexToMichaelAnsweredFlow({ electronApp, michaelPage, alexThreadUrl, timeoutMs }) {
+  const michaelContext = michaelPage.context();
+
+  console.log('\n[Answer Michael] Alex -> Michael: ring, answer on Michael, then hang up...');
+
+  await ensureElectronOnUrl(electronApp, alexThreadUrl);
+  const alexThreadReady = await waitForElectronThreadReady(
+    electronApp,
+    timeoutMs,
+    'Alex thread to expose call controls before Michael-answer validation',
+  );
+  if (!alexThreadReady.ok) {
+    throw new Error(
+      `Alex thread not ready before Michael-answer validation. Last state: ${JSON.stringify(alexThreadReady.lastResult)}`,
+    );
+  }
+
+  const threadReady = await waitForThreadReady(
+    michaelPage,
+    timeoutMs,
+    'Michael thread to expose call controls before Michael-answer validation',
+  );
+  if (!threadReady.ok) {
+    throw new Error(
+      `Michael thread not ready before Michael-answer validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+    );
+  }
+
+  const clickFromAlex = await evaluateInElectronPage(electronApp, buildClickCallStartScript());
+  if (!clickFromAlex.clicked) {
+    throw new Error('Failed to click call start button in Alex app for Michael-answer flow');
+  }
+  console.log(`[Answer Michael] Alex call button clicked: ${clickFromAlex.label}`);
+
+  const michaelIncoming = await waitForBrowserSurface(
+    michaelContext,
+    (state) => Boolean(state && state.incomingVisible),
+    timeoutMs,
+    'Michael incoming controls to appear for Michael-answer validation',
+  );
+  if (!michaelIncoming.ok) {
+    throw new Error(
+      `Michael incoming controls did not appear for Michael-answer validation. Last state: ${JSON.stringify(michaelIncoming.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Michael] Michael incoming surface', michaelIncoming.lastResult.match));
+
+  const answerOnMichael = await clickBrowserPageAction(
+    michaelContext,
+    michaelIncoming.lastResult.match.index,
+    buildClickAnswerScript(),
+  );
+  if (!answerOnMichael.clicked) {
+    throw new Error('Failed to answer call on Michael side');
+  }
+  console.log(`[Answer Michael] Answered on Michael: ${answerOnMichael.label}`);
+
+  const alexActive = await waitForElectronSurface(
+    electronApp,
+    (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
+    timeoutMs,
+    'Alex in-call controls after Michael answered',
+  );
+  if (!alexActive.ok) {
+    throw new Error(
+      `Alex did not show in-call controls after Michael answered. Last state: ${JSON.stringify(alexActive.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Michael] Alex active call surface', alexActive.lastResult.match));
+
+  const michaelActive = await waitForBrowserSurface(
+    michaelContext,
+    (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
+    timeoutMs,
+    'Michael in-call controls after answering on Michael',
+  );
+  if (!michaelActive.ok) {
+    throw new Error(
+      `Michael did not transition to in-call controls after answering. Last state: ${JSON.stringify(michaelActive.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Michael] Michael active call surface', michaelActive.lastResult.match));
+
+  const hangupOnAlex = await clickElectronWindowAction(
+    electronApp,
+    alexActive.lastResult.match.index,
+    buildClickHangupScript(),
+  );
+  if (!hangupOnAlex.clicked) {
+    throw new Error('Failed to hang up on Alex side after Michael answered');
+  }
+  console.log(
+    `[Answer Michael] Hung up on Alex after Michael answered: ${hangupOnAlex.label}`,
+  );
+
+  const alexCleanup = await waitForAlexCleanup(
+    electronApp,
+    Math.max(timeoutMs, 15000),
+    'Alex main window cleanup after Alex-side hangup in Michael-answer flow',
+  );
+  if (!alexCleanup.ok) {
+    throw new Error(
+      `Alex main window did not clear incoming-call cleanup state after Alex hung up in Michael-answer flow. Last state: ${JSON.stringify(alexCleanup.lastResult)}`,
+    );
+  }
+  console.log(describeSurface('[Answer Michael] Alex post-hangup main surface', alexCleanup.lastResult));
+
+  const michaelCleanup = await waitForBrowserNoCallSurface(
+    michaelContext,
+    Math.max(timeoutMs, 15000),
+    'Michael browser cleanup after Alex hung up in the Michael-answer flow',
+  );
+  if (!michaelCleanup.ok) {
+    const michaelStatesAfter = await getBrowserCallSurfaceStates(michaelContext);
+    const michaelStillActive = michaelStatesAfter.find(
+      (entry) =>
+        entry && !entry.error && entry.value && (entry.value.canHangUp || entry.value.incomingVisible),
+    );
+    throw new Error(
+      `Michael still showed active/ringing call UI after Alex hung up in the Michael-answer flow. State: ${JSON.stringify(michaelStillActive)}`,
+    );
+  }
+
+  await closeBrowserPagesMatching(michaelContext, (url) => /\/groupcall\//i.test(String(url || '')));
+  await ensureElectronOnUrl(electronApp, alexThreadUrl);
+  await waitForElectronThreadReady(
+    electronApp,
+    timeoutMs,
+    'Alex thread to restore call controls after Michael-answer hangup',
+  );
+}
+
+async function runMessageMichaelToAlex({ electronApp, michaelPage, alexHomeUrl, timeoutMs }) {
+  console.log('\n[Message] Michael -> Alex: sending normal message and checking notifications...');
+
+  const threadReady = await waitForThreadReady(
+    michaelPage,
+    timeoutMs,
+    'Michael thread to expose composer before message validation',
+  );
+  if (!threadReady.ok) {
+    throw new Error(
+      `Michael thread not ready for message validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+    );
+  }
+
+  await clearCapturedNotifications(electronApp);
+  await ensureElectronOnUrl(electronApp, alexHomeUrl);
+  await wait(1200);
+
+  const messageText = `codex message ${Date.now()}`;
+  const sent = await michaelPage.evaluate(buildSendMessageScript(messageText));
+  if (!sent.sent) {
+    throw new Error('Failed to send normal message from Michael session');
+  }
+
+  const result = await waitForNotificationPredicate(
+    electronApp,
+    (notifications) => notifications.length > 0,
+    timeoutMs,
+    'Alex desktop notification after normal message',
+  );
+
+  const incomingCallNotification = result.notifications.find((entry) =>
+    /incoming call/i.test(String(entry.title || '')) ||
+    /calling you on messenger/i.test(String(entry.body || '')),
+  );
+  if (incomingCallNotification) {
+    throw new Error(
+      `Normal message scenario produced an incoming-call notification: ${JSON.stringify(incomingCallNotification)}`,
+    );
+  }
+
+  if (result.ok) {
+    console.log(`[Message] Captured ${result.notifications.length} desktop notification(s) after normal message.`);
+  } else {
+    console.log('[Message] No desktop notification captured during timeout window; incoming-call false positive check still passed.');
+  }
+}
+
+async function runSyntheticGhostCallScenario({ electronApp, timeoutMs, recovery = false }) {
+  const label = recovery ? 'Recovery' : 'Ghost';
+  console.log(`\n[${label}] Dispatching synthetic call-like notification with no call UI...`);
+
+  await clearCapturedNotifications(electronApp);
+
+  if (recovery) {
+    await evaluateInElectronPage(
+      electronApp,
+      `(() => {
+        window.dispatchEvent(new Event('offline'));
+        window.dispatchEvent(new Event('online'));
+        return true;
+      })();`,
+    );
+    await wait(300);
+  }
+
+  await evaluateInElectronPage(
+    electronApp,
+    `(() => {
+      try {
+        new Notification('Messenger', { body: 'Michael Potenza is calling you' });
+        return true;
+      } catch (error) {
+        return { error: String(error) };
+      }
+    })();`,
+  );
+
+  await wait(Math.min(timeoutMs, 4000));
+  const notifications = await readCapturedNotifications(electronApp);
+  const incomingCallNotification = notifications.find((entry) =>
+    /incoming call/i.test(String(entry.title || '')) ||
+    /calling you on messenger/i.test(String(entry.body || '')),
+  );
+  if (incomingCallNotification) {
+    throw new Error(
+      `${label} scenario produced a ghost incoming-call notification: ${JSON.stringify(incomingCallNotification)}`,
+    );
+  }
+
+  console.log(`[${label}] No incoming-call notification was captured.`);
 }
 
 async function run() {
@@ -525,75 +1373,157 @@ async function run() {
     );
     console.log(`Michael manual-login fallback timeout: ${michaelManualLoginTimeoutMs}ms`);
 
+    const requestedModes = new Set(
+      mode
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    );
+    const hasMode = (value) => {
+      if (requestedModes.has(value)) return true;
+      if (requestedModes.has('both')) {
+        return value === 'incoming' || value === 'outgoing';
+      }
+      if (requestedModes.has('full')) {
+        return (
+          value === 'incoming' ||
+          value === 'outgoing' ||
+          value === 'message' ||
+          value === 'ghost' ||
+          value === 'recovery'
+        );
+      }
+      return false;
+    };
+    const requiresMichael =
+      hasMode('incoming') ||
+      hasMode('outgoing') ||
+      hasMode('message') ||
+      hasMode('answer-alex') ||
+      hasMode('answer-michael');
+
     electronApp = await electron.launch({
       args: [appEntry],
       env: {
         ...process.env,
         NODE_ENV: 'development',
+        MESSENGER_TEST_CAPTURE_NOTIFICATIONS: '1',
       },
     });
 
     await wait(4000);
 
-    fs.mkdirSync(michaelProfileDir, { recursive: true });
-
-    michaelContext = await chromium.launchPersistentContext(michaelProfileDir, {
-      headless: false,
-      viewport: { width: 1440, height: 900 },
-    });
-
-    const michaelPage = michaelContext.pages()[0] || (await michaelContext.newPage());
-
     await ensureElectronOnUrl(electronApp, alexThreadUrl);
-    await michaelPage.goto(michaelThreadUrl, { waitUntil: 'domcontentloaded' });
-    await wait(1500);
 
     const alexAuth = await isElectronAuthenticated(electronApp);
-    let michaelAuth = await isBrowserAuthenticated(michaelPage);
+    let michaelPage = null;
+    let michaelAuth = { authenticated: true, url: michaelThreadUrl };
 
     if (!alexAuth.authenticated) {
       throw new Error(`Alex app session is not authenticated. Current URL: ${alexAuth.url}`);
     }
 
-    if (!michaelAuth.authenticated && autoLoginMichaelWithOp) {
-      try {
-        await attemptMichaelLoginWithOnePassword(michaelPage, {
-          item: opFacebookItem,
-          vault: opVault,
-        });
-      } catch (error) {
-        console.log(
-          `[Setup] Michael 1Password auto-login did not complete: ${error?.message || error}`,
-        );
-      }
-      michaelAuth = await isBrowserAuthenticated(michaelPage);
-    }
+    if (requiresMichael) {
+      fs.mkdirSync(michaelProfileDir, { recursive: true });
 
-    if (!michaelAuth.authenticated) {
-      const manualOk = await waitForMichaelManualLogin(
-        michaelPage,
-        michaelManualLoginTimeoutMs,
-      );
-      if (manualOk) {
+      michaelContext = await chromium.launchPersistentContext(michaelProfileDir, {
+        headless: false,
+        viewport: { width: 1440, height: 900 },
+      });
+
+      michaelContext.on('page', (page) => {
+        attachDialogLogging(page, `Michael page ${michaelContext.pages().length}`);
+      });
+
+      michaelPage = michaelContext.pages()[0] || (await michaelContext.newPage());
+      for (const [index, page] of michaelContext.pages().entries()) {
+        attachDialogLogging(page, `Michael page ${index}`);
+      }
+
+      await michaelPage.goto(michaelThreadUrl, { waitUntil: 'domcontentloaded' });
+      await wait(1500);
+
+      michaelAuth = await isBrowserAuthenticated(michaelPage);
+
+      if (!michaelAuth.authenticated && autoLoginMichaelWithOp) {
+        try {
+          await attemptMichaelLoginWithOnePassword(michaelPage, {
+            item: opFacebookItem,
+            vault: opVault,
+          });
+        } catch (error) {
+          console.log(
+            `[Setup] Michael 1Password auto-login did not complete: ${error?.message || error}`,
+          );
+        }
         michaelAuth = await isBrowserAuthenticated(michaelPage);
       }
+
+      if (!michaelAuth.authenticated) {
+        const manualOk = await waitForMichaelManualLogin(
+          michaelPage,
+          michaelManualLoginTimeoutMs,
+        );
+        if (manualOk) {
+          michaelAuth = await isBrowserAuthenticated(michaelPage);
+        }
+      }
+
+      if (!michaelAuth.authenticated) {
+        throw new Error(
+          `Michael browser session is not authenticated. Current URL: ${michaelAuth.url}. ` +
+            `Either pre-login this profile or keep manual login window open until authenticated.`,
+        );
+      }
     }
 
-    if (!michaelAuth.authenticated) {
-      throw new Error(
-        `Michael browser session is not authenticated. Current URL: ${michaelAuth.url}. ` +
-          `Either pre-login this profile or keep manual login window open until authenticated.`,
-      );
-    }
+    console.log(
+      requiresMichael
+        ? '[Setup] Both Alex and Michael sessions are authenticated.'
+        : '[Setup] Alex session is authenticated. Michael session not required for selected modes.',
+    );
 
-    console.log('[Setup] Both Alex and Michael sessions are authenticated.');
-
-    if (mode === 'incoming' || mode === 'both') {
+    if (hasMode('incoming')) {
       await runIncomingMichaelToAlex({ electronApp, michaelPage, timeoutMs });
     }
 
-    if (mode === 'outgoing' || mode === 'both') {
+    if (hasMode('outgoing')) {
       await runOutgoingAlexToMichael({ electronApp, michaelPage, timeoutMs });
+    }
+
+    if (hasMode('answer-alex')) {
+      await runMichaelToAlexAnsweredFlow({
+        electronApp,
+        michaelPage,
+        alexThreadUrl,
+        timeoutMs,
+      });
+    }
+
+    if (hasMode('answer-michael')) {
+      await runAlexToMichaelAnsweredFlow({
+        electronApp,
+        michaelPage,
+        alexThreadUrl,
+        timeoutMs,
+      });
+    }
+
+    if (hasMode('message')) {
+      await runMessageMichaelToAlex({
+        electronApp,
+        michaelPage,
+        alexHomeUrl: 'https://www.facebook.com/messages/',
+        timeoutMs,
+      });
+    }
+
+    if (hasMode('ghost')) {
+      await runSyntheticGhostCallScenario({ electronApp, timeoutMs, recovery: false });
+    }
+
+    if (hasMode('recovery')) {
+      await runSyntheticGhostCallScenario({ electronApp, timeoutMs, recovery: true });
     }
 
     console.log('\n✅ Call flow GUI test passed.');

@@ -26,6 +26,29 @@ export class NotificationHandler {
   private appDisplayName: string;
   private createNotification: (options: Electron.NotificationConstructorOptions) => Notification;
   private resolveSoundDecision?: NotificationSoundDecisionResolver;
+  private recordTestNotification(normalizedData: NotificationData): void {
+    const enabled =
+      process.env.MESSENGER_TEST_CAPTURE_NOTIFICATIONS === '1' ||
+      process.env.MESSENGER_TEST_CAPTURE_NOTIFICATIONS === 'true';
+    if (!enabled) return;
+
+    const target = globalThis as typeof globalThis & {
+      __mdNotificationEvents?: Array<Record<string, unknown>>;
+    };
+    if (!Array.isArray(target.__mdNotificationEvents)) {
+      target.__mdNotificationEvents = [];
+    }
+
+    target.__mdNotificationEvents.push({
+      timestamp: Date.now(),
+      title: normalizedData.title,
+      body: normalizedData.body,
+      tag: normalizedData.tag,
+      href: normalizedData.href,
+      silent: normalizedData.silent === true,
+      requireInteraction: normalizedData.requireInteraction === true,
+    });
+  }
 
   private isGenericIncomingCallerLabel(input: string): boolean {
     const normalized = String(input || '')
@@ -254,6 +277,7 @@ export class NotificationHandler {
 
     // Show the notification
     notification.show();
+    this.recordTestNotification(normalizedData);
 
     // Store notification if it has a tag
     this.activeNotifications.set(notificationKey, notification);
