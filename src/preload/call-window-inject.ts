@@ -13,6 +13,7 @@
 
   // Track streams we capture via RTCPeerConnection interception
   const activeStreams = new Set<MediaStream>();
+  const activePeerConnections = new Set<RTCPeerConnection>();
 
   // Store original getUserMedia for nuclear option
   const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(
@@ -27,6 +28,7 @@
 
   (window as any).RTCPeerConnection = function (config?: RTCConfiguration) {
     const pc = new OriginalRTCPeerConnection(config);
+    activePeerConnections.add(pc);
 
     // Track streams when tracks are added
     const originalAddTrack = pc.addTrack.bind(pc);
@@ -41,6 +43,22 @@
     // Track remote streams
     pc.addEventListener('track', (event) => {
       event.streams.forEach((s) => activeStreams.add(s));
+    });
+
+    pc.addEventListener('connectionstatechange', () => {
+      if (
+        pc.connectionState === 'closed' ||
+        pc.connectionState === 'failed' ||
+        pc.connectionState === 'disconnected'
+      ) {
+        activePeerConnections.delete(pc);
+      }
+    });
+
+    pc.addEventListener('signalingstatechange', () => {
+      if (pc.signalingState === 'closed') {
+        activePeerConnections.delete(pc);
+      }
     });
 
     return pc;
@@ -89,7 +107,26 @@
       });
     });
 
-    // 3. Nuclear option: Get fresh mic access and immediately release
+    // 3. Stop tracks directly from active peer connections.
+    activePeerConnections.forEach((pc) => {
+      pc.getSenders().forEach((sender) => {
+        const track = sender.track;
+        if (track && track.readyState !== 'ended') {
+          track.stop();
+          tracksStopped++;
+        }
+      });
+
+      pc.getReceivers().forEach((receiver) => {
+        const track = receiver.track;
+        if (track && track.readyState !== 'ended') {
+          track.stop();
+          tracksStopped++;
+        }
+      });
+    });
+
+    // 4. Nuclear option: Get fresh mic access and immediately release
     // This forces the browser to release any microphone that might be stuck
     if (tracksStopped === 0) {
       originalGetUserMedia({ audio: true })
@@ -130,6 +167,12 @@
 
   let hasDetectedCallEnd = false;
 
+  function hasCallEndedSignal(text: string): boolean {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return false;
+    return callEndedPatterns.some((p) => p.test(normalized));
+  }
+
   function handleCallEnded(): void {
     if (hasDetectedCallEnd) return;
     hasDetectedCallEnd = true;
@@ -145,10 +188,32 @@
   // Observe DOM for call-ended indicators
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      for (const node of Array.from(mutation.addedNodes)) {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          const text = (node as Element).textContent || '';
-          if (callEndedPatterns.some((p) => p.test(text))) {
+      if (mutation.type === 'childList') {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            const text = (node as Element).textContent || '';
+            if (hasCallEndedSignal(text)) {
+              handleCallEnded();
+              return;
+            }
+          } else if (node.nodeType === Node.TEXT_NODE) {
+            if (hasCallEndedSignal(node.nodeValue || '')) {
+              handleCallEnded();
+              return;
+            }
+          }
+        }
+      }
+
+      if (mutation.type === 'characterData') {
+        const node = mutation.target;
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (hasCallEndedSignal(node.nodeValue || '')) {
+            handleCallEnded();
+            return;
+          }
+          const parentText = node.parentElement?.textContent || '';
+          if (hasCallEndedSignal(parentText)) {
             handleCallEnded();
             return;
           }
@@ -158,10 +223,18 @@
   });
 
   if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
   } else {
     document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.body, { childList: true, subtree: true });
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
     });
   }
 

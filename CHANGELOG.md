@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0-beta.25] - 2026-03-10
+
+### Changed
+
+- **Issue #47 follow-up polish** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Skip the native incoming-call notification when the Messenger window has already been successfully brought to the foreground, keeping the system notification as a fallback only when focus does not succeed.
+  - Release media tracks more aggressively from active call peer connections when the call ends, so microphone access is less likely to remain active until the redial/post-call window is closed.
+  - Expanded call-ended DOM observation in the injected call window to react to in-place text updates, not just newly added nodes, which improves post-call cleanup on Facebook’s redial/end-call screens.
+
+### Validation
+
+- `npm run build`
+
 ## [1.3.0-beta.24] - 2026-03-10
 
 ### Fixed

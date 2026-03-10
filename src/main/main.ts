@@ -7429,6 +7429,12 @@ function setupIpcHandlers(): void {
       const focusedWindow = applyIncomingCallWindowFocus(
         mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
       );
+      const windowFocusedAfterEscalation = Boolean(
+        mainWindow &&
+          !mainWindow.isDestroyed() &&
+          mainWindow.isVisible() &&
+          mainWindow.isFocused(),
+      );
 
       // On macOS, also bounce the dock icon to get user attention
       if (focusedWindow.focused && process.platform === "darwin" && app.dock) {
@@ -7452,6 +7458,31 @@ function setupIpcHandlers(): void {
       const notificationTag = decision.callKey
         ? `incoming-call:${decision.callKey}`
         : `incoming-call:${decision.now}`;
+
+      if (windowFocusedAfterEscalation) {
+        stopIncomingCallNotificationReminder(true);
+        console.log(
+          "[IPC] Incoming call native notification skipped because window is focused",
+          {
+            callKey: decision.callKey,
+            caller,
+            notificationTag,
+          },
+        );
+        pushIncomingCallDebugEvent({
+          timestamp: now,
+          source: "main",
+          event: "incoming-call-notification-skipped-window-focused",
+          webContentsId: event.sender.id,
+          url: senderUrl,
+          callKey: decision.callKey,
+          caller,
+          notificationTag,
+          confidence: evidence.confidence,
+          evidenceSource: evidence.source,
+        });
+        return;
+      }
 
       if (!decision.shouldNotify) {
         if (
