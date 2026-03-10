@@ -55,7 +55,6 @@ import {
 } from "./incoming-call-overlay-policy";
 import {
   INCOMING_CALL_NO_KEY_MAP_KEY,
-  applyIncomingCallWindowFocus,
   decideIncomingCallNativeNotification,
   decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
@@ -7398,7 +7397,7 @@ function setupIpcHandlers(): void {
         escalation: escalation.reason,
       });
 
-      console.log("[IPC] Incoming call detected - bringing window to foreground", {
+      console.log("[IPC] Incoming call detected - notification path armed", {
         dedupeKey: payload?.dedupeKey,
         caller: payload?.caller,
         source: payload?.source,
@@ -7426,21 +7425,6 @@ function setupIpcHandlers(): void {
         return;
       }
 
-      const focusedWindow = applyIncomingCallWindowFocus(
-        mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
-      );
-      const windowFocusedAfterEscalation = Boolean(
-        mainWindow &&
-          !mainWindow.isDestroyed() &&
-          mainWindow.isVisible() &&
-          mainWindow.isFocused(),
-      );
-
-      // On macOS, also bounce the dock icon to get user attention
-      if (focusedWindow.focused && process.platform === "darwin" && app.dock) {
-        app.dock.bounce("critical");
-      }
-
       // Always emit a native incoming-call notification in addition to any
       // Messenger/web notifications, but dedupe repeated detections of the same
       // ringing event by key. For no-key detections, also apply a tiny jitter
@@ -7458,31 +7442,6 @@ function setupIpcHandlers(): void {
       const notificationTag = decision.callKey
         ? `incoming-call:${decision.callKey}`
         : `incoming-call:${decision.now}`;
-
-      if (windowFocusedAfterEscalation) {
-        stopIncomingCallNotificationReminder(true);
-        console.log(
-          "[IPC] Incoming call native notification skipped because window is focused",
-          {
-            callKey: decision.callKey,
-            caller,
-            notificationTag,
-          },
-        );
-        pushIncomingCallDebugEvent({
-          timestamp: now,
-          source: "main",
-          event: "incoming-call-notification-skipped-window-focused",
-          webContentsId: event.sender.id,
-          url: senderUrl,
-          callKey: decision.callKey,
-          caller,
-          notificationTag,
-          confidence: evidence.confidence,
-          evidenceSource: evidence.source,
-        });
-        return;
-      }
 
       if (!decision.shouldNotify) {
         if (

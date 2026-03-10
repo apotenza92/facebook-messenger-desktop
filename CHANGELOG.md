@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0-beta.26] - 2026-03-10
+
+### Changed
+
+- **Issue #47 follow-up behavior adjustment** ([#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Reverted the `beta.25` incoming-call foreground change so real incoming calls keep using the native system notification instead of forcing the Messenger window to the front.
+  - Kept the tighter post-call media cleanup so microphone access is still more likely to be released when the call ends, even if the post-call/redial UI remains open.
+
+### Validation
+
+- `npm run build`
+
 ## [1.3.0-beta.25] - 2026-03-10
 
 ### Changed
