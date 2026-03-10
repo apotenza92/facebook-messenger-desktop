@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.3.0-beta.24] - 2026-03-10
+
+### Fixed
+
+- **Issues #41 / #47: ghost incoming-call alerts could still appear after stale recovery or low-confidence call-like signals** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41), [#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47))
+  - Introduced evidence-based incoming-call classification so low-confidence native notifications and weak DOM signals no longer escalate into real incoming-call reminder/focus state.
+  - Added recovery settling for `offline -> online`, `resume`, and `unlock-screen` so stale call-like state after sleep/network churn is suppressed until real incoming-call UI is visible again.
+  - Expanded explicit non-incoming exclusions for statuses like missed/cancelled/joined/answered-elsewhere calls and removed title-only escalation paths.
+- **Issue #48: messages viewport crop now re-applies after stale recovery events** ([#48](https://github.com/apotenza92/facebook-messenger-desktop/issues/48))
+  - Added viewport/header recovery rechecks on `online`, `focus`, `visibilitychange`, `resume`, and `unlock-screen` so the Facebook top bar is less likely to remain exposed after reconnect or wake.
+
+### Added
+
+- **Incoming-call diagnostics + stronger live call coverage**
+  - Added structured incoming-call debug logging and shared evidence helpers across preload/main call-detection paths.
+  - Extended the GUI call harness to cover answered-call flows on both sides, hang-up cleanup, and message-only no-ghost-notification validation.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:issues:e2e`
+- Real two-account live validation:
+  - incoming call answered on the receiving side
+  - outgoing call answered on the remote side
+  - normal message flow with no ghost `Incoming call` notification
+
 ## [1.3.0-beta.23] - 2026-03-09
 
 ### Fixed
