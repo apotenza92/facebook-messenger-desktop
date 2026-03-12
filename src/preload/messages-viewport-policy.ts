@@ -19,6 +19,21 @@ const MEDIA_ROUTE_PREFIXES = [
   "/stories",
 ];
 
+const MEDIA_LOADING_BANNER_ROUTE_PREFIXES = [
+  "/messages/attachment_preview",
+  "/messages/media_viewer",
+  "/photo",
+  "/photos",
+];
+
+function matchesRoutePrefix(path: string, prefix: string): boolean {
+  return (
+    path === prefix ||
+    path.startsWith(`${prefix}/`) ||
+    path.startsWith(`${prefix}.`)
+  );
+}
+
 function toPathname(input: string): string {
   if (!input) return "/";
 
@@ -36,10 +51,7 @@ function toPathname(input: string): string {
 export function isMessagesMediaRoute(input: string): boolean {
   const path = toPathname(input);
   return MEDIA_ROUTE_PREFIXES.some(
-    (prefix) =>
-      path === prefix ||
-      path.startsWith(`${prefix}/`) ||
-      path.startsWith(`${prefix}.`),
+    (prefix) => matchesRoutePrefix(path, prefix),
   );
 }
 
@@ -68,6 +80,47 @@ export function resolveViewportMode(
 
 export function shouldApplyMessagesCrop(input: ResolveViewportModeInput): boolean {
   return resolveViewportMode(input) === "chat";
+}
+
+export function shouldHideMediaViewerBannerWhileLoading(input: {
+  urlPath: string;
+  hasDismissAction: boolean;
+  hasDownloadAction: boolean;
+  hasShareAction: boolean;
+}): boolean {
+  const path = toPathname(input.urlPath);
+  if (!MEDIA_LOADING_BANNER_ROUTE_PREFIXES.some((prefix) => matchesRoutePrefix(path, prefix))) {
+    return false;
+  }
+
+  return !(
+    input.hasDismissAction ||
+    input.hasDownloadAction ||
+    input.hasShareAction
+  );
+}
+
+export function shouldTreatHintedMediaOverlayAsVisible(input: {
+  dismissCount: number;
+  hasDownloadAction: boolean;
+  hasShareAction: boolean;
+  hasLargeMedia: boolean;
+  hasPendingOpenHint: boolean;
+}): boolean {
+  if (!input.hasPendingOpenHint) {
+    return false;
+  }
+
+  const hasOverlayChrome = input.dismissCount >= 2 || input.hasLargeMedia;
+  if (!hasOverlayChrome) {
+    return false;
+  }
+
+  return (
+    input.hasDownloadAction ||
+    input.hasShareAction ||
+    hasOverlayChrome
+  );
 }
 
 export function resolveMediaViewerStateVisible(input: {

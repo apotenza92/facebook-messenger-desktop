@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0-beta.27] - 2026-03-12
+
+### Fixed
+
+- **Photo viewer: hide Facebook top bar earlier while photos are still loading**
+  - Added an in-thread media-open hint so photo/video opens from conversation media panels are treated as active overlays before Facebook finishes mounting the full media control set.
+  - Hide Facebook's top banner chrome during that early loading window, instead of waiting for the later download/share controls to appear.
+  - Keep the normal loaded-state behavior unchanged once the real media controls mount.
+
+### Validation
+
+- `NODE_OPTIONS=--max-old-space-size=4096 npm run build`
+- Real live validation on the `JLew` thread:
+  - reproduced the transient top-bar flash on the pre-fix build by opening `Media -> View photo sent on 24 February 2026, 14:46` under throttled network
+  - verified the beta.27 build hides the Facebook top bar within ~200ms of the same real photo-open flow and keeps media controls visible once loading completes
+
 ## [1.3.0-beta.26] - 2026-03-10
 
 ### Changed

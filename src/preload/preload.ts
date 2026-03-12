@@ -4,6 +4,8 @@ import {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
+  shouldHideMediaViewerBannerWhileLoading,
+  shouldTreatHintedMediaOverlayAsVisible,
 } from "./messages-viewport-policy";
 import {
   getIncomingCallHintClearReason,
@@ -268,6 +270,7 @@ ipcRenderer.on(
   const STYLE_ID = "md-fb-messages-viewport-fix-style";
   const ACTIVE_CLASS = "md-fb-messages-viewport-fix";
   const MEDIA_CLEAN_CLASS = "md-fb-media-viewer-clean";
+  const MEDIA_LOADING_CLASS = "md-fb-media-viewer-loading";
   const INCOMING_CALL_CLEAN_CLASS = "md-fb-incoming-call-clean";
   const MEDIA_LEFT_DISMISS_CLASS = "md-fb-media-dismiss-left";
   const MEDIA_CLOSE_ACTION_CLASS = "md-fb-media-action-close";
@@ -310,6 +313,7 @@ ipcRenderer.on(
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
   const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 10_000;
+  const MEDIA_OPEN_HINT_DURATION_MS = 4_000;
 
   let pendingApply = false;
   let pendingSend = false;
@@ -321,6 +325,8 @@ ipcRenderer.on(
   let incomingCallHintActivatedAt = 0;
   let incomingCallLastDetectedAt = 0;
   let incomingCallDetectedSinceHint = false;
+  let mediaOverlayOpenHintUntil = 0;
+  let mediaOverlayOpenHintTimer: number | null = null;
   let mediaOverlayTransitionTimer: number | null = null;
   let viewportStateSendTimer: number | null = null;
   let viewportRecoveryTimerIds: number[] = [];
@@ -512,6 +518,18 @@ ipcRenderer.on(
       return false;
     }
 
+    if (
+      shouldTreatHintedMediaOverlayAsVisible({
+        dismissCount: signals.dismissCount,
+        hasDownloadAction: signals.hasDownloadAction,
+        hasShareAction: signals.hasShareAction,
+        hasLargeMedia: signals.hasLargeMedia,
+        hasPendingOpenHint: hasMediaOverlayOpenHint(),
+      })
+    ) {
+      return true;
+    }
+
     // Treat as media overlay only when dismiss + explicit media actions +
     // viewport-scale centered media are present. This avoids stale false-positives
     // after close where toolbar actions may still briefly exist in chat surfaces.
@@ -581,6 +599,61 @@ ipcRenderer.on(
 
     const signals = collectMediaOverlaySignals();
     return evaluateMediaOverlayVisible(signals);
+  };
+
+  const hasMediaOverlayOpenHint = (): boolean => mediaOverlayOpenHintUntil > Date.now();
+
+  const shouldHideMediaBannerDuringLoad = (
+    signals: MediaOverlaySignals,
+  ): boolean => {
+    if (
+      hasMediaOverlayOpenHint() &&
+      !signals.hasDownloadAction &&
+      !signals.hasShareAction &&
+      (signals.dismissCount >= 2 || signals.hasLargeMedia)
+    ) {
+      return true;
+    }
+
+    return shouldHideMediaViewerBannerWhileLoading({
+      urlPath: signals.path,
+      hasDismissAction: signals.hasDismissAction,
+      hasDownloadAction: signals.hasDownloadAction,
+      hasShareAction: signals.hasShareAction,
+    });
+  };
+
+  const scheduleMediaOpenHintExpiry = (): void => {
+    if (mediaOverlayOpenHintTimer !== null) {
+      clearTimeout(mediaOverlayOpenHintTimer);
+      mediaOverlayOpenHintTimer = null;
+    }
+
+    if (!hasMediaOverlayOpenHint()) return;
+
+    const remainingMs = Math.max(0, mediaOverlayOpenHintUntil - Date.now());
+    mediaOverlayOpenHintTimer = window.setTimeout(() => {
+      mediaOverlayOpenHintTimer = null;
+      if (!hasMediaOverlayOpenHint()) {
+        sendMediaOverlayDebug("media-open-hint-expired", { force: true });
+        scheduleMediaOverlayRecheck();
+        scheduleApply();
+        scheduleViewportStateSend(true);
+      }
+    }, remainingMs + 5);
+  };
+
+  const applyMediaOverlayOpenHint = (reason: string): void => {
+    mediaOverlayOpenHintUntil = Date.now() + MEDIA_OPEN_HINT_DURATION_MS;
+    sendMediaOverlayDebug("media-open-hint", {
+      force: true,
+      reason,
+      expiresInMs: MEDIA_OPEN_HINT_DURATION_MS,
+    });
+    scheduleMediaOpenHintExpiry();
+    scheduleMediaOverlayRecheck();
+    scheduleApply();
+    scheduleViewportStateSend(true);
   };
 
   const setPinnedStyle = (
@@ -1075,6 +1148,16 @@ ipcRenderer.on(
         pointer-events: none !important;
       }
 
+      /* Route-based media viewers can render Facebook's banner shell before
+         the real viewer controls mount. Hide that shell until media chrome exists. */
+      html.${MEDIA_LOADING_CLASS} [role="banner"],
+      html.${MEDIA_LOADING_CLASS} [role="banner"]::before,
+      html.${MEDIA_LOADING_CLASS} [role="banner"]::after {
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
       /* Incoming call overlay: hide only Facebook global chrome controls,
          not the entire banner container (call controls can be hosted there). */
       html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Menu" i],
@@ -1160,11 +1243,19 @@ ipcRenderer.on(
       }
     }
 
+    const mediaSignals = mode === "media" ? collectMediaOverlaySignals() : null;
+
     if (mode === "media" && !detectedIncomingCallOverlayVisible && !incomingCallOverlayHintActive) {
       document.documentElement.classList.add(MEDIA_CLEAN_CLASS);
+      if (mediaSignals && shouldHideMediaBannerDuringLoad(mediaSignals)) {
+        document.documentElement.classList.add(MEDIA_LOADING_CLASS);
+      } else {
+        document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
+      }
       markMediaActions();
     } else {
       document.documentElement.classList.remove(MEDIA_CLEAN_CLASS);
+      document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
       clearMarkedMediaActions();
     }
 
@@ -1227,6 +1318,41 @@ ipcRenderer.on(
   const isDismissActionTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) return false;
     return target.closest(dismissActionSelectors.join(", ")) !== null;
+  };
+
+  const mediaOpenActionSelectors = [
+    '[aria-label^="View photo" i]',
+    '[aria-label^="View video" i]',
+    '[aria-label^="View attachment" i]',
+    '[aria-label^="Open photo" i]',
+    '[aria-label^="Open video" i]',
+    'a[href*="/photo/"]',
+    'a[href*="/photos/"]',
+    'a[href*="/video/"]',
+    'a[href*="/messages/media_viewer"]',
+    'a[href*="/messages/attachment_preview"]',
+    'a[href*="/messenger_media"]',
+  ];
+
+  const isMediaOpenActionTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+
+    const matched = target.closest(mediaOpenActionSelectors.join(", "));
+    if (matched) return true;
+
+    const clickable = target.closest('button, [role="button"], a[href]');
+    if (!(clickable instanceof HTMLElement)) return false;
+    if (
+      clickable.closest('[role="banner"], [role="navigation"], [aria-label="Chats" i]')
+    ) {
+      return false;
+    }
+
+    const mediaNode = clickable.querySelector("img, video");
+    if (!(mediaNode instanceof HTMLElement)) return false;
+
+    const rect = mediaNode.getBoundingClientRect();
+    return rect.width >= 120 && rect.height >= 120 && rect.right > 250;
   };
 
   const scheduleDismissFastPathChecks = (trigger: string): void => {
@@ -1383,6 +1509,9 @@ ipcRenderer.on(
   document.addEventListener(
     "click",
     (event) => {
+      if (isMediaOpenActionTarget(event.target)) {
+        applyMediaOverlayOpenHint("open-click");
+      }
       if (!isDismissActionTarget(event.target)) return;
       scheduleDismissFastPathChecks("dismiss-click");
     },
@@ -1392,6 +1521,12 @@ ipcRenderer.on(
   document.addEventListener(
     "keydown",
     (event) => {
+      if (
+        (event.key === "Enter" || event.key === " ") &&
+        isMediaOpenActionTarget(event.target)
+      ) {
+        applyMediaOverlayOpenHint("open-key");
+      }
       if (event.key !== "Enter" && event.key !== " ") return;
       if (!isDismissActionTarget(event.target)) return;
       scheduleDismissFastPathChecks("dismiss-key");

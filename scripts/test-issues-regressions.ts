@@ -4,6 +4,8 @@ const {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
+  shouldHideMediaViewerBannerWhileLoading,
+  shouldTreatHintedMediaOverlayAsVisible,
 } = require("../src/preload/messages-viewport-policy");
 const incomingCallHintPolicy = require("../src/preload/incoming-call-overlay-hint-policy.ts");
 const notificationDecisionPolicy = require("../src/preload/notification-decision-policy.ts");
@@ -133,6 +135,101 @@ const runViewportPolicyTests = () => {
     }),
     true,
     "#47 real media overlay should continue forcing media-viewer-state visible",
+  );
+
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/photo/123",
+      hasDismissAction: false,
+      hasDownloadAction: false,
+      hasShareAction: false,
+    }),
+    true,
+    "#49 photo route should hide the Facebook banner while viewer controls are still loading",
+  );
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/messages/media_viewer.123",
+      hasDismissAction: false,
+      hasDownloadAction: false,
+      hasShareAction: false,
+    }),
+    true,
+    "#49 messages media viewer route should hide the Facebook banner while viewer controls are still loading",
+  );
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/photo/123",
+      hasDismissAction: true,
+      hasDownloadAction: false,
+      hasShareAction: false,
+    }),
+    false,
+    "#49 photo route should stop hiding the banner once dismiss controls mount",
+  );
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/video/123",
+      hasDismissAction: false,
+      hasDownloadAction: false,
+      hasShareAction: false,
+    }),
+    false,
+    "#49 non-photo media routes should keep their existing banner behavior",
+  );
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/messages/t/123",
+      hasDismissAction: false,
+      hasDownloadAction: false,
+      hasShareAction: false,
+    }),
+    false,
+    "#49 chat routes should never enter the media-loading banner suppression state",
+  );
+  assertEqual(
+    shouldTreatHintedMediaOverlayAsVisible({
+      dismissCount: 1,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasLargeMedia: false,
+      hasPendingOpenHint: true,
+    }),
+    false,
+    "#49 pending open hint alone should not force media mode without overlay chrome",
+  );
+  assertEqual(
+    shouldTreatHintedMediaOverlayAsVisible({
+      dismissCount: 2,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasLargeMedia: false,
+      hasPendingOpenHint: true,
+    }),
+    true,
+    "#49 pending open hint should force media mode once overlay dismiss chrome appears",
+  );
+  assertEqual(
+    shouldTreatHintedMediaOverlayAsVisible({
+      dismissCount: 1,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasLargeMedia: true,
+      hasPendingOpenHint: true,
+    }),
+    true,
+    "#49 pending open hint should force media mode once large media appears",
+  );
+  assertEqual(
+    shouldTreatHintedMediaOverlayAsVisible({
+      dismissCount: 2,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasLargeMedia: false,
+      hasPendingOpenHint: false,
+    }),
+    false,
+    "#49 overlay chrome without a pending hint should still wait for stable media signals",
   );
 };
 
