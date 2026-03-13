@@ -1656,6 +1656,7 @@
 
     const incomingCallAnswerSelectors = [
       '[aria-label*="Answer" i]',
+      '[aria-label="Accept" i]',
       '[aria-label*="Accept call" i]',
       '[aria-label*="Join call" i]',
       '[aria-label*="Accept video call" i]',
@@ -1707,6 +1708,7 @@
     const callPopupSelectors = [
       // Buttons with call-related aria-labels (case-insensitive)
       '[aria-label*="Answer" i]',
+      '[aria-label="Accept" i]',
       '[aria-label*="Decline" i]',
       '[aria-label*="Accept call" i]',
       '[aria-label*="Ignore call" i]',

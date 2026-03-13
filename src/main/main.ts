@@ -7433,7 +7433,10 @@ function setupIpcHandlers(): void {
         payload,
         now,
         notificationByKey: incomingCallNotificationByKey,
-        lastNoKeyIncomingCallNotificationAt,
+        lastNoKeyIncomingCallNotificationAt: Math.max(
+          lastNoKeyIncomingCallNotificationAt,
+          activeIncomingCallNotificationSeenAt,
+        ),
       });
       const caller = formatIncomingCallCaller(payload?.caller);
       const notificationBody = caller
@@ -7487,9 +7490,11 @@ function setupIpcHandlers(): void {
           decision.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
           decision.now,
         );
-        if (decision.callKey === null) {
-          lastNoKeyIncomingCallNotificationAt = decision.now;
-        }
+        incomingCallNotificationByKey.set(
+          INCOMING_CALL_NO_KEY_MAP_KEY,
+          decision.now,
+        );
+        lastNoKeyIncomingCallNotificationAt = decision.now;
 
         notificationHandler.showNotification({
           title: "Incoming call",

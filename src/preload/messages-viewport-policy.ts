@@ -87,6 +87,7 @@ export function shouldHideMediaViewerBannerWhileLoading(input: {
   hasDismissAction: boolean;
   hasDownloadAction: boolean;
   hasShareAction: boolean;
+  hasNavigationAction: boolean;
 }): boolean {
   const path = toPathname(input.urlPath);
   if (!MEDIA_LOADING_BANNER_ROUTE_PREFIXES.some((prefix) => matchesRoutePrefix(path, prefix))) {
@@ -96,7 +97,8 @@ export function shouldHideMediaViewerBannerWhileLoading(input: {
   return !(
     input.hasDismissAction ||
     input.hasDownloadAction ||
-    input.hasShareAction
+    input.hasShareAction ||
+    input.hasNavigationAction
   );
 }
 
@@ -107,6 +109,7 @@ export function shouldKeepMediaViewerBannerHiddenDuringLoadingWindow(input: {
   hasMarkedCloseAction: boolean;
   hasMarkedDownloadAction: boolean;
   hasMarkedShareAction: boolean;
+  hasVisibleNavigationAction: boolean;
 }): boolean {
   if (!input.loadingWindowActive) {
     return false;
@@ -115,7 +118,8 @@ export function shouldKeepMediaViewerBannerHiddenDuringLoadingWindow(input: {
   if (
     input.hasMarkedCloseAction ||
     input.hasMarkedDownloadAction ||
-    input.hasMarkedShareAction
+    input.hasMarkedShareAction ||
+    input.hasVisibleNavigationAction
   ) {
     return false;
   }
@@ -127,6 +131,7 @@ export function shouldTreatHintedMediaOverlayAsVisible(input: {
   dismissCount: number;
   hasDownloadAction: boolean;
   hasShareAction: boolean;
+  hasNavigationAction: boolean;
   hasLargeMedia: boolean;
   hasPendingOpenHint: boolean;
 }): boolean {
@@ -134,7 +139,10 @@ export function shouldTreatHintedMediaOverlayAsVisible(input: {
     return false;
   }
 
-  const hasOverlayChrome = input.dismissCount >= 2 || input.hasLargeMedia;
+  const hasOverlayChrome =
+    input.dismissCount >= 2 ||
+    input.hasLargeMedia ||
+    (input.dismissCount >= 1 && input.hasNavigationAction);
   if (!hasOverlayChrome) {
     return false;
   }
@@ -142,7 +150,50 @@ export function shouldTreatHintedMediaOverlayAsVisible(input: {
   return (
     input.hasDownloadAction ||
     input.hasShareAction ||
+    input.hasNavigationAction ||
     hasOverlayChrome
+  );
+}
+
+export function shouldTreatDetectedMediaOverlayAsVisible(input: {
+  modeFromPath: MessagesViewportMode;
+  threadSubtabRoute: boolean;
+  hasDismissAction: boolean;
+  dismissCount: number;
+  hasDownloadAction: boolean;
+  hasShareAction: boolean;
+  hasNavigationAction: boolean;
+  hasLargeMedia: boolean;
+  hasPendingOpenHint: boolean;
+}): boolean {
+  if (input.modeFromPath === "media") {
+    return true;
+  }
+
+  if (input.threadSubtabRoute || !input.hasDismissAction) {
+    return false;
+  }
+
+  if (
+    shouldTreatHintedMediaOverlayAsVisible({
+      dismissCount: input.dismissCount,
+      hasDownloadAction: input.hasDownloadAction,
+      hasShareAction: input.hasShareAction,
+      hasNavigationAction: input.hasNavigationAction,
+      hasLargeMedia: input.hasLargeMedia,
+      hasPendingOpenHint: input.hasPendingOpenHint,
+    })
+  ) {
+    return true;
+  }
+
+  // Chat threads can expose share actions next to large inline media after
+  // dismissing a viewer. Keep share-only detection stricter than download or
+  // navigation so normal thread chrome cannot get stuck in media mode.
+  return (
+    (input.hasDismissAction && input.hasNavigationAction) ||
+    (input.hasDownloadAction && input.hasLargeMedia) ||
+    (input.hasShareAction && input.hasLargeMedia && input.dismissCount >= 2)
   );
 }
 

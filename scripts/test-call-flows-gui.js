@@ -131,8 +131,26 @@ async function evaluateInElectronWindows(electronApp, scriptBody) {
 
       for (let index = 0; index < wins.length; index += 1) {
         const win = wins[index];
+        if (!win || win.isDestroyed()) {
+          results.push({
+            index,
+            error: "window-destroyed",
+          });
+          continue;
+        }
+
         const views = win.getBrowserViews();
         const wc = views.length > 0 ? views[0].webContents : win.webContents;
+        if (!wc || wc.isDestroyed()) {
+          results.push({
+            index,
+            windowTitle: win.getTitle(),
+            windowVisible: win.isVisible(),
+            focused: win.isFocused(),
+            error: "webcontents-destroyed",
+          });
+          continue;
+        }
         try {
           const value = await wc.executeJavaScript(script, true);
           results.push({
@@ -165,11 +183,14 @@ async function evaluateInElectronWindowByIndex(electronApp, index, scriptBody) {
   return electronApp.evaluate(
     async ({ BrowserWindow }, { index: targetIndex, script }) => {
       const win = BrowserWindow.getAllWindows()[targetIndex];
-      if (!win) {
+      if (!win || win.isDestroyed()) {
         throw new Error(`No Electron window at index ${targetIndex}`);
       }
       const views = win.getBrowserViews();
       const wc = views.length > 0 ? views[0].webContents : win.webContents;
+      if (!wc || wc.isDestroyed()) {
+        throw new Error(`No live webContents for Electron window at index ${targetIndex}`);
+      }
       return wc.executeJavaScript(script, true);
     },
     { index, script: scriptBody },
@@ -187,6 +208,19 @@ async function readCapturedNotifications(electronApp) {
 async function clearCapturedNotifications(electronApp) {
   await electronApp.evaluate(() => {
     globalThis.__mdNotificationEvents = [];
+  });
+}
+
+function getIncomingCallNotifications(notifications) {
+  return (Array.isArray(notifications) ? notifications : []).filter((entry) => {
+    const title = String(entry?.title || '');
+    const body = String(entry?.body || '');
+    const tag = String(entry?.tag || '');
+    return (
+      /incoming call/i.test(title) ||
+      /is calling you/i.test(body) ||
+      /^incoming-call:/i.test(tag)
+    );
   });
 }
 
@@ -999,6 +1033,7 @@ async function runMichaelToAlexAnsweredFlow({ electronApp, michaelPage, alexThre
   const michaelContext = michaelPage.context();
 
   console.log('\n[Answer Alex] Michael -> Alex: ring, answer on Alex, then hang up...');
+  await clearCapturedNotifications(electronApp);
 
   const threadReady = await waitForThreadReady(
     michaelPage,
@@ -1016,6 +1051,18 @@ async function runMichaelToAlexAnsweredFlow({ electronApp, michaelPage, alexThre
     throw new Error('Failed to click call start button in Michael session for Alex-answer flow');
   }
   console.log(`[Answer Alex] Michael call button clicked: ${clickFromMichael.label}`);
+
+  const initialNotification = await waitForNotificationPredicate(
+    electronApp,
+    (notifications) => getIncomingCallNotifications(notifications).length >= 1,
+    Math.min(timeoutMs, 10000),
+    'Alex native incoming-call notification to appear',
+  );
+  if (!initialNotification.ok) {
+    throw new Error(
+      `Alex did not receive an incoming-call notification before answer. Notifications: ${JSON.stringify(initialNotification.notifications)}`,
+    );
+  }
 
   const appeared = await waitForElectronSurface(
     electronApp,
@@ -1041,6 +1088,17 @@ async function runMichaelToAlexAnsweredFlow({ electronApp, michaelPage, alexThre
     throw new Error('Failed to answer call on Alex side');
   }
   console.log(`[Answer Alex] Answered on Alex: ${answerOnAlex.label}`);
+
+  await wait(4000);
+  const notificationsAfterAnswer = await readCapturedNotifications(electronApp);
+  const incomingCallNotificationsAfterAnswer = getIncomingCallNotifications(
+    notificationsAfterAnswer,
+  );
+  if (incomingCallNotificationsAfterAnswer.length !== 1) {
+    throw new Error(
+      `Expected exactly one incoming-call notification across ring + answer, saw ${incomingCallNotificationsAfterAnswer.length}: ${JSON.stringify(incomingCallNotificationsAfterAnswer)}`,
+    );
+  }
 
   const alexActive = await waitForElectronSurface(
     electronApp,

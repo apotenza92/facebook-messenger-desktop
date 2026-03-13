@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.0-beta.29] - 2026-03-13
+
+### Fixed
+
+- **Issue #41 follow-up: real incoming-call answer UI + notification dedupe** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Recognize Facebook's plain `Accept` incoming-call control so the clean incoming-call overlay state applies on the real answered-call UI and the Facebook top bar stays hidden.
+  - Suppress the duplicate no-key incoming-call notification echo that could fire immediately after answering.
+  - Hardened the live call harness so answered-call validation survives destroyed popup windows and asserts notification count during ring + answer.
+- **Issue #45 follow-up: photo/media close recovery no longer sticks the main window in media mode**
+  - Stop chat threads with large inline media and share controls from being misclassified as an active media viewer after closing a photo.
+  - Clear the temporary media-open hint immediately on dismiss and URL transitions so BrowserView crop recovery happens promptly instead of waiting out the hint window.
+  - Added deterministic and GUI regression coverage for the stuck `mediaClean` recovery path.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:issue45:close:return:gui`
+- `npm run test:issue45:thread:extensive:gui`
+- Real two-account live call validation:
+  - Michael -> Alex answer/hangup with clean incoming overlay and exactly one incoming-call notification
+  - Alex -> Michael answer/hangup
+  - incoming/outgoing ring flows
+
 ## [1.3.0-beta.28] - 2026-03-13
 
 ### Fixed

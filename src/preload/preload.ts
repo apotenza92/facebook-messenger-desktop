@@ -4,9 +4,9 @@ import {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
+  shouldTreatDetectedMediaOverlayAsVisible,
   shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
   shouldHideMediaViewerBannerWhileLoading,
-  shouldTreatHintedMediaOverlayAsVisible,
 } from "./messages-viewport-policy";
 import {
   getIncomingCallHintClearReason,
@@ -17,6 +17,7 @@ import {
 
 const incomingCallAnswerSelectors = [
   '[aria-label*="Answer" i]',
+  '[aria-label="Accept" i]',
   '[aria-label*="Accept call" i]',
   '[aria-label*="Join call" i]',
   '[aria-label*="Accept video call" i]',
@@ -312,6 +313,14 @@ ipcRenderer.on(
     '[aria-label*="Forward" i][role="button"]',
     'button[aria-label*="Forward" i]',
   ];
+  const mediaNavigationSelectors = [
+    '[aria-label*="Next" i][role="button"]',
+    'button[aria-label*="Next" i]',
+    '[aria-label*="Previous" i][role="button"]',
+    'button[aria-label*="Previous" i]',
+    '[aria-label*="Prev" i][role="button"]',
+    'button[aria-label*="Prev" i]',
+  ];
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
   const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 10_000;
@@ -435,6 +444,39 @@ ipcRenderer.on(
     return count;
   };
 
+  const countMediaNavigationActions = (
+    selector: string,
+    maxEdgeDistance = 180,
+  ): number => {
+    const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
+    let count = 0;
+    for (const node of nodes) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 20 || rect.height < 20) continue;
+      if (
+        rect.width > MAX_ACTION_NODE_DIMENSION ||
+        rect.height > MAX_ACTION_NODE_DIMENSION
+      ) {
+        continue;
+      }
+      if (rect.bottom < window.innerHeight * 0.12) continue;
+      if (rect.top > window.innerHeight * 0.88) continue;
+
+      const edgeDistance = Math.min(
+        Math.abs(rect.left),
+        Math.abs(window.innerWidth - rect.right),
+      );
+      if (edgeDistance > maxEdgeDistance) continue;
+
+      count += 1;
+    }
+
+    return count;
+  };
+
   const hasLargeViewportMedia = (): boolean => {
     const nodes = Array.from(document.querySelectorAll("img, video")) as HTMLElement[];
     const centerX = window.innerWidth / 2;
@@ -475,6 +517,8 @@ ipcRenderer.on(
     downloadCount: number;
     hasShareAction: boolean;
     shareCount: number;
+    hasNavigationAction: boolean;
+    navigationCount: number;
     hasLargeMedia: boolean;
   };
 
@@ -494,10 +538,12 @@ ipcRenderer.on(
     const dismissSelector = dismissActionSelectors.join(", ");
     const downloadSelector = mediaDownloadSelectors.join(", ");
     const shareSelector = mediaShareSelectors.join(", ");
+    const navigationSelector = mediaNavigationSelectors.join(", ");
 
     const dismissCount = countTopAnchoredActions(dismissSelector, -160, 260);
     const downloadCount = countTopAnchoredActions(downloadSelector, -160, 260, 0.35);
     const shareCount = countTopAnchoredActions(shareSelector, -160, 260, 0.35);
+    const navigationCount = countMediaNavigationActions(navigationSelector);
 
     return {
       path,
@@ -509,42 +555,24 @@ ipcRenderer.on(
       downloadCount,
       hasShareAction: shareCount > 0,
       shareCount,
+      hasNavigationAction: navigationCount > 0,
+      navigationCount,
       hasLargeMedia: hasLargeViewportMedia(),
     };
   };
 
   const evaluateMediaOverlayVisible = (signals: MediaOverlaySignals): boolean => {
-    if (signals.modeFromPath === "media") {
-      return true;
-    }
-
-    if (signals.threadSubtabRoute) {
-      return false;
-    }
-
-    if (!signals.hasDismissAction) {
-      return false;
-    }
-
-    if (
-      shouldTreatHintedMediaOverlayAsVisible({
-        dismissCount: signals.dismissCount,
-        hasDownloadAction: signals.hasDownloadAction,
-        hasShareAction: signals.hasShareAction,
-        hasLargeMedia: signals.hasLargeMedia,
-        hasPendingOpenHint: hasMediaOverlayOpenHint(),
-      })
-    ) {
-      return true;
-    }
-
-    // Treat as media overlay only when dismiss + explicit media actions +
-    // viewport-scale centered media are present. This avoids stale false-positives
-    // after close where toolbar actions may still briefly exist in chat surfaces.
-    return (
-      (signals.hasDownloadAction || signals.hasShareAction) &&
-      signals.hasLargeMedia
-    );
+    return shouldTreatDetectedMediaOverlayAsVisible({
+      modeFromPath: signals.modeFromPath,
+      threadSubtabRoute: signals.threadSubtabRoute,
+      hasDismissAction: signals.hasDismissAction,
+      dismissCount: signals.dismissCount,
+      hasDownloadAction: signals.hasDownloadAction,
+      hasShareAction: signals.hasShareAction,
+      hasNavigationAction: signals.hasNavigationAction,
+      hasLargeMedia: signals.hasLargeMedia,
+      hasPendingOpenHint: hasMediaOverlayOpenHint(),
+    });
   };
 
   const sendMediaOverlayDebug = (
@@ -622,14 +650,17 @@ ipcRenderer.on(
         hasDismissAction: signals.hasDismissAction,
         hasDownloadAction: signals.hasDownloadAction,
         hasShareAction: signals.hasShareAction,
+        hasNavigationAction: signals.hasNavigationAction,
       }),
       hintedOverlayLoading:
         !signals.hasDownloadAction &&
         !signals.hasShareAction &&
+        !signals.hasNavigationAction &&
         (signals.dismissCount >= 2 || signals.hasLargeMedia),
       hasMarkedCloseAction: markedActions.closeMarked,
       hasMarkedDownloadAction: markedActions.downloadMarked,
       hasMarkedShareAction: markedActions.shareMarked,
+      hasVisibleNavigationAction: signals.hasNavigationAction,
     });
   };
 
@@ -651,6 +682,21 @@ ipcRenderer.on(
         scheduleViewportStateSend(true);
       }
     }, remainingMs + 5);
+  };
+
+  const clearMediaOverlayOpenHint = (reason: string): void => {
+    const hadHint = hasMediaOverlayOpenHint();
+    mediaOverlayOpenHintUntil = 0;
+    if (mediaOverlayOpenHintTimer !== null) {
+      clearTimeout(mediaOverlayOpenHintTimer);
+      mediaOverlayOpenHintTimer = null;
+    }
+    if (!hadHint) return;
+
+    sendMediaOverlayDebug("media-open-hint-cleared", {
+      force: true,
+      reason,
+    });
   };
 
   const primeMediaOverlayOpenHint = (reason: string): void => {
@@ -884,7 +930,9 @@ ipcRenderer.on(
     selectors: string[],
     excludedNodes: Set<HTMLElement>,
   ): ActionCandidate[] => {
-    const candidates = collectActionCandidates(selectors, excludedNodes);
+    const candidates = collectActionCandidates(selectors, excludedNodes).filter(
+      (candidate) => candidate.rect.top <= 140,
+    );
 
     candidates.sort((a, b) => {
       const aLeftDist = Math.abs(a.rect.left);
@@ -1289,6 +1337,7 @@ ipcRenderer.on(
           hasDismissAction: mediaSignals.hasDismissAction,
           hasDownloadAction: mediaSignals.hasDownloadAction,
           hasShareAction: mediaSignals.hasShareAction,
+          hasNavigationAction: mediaSignals.hasNavigationAction,
         })
       ) {
         primeMediaOverlayOpenHint("media-route-loading");
@@ -1561,6 +1610,7 @@ ipcRenderer.on(
         applyMediaOverlayOpenHint("open-click");
       }
       if (!isDismissActionTarget(event.target)) return;
+      clearMediaOverlayOpenHint("dismiss-click");
       scheduleDismissFastPathChecks("dismiss-click");
     },
     { passive: true, capture: true },
@@ -1577,6 +1627,7 @@ ipcRenderer.on(
       }
       if (event.key !== "Enter" && event.key !== " ") return;
       if (!isDismissActionTarget(event.target)) return;
+      clearMediaOverlayOpenHint("dismiss-key");
       scheduleDismissFastPathChecks("dismiss-key");
     },
     { passive: true, capture: true },
@@ -1610,6 +1661,7 @@ ipcRenderer.on(
     if (currentUrl !== lastUrl) {
       const previousUrl = lastUrl;
       lastUrl = currentUrl;
+      clearMediaOverlayOpenHint("url-change");
       sendMediaOverlayDebug("url-change", {
         force: true,
         previousUrl,

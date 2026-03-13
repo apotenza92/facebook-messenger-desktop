@@ -4,6 +4,7 @@ const {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
+  shouldTreatDetectedMediaOverlayAsVisible,
   shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
   shouldHideMediaViewerBannerWhileLoading,
   shouldTreatHintedMediaOverlayAsVisible,
@@ -144,6 +145,7 @@ const runViewportPolicyTests = () => {
       hasDismissAction: false,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
     }),
     true,
     "#49 photo route should hide the Facebook banner while viewer controls are still loading",
@@ -154,6 +156,7 @@ const runViewportPolicyTests = () => {
       hasDismissAction: false,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
     }),
     true,
     "#49 messages media viewer route should hide the Facebook banner while viewer controls are still loading",
@@ -164,6 +167,7 @@ const runViewportPolicyTests = () => {
       hasDismissAction: true,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
     }),
     false,
     "#49 photo route should stop hiding the banner once dismiss controls mount",
@@ -174,6 +178,7 @@ const runViewportPolicyTests = () => {
       hasDismissAction: false,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
     }),
     false,
     "#49 non-photo media routes should keep their existing banner behavior",
@@ -184,9 +189,21 @@ const runViewportPolicyTests = () => {
       hasDismissAction: false,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
     }),
     false,
     "#49 chat routes should never enter the media-loading banner suppression state",
+  );
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/photo/123",
+      hasDismissAction: false,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasNavigationAction: true,
+    }),
+    false,
+    "#49 photo route should stop hiding the banner once viewer navigation mounts",
   );
   assertEqual(
     shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
@@ -196,6 +213,7 @@ const runViewportPolicyTests = () => {
       hasMarkedCloseAction: false,
       hasMarkedDownloadAction: false,
       hasMarkedShareAction: false,
+      hasVisibleNavigationAction: false,
     }),
     true,
     "#49 loading window should keep the banner hidden while route-based media chrome is still absent",
@@ -208,9 +226,23 @@ const runViewportPolicyTests = () => {
       hasMarkedCloseAction: true,
       hasMarkedDownloadAction: false,
       hasMarkedShareAction: false,
+      hasVisibleNavigationAction: false,
     }),
     false,
     "#49 loading banner must stop hiding once a close action has been captured",
+  );
+  assertEqual(
+    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
+      loadingWindowActive: true,
+      routeBasedLoading: true,
+      hintedOverlayLoading: false,
+      hasMarkedCloseAction: false,
+      hasMarkedDownloadAction: false,
+      hasMarkedShareAction: false,
+      hasVisibleNavigationAction: true,
+    }),
+    false,
+    "#49 loading banner must stop hiding once viewer navigation is visible",
   );
   assertEqual(
     shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
@@ -220,6 +252,7 @@ const runViewportPolicyTests = () => {
       hasMarkedCloseAction: false,
       hasMarkedDownloadAction: false,
       hasMarkedShareAction: false,
+      hasVisibleNavigationAction: false,
     }),
     false,
     "#49 loading banner suppression must expire when the bounded loading window ends",
@@ -229,6 +262,7 @@ const runViewportPolicyTests = () => {
       dismissCount: 1,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
       hasLargeMedia: false,
       hasPendingOpenHint: true,
     }),
@@ -240,6 +274,7 @@ const runViewportPolicyTests = () => {
       dismissCount: 2,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
       hasLargeMedia: false,
       hasPendingOpenHint: true,
     }),
@@ -251,6 +286,7 @@ const runViewportPolicyTests = () => {
       dismissCount: 1,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
       hasLargeMedia: true,
       hasPendingOpenHint: true,
     }),
@@ -259,14 +295,72 @@ const runViewportPolicyTests = () => {
   );
   assertEqual(
     shouldTreatHintedMediaOverlayAsVisible({
+      dismissCount: 1,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasNavigationAction: true,
+      hasLargeMedia: false,
+      hasPendingOpenHint: true,
+    }),
+    true,
+    "#49 pending open hint should force media mode once dismiss plus photo navigation chrome appears",
+  );
+  assertEqual(
+    shouldTreatHintedMediaOverlayAsVisible({
       dismissCount: 2,
       hasDownloadAction: false,
       hasShareAction: false,
+      hasNavigationAction: false,
       hasLargeMedia: false,
       hasPendingOpenHint: false,
     }),
     false,
     "#49 overlay chrome without a pending hint should still wait for stable media signals",
+  );
+  assertEqual(
+    shouldTreatDetectedMediaOverlayAsVisible({
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
+      hasShareAction: true,
+      hasNavigationAction: false,
+      hasLargeMedia: true,
+      hasPendingOpenHint: false,
+    }),
+    false,
+    "#49 chat thread share actions plus a large inline image must not keep media mode stuck after close",
+  );
+  assertEqual(
+    shouldTreatDetectedMediaOverlayAsVisible({
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: true,
+      hasShareAction: false,
+      hasNavigationAction: false,
+      hasLargeMedia: true,
+      hasPendingOpenHint: false,
+    }),
+    true,
+    "#49 download plus large media should still count as a real overlay on chat routes",
+  );
+  assertEqual(
+    shouldTreatDetectedMediaOverlayAsVisible({
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 2,
+      hasDownloadAction: false,
+      hasShareAction: true,
+      hasNavigationAction: false,
+      hasLargeMedia: true,
+      hasPendingOpenHint: false,
+    }),
+    true,
+    "#49 share-only overlays should still count once strong dismiss chrome is present",
   );
 };
 
@@ -751,6 +845,24 @@ const runIncomingCallIpcPolicyTests = () => {
     firstKeyed.callKey,
     "call-123",
     "incoming-call IPC should normalize dedupe key",
+  );
+  map.set(incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_MAP_KEY, firstKeyed.now);
+
+  const noKeyAfterRecentIncomingCall = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+    payload: {},
+    now: firstKeyed.now + 2_000,
+    notificationByKey: map,
+    lastNoKeyIncomingCallNotificationAt: firstKeyed.now,
+  });
+  assertEqual(
+    noKeyAfterRecentIncomingCall.shouldNotify,
+    false,
+    "incoming-call IPC should suppress no-key echoes immediately after a recent incoming-call notification",
+  );
+  assertEqual(
+    noKeyAfterRecentIncomingCall.reason,
+    "no-key-cooldown",
+    "incoming-call IPC should treat recent incoming-call notifications as no-key cooldown guards",
   );
 
   map.set(firstKeyed.callKey, firstKeyed.now);
