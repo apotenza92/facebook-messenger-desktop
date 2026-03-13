@@ -100,6 +100,29 @@ export function shouldHideMediaViewerBannerWhileLoading(input: {
   );
 }
 
+export function shouldKeepMediaViewerBannerHiddenDuringLoadingWindow(input: {
+  loadingWindowActive: boolean;
+  routeBasedLoading: boolean;
+  hintedOverlayLoading: boolean;
+  hasMarkedCloseAction: boolean;
+  hasMarkedDownloadAction: boolean;
+  hasMarkedShareAction: boolean;
+}): boolean {
+  if (!input.loadingWindowActive) {
+    return false;
+  }
+
+  if (
+    input.hasMarkedCloseAction ||
+    input.hasMarkedDownloadAction ||
+    input.hasMarkedShareAction
+  ) {
+    return false;
+  }
+
+  return input.routeBasedLoading || input.hintedOverlayLoading;
+}
+
 export function shouldTreatHintedMediaOverlayAsVisible(input: {
   dismissCount: number;
   hasDownloadAction: boolean;

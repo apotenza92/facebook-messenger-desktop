@@ -33,6 +33,40 @@ export type IncomingCallNativeNotificationDecision = {
 
 export type IncomingCallSignalEscalationDecision = IncomingCallEscalationDecision;
 
+export type IncomingCallWindowFocusTarget = {
+  isMinimized: () => boolean;
+  restore: () => void;
+  show: () => void;
+  focus: () => void;
+};
+
+export function applyIncomingCallWindowFocus(
+  target: IncomingCallWindowFocusTarget | null,
+): {
+  focused: boolean;
+  restoredFromMinimized: boolean;
+} {
+  if (!target) {
+    return {
+      focused: false,
+      restoredFromMinimized: false,
+    };
+  }
+
+  const restoredFromMinimized = target.isMinimized();
+  if (restoredFromMinimized) {
+    target.restore();
+  }
+
+  target.show();
+  target.focus();
+
+  return {
+    focused: true,
+    restoredFromMinimized,
+  };
+}
+
 export function normalizeIncomingCallDedupeKey(
   payload?: IncomingCallIpcPayload,
 ): string | null {

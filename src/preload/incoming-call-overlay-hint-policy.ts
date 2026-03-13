@@ -7,6 +7,12 @@ export type IncomingCallUiVisibilitySignals = {
   textSignal: boolean;
 };
 
+export type IncomingCallOverlayHintEvidence = {
+  source?: string;
+  confidence?: string;
+  hasVisibleControls?: boolean;
+};
+
 export function shouldTreatIncomingCallUiAsVisible(
   signals: IncomingCallUiVisibilitySignals,
 ): boolean {
@@ -21,6 +27,33 @@ export function shouldTreatIncomingCallUiAsVisible(
   return (
     signals.titleSignal || signals.selectorSignal || signals.textSignal
   );
+}
+
+export function shouldActivateIncomingCallHint(params: {
+  evidence?: IncomingCallOverlayHintEvidence | null;
+  overlayVisibleNow: boolean;
+}): boolean {
+  if (params.overlayVisibleNow) {
+    return true;
+  }
+
+  const evidence = params.evidence;
+  if (!evidence) {
+    return false;
+  }
+
+  if (evidence.confidence === "low") {
+    return false;
+  }
+
+  if (
+    evidence.source === "native-notification" ||
+    evidence.source === "periodic-scan"
+  ) {
+    return false;
+  }
+
+  return evidence.source === "dom-explicit" || evidence.hasVisibleControls === true;
 }
 
 export function shouldKeepIncomingCallHintActive(params: {

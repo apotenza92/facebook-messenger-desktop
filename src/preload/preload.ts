@@ -4,11 +4,13 @@ import {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
+  shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
   shouldHideMediaViewerBannerWhileLoading,
   shouldTreatHintedMediaOverlayAsVisible,
 } from "./messages-viewport-policy";
 import {
   getIncomingCallHintClearReason,
+  shouldActivateIncomingCallHint,
   shouldKeepIncomingCallHintActive,
   shouldTreatIncomingCallUiAsVisible,
 } from "./incoming-call-overlay-hint-policy";
@@ -476,6 +478,12 @@ ipcRenderer.on(
     hasLargeMedia: boolean;
   };
 
+  type MarkedMediaActionState = {
+    closeMarked: boolean;
+    downloadMarked: boolean;
+    shareMarked: boolean;
+  };
+
   const collectMediaOverlaySignals = (): MediaOverlaySignals => {
     const path = window.location.pathname.toLowerCase();
     const modeFromPath = resolveViewportMode({
@@ -605,21 +613,23 @@ ipcRenderer.on(
 
   const shouldHideMediaBannerDuringLoad = (
     signals: MediaOverlaySignals,
+    markedActions: MarkedMediaActionState,
   ): boolean => {
-    if (
-      hasMediaOverlayOpenHint() &&
-      !signals.hasDownloadAction &&
-      !signals.hasShareAction &&
-      (signals.dismissCount >= 2 || signals.hasLargeMedia)
-    ) {
-      return true;
-    }
-
-    return shouldHideMediaViewerBannerWhileLoading({
-      urlPath: signals.path,
-      hasDismissAction: signals.hasDismissAction,
-      hasDownloadAction: signals.hasDownloadAction,
-      hasShareAction: signals.hasShareAction,
+    return shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
+      loadingWindowActive: hasMediaOverlayOpenHint(),
+      routeBasedLoading: shouldHideMediaViewerBannerWhileLoading({
+        urlPath: signals.path,
+        hasDismissAction: signals.hasDismissAction,
+        hasDownloadAction: signals.hasDownloadAction,
+        hasShareAction: signals.hasShareAction,
+      }),
+      hintedOverlayLoading:
+        !signals.hasDownloadAction &&
+        !signals.hasShareAction &&
+        (signals.dismissCount >= 2 || signals.hasLargeMedia),
+      hasMarkedCloseAction: markedActions.closeMarked,
+      hasMarkedDownloadAction: markedActions.downloadMarked,
+      hasMarkedShareAction: markedActions.shareMarked,
     });
   };
 
@@ -643,14 +653,26 @@ ipcRenderer.on(
     }, remainingMs + 5);
   };
 
-  const applyMediaOverlayOpenHint = (reason: string): void => {
-    mediaOverlayOpenHintUntil = Date.now() + MEDIA_OPEN_HINT_DURATION_MS;
-    sendMediaOverlayDebug("media-open-hint", {
+  const primeMediaOverlayOpenHint = (reason: string): void => {
+    const nextUntil = Date.now() + MEDIA_OPEN_HINT_DURATION_MS;
+    if (nextUntil <= mediaOverlayOpenHintUntil) return;
+
+    mediaOverlayOpenHintUntil = nextUntil;
+    sendMediaOverlayDebug("media-open-hint-primed", {
       force: true,
       reason,
       expiresInMs: MEDIA_OPEN_HINT_DURATION_MS,
     });
     scheduleMediaOpenHintExpiry();
+  };
+
+  const applyMediaOverlayOpenHint = (reason: string): void => {
+    primeMediaOverlayOpenHint(reason);
+    sendMediaOverlayDebug("media-open-hint", {
+      force: true,
+      reason,
+      expiresInMs: MEDIA_OPEN_HINT_DURATION_MS,
+    });
     scheduleMediaOverlayRecheck();
     scheduleApply();
     scheduleViewportStateSend(true);
@@ -880,10 +902,15 @@ ipcRenderer.on(
     return candidates;
   };
 
-  const markMediaActions = (): void => {
+  const markMediaActions = (): MarkedMediaActionState => {
     clearMarkedMediaActions();
 
     const selectedNodes = new Set<HTMLElement>();
+    const markedState: MarkedMediaActionState = {
+      closeMarked: false,
+      downloadMarked: false,
+      shareMarked: false,
+    };
     let usingRightDismissLayout = true;
     let pinnedTopOffset = MEDIA_ACTION_TOP_OFFSET;
     let mirroredEdgeGap = MEDIA_ACTION_CLOSE_LEFT_OFFSET;
@@ -915,6 +942,7 @@ ipcRenderer.on(
 
       closeNode.classList.add(MEDIA_CLOSE_ACTION_CLASS);
       selectedNodes.add(closeNode);
+      markedState.closeMarked = true;
       usingRightDismissLayout = isRightDismiss;
       pinnedTopOffset = Math.max(
         MEDIA_ACTION_TOP_OFFSET,
@@ -955,6 +983,11 @@ ipcRenderer.on(
         );
         if (pinned) {
           selectedNodes.add(node);
+          if (className === MEDIA_DOWNLOAD_ACTION_CLASS) {
+            markedState.downloadMarked = true;
+          } else if (className === MEDIA_SHARE_ACTION_CLASS) {
+            markedState.shareMarked = true;
+          }
           return;
         }
         node.classList.remove(className);
@@ -986,6 +1019,8 @@ ipcRenderer.on(
       MEDIA_SHARE_ACTION_CLASS,
       shareOffset,
     );
+
+    return markedState;
   };
 
   const resolveMode = (): MessagesViewportMode =>
@@ -1246,13 +1281,26 @@ ipcRenderer.on(
     const mediaSignals = mode === "media" ? collectMediaOverlaySignals() : null;
 
     if (mode === "media" && !detectedIncomingCallOverlayVisible && !incomingCallOverlayHintActive) {
+      if (
+        mediaSignals &&
+        !hasMediaOverlayOpenHint() &&
+        shouldHideMediaViewerBannerWhileLoading({
+          urlPath: mediaSignals.path,
+          hasDismissAction: mediaSignals.hasDismissAction,
+          hasDownloadAction: mediaSignals.hasDownloadAction,
+          hasShareAction: mediaSignals.hasShareAction,
+        })
+      ) {
+        primeMediaOverlayOpenHint("media-route-loading");
+      }
+
+      const markedActions = markMediaActions();
       document.documentElement.classList.add(MEDIA_CLEAN_CLASS);
-      if (mediaSignals && shouldHideMediaBannerDuringLoad(mediaSignals)) {
+      if (mediaSignals && shouldHideMediaBannerDuringLoad(mediaSignals, markedActions)) {
         document.documentElement.classList.add(MEDIA_LOADING_CLASS);
       } else {
         document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
       }
-      markMediaActions();
     } else {
       document.documentElement.classList.remove(MEDIA_CLEAN_CLASS);
       document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
@@ -1909,10 +1957,12 @@ ipcRenderer.on(
             ? incomingCallData.evidence
             : null;
 
+        const overlayVisibleNow = detectIncomingCallOverlayVisibleForHint();
         if (
-          evidence &&
-          evidence.confidence !== "low" &&
-          evidence.source !== "native-notification"
+          shouldActivateIncomingCallHint({
+            evidence,
+            overlayVisibleNow,
+          })
         ) {
           // Force-disable header crop so in-page incoming call controls stay visible
           // while Messenger animates in. Keep hint sticky for a grace window even if

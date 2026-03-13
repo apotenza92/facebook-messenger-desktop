@@ -1724,7 +1724,9 @@
       /\bongoing call\b/i,
       /\byou started (?:an? )?(?:video |audio )?call\b/i,
       /\bstarted (?:an? )?(?:video |audio )?call\b/i,
+      /\b(?:video |audio )?call (?:has )?started\b/i,
       /\bjoined (?:the )?(?:video |audio )?call\b/i,
+      /\bjoin(?:ed|ing)? (?:the )?(?:video |audio )?call\b/i,
       /\bcall ended\b/i,
       /\bmissed (?:video |audio )?call\b/i,
       /\bcall cancel(?:ed|led)\b/i,
@@ -2100,7 +2102,9 @@
           markIncomingCallUiVisible(now);
 
           if (now - lastCallSignalTime >= CALL_SIGNAL_DEBOUNCE_MS && !isWindowFocused()) {
-            const payload = buildIncomingCallPayload('periodic-scan', {
+            const periodicScanEvidenceSource: IncomingCallEvidenceSource =
+              uiState.hasVisibleControls ? 'dom-explicit' : 'periodic-scan';
+            const payload = buildIncomingCallPayload(periodicScanEvidenceSource, {
               caller: uiState.caller,
               matchedPattern: uiState.matchedPattern,
               hasVisibleControls: uiState.hasVisibleControls,

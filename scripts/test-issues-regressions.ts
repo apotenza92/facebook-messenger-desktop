@@ -4,6 +4,7 @@ const {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
   shouldApplyMessagesCrop,
+  shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
   shouldHideMediaViewerBannerWhileLoading,
   shouldTreatHintedMediaOverlayAsVisible,
 } = require("../src/preload/messages-viewport-policy");
@@ -186,6 +187,42 @@ const runViewportPolicyTests = () => {
     }),
     false,
     "#49 chat routes should never enter the media-loading banner suppression state",
+  );
+  assertEqual(
+    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
+      loadingWindowActive: true,
+      routeBasedLoading: true,
+      hintedOverlayLoading: false,
+      hasMarkedCloseAction: false,
+      hasMarkedDownloadAction: false,
+      hasMarkedShareAction: false,
+    }),
+    true,
+    "#49 loading window should keep the banner hidden while route-based media chrome is still absent",
+  );
+  assertEqual(
+    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
+      loadingWindowActive: true,
+      routeBasedLoading: true,
+      hintedOverlayLoading: false,
+      hasMarkedCloseAction: true,
+      hasMarkedDownloadAction: false,
+      hasMarkedShareAction: false,
+    }),
+    false,
+    "#49 loading banner must stop hiding once a close action has been captured",
+  );
+  assertEqual(
+    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
+      loadingWindowActive: false,
+      routeBasedLoading: true,
+      hintedOverlayLoading: true,
+      hasMarkedCloseAction: false,
+      hasMarkedDownloadAction: false,
+      hasMarkedShareAction: false,
+    }),
+    false,
+    "#49 loading banner suppression must expire when the bounded loading window ends",
   );
   assertEqual(
     shouldTreatHintedMediaOverlayAsVisible({
@@ -427,6 +464,10 @@ const runIncomingCallHintPolicyTests = () => {
     "incoming call hint policy missing shouldTreatIncomingCallUiAsVisible",
   );
   assert(
+    typeof incomingCallHintPolicy.shouldActivateIncomingCallHint === "function",
+    "incoming call hint policy missing shouldActivateIncomingCallHint",
+  );
+  assert(
     typeof incomingCallHintPolicy.shouldKeepIncomingCallHintActive ===
       "function",
     "incoming call hint policy missing shouldKeepIncomingCallHintActive",
@@ -459,6 +500,42 @@ const runIncomingCallHintPolicyTests = () => {
     }),
     true,
     "#47 call text signal should keep incoming-call hint visible",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldActivateIncomingCallHint({
+      evidence: {
+        source: "dom-soft",
+        confidence: "medium",
+        hasVisibleControls: false,
+      },
+      overlayVisibleNow: false,
+    }),
+    false,
+    "#41 soft/background evidence alone should not start the incoming-call overlay hint",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldActivateIncomingCallHint({
+      evidence: {
+        source: "dom-explicit",
+        confidence: "high",
+        hasVisibleControls: true,
+      },
+      overlayVisibleNow: false,
+    }),
+    true,
+    "#41 explicit incoming-call UI should still start the incoming-call overlay hint",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldActivateIncomingCallHint({
+      evidence: {
+        source: "native-notification",
+        confidence: "medium",
+        hasVisibleControls: false,
+      },
+      overlayVisibleNow: true,
+    }),
+    true,
+    "#41 a currently visible incoming-call overlay should keep the hint active even after a native-notification signal",
   );
   assertEqual(
     incomingCallHintPolicy.shouldKeepIncomingCallHintActive({
@@ -1036,6 +1113,28 @@ const runNotificationPolicyTests = () => {
     answeredElsewhereClassifier.isIncomingCall,
     false,
     "#41 call classifier should reject answered-elsewhere status rows",
+  );
+
+  const callStartedClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Messenger",
+      body: "Video call has started",
+    });
+  assertEqual(
+    callStartedClassifier.isIncomingCall,
+    false,
+    "#41 call classifier should reject in-progress call started status rows",
+  );
+
+  const joinCallClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Messenger",
+      body: "Join the video call",
+    });
+  assertEqual(
+    joinCallClassifier.isIncomingCall,
+    false,
+    "#41 call classifier should reject join-call status rows",
   );
 
   const titleOnlyClassifier =

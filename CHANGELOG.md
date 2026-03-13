@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0-beta.28] - 2026-03-13
+
+### Fixed
+
+- **Issue #41 follow-up: tighten stale incoming-call recovery and overlay activation rules** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Stop status text like `Video call has started` and `Join the video call` from being classified as new incoming calls.
+  - Prevent soft/background evidence from activating the incoming-call overlay hint unless explicit incoming-call UI is actually visible.
+  - Treat periodic scans that find visible incoming-call controls as explicit DOM evidence instead of weaker background evidence.
+  - Centralize incoming-call window focus behavior and expand deterministic regression coverage for the stale/false-positive cases.
+- **Photo viewer loading polish**
+  - Keep the Facebook top banner hidden only during the bounded media-loading window and stop suppression as soon as marked close/download/share controls appear, preventing navigation controls from disappearing after the viewer UI mounts.
+
+### Validation
+
+- `npm run test:issues:deterministic`
+- `npm run build`
+
 ## [1.3.0-beta.27] - 2026-03-12
 
 ### Fixed
