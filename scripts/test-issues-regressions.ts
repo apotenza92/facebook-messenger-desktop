@@ -1,5 +1,14 @@
 type ViewportMode = "chat" | "media" | "other";
 
+type DeterministicCaseName = "all" | "muted-conflict";
+
+const fs = require("fs");
+const path = require("path");
+
+const APP_ROOT = process.env.MESSENGER_APP_ROOT
+  ? path.resolve(process.env.MESSENGER_APP_ROOT)
+  : path.resolve(__dirname, "..");
+
 const {
   resolveMediaViewerStateVisible,
   resolveViewportMode,
@@ -8,16 +17,22 @@ const {
   shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
   shouldHideMediaViewerBannerWhileLoading,
   shouldTreatHintedMediaOverlayAsVisible,
-} = require("../src/preload/messages-viewport-policy");
-const incomingCallHintPolicy = require("../src/preload/incoming-call-overlay-hint-policy.ts");
-const notificationDecisionPolicy = require("../src/preload/notification-decision-policy.ts");
-const incomingCallOverlayPolicy = require("../src/main/incoming-call-overlay-policy.ts");
-const incomingCallIpcPolicy = require("../src/main/incoming-call-ipc-policy.ts");
-const incomingCallEvidence = require("../src/shared/incoming-call-evidence.ts");
-const {
-  isMessagesRoute,
-  isMessagesMediaViewerRoute,
-} = require("../src/main/url-policy");
+} = require(path.join(APP_ROOT, "src/preload/messages-viewport-policy"));
+const loadIncomingCallHintPolicy = () =>
+  require(
+    path.join(APP_ROOT, "src/preload/incoming-call-overlay-hint-policy.ts"),
+  );
+const loadNotificationDecisionPolicy = () =>
+  require(path.join(APP_ROOT, "src/preload/notification-decision-policy.ts"));
+const loadIncomingCallOverlayPolicy = () =>
+  require(path.join(APP_ROOT, "src/main/incoming-call-overlay-policy.ts"));
+const loadIncomingCallIpcPolicy = () =>
+  require(path.join(APP_ROOT, "src/main/incoming-call-ipc-policy.ts"));
+const loadIncomingCallEvidence = () =>
+  require(path.join(APP_ROOT, "src/shared/incoming-call-evidence.ts"));
+const { isMessagesRoute, isMessagesMediaViewerRoute } = require(
+  path.join(APP_ROOT, "src/main/url-policy"),
+);
 
 const assert = (condition: boolean, message: string) => {
   if (!condition) {
@@ -65,6 +80,152 @@ const shouldApplyMainCrop = (input: {
   );
 };
 
+const parseCliArgs = (
+  argv: string[],
+): {
+  caseName: DeterministicCaseName;
+  jsonOutput?: string;
+} => {
+  let caseName: DeterministicCaseName = "all";
+  let jsonOutput: string | undefined;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--case") {
+      const value = String(argv[i + 1] || "").trim();
+      i += 1;
+      if (value === "all" || value === "muted-conflict") {
+        caseName = value;
+      } else {
+        throw new Error(`Unknown --case value: ${value}`);
+      }
+    } else if (arg === "--json-output") {
+      jsonOutput = path.resolve(String(argv[i + 1] || "").trim());
+      i += 1;
+    } else if (arg === "--app-root") {
+      // Consumed by APP_ROOT via env; accepting the flag keeps the script ergonomically consistent.
+      i += 1;
+    } else if (arg === "--help" || arg === "-h") {
+      console.log(
+        `Usage: node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts [options]\n\nOptions:\n  --case <all|muted-conflict>   Run the full deterministic suite or the Issue #46 evidence case\n  --json-output <path>          Write structured JSON evidence to the given path\n  --app-root <dir>              Alternate app root (prefer MESSENGER_APP_ROOT env)\n`,
+      );
+      process.exit(0);
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  return { caseName, jsonOutput };
+};
+
+const writeJsonOutput = (
+  jsonOutput: string | undefined,
+  value: unknown,
+): void => {
+  if (!jsonOutput) return;
+  fs.mkdirSync(path.dirname(jsonOutput), { recursive: true });
+  fs.writeFileSync(jsonOutput, JSON.stringify(value, null, 2), "utf8");
+};
+
+const buildMutedConflictEvidence = () => {
+  const notificationDecisionPolicy = loadNotificationDecisionPolicy();
+  const payload = {
+    title: "Alex",
+    body: "sent a message",
+  };
+  const candidateRows = [
+    {
+      href: "/t/alex",
+      title: "Alex",
+      body: "sent a message",
+      muted: false,
+      unread: true,
+    },
+    {
+      href: "/t/group-project",
+      title: "Project Squad",
+      body: "Alex sent a message",
+      muted: true,
+      unread: true,
+    },
+  ];
+  const observedHref = "/t/alex";
+  const nativeMatch =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      payload,
+      candidateRows,
+    );
+  const observedDecision =
+    typeof notificationDecisionPolicy.resolveObservedSidebarNotificationTarget ===
+    "function"
+      ? notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+          payload,
+          observedHref,
+          candidateRows,
+        )
+      : {
+          ...nativeMatch,
+          observedHref,
+          matchedObservedHref: nativeMatch.matchedHref === observedHref,
+          shouldNotify:
+            !nativeMatch.ambiguous &&
+            !nativeMatch.muted &&
+            nativeMatch.matchedHref === observedHref,
+          fallback: "derived-from-native-match",
+        };
+  const capturedNotificationEvents = Array.isArray(
+    (globalThis as typeof globalThis & { __mdNotificationEvents?: unknown[] })
+      .__mdNotificationEvents,
+  )
+    ? [
+        ...((
+          globalThis as typeof globalThis & {
+            __mdNotificationEvents?: unknown[];
+          }
+        ).__mdNotificationEvents as unknown[]),
+      ]
+    : [];
+
+  return {
+    case: "muted-conflict",
+    generatedAt: new Date().toISOString(),
+    appRoot: APP_ROOT,
+    expected: {
+      nativeReason: "muted-conflict",
+      nativeShouldNotify: false,
+      observedReason: "muted-conflict",
+      observedShouldNotify: false,
+      matchedHref: null,
+      matchedObservedHref: false,
+    },
+    payload,
+    candidateRows,
+    nativeMatch: {
+      ...nativeMatch,
+      shouldNotify: !nativeMatch.ambiguous && !nativeMatch.muted,
+      matchedHref: nativeMatch.matchedHref ?? null,
+      unmatchedHrefs: candidateRows
+        .map((candidate: { href: string }) => candidate.href)
+        .filter((href: string) => href !== nativeMatch.matchedHref),
+    },
+    observedDecision: {
+      ...observedDecision,
+      observedHref,
+      matchedHref: observedDecision.matchedHref ?? null,
+      unmatchedHrefs: candidateRows
+        .map((candidate: { href: string }) => candidate.href)
+        .filter((href: string) => href !== observedDecision.matchedHref),
+    },
+    notificationCapture: {
+      enabled:
+        process.env.MESSENGER_TEST_CAPTURE_NOTIFICATIONS === "1" ||
+        process.env.MESSENGER_TEST_CAPTURE_NOTIFICATIONS === "true",
+      eventCount: capturedNotificationEvents.length,
+      events: capturedNotificationEvents,
+    },
+  };
+};
+
 const runViewportPolicyTests = () => {
   const expectMode = (
     path: string,
@@ -73,7 +234,10 @@ const runViewportPolicyTests = () => {
     expectedCrop: boolean,
   ) => {
     const mode = resolveViewportMode({ urlPath: path, mediaOverlayVisible });
-    const crop = shouldApplyMessagesCrop({ urlPath: path, mediaOverlayVisible });
+    const crop = shouldApplyMessagesCrop({
+      urlPath: path,
+      mediaOverlayVisible,
+    });
     assertEqual(
       mode,
       expectedMode,
@@ -92,6 +256,7 @@ const runViewportPolicyTests = () => {
   expectMode("/messages/e2ee/t/123", false, "chat", true);
   expectMode("/messages/e2ee/t/123", true, "media", false);
   expectMode("/messages/media_viewer.123", false, "media", false);
+  expectMode("/messenger_media/?attachment_id=123", false, "media", false);
   expectMode("/photo/123", false, "media", false);
   expectMode("/settings", false, "other", false);
 
@@ -160,6 +325,17 @@ const runViewportPolicyTests = () => {
     }),
     true,
     "#49 messages media viewer route should hide the Facebook banner while viewer controls are still loading",
+  );
+  assertEqual(
+    shouldHideMediaViewerBannerWhileLoading({
+      urlPath: "/messenger_media/?attachment_id=123",
+      hasDismissAction: false,
+      hasDownloadAction: false,
+      hasShareAction: false,
+      hasNavigationAction: false,
+    }),
+    true,
+    "#49 messenger_media route should hide the Facebook banner while viewer controls are still loading",
   );
   assertEqual(
     shouldHideMediaViewerBannerWhileLoading({
@@ -266,8 +442,8 @@ const runViewportPolicyTests = () => {
       hasLargeMedia: false,
       hasPendingOpenHint: true,
     }),
-    false,
-    "#49 pending open hint alone should not force media mode without overlay chrome",
+    true,
+    "#49 pending open hint should treat a single dismiss control as enough same-route overlay chrome",
   );
   assertEqual(
     shouldTreatHintedMediaOverlayAsVisible({
@@ -324,6 +500,21 @@ const runViewportPolicyTests = () => {
       hasDismissAction: true,
       dismissCount: 1,
       hasDownloadAction: false,
+      hasShareAction: false,
+      hasNavigationAction: false,
+      hasLargeMedia: false,
+      hasPendingOpenHint: true,
+    }),
+    true,
+    "#49 same-route chat overlays should enter media mode once a hinted dismiss control appears",
+  );
+  assertEqual(
+    shouldTreatDetectedMediaOverlayAsVisible({
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
       hasShareAction: true,
       hasNavigationAction: false,
       hasLargeMedia: true,
@@ -362,9 +553,25 @@ const runViewportPolicyTests = () => {
     true,
     "#49 share-only overlays should still count once strong dismiss chrome is present",
   );
+
+  const preloadSource = fs.readFileSync(
+    path.join(APP_ROOT, "src/preload/preload.ts"),
+    "utf8",
+  );
+  assert(
+    /Back to Previous Page/.test(preloadSource),
+    "#49 media dismiss selectors should include the real Back to Previous Page label",
+  );
+  assert(
+    /rankEdgeCloseCandidates\(\s*dismissActionSelectors,\s*selectedNodes,\s*\)/m.test(
+      preloadSource,
+    ),
+    "#49 media close ranking should reuse the shared dismiss selector source",
+  );
 };
 
 const runIncomingCallOverlayLifecycleTests = () => {
+  const incomingCallOverlayPolicy = loadIncomingCallOverlayPolicy();
   assert(
     typeof incomingCallOverlayPolicy.parseIncomingCallOverlayHintVisible ===
       "function",
@@ -423,7 +630,9 @@ const runIncomingCallOverlayLifecycleTests = () => {
 
   const chatUrl = "https://www.facebook.com/messages/t/123";
   assertEqual(
-    incomingCallOverlayPolicy.shouldResetIncomingCallOverlayOnNavigation(chatUrl),
+    incomingCallOverlayPolicy.shouldResetIncomingCallOverlayOnNavigation(
+      chatUrl,
+    ),
     false,
     "#47 incoming-call overlay should not reset on in-messages navigation",
   );
@@ -446,12 +655,13 @@ const runIncomingCallOverlayLifecycleTests = () => {
   );
 
   const t0 = 1_000;
-  const incomingCallStart = incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
-    state,
-    webContentsId,
-    true,
-    t0,
-  );
+  const incomingCallStart =
+    incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+      state,
+      webContentsId,
+      true,
+      t0,
+    );
   assertEqual(
     incomingCallStart.changed,
     true,
@@ -468,35 +678,38 @@ const runIncomingCallOverlayLifecycleTests = () => {
     "#47 main crop should be disabled while incoming-call hint is visible",
   );
 
-  const heartbeat = incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
-    state,
-    webContentsId,
-    true,
-    t0 + 12_000,
-  );
+  const heartbeat =
+    incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+      state,
+      webContentsId,
+      true,
+      t0 + 12_000,
+    );
   assertEqual(
     heartbeat.changed,
     false,
     "#47 incoming-call heartbeat should refresh timestamp without toggling visibility",
   );
 
-  const staleTooEarly = incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds(
-    state,
-    t0 + 12_000 + 29_999,
-    30_000,
-  );
+  const staleTooEarly =
+    incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds(
+      state,
+      t0 + 12_000 + 29_999,
+      30_000,
+    );
   assertEqual(
     staleTooEarly.includes(webContentsId),
     false,
     "#47 watchdog should not expire recent incoming-call heartbeat state",
   );
 
-  const incomingCallEnd = incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
-    state,
-    webContentsId,
-    false,
-    t0 + 13_000,
-  );
+  const incomingCallEnd =
+    incomingCallOverlayPolicy.applyIncomingCallOverlayHintSignal(
+      state,
+      webContentsId,
+      false,
+      t0 + 13_000,
+    );
   assertEqual(
     incomingCallEnd.changed,
     true,
@@ -519,21 +732,23 @@ const runIncomingCallOverlayLifecycleTests = () => {
     true,
     t0 + 30_000,
   );
-  const staleIds = incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds(
-    state,
-    t0 + 60_001,
-    30_000,
-  );
+  const staleIds =
+    incomingCallOverlayPolicy.collectStaleIncomingCallOverlayHintIds(
+      state,
+      t0 + 60_001,
+      30_000,
+    );
   assertEqual(
     staleIds.includes(webContentsId),
     true,
     "#47 watchdog should identify stale incoming-call hint state",
   );
 
-  const staleReset = incomingCallOverlayPolicy.clearIncomingCallOverlayHintState(
-    state,
-    webContentsId,
-  );
+  const staleReset =
+    incomingCallOverlayPolicy.clearIncomingCallOverlayHintState(
+      state,
+      webContentsId,
+    );
   assertEqual(
     staleReset.changed,
     true,
@@ -552,6 +767,7 @@ const runIncomingCallOverlayLifecycleTests = () => {
 };
 
 const runIncomingCallHintPolicyTests = () => {
+  const incomingCallHintPolicy = loadIncomingCallHintPolicy();
   assert(
     typeof incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible ===
       "function",
@@ -678,6 +894,8 @@ const runIncomingCallHintPolicyTests = () => {
 };
 
 const runIncomingCallIpcPolicyTests = () => {
+  const incomingCallIpcPolicy = loadIncomingCallIpcPolicy();
+  const incomingCallEvidence = loadIncomingCallEvidence();
   assert(
     typeof incomingCallIpcPolicy.applyIncomingCallWindowFocus === "function",
     "incoming call IPC policy missing applyIncomingCallWindowFocus",
@@ -713,11 +931,10 @@ const runIncomingCallIpcPolicyTests = () => {
     "#47 periodic-scan call signals without a caller should not arm incoming-call reminder state",
   );
 
-  const domSignalEscalation = incomingCallIpcPolicy.decideIncomingCallSignalEscalation(
-    {
+  const domSignalEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
       source: "dom-node",
-    },
-  );
+    });
   assertEqual(
     domSignalEscalation.shouldEscalate,
     true,
@@ -819,7 +1036,8 @@ const runIncomingCallIpcPolicyTests = () => {
     "incoming-call IPC should show/focus non-minimized windows",
   );
 
-  const noWindowResult = incomingCallIpcPolicy.applyIncomingCallWindowFocus(null);
+  const noWindowResult =
+    incomingCallIpcPolicy.applyIncomingCallWindowFocus(null);
   assertEqual(
     noWindowResult.focused,
     false,
@@ -830,12 +1048,14 @@ const runIncomingCallIpcPolicyTests = () => {
   const map = new Map<string, number>([["stale-key", baseNow - 80_000]]);
   let lastNoKeyAt = 0;
 
-  const firstKeyed = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: { dedupeKey: " call-123 " },
-    now: baseNow,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const firstKeyed = incomingCallIpcPolicy.decideIncomingCallNativeNotification(
+    {
+      payload: { dedupeKey: " call-123 " },
+      now: baseNow,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    },
+  );
   assertEqual(
     firstKeyed.shouldNotify,
     true,
@@ -848,12 +1068,13 @@ const runIncomingCallIpcPolicyTests = () => {
   );
   map.set(incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_MAP_KEY, firstKeyed.now);
 
-  const noKeyAfterRecentIncomingCall = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: {},
-    now: firstKeyed.now + 2_000,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: firstKeyed.now,
-  });
+  const noKeyAfterRecentIncomingCall =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: {},
+      now: firstKeyed.now + 2_000,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: firstKeyed.now,
+    });
   assertEqual(
     noKeyAfterRecentIncomingCall.shouldNotify,
     false,
@@ -867,12 +1088,13 @@ const runIncomingCallIpcPolicyTests = () => {
 
   map.set(firstKeyed.callKey, firstKeyed.now);
 
-  const duplicateKeyed = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: { dedupeKey: "call-123" },
-    now: baseNow + 3_000,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const duplicateKeyed =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: { dedupeKey: "call-123" },
+      now: baseNow + 3_000,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    });
   assertEqual(
     duplicateKeyed.shouldNotify,
     false,
@@ -885,14 +1107,16 @@ const runIncomingCallIpcPolicyTests = () => {
   );
 
   const ttlMs = incomingCallIpcPolicy.INCOMING_CALL_KEY_TTL_MS;
-  const noKeyCooldownMs = incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_COOLDOWN_MS;
+  const noKeyCooldownMs =
+    incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_COOLDOWN_MS;
 
-  const keyedAfterTtl = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: { dedupeKey: "call-123" },
-    now: firstKeyed.now + ttlMs + 5,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const keyedAfterTtl =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: { dedupeKey: "call-123" },
+      now: firstKeyed.now + ttlMs + 5,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    });
   assertEqual(
     keyedAfterTtl.shouldNotify,
     true,
@@ -904,12 +1128,14 @@ const runIncomingCallIpcPolicyTests = () => {
     "incoming-call IPC should clean stale dedupe keys",
   );
 
-  const noKeyFirst = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: {},
-    now: baseNow + ttlMs + 10_000,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const noKeyFirst = incomingCallIpcPolicy.decideIncomingCallNativeNotification(
+    {
+      payload: {},
+      now: baseNow + ttlMs + 10_000,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    },
+  );
   assertEqual(
     noKeyFirst.shouldNotify,
     true,
@@ -918,12 +1144,16 @@ const runIncomingCallIpcPolicyTests = () => {
   map.set(incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_MAP_KEY, noKeyFirst.now);
   lastNoKeyAt = noKeyFirst.now;
 
-  const noKeyJitter = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: {},
-    now: noKeyFirst.now + incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_JITTER_GUARD_MS - 1,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const noKeyJitter =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: {},
+      now:
+        noKeyFirst.now +
+        incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_JITTER_GUARD_MS -
+        1,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    });
   assertEqual(
     noKeyJitter.shouldNotify,
     false,
@@ -935,12 +1165,16 @@ const runIncomingCallIpcPolicyTests = () => {
     "incoming-call IPC should report no-key jitter dedupe reason",
   );
 
-  const noKeyCooldown = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: {},
-    now: noKeyFirst.now + incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_JITTER_GUARD_MS + 50,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const noKeyCooldown =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: {},
+      now:
+        noKeyFirst.now +
+        incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_JITTER_GUARD_MS +
+        50,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    });
   assertEqual(
     noKeyCooldown.shouldNotify,
     false,
@@ -952,12 +1186,13 @@ const runIncomingCallIpcPolicyTests = () => {
     "incoming-call IPC should report no-key cooldown dedupe reason",
   );
 
-  const noKeyAfterCooldown = incomingCallIpcPolicy.decideIncomingCallNativeNotification({
-    payload: {},
-    now: noKeyFirst.now + noKeyCooldownMs + 5,
-    notificationByKey: map,
-    lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
-  });
+  const noKeyAfterCooldown =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: {},
+      now: noKeyFirst.now + noKeyCooldownMs + 5,
+      notificationByKey: map,
+      lastNoKeyIncomingCallNotificationAt: lastNoKeyAt,
+    });
   assertEqual(
     noKeyAfterCooldown.shouldNotify,
     true,
@@ -966,13 +1201,20 @@ const runIncomingCallIpcPolicyTests = () => {
 };
 
 const runNotificationPolicyTests = () => {
+  const notificationDecisionPolicy = loadNotificationDecisionPolicy();
   assert(
-    typeof notificationDecisionPolicy.resolveNativeNotificationTarget === "function",
+    typeof notificationDecisionPolicy.resolveNativeNotificationTarget ===
+      "function",
     "notification decision policy missing resolveNativeNotificationTarget",
   );
   assert(
     typeof notificationDecisionPolicy.createNotificationDeduper === "function",
     "notification decision policy missing createNotificationDeduper",
+  );
+  assert(
+    typeof notificationDecisionPolicy.resolveObservedSidebarNotificationTarget ===
+      "function",
+    "notification decision policy missing resolveObservedSidebarNotificationTarget",
   );
   assert(
     typeof notificationDecisionPolicy.isLikelyGlobalFacebookNotification ===
@@ -982,6 +1224,16 @@ const runNotificationPolicyTests = () => {
   assert(
     typeof notificationDecisionPolicy.classifyCallNotification === "function",
     "notification decision policy missing classifyCallNotification",
+  );
+  assert(
+    typeof notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview ===
+      "function",
+    "notification decision policy missing isLikelySelfAuthoredMessagePreview",
+  );
+  assert(
+    typeof notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification ===
+      "function",
+    "notification decision policy missing shouldSuppressSelfAuthoredNotification",
   );
 
   const mutedIndividualMatch =
@@ -1023,29 +1275,8 @@ const runNotificationPolicyTests = () => {
     "#46 muted individual should mark result as muted",
   );
 
-  const mutedConflictMatch =
-    notificationDecisionPolicy.resolveNativeNotificationTarget(
-      {
-        title: "Alex",
-        body: "sent a message",
-      },
-      [
-        {
-          href: "/t/alex",
-          title: "Alex",
-          body: "sent a message",
-          muted: false,
-          unread: true,
-        },
-        {
-          href: "/t/group-project",
-          title: "Project Squad",
-          body: "Alex sent a message",
-          muted: true,
-          unread: true,
-        },
-      ],
-    );
+  const mutedConflictEvidence = buildMutedConflictEvidence();
+  const mutedConflictMatch = mutedConflictEvidence.nativeMatch;
   assertEqual(
     mutedConflictMatch.ambiguous,
     true,
@@ -1057,8 +1288,8 @@ const runNotificationPolicyTests = () => {
     "#46 sender-title + muted group alternative should return muted-conflict reason",
   );
   assertEqual(
-    typeof mutedConflictMatch.matchedHref,
-    "undefined",
+    mutedConflictMatch.matchedHref,
+    null,
     "#46 muted-conflict should not resolve a matchedHref",
   );
 
@@ -1101,28 +1332,29 @@ const runNotificationPolicyTests = () => {
     "#46 muted group-title case should mark result as muted",
   );
 
-  const directMatch = notificationDecisionPolicy.resolveNativeNotificationTarget(
-    {
-      title: "Taylor",
-      body: "Are you free?",
-    },
-    [
+  const directMatch =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        href: "/t/taylor",
         title: "Taylor",
         body: "Are you free?",
-        muted: false,
-        unread: true,
       },
-      {
-        href: "/t/random-group",
-        title: "Weekend Plans",
-        body: "Dinner on Friday",
-        muted: false,
-        unread: true,
-      },
-    ],
-  );
+      [
+        {
+          href: "/t/taylor",
+          title: "Taylor",
+          body: "Are you free?",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/random-group",
+          title: "Weekend Plans",
+          body: "Dinner on Friday",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
   assertEqual(
     directMatch.ambiguous,
     false,
@@ -1137,6 +1369,88 @@ const runNotificationPolicyTests = () => {
     directMatch.muted,
     false,
     "#46 direct conversation should not be muted",
+  );
+
+  const observedDirectMatch =
+    notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+      {
+        title: "Taylor",
+        body: "Are you free?",
+      },
+      "/t/taylor",
+      [
+        {
+          href: "/t/taylor",
+          title: "Taylor",
+          body: "Are you free?",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/weekend-group",
+          title: "Weekend Plans",
+          body: "Dinner on Friday",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    observedDirectMatch.shouldNotify,
+    true,
+    "#46 observed direct conversation should remain deliverable",
+  );
+  assertEqual(
+    observedDirectMatch.matchedObservedHref,
+    true,
+    "#46 observed direct conversation should match the changed sidebar row",
+  );
+
+  const observedMutedConflict = mutedConflictEvidence.observedDecision;
+  assertEqual(
+    observedMutedConflict.shouldNotify,
+    false,
+    "#46 observed muted-conflict sidebar updates should fail closed",
+  );
+  assertEqual(
+    observedMutedConflict.reason,
+    "muted-conflict",
+    "#46 observed muted-conflict sidebar updates should preserve muted-conflict reason",
+  );
+
+  const observedRowMismatch =
+    notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+      {
+        title: "Weekend Plans",
+        body: "Dinner on Friday",
+      },
+      "/t/taylor",
+      [
+        {
+          href: "/t/taylor",
+          title: "Taylor",
+          body: "Are you free?",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/weekend-group",
+          title: "Weekend Plans",
+          body: "Dinner on Friday",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    observedRowMismatch.shouldNotify,
+    false,
+    "#46 observed sidebar mismatches should fail closed",
+  );
+  assertEqual(
+    observedRowMismatch.reason,
+    "observed-row-mismatch",
+    "#46 observed sidebar mismatches should report observed-row-mismatch",
   );
 
   const globalSocialSuppressed =
@@ -1159,6 +1473,84 @@ const runNotificationPolicyTests = () => {
     directMessageNotSuppressed,
     false,
     "#46 should not suppress normal message notifications",
+  );
+
+  const selfAuthoredTextMessage =
+    notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
+      title: "Michael Potenza",
+      body: "You: selfnotif test",
+    });
+  assertEqual(
+    selfAuthoredTextMessage,
+    true,
+    "#41 should suppress self-authored text previews",
+  );
+
+  const selfAuthoredAttachmentMessage =
+    notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
+      title: "Michael Potenza",
+      body: "You sent an attachment.",
+    });
+  assertEqual(
+    selfAuthoredAttachmentMessage,
+    true,
+    "#41 should suppress self-authored attachment previews",
+  );
+
+  const incomingMessagePreview =
+    notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
+      title: "Michael Potenza",
+      body: "Can you review this?",
+    });
+  assertEqual(
+    incomingMessagePreview,
+    false,
+    "#41 should not suppress incoming previews",
+  );
+
+  const selfAuthoredEditedMessage =
+    notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
+      title: "Michael Potenza",
+      body: "You edited a message",
+    });
+  assertEqual(
+    selfAuthoredEditedMessage,
+    true,
+    "#41 should suppress self-authored edited-message previews",
+  );
+
+  const selfAuthoredPayloadMismatchSuppressed =
+    notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification([
+      {
+        title: "Michael Potenza",
+        body: "You: selfnotif test",
+      },
+      {
+        title: "Michael Potenza",
+        body: "selfnotif test",
+      },
+    ]);
+  assertEqual(
+    selfAuthoredPayloadMismatchSuppressed,
+    true,
+    "#41 should suppress self-authored notifications even when sidebar text drops the You prefix",
+  );
+
+  const incomingPayloadMismatchNotSuppressed =
+    notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification([
+      {
+        title: "Michael Potenza",
+        body: "Can you review this?",
+      },
+      {
+        title: "Michael Potenza",
+        body: "Can you review this?",
+      },
+    ]);
+  assertEqual(
+    incomingPayloadMismatchNotSuppressed,
+    false,
+    "#41 should keep normal incoming notifications when neither payload is self-authored",
   );
 
   const callClassifierBodyCase =
@@ -1289,7 +1681,41 @@ const runNotificationPolicyTests = () => {
   );
 };
 
-const run = () => {
+const runMutedConflictEvidenceCase = (jsonOutput?: string) => {
+  const evidence = buildMutedConflictEvidence();
+  const nativeLooksFixed =
+    evidence.nativeMatch.reason === "muted-conflict" &&
+    evidence.nativeMatch.shouldNotify === false &&
+    evidence.nativeMatch.matchedHref === null;
+  const observedLooksFixed =
+    evidence.observedDecision.reason === "muted-conflict" &&
+    evidence.observedDecision.shouldNotify === false &&
+    evidence.observedDecision.matchedObservedHref === false;
+
+  const enrichedEvidence = {
+    ...evidence,
+    verdict: {
+      nativeLooksFixed,
+      observedLooksFixed,
+      overall:
+        nativeLooksFixed && observedLooksFixed ? "fixed" : "pre-fix-or-partial",
+    },
+  };
+
+  writeJsonOutput(jsonOutput, enrichedEvidence);
+  console.log(
+    jsonOutput
+      ? `PASS deterministic regression tests (muted-conflict evidence written to ${jsonOutput})`
+      : "PASS deterministic regression tests (muted-conflict evidence)",
+  );
+};
+
+const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
+  if (caseName === "muted-conflict") {
+    runMutedConflictEvidenceCase(jsonOutput);
+    return;
+  }
+
   runViewportPolicyTests();
   runIncomingCallOverlayLifecycleTests();
   runIncomingCallHintPolicyTests();
@@ -1299,7 +1725,8 @@ const run = () => {
 };
 
 try {
-  run();
+  const args = parseCliArgs(process.argv.slice(2));
+  run(args.caseName, args.jsonOutput);
 } catch (error) {
   console.error("FAIL deterministic regression tests failed:", error);
   process.exit(1);

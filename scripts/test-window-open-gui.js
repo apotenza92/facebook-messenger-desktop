@@ -1,5 +1,5 @@
-const { _electron: electron } = require('playwright');
-const path = require('path');
+const { _electron: electron } = require("playwright");
+const path = require("path");
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -51,15 +51,15 @@ async function readState(electronApp) {
 
     const childWindows = windows.filter((win) => win !== mainWindow);
 
-    let mainTargetUrl = '';
+    let mainTargetUrl = "";
     try {
       const mainViews = mainWindow?.getBrowserViews?.() || [];
       mainTargetUrl =
         mainViews.length > 0
           ? mainViews[0].webContents.getURL()
-          : (mainWindow?.webContents.getURL() || '');
+          : mainWindow?.webContents.getURL() || "";
     } catch {
-      mainTargetUrl = '';
+      mainTargetUrl = "";
     }
 
     return {
@@ -70,7 +70,7 @@ async function readState(electronApp) {
         try {
           return win.webContents.getURL();
         } catch {
-          return 'about:blank';
+          return "about:blank";
         }
       }),
       openedExternal: [...(globalThis.__mdOpenedExternal || [])],
@@ -95,7 +95,7 @@ async function closeChildWindows(electronApp) {
 async function triggerWindowOpen(electronApp, url) {
   await electronApp.evaluate(async ({ BrowserWindow }, targetUrl) => {
     const win = BrowserWindow.getAllWindows()[0];
-    if (!win) throw new Error('No main window');
+    if (!win) throw new Error("No main window");
 
     const views = win.getBrowserViews();
     const wc = views.length > 0 ? views[0].webContents : win.webContents;
@@ -104,6 +104,29 @@ async function triggerWindowOpen(electronApp, url) {
       link.href = ${JSON.stringify(targetUrl)};
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    })();`;
+    try {
+      await wc.executeJavaScript(script, true);
+    } catch {
+      // Ignore result errors; open handler side effects are what we assert.
+    }
+  }, url);
+}
+
+async function triggerSameFrameClick(electronApp, url) {
+  await electronApp.evaluate(async ({ BrowserWindow }, targetUrl) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) throw new Error("No main window");
+
+    const views = win.getBrowserViews();
+    const wc = views.length > 0 ? views[0].webContents : win.webContents;
+    const script = `(() => {
+      const link = document.createElement('a');
+      link.href = ${JSON.stringify(targetUrl)};
       link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
@@ -128,7 +151,7 @@ async function triggerAboutBlankNavigationSequence(
 ) {
   await electronApp.evaluate(async ({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
-    if (!win) throw new Error('No main window');
+    if (!win) throw new Error("No main window");
 
     const views = win.getBrowserViews();
     const wc = views.length > 0 ? views[0].webContents : win.webContents;
@@ -155,7 +178,7 @@ async function triggerAboutBlankNavigationSequence(
         .reverse()
         .find((win) => win !== mainWindow && !win.isDestroyed());
       if (!childWindow) {
-        throw new Error('No child window to navigate');
+        throw new Error("No child window to navigate");
       }
 
       try {
@@ -181,10 +204,14 @@ async function runCase(electronApp, testCase) {
     );
   } else if (testCase.bootstrapViaAboutBlank) {
     await triggerAboutBlankThenNavigate(electronApp, testCase.url);
+  } else if (testCase.sameFrameClick) {
+    await triggerSameFrameClick(electronApp, testCase.url);
   } else {
     await triggerWindowOpen(electronApp, testCase.url);
   }
-  await wait(typeof testCase.waitAfterMs === 'number' ? testCase.waitAfterMs : 800);
+  await wait(
+    typeof testCase.waitAfterMs === "number" ? testCase.waitAfterMs : 800,
+  );
   const after = await readState(electronApp);
 
   const newWindows = after.childWindowCount - before.childWindowCount;
@@ -216,13 +243,15 @@ async function runCase(electronApp, testCase) {
 }
 
 async function run() {
-  console.log('\n🧪 GUI window-open behavior test\n');
+  console.log("\n🧪 GUI window-open behavior test\n");
 
   const electronApp = await electron.launch({
-    args: [path.join(__dirname, '../dist/main/main.js')],
+    args: [path.join(__dirname, "../dist/main/main.js")],
     env: {
       ...process.env,
-      NODE_ENV: 'development',
+      NODE_ENV: "development",
+      SKIP_SINGLE_INSTANCE_LOCK: "true",
+      MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
     },
   });
 
@@ -230,113 +259,123 @@ async function run() {
     await wait(3500);
 
     const targetInfo = await getPrimaryTargetInfo(electronApp);
-    console.log('Primary target:', targetInfo);
+    console.log("Primary target:", targetInfo);
 
     await setupShellIntercept(electronApp);
     await closeChildWindows(electronApp);
 
     const cases = [
       {
-        name: 'Call-like Facebook URL opens child call window',
-        url: 'https://www.facebook.com/videochat/',
+        name: "Call-like Facebook URL opens child call window",
+        url: "https://www.facebook.com/videochat/",
         expected: { newWindows: 1 },
       },
       {
-        name: 'About:blank bootstrap to trusted non-call Facebook thread is rerouted to main view',
-        url: 'https://www.facebook.com/messages/t/1234567890',
+        name: "About:blank bootstrap to trusted non-call Facebook thread is rerouted to main view",
+        url: "https://www.facebook.com/messages/t/1234567890",
         bootstrapViaAboutBlank: true,
         expected: {
           newWindows: 0,
-          inAppUrlContains: '/messages/t/1234567890',
+          inAppUrlContains: "/messages/t/1234567890",
         },
       },
       {
-        name: 'About:blank multi-hop bootstrap (call-safe hops) stays in child window',
-        url: 'https://www.facebook.com/videochat/',
+        name: "About:blank multi-hop bootstrap (call-safe hops) stays in child window",
+        url: "https://www.facebook.com/videochat/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/videochat/?step=1',
-          'https://www.facebook.com/videochat/?step=2',
-          'https://www.facebook.com/videochat/',
+          "https://www.facebook.com/videochat/?step=1",
+          "https://www.facebook.com/videochat/?step=2",
+          "https://www.facebook.com/videochat/",
         ],
         waitAfterMs: 1200,
         expected: { newWindows: 1 },
       },
       {
-        name: 'About:blank outgoing-call bootstrap (call-safe -> thread -> call) stays in child window',
-        url: 'https://www.facebook.com/videochat/',
+        name: "About:blank outgoing-call bootstrap (call-safe -> thread -> call) stays in child window",
+        url: "https://www.facebook.com/videochat/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/videochat/?step=entry',
-          'https://www.facebook.com/messages/t/1234567890',
-          'https://www.facebook.com/videochat/?step=final',
+          "https://www.facebook.com/videochat/?step=entry",
+          "https://www.facebook.com/messages/t/1234567890",
+          "https://www.facebook.com/videochat/?step=final",
         ],
         waitAfterMs: 1200,
         expected: { newWindows: 1 },
       },
       {
-        name: 'About:blank bootstrap allows trusted intermediate non-call hop before final call URL',
-        url: 'https://www.facebook.com/videochat/',
+        name: "About:blank bootstrap allows trusted intermediate non-call hop before final call URL",
+        url: "https://www.facebook.com/videochat/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/ajax/call_bootstrap_bridge/',
-          'https://www.facebook.com/videochat/',
+          "https://www.facebook.com/ajax/call_bootstrap_bridge/",
+          "https://www.facebook.com/videochat/",
         ],
         waitAfterMs: 1200,
         expected: { newWindows: 1 },
       },
       {
-        name: 'About:blank outgoing-call bootstrap (trusted intermediate -> thread -> call) stays in child window',
-        url: 'https://www.facebook.com/videochat/',
+        name: "About:blank outgoing-call bootstrap (trusted intermediate -> thread -> call) stays in child window",
+        url: "https://www.facebook.com/videochat/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/videochat/?step=entry',
-          'https://www.facebook.com/ajax/call_bootstrap_bridge/',
-          'https://www.facebook.com/messages/t/1234567890',
-          'https://www.facebook.com/videochat/?step=final',
+          "https://www.facebook.com/videochat/?step=entry",
+          "https://www.facebook.com/ajax/call_bootstrap_bridge/",
+          "https://www.facebook.com/messages/t/1234567890",
+          "https://www.facebook.com/videochat/?step=final",
         ],
         waitAfterMs: 1200,
         expected: { newWindows: 1 },
       },
       {
-        name: 'About:blank cross-domain bootstrap (facebook -> messenger -> facebook call) stays in child window',
-        url: 'https://www.facebook.com/videochat/',
+        name: "About:blank cross-domain bootstrap (facebook -> messenger -> facebook call) stays in child window",
+        url: "https://www.facebook.com/videochat/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/videochat/?step=fb',
-          'https://www.messenger.com/call/start/?thread_id=3333333333',
-          'https://www.facebook.com/videochat/',
+          "https://www.facebook.com/videochat/?step=fb",
+          "https://www.messenger.com/call/start/?thread_id=3333333333",
+          "https://www.facebook.com/videochat/",
         ],
         waitAfterMs: 1200,
         expected: { newWindows: 1 },
       },
       {
-        name: 'About:blank bootstrap to trusted non-call messenger URL is blocked and routed external',
-        url: 'https://www.messenger.com/',
+        name: "About:blank bootstrap to trusted non-call messenger URL is blocked and routed external",
+        url: "https://www.messenger.com/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/videochat/',
-          'https://www.messenger.com/',
+          "https://www.facebook.com/videochat/",
+          "https://www.messenger.com/",
         ],
         waitAfterMs: 1200,
-        expected: { newWindows: 0, externalUrl: 'https://www.messenger.com/' },
+        expected: { newWindows: 0, externalUrl: "https://www.messenger.com/" },
       },
       {
-        name: 'About:blank bootstrap external escape is blocked and routed external',
-        url: 'https://example.com/',
+        name: "About:blank bootstrap external escape is blocked and routed external",
+        url: "https://example.com/",
         bootstrapNavigationSequence: [
-          'https://www.facebook.com/videochat/?step=entry',
-          'https://example.com/',
+          "https://www.facebook.com/videochat/?step=entry",
+          "https://example.com/",
         ],
         waitAfterMs: 1200,
-        expected: { newWindows: 0, externalUrl: 'https://example.com/' },
+        expected: { newWindows: 0, externalUrl: "https://example.com/" },
       },
       {
-        name: 'Facebook thread URL opens in-app (no child window)',
-        url: 'https://www.facebook.com/messages/t/1234567890',
+        name: "Facebook thread URL opens in-app (no child window)",
+        url: "https://www.facebook.com/messages/t/1234567890",
         expected: {
           newWindows: 0,
-          inAppUrlContains: '/messages/t/1234567890',
+          inAppUrlContains: "/messages/t/1234567890",
         },
       },
       {
-        name: 'Non-Facebook URL opens external browser',
-        url: 'https://example.com/',
-        expected: { newWindows: 0, externalUrl: 'https://example.com/' },
+        name: "Marketplace link click opens external browser instead of navigating in-app",
+        url: "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+        sameFrameClick: true,
+        expected: {
+          newWindows: 0,
+          externalUrl:
+            "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+        },
+      },
+      {
+        name: "Non-Facebook URL opens external browser",
+        url: "https://example.com/",
+        expected: { newWindows: 0, externalUrl: "https://example.com/" },
       },
     ];
 
@@ -344,10 +383,10 @@ async function run() {
     for (const testCase of cases) {
       const result = await runCase(electronApp, testCase);
       results.push(result);
-      console.log(`${result.pass ? '✅' : '❌'} ${result.name}`);
+      console.log(`${result.pass ? "✅" : "❌"} ${result.name}`);
       if (!result.pass) {
-        console.log('   expected:', result.expected);
-        console.log('   observed:', result.observed);
+        console.log("   expected:", result.expected);
+        console.log("   observed:", result.observed);
       }
       await closeChildWindows(electronApp);
       await wait(250);
@@ -358,7 +397,7 @@ async function run() {
       throw new Error(`${failed.length} GUI case(s) failed`);
     }
 
-    console.log('\nPASS GUI window-open behavior test');
+    console.log("\nPASS GUI window-open behavior test");
   } finally {
     await restoreShellIntercept(electronApp).catch(() => {});
     await electronApp.close().catch(() => {});
@@ -366,6 +405,6 @@ async function run() {
 }
 
 run().catch((err) => {
-  console.error('\nFAIL GUI window-open behavior test:', err.message || err);
+  console.error("\nFAIL GUI window-open behavior test:", err.message || err);
   process.exit(1);
 });

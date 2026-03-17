@@ -58,6 +58,18 @@ function parseUrl(input: string): URL | null {
   }
 }
 
+function extractNestedUrlCandidate(parsed: URL): string | null {
+  const candidateKeys = ["u", "url", "href", "link", "next"];
+  for (const key of candidateKeys) {
+    const value = parsed.searchParams.get(key);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 export function isMessengerHost(hostname: string): boolean {
   return hostname === "messenger.com" || hostname === "www.messenger.com";
 }
@@ -70,6 +82,25 @@ export function isFacebookOrMessengerUrl(input: string): boolean {
   const parsed = parseUrl(input);
   if (!parsed) return false;
   return isFacebookHost(parsed.hostname) || isMessengerHost(parsed.hostname);
+}
+
+export function isMarketplaceUrl(input: string, depth = 0): boolean {
+  if (depth > 2) return false;
+
+  const parsed = parseUrl(input);
+  if (!parsed) return false;
+
+  if (
+    isFacebookHost(parsed.hostname) &&
+    parsed.pathname.toLowerCase().includes("/marketplace")
+  ) {
+    return true;
+  }
+
+  const nestedCandidate = extractNestedUrlCandidate(parsed);
+  if (!nestedCandidate) return false;
+
+  return isMarketplaceUrl(nestedCandidate, depth + 1);
 }
 
 export function isMessagesRoute(input: string): boolean {
@@ -124,9 +155,12 @@ export type WindowOpenAction =
 export function decideWindowOpenAction(input: string): WindowOpenAction {
   const isMessengerUrl = isFacebookOrMessengerUrl(input);
 
+  if (isMarketplaceUrl(input)) {
+    return "open-external-browser";
+  }
+
   const shouldAllowChildWindow =
-    input === "about:blank" ||
-    (isMessengerUrl && isLikelyCallPopupUrl(input));
+    input === "about:blank" || (isMessengerUrl && isLikelyCallPopupUrl(input));
   if (shouldAllowChildWindow) {
     return "allow-child-window";
   }
@@ -184,7 +218,7 @@ export function shouldOpenInApp(input: string): boolean {
   }
 
   // Preserve existing behavior: marketplace is better opened externally.
-  if (parsed.pathname.toLowerCase().includes("/marketplace")) {
+  if (isMarketplaceUrl(parsed.href)) {
     return false;
   }
 

@@ -24,10 +24,7 @@ function expectAction(url: string, expected: WindowOpenAction): void {
 function run(): void {
   // Should stay as child windows (call-like flows)
   expectAction("about:blank", "allow-child-window");
-  expectAction(
-    "https://www.facebook.com/videochat/",
-    "allow-child-window",
-  );
+  expectAction("https://www.facebook.com/videochat/", "allow-child-window");
   expectAction(
     "https://www.messenger.com/call/start/?thread_id=123",
     "allow-child-window",
@@ -52,9 +49,22 @@ function run(): void {
   // Message thread links should stay in-app
   expectAction("https://www.facebook.com/messages/t/123", "reroute-main-view");
 
+  // Marketplace links should always escape to the system browser, even when wrapped
+  expectAction(
+    "https://www.facebook.com/marketplace/item/1234567890",
+    "open-external-browser",
+  );
+  expectAction(
+    "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+    "open-external-browser",
+  );
+
   // Non-messages links should open externally in system browser
   expectAction("https://www.messenger.com/t/123", "open-external-browser");
-  expectAction("https://www.facebook.com/groups/some-group", "open-external-browser");
+  expectAction(
+    "https://www.facebook.com/groups/some-group",
+    "open-external-browser",
+  );
   expectAction("https://example.com/call", "open-external-browser");
 
   const bootstrapStartedAt = Date.now() - 250;
@@ -90,14 +100,13 @@ function run(): void {
     "Call-safe about:blank bootstrap hop should be allowed",
   );
 
-  const postCallThreadBootstrap =
-    shouldAllowAboutBlankChildBootstrapNavigation(
-      "https://www.facebook.com/messages/t/123",
-      "reroute-main-view",
-      bootstrapStartedAt,
-      1,
-      true,
-    );
+  const postCallThreadBootstrap = shouldAllowAboutBlankChildBootstrapNavigation(
+    "https://www.facebook.com/messages/t/123",
+    "reroute-main-view",
+    bootstrapStartedAt,
+    1,
+    true,
+  );
   assertEqual(
     postCallThreadBootstrap.allowed,
     true,
@@ -158,13 +167,14 @@ function run(): void {
     0,
     false,
   );
-  const threadWithDownloadAction = shouldAllowAboutBlankChildBootstrapNavigation(
-    "https://www.facebook.com/messages/t/123",
-    "download-media",
-    bootstrapStartedAt,
-    3,
-    true,
-  );
+  const threadWithDownloadAction =
+    shouldAllowAboutBlankChildBootstrapNavigation(
+      "https://www.facebook.com/messages/t/123",
+      "download-media",
+      bootstrapStartedAt,
+      3,
+      true,
+    );
   assertEqual(
     threadWithDownloadAction.allowed,
     false,
@@ -189,13 +199,14 @@ function run(): void {
     "About:blank bootstrap should deny hops after bootstrap window expiry",
   );
 
-  const exhaustedBootstrapBudget = shouldAllowAboutBlankChildBootstrapNavigation(
-    "https://www.facebook.com/videochat/",
-    "allow-child-window",
-    bootstrapStartedAt,
-    ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
-    true,
-  );
+  const exhaustedBootstrapBudget =
+    shouldAllowAboutBlankChildBootstrapNavigation(
+      "https://www.facebook.com/videochat/",
+      "allow-child-window",
+      bootstrapStartedAt,
+      ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
+      true,
+    );
   assertEqual(
     exhaustedBootstrapBudget.allowed,
     false,

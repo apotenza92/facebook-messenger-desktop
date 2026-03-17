@@ -39,32 +39,56 @@ async function runViewportScenario(electronApp, scenario) {
     async (wc, input) => {
       const script = `
         (() => {
-          const input = ${JSON.stringify(input)};
-          const ACTIVE_CLASS = 'md-fb-messages-viewport-fix';
-          const MEDIA_CLEAN_CLASS = 'md-fb-media-viewer-clean';
-          const root = document.documentElement;
+          try {
+            const input = ${JSON.stringify(input)};
+            const ACTIVE_CLASS = 'md-fb-messages-viewport-fix';
+            const MEDIA_CLEAN_CLASS = 'md-fb-media-viewer-clean';
+            const root = document.documentElement;
+            const classifyThreadRouteType = (pathname) => {
+              if (pathname.startsWith('/messages/e2ee/t/')) return 'e2ee';
+              if (pathname.startsWith('/messages/t/')) return 'non-e2ee';
+              return 'other';
+            };
+            const normalizeThreadKey = (pathname) => {
+              if (pathname.startsWith('/messages/e2ee/t/')) {
+                return '/t/' + pathname.slice('/messages/e2ee/t/'.length);
+              }
+              if (pathname.startsWith('/messages/t/')) {
+                return '/t/' + pathname.slice('/messages/t/'.length);
+              }
+              return pathname;
+            };
 
-          history.replaceState({}, '', input.pathname);
+            history.replaceState({}, '', input.pathname);
 
-          window.postMessage(
-            {
-              type: 'md-force-media-overlay-visible',
-              visible: input.overlayVisible ? true : false,
-            },
-            '*',
-          );
+            window.postMessage(
+              {
+                type: 'md-force-media-overlay-visible',
+                visible: input.overlayVisible ? true : false,
+              },
+              '*',
+            );
 
-          window.dispatchEvent(new Event('resize'));
+            window.dispatchEvent(new Event('resize'));
 
-          return new Promise((resolve) => {
-            setTimeout(() => {
-              resolve({
-                pathname: window.location.pathname,
-                activeCrop: root.classList.contains(ACTIVE_CLASS),
-                mediaClean: root.classList.contains(MEDIA_CLEAN_CLASS),
-              });
-            }, 350);
-          });
+            return new Promise((resolve) => {
+              setTimeout(() => {
+                try {
+                  resolve({
+                    pathname: window.location.pathname,
+                    routeType: classifyThreadRouteType(window.location.pathname),
+                    normalizedThreadKey: normalizeThreadKey(window.location.pathname),
+                    activeCrop: root.classList.contains(ACTIVE_CLASS),
+                    mediaClean: root.classList.contains(MEDIA_CLEAN_CLASS),
+                  });
+                } catch (error) {
+                  resolve({ error: String(error && error.message ? error.message : error) });
+                }
+              }, 350);
+            });
+          } catch (error) {
+            return { error: String(error && error.message ? error.message : error) };
+          }
         })();
       `;
 
@@ -115,6 +139,29 @@ async function run() {
     console.log('Chat-only E2EE state:', chatOnlyE2EE);
     console.log('Legacy overlay state:', legacyOverlay);
     console.log('E2EE overlay state:', e2eeOverlay);
+
+    assert(
+      !chatOnlyE2EE.error && !legacyOverlay.error && !e2eeOverlay.error,
+      `Expected synthetic issue #45 scenarios to execute without renderer errors: ${JSON.stringify({
+        chatOnlyE2EE,
+        legacyOverlay,
+        e2eeOverlay,
+      })}`,
+    );
+
+    assert(
+      chatOnlyE2EE.routeType === 'e2ee' &&
+        legacyOverlay.routeType === 'non-e2ee' &&
+        e2eeOverlay.routeType === 'e2ee',
+      'Expected synthetic issue #45 scenarios to classify E2EE vs non-E2EE from the route before any normalization',
+    );
+
+    assert(
+      chatOnlyE2EE.normalizedThreadKey === '/t/e2ee-chat' &&
+        legacyOverlay.normalizedThreadKey === '/t/legacy-chat' &&
+        e2eeOverlay.normalizedThreadKey === '/t/e2ee-chat',
+      'Expected synthetic issue #45 scenarios to preserve /t/<id> normalization separately from route classification',
+    );
 
     assert(
       chatOnlyE2EE.activeCrop === true && chatOnlyE2EE.mediaClean === false,

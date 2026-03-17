@@ -3,6 +3,24 @@ const path = require('path');
 const fs = require('fs');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const CLOSE_CONTROL_SELECTOR = [
+  '[aria-label="Close" i]',
+  'button[aria-label="Close" i]',
+  '[role="button"][aria-label="Close" i]',
+  'a[href][aria-label="Close" i]',
+  '[aria-label="Back" i]',
+  'button[aria-label="Back" i]',
+  '[role="button"][aria-label="Back" i]',
+  'a[href][aria-label="Back" i]',
+  '[aria-label*="Go back" i]',
+  'button[aria-label*="Go back" i]',
+  '[role="button"][aria-label*="Go back" i]',
+  'a[href][aria-label*="Go back" i]',
+  '[aria-label="Back to Previous Page" i]',
+  'button[aria-label="Back to Previous Page" i]',
+  '[role="button"][aria-label="Back to Previous Page" i]',
+  'a[href][aria-label="Back to Previous Page" i]',
+].join(', ');
 
 function ts() {
   const d = new Date();
@@ -15,6 +33,26 @@ function safe(input) {
     .replace(/^https?:\/\//, '')
     .replace(/[^a-zA-Z0-9._-]+/g, '_')
     .slice(0, 90);
+}
+
+function classifyThreadRouteType(rawUrl) {
+  try {
+    const pathname = new URL(rawUrl).pathname.toLowerCase();
+    if (pathname.startsWith('/messages/e2ee/t/')) return 'e2ee';
+    if (pathname.startsWith('/messages/t/')) return 'non-e2ee';
+  } catch {}
+  return 'other';
+}
+
+function normalizeThreadKey(rawUrl) {
+  try {
+    const pathname = new URL(rawUrl).pathname.replace(/\/+$/, '') || '/';
+    return pathname
+      .replace(/^\/messages\/e2ee\/t\//i, '/t/')
+      .replace(/^\/messages\/t\//i, '/t/');
+  } catch {
+    return String(rawUrl || '');
+  }
 }
 
 async function withPrimaryWebContents(app, fn, payload) {
@@ -61,7 +99,7 @@ async function loadMessagesHome(app) {
 }
 
 async function collectThreadUrls(app) {
-  return withPrimaryWebContents(
+  const urls = await withPrimaryWebContents(
     app,
     async (wc) => {
       const script = `
@@ -112,6 +150,12 @@ async function collectThreadUrls(app) {
     },
     null,
   );
+
+  return urls.map((url) => ({
+    url,
+    routeType: classifyThreadRouteType(url),
+    normalizedThreadKey: normalizeThreadKey(url),
+  }));
 }
 
 async function navigate(app, url) {
@@ -150,7 +194,7 @@ async function countMediaLinksOnCurrentPage(app) {
             if (!raw) return false;
             const h = raw.toLowerCase();
             if (h.includes('/reel/?s=tab') || h === '/reel/' || h === '/reel') return false;
-            return h.includes('/messenger_media') || h.includes('/messages/media_viewer') || h.includes('/messages/attachment_preview') || h.includes('/photo') || h.includes('/video') || h.includes('/story');
+            return h.includes('/messenger_media') || h.includes('/messages/media_viewer') || h.includes('/messages/attachment_preview') || h.includes('/photo') || h.includes('/photos') || h.includes('/video') || h.includes('/watch') || h.includes('/story') || h.includes('/stories');
           };
 
           const unique = new Set();
@@ -262,7 +306,6 @@ async function tryOpenMediaFromThread(app, pass) {
             return { opened: true, method: 'thumb-click', href: null, pass };
           }
 
-          // Scroll likely conversation pane (prefer right side containers)
           const scrollers = Array.from(document.querySelectorAll('div'))
             .filter((el) => el.scrollHeight > el.clientHeight + 180)
             .map((el) => {
@@ -294,41 +337,62 @@ async function tryOpenMediaFromThread(app, pass) {
 async function inspectState(app) {
   return withPrimaryWebContents(
     app,
-    async (wc) => {
+    async (wc, selector) => {
       const script = `
         (() => {
-          const closeCount = document.querySelectorAll('[aria-label="Close" i],button[aria-label="Close" i],[aria-label*="Go back" i],button[aria-label*="Go back" i],[aria-label="Back" i],button[aria-label="Back" i]').length;
-          const downloadCount = document.querySelectorAll('[aria-label*="Download" i],button[aria-label*="Download" i],[aria-label*="Save" i],button[aria-label*="Save" i]').length;
-          const shareCount = document.querySelectorAll('[aria-label*="Share" i],button[aria-label*="Share" i],[aria-label*="Forward" i],button[aria-label*="Forward" i]').length;
+          const closeSelector = ${JSON.stringify(selector)};
+          const path = (() => {
+            try { return new URL(window.location.href).pathname.toLowerCase(); }
+            catch { return window.location.pathname.toLowerCase(); }
+          })();
+
+          const mediaRouteType =
+            path.startsWith('/messenger_media') ? 'messenger_media' :
+            path.startsWith('/messages/media_viewer') ? 'messages_media_viewer' :
+            path.startsWith('/messages/attachment_preview') ? 'attachment_preview' :
+            path.startsWith('/photo') || path.startsWith('/photos') ? 'photo' :
+            path.startsWith('/video') || path.startsWith('/watch') ? 'video' :
+            path.startsWith('/story') || path.startsWith('/stories') ? 'story' :
+            path.startsWith('/reel') || path.startsWith('/reels') ? 'reel' :
+            'other';
+
+          const topLabels = Array.from(new Set(
+            Array.from(document.querySelectorAll([closeSelector, '[aria-label*="Download" i]', '[aria-label*="Save" i]', '[aria-label*="Share" i]', '[aria-label*="Forward" i]'].join(', ')))
+              .map((node) => node.getAttribute('aria-label') || '')
+              .filter(Boolean)
+          ));
 
           return {
             url: window.location.href,
+            mediaRouteType,
+            topLabels,
             classes: {
               mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
               leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
             counts: {
-              close: closeCount,
-              download: downloadCount,
-              share: shareCount,
+              close: document.querySelectorAll(closeSelector).length,
+              download: document.querySelectorAll('[aria-label*="Download" i],button[aria-label*="Download" i],[aria-label*="Save" i],button[aria-label*="Save" i]').length,
+              share: document.querySelectorAll('[aria-label*="Share" i],button[aria-label*="Share" i],[aria-label*="Forward" i],button[aria-label*="Forward" i]').length,
             },
           };
         })();
       `;
       return wc.executeJavaScript(script, true);
     },
-    null,
+    CLOSE_CONTROL_SELECTOR,
   );
 }
 
 async function closeMedia(app) {
   return withPrimaryWebContents(
     app,
-    async (wc) => {
+    async (wc, selector) => {
       const script = `
         (() => {
-          const node = document.querySelector('[aria-label="Close" i],button[aria-label="Close" i],[aria-label*="Go back" i],button[aria-label*="Go back" i],[aria-label="Back" i],button[aria-label="Back" i]');
+          const selector = ${JSON.stringify(selector)};
+          const node = document.querySelector(selector);
           if (!(node instanceof HTMLElement)) return false;
           const r = node.getBoundingClientRect();
           node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
@@ -337,7 +401,7 @@ async function closeMedia(app) {
       `;
       return wc.executeJavaScript(script, true);
     },
-    null,
+    CLOSE_CONTROL_SELECTOR,
   );
 }
 
@@ -357,11 +421,17 @@ async function run() {
 
   const summary = {
     detection: {
-      method: 'Deep sidebar scan (160 passes) + URL classification: /messages/e2ee/t/<id> = E2EE, /messages/t/<id> = non-E2EE',
+      method: 'Deep sidebar scan (160 passes) + route classification before normalization: /messages/e2ee/t/<id> = E2EE, /messages/t/<id> = non-E2EE, both normalized separately to /t/<id> for notification-style matching',
       totalThreadsDiscovered: 0,
-      e2eeThreadsDiscovered: 0,
-      nonE2EEThreadsDiscovered: 0,
-      selectedOldestNonE2EEThreads: [],
+      discoveredByRouteType: {
+        e2ee: 0,
+        'non-e2ee': 0,
+      },
+      selectedCandidateThreadsByRouteType: {
+        e2ee: [],
+        'non-e2ee': [],
+      },
+      coverageGaps: [],
     },
     sizes: [
       { width: 1280, height: 900, tag: '1280x900' },
@@ -370,6 +440,10 @@ async function run() {
     ],
     threads: [],
     runs: [],
+    resultsByRouteType: {
+      e2ee: { totalChecks: 0, failures: 0 },
+      'non-e2ee': { totalChecks: 0, failures: 0 },
+    },
   };
 
   try {
@@ -378,47 +452,63 @@ async function run() {
     console.log('Loaded:', home);
 
     const allThreads = await collectThreadUrls(app);
-    const e2eeThreads = allThreads.filter((u) => u.includes('/messages/e2ee/t/'));
-    const nonE2EEThreads = allThreads.filter(
-      (u) => u.includes('/messages/t/') && !u.includes('/messages/e2ee/t/'),
-    );
+    const e2eeThreads = allThreads.filter((entry) => entry.routeType === 'e2ee');
+    const nonE2EEThreads = allThreads.filter((entry) => entry.routeType === 'non-e2ee');
 
     summary.detection.totalThreadsDiscovered = allThreads.length;
-    summary.detection.e2eeThreadsDiscovered = e2eeThreads.length;
-    summary.detection.nonE2EEThreadsDiscovered = nonE2EEThreads.length;
+    summary.detection.discoveredByRouteType.e2ee = e2eeThreads.length;
+    summary.detection.discoveredByRouteType['non-e2ee'] = nonE2EEThreads.length;
 
-    // Set insertion order reflects first-seen while scrolling downward.
-    // Use the tail of the list to target oldest-discovered non-E2EE threads.
-    const oldestCandidates = nonE2EEThreads.slice(-10);
-    summary.detection.selectedOldestNonE2EEThreads = [...oldestCandidates];
+    const selectedThreads = [];
 
-    const withMedia = [];
-    for (const threadUrl of oldestCandidates) {
-      const mediaPage = toMediaPageUrl(threadUrl);
-      if (!mediaPage) continue;
+    for (const routeType of ['non-e2ee', 'e2ee']) {
+      const pool = (routeType === 'e2ee' ? e2eeThreads : nonE2EEThreads).slice(-12);
+      const withMedia = [];
 
-      const navMedia = await navigate(app, mediaPage);
-      if (!navMedia.ok) continue;
-      await wait(700);
+      for (const thread of pool) {
+        const mediaPage = toMediaPageUrl(thread.url);
+        if (!mediaPage) continue;
 
-      const mediaCount = await countMediaLinksOnCurrentPage(app);
-      if (mediaCount > 0) {
-        withMedia.push(threadUrl);
+        const navMedia = await navigate(app, mediaPage);
+        if (!navMedia.ok) continue;
+        await wait(700);
+
+        const mediaCount = await countMediaLinksOnCurrentPage(app);
+        if (mediaCount > 0) {
+          withMedia.push({
+            ...thread,
+            mediaCount,
+            mediaPage,
+          });
+        }
+        if (withMedia.length >= 3) break;
       }
-      if (withMedia.length >= 6) break;
+
+      summary.detection.selectedCandidateThreadsByRouteType[routeType] = withMedia.map((thread) => ({
+        url: thread.url,
+        normalizedThreadKey: thread.normalizedThreadKey,
+        mediaCount: thread.mediaCount,
+        mediaPage: thread.mediaPage,
+      }));
+
+      if (withMedia.length === 0) {
+        summary.detection.coverageGaps.push(`No ${routeType} thread with media was available for this run.`);
+      }
+
+      selectedThreads.push(...withMedia);
     }
 
-    summary.threads = withMedia;
+    summary.threads = selectedThreads;
 
     console.log('Thread discovery:', {
       total: allThreads.length,
       e2ee: e2eeThreads.length,
       nonE2EE: nonE2EEThreads.length,
-      oldestCandidates: oldestCandidates.length,
-      selectedWithMedia: summary.threads.length,
+      selectedWithMedia: selectedThreads.length,
+      coverageGaps: summary.detection.coverageGaps,
     });
 
-    assert(summary.threads.length > 0, 'No old non-E2EE threads with media found');
+    assert(summary.threads.length > 0, 'No threads with media found for extensive coverage');
 
     let totalChecks = 0;
     let totalFailures = 0;
@@ -430,9 +520,13 @@ async function run() {
       for (const thread of summary.threads) {
         for (let cycle = 1; cycle <= 3; cycle++) {
           totalChecks += 1;
+          summary.resultsByRouteType[thread.routeType].totalChecks += 1;
+
           const run = {
             size,
-            thread,
+            thread: thread.url,
+            threadRouteType: thread.routeType,
+            normalizedThreadKey: thread.normalizedThreadKey,
             cycle,
             opened: null,
             openState: null,
@@ -440,6 +534,7 @@ async function run() {
             after900: null,
             after1800: null,
             switchTarget: null,
+            switchTargetRouteType: null,
             afterSwitch300: null,
             afterSwitch1500: null,
             pass: false,
@@ -448,10 +543,11 @@ async function run() {
           };
 
           try {
-            const nav = await navigate(app, thread);
+            const nav = await navigate(app, thread.url);
             if (!nav.ok) {
               run.failureReason = `navigate-thread-failed:${nav.error}`;
               totalFailures += 1;
+              summary.resultsByRouteType[thread.routeType].failures += 1;
               summary.runs.push(run);
               continue;
             }
@@ -468,6 +564,7 @@ async function run() {
             if (!opened || !opened.opened) {
               run.failureReason = 'no-media-opened-from-thread';
               totalFailures += 1;
+              summary.resultsByRouteType[thread.routeType].failures += 1;
               summary.runs.push(run);
               continue;
             }
@@ -475,7 +572,7 @@ async function run() {
             await wait(1300);
             run.openState = await inspectState(app);
 
-            const openShot = `${safe(thread)}-${size.tag}-cycle${cycle}-open.png`;
+            const openShot = `${safe(thread.url)}-${size.tag}-cycle${cycle}-open.png`;
             await captureWindow(app, path.join(outDir, openShot));
             run.screenshots.push(openShot);
 
@@ -489,17 +586,22 @@ async function run() {
             await wait(900);
             run.after1800 = await inspectState(app);
 
-            const closeShot = `${safe(thread)}-${size.tag}-cycle${cycle}-after-close.png`;
+            const closeShot = `${safe(thread.url)}-${size.tag}-cycle${cycle}-after-close.png`;
             await captureWindow(app, path.join(outDir, closeShot));
             run.screenshots.push(closeShot);
 
-            const switchTarget = summary.threads.find((u) => u !== thread) || thread;
-            run.switchTarget = switchTarget;
+            const switchTarget =
+              summary.threads.find((candidate) => candidate.url !== thread.url && candidate.routeType !== thread.routeType) ||
+              summary.threads.find((candidate) => candidate.url !== thread.url) ||
+              thread;
+            run.switchTarget = switchTarget.url;
+            run.switchTargetRouteType = switchTarget.routeType;
 
-            const navSwitch = await navigate(app, switchTarget);
+            const navSwitch = await navigate(app, switchTarget.url);
             if (!navSwitch.ok) {
               run.failureReason = `switch-target-nav-failed:${navSwitch.error}`;
               totalFailures += 1;
+              summary.resultsByRouteType[thread.routeType].failures += 1;
               summary.runs.push(run);
               continue;
             }
@@ -510,7 +612,7 @@ async function run() {
             await wait(1200);
             run.afterSwitch1500 = await inspectState(app);
 
-            const switchShot = `${safe(thread)}-${size.tag}-cycle${cycle}-after-switch.png`;
+            const switchShot = `${safe(thread.url)}-${size.tag}-cycle${cycle}-after-switch.png`;
             await captureWindow(app, path.join(outDir, switchShot));
             run.screenshots.push(switchShot);
 
@@ -541,10 +643,12 @@ async function run() {
             if (!run.pass) {
               run.failureReason = `recovery-invalid:close=${JSON.stringify(settled)}|switch=${JSON.stringify(switchSettled)}`;
               totalFailures += 1;
+              summary.resultsByRouteType[thread.routeType].failures += 1;
             }
           } catch (error) {
             run.failureReason = `exception:${String(error?.message || error)}`;
             totalFailures += 1;
+            summary.resultsByRouteType[thread.routeType].failures += 1;
           }
 
           summary.runs.push(run);
@@ -560,12 +664,20 @@ async function run() {
       totalChecks,
       totalFailures,
       totalPasses: totalChecks - totalFailures,
+      resultsByRouteType: summary.resultsByRouteType,
+      coverageGaps: summary.detection.coverageGaps,
     });
 
     const failures = summary.runs.filter((r) => !r.pass);
     if (failures.length > 0) {
       console.log('Failure sample:', failures.slice(0, 3));
       throw new Error(`${failures.length} extensive GUI runs failed`);
+    }
+
+    if (summary.detection.coverageGaps.length > 0) {
+      for (const gap of summary.detection.coverageGaps) {
+        console.log('NOTE:', gap);
+      }
     }
 
     console.log('PASS extensive thread open/close GUI test');

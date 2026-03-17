@@ -104,7 +104,11 @@ function queryVisibleElements(
     }
 
     for (const match of Array.from(matches)) {
-      if (seen.has(match) || !isVisible(match) || isSidebarCallStatusElement(match)) {
+      if (
+        seen.has(match) ||
+        !isVisible(match) ||
+        isSidebarCallStatusElement(match)
+      ) {
         continue;
       }
       seen.add(match);
@@ -116,18 +120,27 @@ function queryVisibleElements(
 }
 
 function hasIncomingCallTitleSignal(title: string): boolean {
-  const normalizedTitle = String(title || "").replace(/\s+/g, " ").trim();
+  const normalizedTitle = String(title || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalizedTitle) return false;
-  if (nonIncomingCallTextPatterns.some((pattern) => pattern.test(normalizedTitle))) {
+  if (
+    nonIncomingCallTextPatterns.some((pattern) => pattern.test(normalizedTitle))
+  ) {
     return false;
   }
-  return incomingCallTextPatterns.some((pattern) => pattern.test(normalizedTitle));
+  return incomingCallTextPatterns.some((pattern) =>
+    pattern.test(normalizedTitle),
+  );
 }
 
 function hasVisibleIncomingCallContainer(
   isVisible: (el: Element | null) => boolean,
 ): boolean {
-  return queryVisibleElements(incomingCallSignalContainerSelectors, isVisible).length > 0;
+  return (
+    queryVisibleElements(incomingCallSignalContainerSelectors, isVisible)
+      .length > 0
+  );
 }
 
 function hasIncomingCallTextSignal(
@@ -139,7 +152,9 @@ function hasIncomingCallTextSignal(
   );
 
   for (const candidate of candidates) {
-    const text = String(candidate.textContent || "").replace(/\s+/g, " ").trim();
+    const text = String(candidate.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!text || text.length > 400) {
       continue;
     }
@@ -160,23 +175,24 @@ function detectIncomingCallUiVisible(
   isVisible: (el: Element | null) => boolean,
 ): boolean {
   const hasVisibleContainer = hasVisibleIncomingCallContainer(isVisible);
-  const answerVisible = queryVisibleElements(incomingCallAnswerSelectors, isVisible)
-    .length > 0;
-  const declineVisible = queryVisibleElements(
-    incomingCallDeclineSelectors,
-    isVisible,
-  ).length > 0;
-  const joinVisible = queryVisibleElements(incomingCallJoinSelectors, isVisible)
-    .length > 0;
-  const selectorSignal = queryVisibleElements(
-    incomingCallSoftSignalSelectors,
-    isVisible,
-  ).length > 0 && hasVisibleContainer;
+  const answerVisible =
+    queryVisibleElements(incomingCallAnswerSelectors, isVisible).length > 0;
+  const declineVisible =
+    queryVisibleElements(incomingCallDeclineSelectors, isVisible).length > 0;
+  const joinVisible =
+    queryVisibleElements(incomingCallJoinSelectors, isVisible).length > 0;
+  const selectorSignal =
+    queryVisibleElements(incomingCallSoftSignalSelectors, isVisible).length >
+      0 && hasVisibleContainer;
   const textSignal = hasIncomingCallTextSignal(isVisible);
   const titleSignal =
     hasIncomingCallTitleSignal(document.title) &&
     hasVisibleContainer &&
-    (selectorSignal || textSignal || answerVisible || declineVisible || joinVisible);
+    (selectorSignal ||
+      textSignal ||
+      answerVisible ||
+      declineVisible ||
+      joinVisible);
 
   return shouldTreatIncomingCallUiAsVisible({
     answerVisible,
@@ -279,6 +295,9 @@ ipcRenderer.on(
   const MEDIA_CLOSE_ACTION_CLASS = "md-fb-media-action-close";
   const MEDIA_DOWNLOAD_ACTION_CLASS = "md-fb-media-action-download";
   const MEDIA_SHARE_ACTION_CLASS = "md-fb-media-action-share";
+  const MEDIA_FALLBACK_CONTROLS_ID = "md-fb-media-fallback-controls";
+  const MEDIA_FALLBACK_BUTTON_CLASS = "md-fb-media-fallback-button";
+  const MEDIA_FALLBACK_CONTROL_ATTR = "data-md-fb-fallback-control";
   const HEADER_HEIGHT_CSS_VAR = "--md-fb-header-height";
   const DEFAULT_HEADER_HEIGHT = 56;
   const MIN_HEADER_HEIGHT = DEFAULT_HEADER_HEIGHT;
@@ -293,14 +312,35 @@ ipcRenderer.on(
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
 
-  const dismissActionSelectors = [
-    '[aria-label="Close" i][role="button"]',
-    'button[aria-label="Close" i]',
-    '[aria-label="Back" i][role="button"]',
-    'button[aria-label="Back" i]',
-    '[aria-label*="Go back" i][role="button"]',
-    'button[aria-label*="Go back" i]',
-  ];
+  type AriaSelectorMatcher =
+    | { type: "exact"; value: string }
+    | { type: "contains"; value: string };
+
+  const buildActionSelectors = (matchers: AriaSelectorMatcher[]): string[] => {
+    const selectors = new Set<string>();
+    const targets = ['[role="button"]', "button", "a[href]"];
+
+    for (const matcher of matchers) {
+      const attribute =
+        matcher.type === "exact"
+          ? `[aria-label="${matcher.value}" i]`
+          : `[aria-label*="${matcher.value}" i]`;
+
+      selectors.add(attribute);
+      for (const target of targets) {
+        selectors.add(`${target}${attribute}`);
+      }
+    }
+
+    return Array.from(selectors);
+  };
+
+  const dismissActionSelectors = buildActionSelectors([
+    { type: "exact", value: "Close" },
+    { type: "exact", value: "Back" },
+    { type: "contains", value: "Go back" },
+    { type: "exact", value: "Back to Previous Page" },
+  ]);
   const mediaDownloadSelectors = [
     '[aria-label*="Download" i][role="button"]',
     'button[aria-label*="Download" i]',
@@ -344,6 +384,8 @@ ipcRenderer.on(
   let lastSentViewportState: { visible: boolean; url: string } | null = null;
   let lastViewportMode: MessagesViewportMode | null = null;
   let lastMediaOverlayDebugSentAt = 0;
+  let lastMediaOpenSourceUrl: string | null = null;
+  let lastMediaOpenSourceKind: "image" | "video" | "unknown" = "unknown";
   const mediaActionClasses = [
     MEDIA_CLOSE_ACTION_CLASS,
     MEDIA_DOWNLOAD_ACTION_CLASS,
@@ -377,9 +419,71 @@ ipcRenderer.on(
     }
   };
 
+  const isFacebookHostname = (hostname: string): boolean =>
+    hostname === "facebook.com" || hostname.endsWith(".facebook.com");
+
+  const parseNavigationUrl = (input: string): URL | null => {
+    try {
+      if (input.startsWith("http://") || input.startsWith("https://")) {
+        return new URL(input);
+      }
+      return new URL(input, "https://www.facebook.com");
+    } catch {
+      return null;
+    }
+  };
+
+  const extractNestedNavigationUrl = (parsed: URL): string | null => {
+    for (const key of ["u", "url", "href", "link", "next"]) {
+      const value = parsed.searchParams.get(key);
+      if (value) return value;
+    }
+    return null;
+  };
+
+  const isMarketplaceNavigationUrl = (input: string, depth = 0): boolean => {
+    if (depth > 2) return false;
+    const parsed = parseNavigationUrl(input);
+    if (!parsed) return false;
+
+    if (
+      isFacebookHostname(parsed.hostname) &&
+      parsed.pathname.toLowerCase().includes("/marketplace")
+    ) {
+      return true;
+    }
+
+    const nestedUrl = extractNestedNavigationUrl(parsed);
+    return nestedUrl ? isMarketplaceNavigationUrl(nestedUrl, depth + 1) : false;
+  };
+
+  const findClosestAnchor = (
+    target: EventTarget | null,
+  ): HTMLAnchorElement | null => {
+    if (!(target instanceof Element)) return null;
+    const anchor = target.closest("a[href]");
+    return anchor instanceof HTMLAnchorElement ? anchor : null;
+  };
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const anchor = findClosestAnchor(event.target);
+      if (!anchor) return;
+
+      const href = anchor.href;
+      if (!href || !isMarketplaceNavigationUrl(href)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      ipcRenderer.send("open-external-url", href);
+    },
+    { capture: true },
+  );
+
   const isAriaVisible = (el: Element | null): boolean => {
     if (!el) return false;
-    if (el.closest('[aria-hidden="true"]') || el.closest('[hidden]')) {
+    if (el.closest('[aria-hidden="true"]') || el.closest("[hidden]")) {
       return false;
     }
 
@@ -414,6 +518,38 @@ ipcRenderer.on(
     return detectIncomingCallUiVisible(isAriaVisible);
   };
 
+  const isMediaOverlayElementVisible = (el: Element | null): boolean => {
+    if (!el) return false;
+    if (
+      el.closest("[hidden]") ||
+      el.closest(`[${MEDIA_FALLBACK_CONTROL_ATTR}="true"]`)
+    ) {
+      return false;
+    }
+
+    const target = el instanceof HTMLElement ? el : null;
+    if (!target) return true;
+    const style = window.getComputedStyle(target);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+
+    const rect = target.getBoundingClientRect();
+    if (rect.width < 4 || rect.height < 4) {
+      return false;
+    }
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      return false;
+    }
+
+    const opacity = Number.parseFloat(style.opacity || "1");
+    if (Number.isFinite(opacity) && opacity <= 0.01) {
+      return false;
+    }
+
+    return true;
+  };
+
   const getViewportOverlayVisible = (): boolean =>
     mediaOverlayVisible ||
     incomingCallOverlayHintActive ||
@@ -425,16 +561,20 @@ ipcRenderer.on(
     maxTop = 220,
     minRightFraction = 0,
   ): number => {
-    const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
+    const nodes = Array.from(
+      document.querySelectorAll(selector),
+    ) as HTMLElement[];
     let count = 0;
     for (const node of nodes) {
-      const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (!isMediaOverlayElementVisible(node)) continue;
 
       const rect = node.getBoundingClientRect();
       if (rect.width < 6 || rect.height < 6) continue;
       if (rect.top < minTop || rect.top > maxTop) continue;
-      if (minRightFraction > 0 && rect.right < window.innerWidth * minRightFraction) {
+      if (
+        minRightFraction > 0 &&
+        rect.right < window.innerWidth * minRightFraction
+      ) {
         continue;
       }
 
@@ -448,11 +588,12 @@ ipcRenderer.on(
     selector: string,
     maxEdgeDistance = 180,
   ): number => {
-    const nodes = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
+    const nodes = Array.from(
+      document.querySelectorAll(selector),
+    ) as HTMLElement[];
     let count = 0;
     for (const node of nodes) {
-      const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (!isMediaOverlayElementVisible(node)) continue;
 
       const rect = node.getBoundingClientRect();
       if (rect.width < 20 || rect.height < 20) continue;
@@ -478,13 +619,14 @@ ipcRenderer.on(
   };
 
   const hasLargeViewportMedia = (): boolean => {
-    const nodes = Array.from(document.querySelectorAll("img, video")) as HTMLElement[];
+    const nodes = Array.from(
+      document.querySelectorAll("img, video, [role='img']"),
+    ) as HTMLElement[];
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
 
     for (const node of nodes) {
-      const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (!isMediaOverlayElementVisible(node)) continue;
 
       const rect = node.getBoundingClientRect();
       if (rect.width < 180 && rect.height < 180) continue;
@@ -505,7 +647,9 @@ ipcRenderer.on(
   };
 
   const isMessagesThreadSubtabRoute = (path: string): boolean =>
-    /^\/messages\/(?:e2ee\/)?t\/[^/]+\/(media|files|links|search)(?:\/|$)/.test(path);
+    /^\/messages\/(?:e2ee\/)?t\/[^/]+\/(media|files|links|search)(?:\/|$)/.test(
+      path,
+    );
 
   type MediaOverlaySignals = {
     path: string;
@@ -541,7 +685,12 @@ ipcRenderer.on(
     const navigationSelector = mediaNavigationSelectors.join(", ");
 
     const dismissCount = countTopAnchoredActions(dismissSelector, -160, 260);
-    const downloadCount = countTopAnchoredActions(downloadSelector, -160, 260, 0.35);
+    const downloadCount = countTopAnchoredActions(
+      downloadSelector,
+      -160,
+      260,
+      0.35,
+    );
     const shareCount = countTopAnchoredActions(shareSelector, -160, 260, 0.35);
     const navigationCount = countMediaNavigationActions(navigationSelector);
 
@@ -561,7 +710,9 @@ ipcRenderer.on(
     };
   };
 
-  const evaluateMediaOverlayVisible = (signals: MediaOverlaySignals): boolean => {
+  const evaluateMediaOverlayVisible = (
+    signals: MediaOverlaySignals,
+  ): boolean => {
     return shouldTreatDetectedMediaOverlayAsVisible({
       modeFromPath: signals.modeFromPath,
       threadSubtabRoute: signals.threadSubtabRoute,
@@ -581,7 +732,10 @@ ipcRenderer.on(
   ): void => {
     const now = Date.now();
     const force = extra.force === true;
-    if (!force && now - lastMediaOverlayDebugSentAt < MEDIA_OVERLAY_DEBUG_COOLDOWN_MS) {
+    if (
+      !force &&
+      now - lastMediaOverlayDebugSentAt < MEDIA_OVERLAY_DEBUG_COOLDOWN_MS
+    ) {
       return;
     }
 
@@ -607,7 +761,8 @@ ipcRenderer.on(
           forcedMediaOverlayVisible === true,
         signals,
         classes: {
-          mediaClean: document.documentElement.classList.contains(MEDIA_CLEAN_CLASS),
+          mediaClean:
+            document.documentElement.classList.contains(MEDIA_CLEAN_CLASS),
           activeCrop: document.documentElement.classList.contains(ACTIVE_CLASS),
           leftDismiss: document.documentElement.classList.contains(
             MEDIA_LEFT_DISMISS_CLASS,
@@ -637,7 +792,8 @@ ipcRenderer.on(
     return evaluateMediaOverlayVisible(signals);
   };
 
-  const hasMediaOverlayOpenHint = (): boolean => mediaOverlayOpenHintUntil > Date.now();
+  const hasMediaOverlayOpenHint = (): boolean =>
+    mediaOverlayOpenHintUntil > Date.now();
 
   const shouldHideMediaBannerDuringLoad = (
     signals: MediaOverlaySignals,
@@ -829,8 +985,14 @@ ipcRenderer.on(
     const rect = node.getBoundingClientRect();
     if (rect.width < 6 || rect.height < 6) return false;
 
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    const x = Math.min(
+      window.innerWidth - 1,
+      Math.max(1, rect.left + rect.width / 2),
+    );
+    const y = Math.min(
+      window.innerHeight - 1,
+      Math.max(1, rect.top + rect.height / 2),
+    );
     if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
 
     const topNode = document.elementFromPoint(x, y);
@@ -855,7 +1017,7 @@ ipcRenderer.on(
 
   const resolveInteractiveActionNode = (node: HTMLElement): HTMLElement => {
     const interactive = node.closest(
-      'button, [role="button"], a[href], [tabindex]'
+      'button, [role="button"], a[href], [tabindex]',
     );
     if (interactive instanceof HTMLElement) {
       return interactive;
@@ -875,7 +1037,9 @@ ipcRenderer.on(
   ): ActionCandidate[] => {
     const nodes = new Set<HTMLElement>();
     for (const selector of selectors) {
-      const matches = document.querySelectorAll(selector) as NodeListOf<HTMLElement>;
+      const matches = document.querySelectorAll(
+        selector,
+      ) as NodeListOf<HTMLElement>;
       for (const match of Array.from(matches)) {
         const resolved = resolveInteractiveActionNode(match);
         if (excludedNodes.has(resolved)) continue;
@@ -885,8 +1049,7 @@ ipcRenderer.on(
 
     const candidates: ActionCandidate[] = [];
     for (const node of nodes) {
-      const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") continue;
+      if (!isMediaOverlayElementVisible(node)) continue;
 
       const rect = node.getBoundingClientRect();
       if (rect.width < 6 || rect.height < 6) continue;
@@ -914,7 +1077,8 @@ ipcRenderer.on(
     minRightFraction = 0.35,
   ): ActionCandidate[] => {
     const candidates = collectActionCandidates(selectors, excludedNodes).filter(
-      (candidate) => candidate.rect.right >= window.innerWidth * minRightFraction,
+      (candidate) =>
+        candidate.rect.right >= window.innerWidth * minRightFraction,
     );
 
     candidates.sort((a, b) => {
@@ -964,14 +1128,7 @@ ipcRenderer.on(
     let mirroredEdgeGap = MEDIA_ACTION_CLOSE_LEFT_OFFSET;
 
     const closeCandidates = rankEdgeCloseCandidates(
-      [
-        '[aria-label="Close" i][role="button"]',
-        'button[aria-label="Close" i]',
-        '[aria-label*="Go back" i][role="button"]',
-        'button[aria-label*="Go back" i]',
-        '[aria-label="Back" i][role="button"]',
-        'button[aria-label="Back" i]',
-      ],
+      dismissActionSelectors,
       selectedNodes,
     );
 
@@ -984,7 +1141,12 @@ ipcRenderer.on(
       );
       const isRightDismiss = rightDistance < leftDistance;
 
-      if (!isPinnedActionHitVisible(closeNode)) {
+      const intersectsViewport =
+        candidate.rect.right >= 8 &&
+        candidate.rect.left <= window.innerWidth - 8 &&
+        candidate.rect.bottom >= 8 &&
+        candidate.rect.top <= window.innerHeight - 8;
+      if (!intersectsViewport && !isPinnedActionHitVisible(closeNode)) {
         continue;
       }
 
@@ -1069,6 +1231,280 @@ ipcRenderer.on(
     );
 
     return markedState;
+  };
+
+  const dispatchProxyClick = (node: HTMLElement | null): boolean => {
+    if (!(node instanceof HTMLElement)) return false;
+
+    try {
+      node.click();
+    } catch {
+      // Fall through to synthetic events below.
+    }
+
+    const rect = node.getBoundingClientRect();
+    const clientX = Math.max(1, rect.left + rect.width / 2);
+    const clientY = Math.max(1, rect.top + rect.height / 2);
+    for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+      try {
+        const EventCtor = type === "pointerdown" ? PointerEvent : MouseEvent;
+        node.dispatchEvent(
+          new EventCtor(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+          }),
+        );
+      } catch {
+        // Ignore synthetic dispatch failures.
+      }
+    }
+
+    return true;
+  };
+
+  const clearFallbackMediaControls = (): void => {
+    document.getElementById(MEDIA_FALLBACK_CONTROLS_ID)?.remove();
+  };
+
+  const getOrCreateFallbackMediaControlsHost = (): HTMLElement => {
+    const existing = document.getElementById(MEDIA_FALLBACK_CONTROLS_ID);
+    if (existing instanceof HTMLElement) {
+      return existing;
+    }
+
+    const host = document.createElement("div");
+    host.id = MEDIA_FALLBACK_CONTROLS_ID;
+    host.setAttribute(MEDIA_FALLBACK_CONTROL_ATTR, "true");
+    host.style.position = "fixed";
+    host.style.inset = "0";
+    host.style.pointerEvents = "none";
+    host.style.zIndex = "2147483646";
+    document.body.appendChild(host);
+    return host;
+  };
+
+  const upsertFallbackMediaButton = (input: {
+    host: HTMLElement;
+    key: string;
+    label: string;
+    text: string;
+    top: number;
+    left?: number;
+    right?: number;
+    onClick: () => void;
+  }): void => {
+    const buttonId = `${MEDIA_FALLBACK_CONTROLS_ID}-${input.key}`;
+    let button = document.getElementById(buttonId) as HTMLButtonElement | null;
+    if (!(button instanceof HTMLButtonElement)) {
+      button = document.createElement("button");
+      button.id = buttonId;
+      button.type = "button";
+      button.className = MEDIA_FALLBACK_BUTTON_CLASS;
+      button.setAttribute(MEDIA_FALLBACK_CONTROL_ATTR, "true");
+      input.host.appendChild(button);
+    }
+
+    button.setAttribute("aria-label", input.label);
+    button.textContent = input.text;
+    button.style.top = `${Math.max(8, Math.round(input.top))}px`;
+    button.style.left =
+      typeof input.left === "number" ? `${input.left}px` : "auto";
+    button.style.right =
+      typeof input.right === "number" ? `${input.right}px` : "auto";
+    button.style.display = "flex";
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      input.onClick();
+    };
+  };
+
+  const hideFallbackMediaButton = (key: string): void => {
+    const button = document.getElementById(
+      `${MEDIA_FALLBACK_CONTROLS_ID}-${key}`,
+    );
+    if (button instanceof HTMLElement) {
+      button.style.display = "none";
+    }
+  };
+
+  const resolveActiveMediaSourceUrl = (): string | null => {
+    const nodes = Array.from(
+      document.querySelectorAll("img, video, [role='img']"),
+    ) as HTMLElement[];
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+
+    for (const node of nodes) {
+      if (!isAriaVisible(node)) continue;
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 180 && rect.height < 180) continue;
+      if (rect.width * rect.height < 30000) continue;
+      if (rect.bottom < 24 || rect.top > window.innerHeight - 24) continue;
+      const containsCenter =
+        centerX >= rect.left &&
+        centerX <= rect.right &&
+        centerY >= rect.top &&
+        centerY <= rect.bottom;
+      if (!containsCenter) continue;
+
+      const source = resolveMediaSourceFromNode(node);
+      if (source.url) {
+        lastMediaOpenSourceUrl = source.url;
+        lastMediaOpenSourceKind = source.kind;
+        return source.url;
+      }
+    }
+
+    return lastMediaOpenSourceUrl;
+  };
+
+  const triggerDownloadForUrl = (rawUrl: string): boolean => {
+    if (!rawUrl) return false;
+
+    try {
+      const anchor = document.createElement("a");
+      anchor.href = rawUrl;
+      anchor.download = "";
+      anchor.rel = "noopener noreferrer";
+      anchor.target = "_blank";
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const updateFallbackMediaControls = (
+    markedActions: MarkedMediaActionState,
+  ): void => {
+    const closeCandidate = rankEdgeCloseCandidates(
+      dismissActionSelectors,
+      new Set<HTMLElement>(),
+    )[0];
+    const closeNode = closeCandidate?.node || null;
+    const closeRect = closeCandidate?.rect || null;
+    const closePinnedVisible = closeNode
+      ? isPinnedActionHitVisible(closeNode)
+      : false;
+    const closeNeedsFallback =
+      closeRect !== null &&
+      (!markedActions.closeMarked ||
+        !closePinnedVisible ||
+        closeRect.left < 8 ||
+        closeRect.right > window.innerWidth - 8 ||
+        closeNode?.closest('[aria-hidden="true"]') !== null);
+
+    const downloadCandidate = !markedActions.downloadMarked
+      ? rankRightActionCandidates(
+          [
+            '[aria-label*="Download" i][role="button"]',
+            'button[aria-label*="Download" i]',
+            '[aria-label*="Download" i]',
+            '[aria-label*="Save" i][role="button"]',
+            'button[aria-label*="Save" i]',
+            '[aria-label*="Save" i]',
+          ],
+          new Set<HTMLElement>(),
+          0,
+        )[0]
+      : null;
+
+    const shareCandidate = !markedActions.shareMarked
+      ? rankRightActionCandidates(
+          [
+            '[aria-label*="Share" i][role="button"]',
+            'button[aria-label*="Share" i]',
+            '[aria-label*="Share" i]',
+            '[aria-label*="Forward" i][role="button"]',
+            'button[aria-label*="Forward" i]',
+            '[aria-label*="Forward" i]',
+          ],
+          new Set<HTMLElement>(),
+          0,
+        )[0]
+      : null;
+
+    const activeMediaSourceUrl = resolveActiveMediaSourceUrl();
+    const topOffset = closeRect ? Math.max(8, Math.round(closeRect.top)) : 8;
+    const closeOnLeft =
+      closeRect !== null
+        ? Math.abs(closeRect.left) <=
+          Math.abs(window.innerWidth - closeRect.right)
+        : true;
+
+    const host = getOrCreateFallbackMediaControlsHost();
+
+    if (closeNeedsFallback && closeNode) {
+      upsertFallbackMediaButton({
+        host,
+        key: "close",
+        label: closeNode.getAttribute("aria-label") || "Close",
+        text: "×",
+        top: topOffset,
+        ...(closeOnLeft
+          ? { left: MEDIA_ACTION_CLOSE_LEFT_OFFSET }
+          : { right: 16 }),
+        onClick: () => {
+          dispatchProxyClick(closeNode);
+        },
+      });
+    } else {
+      hideFallbackMediaButton("close");
+    }
+
+    const showDownloadFallback = Boolean(
+      downloadCandidate || activeMediaSourceUrl,
+    );
+    const showShareFallback = Boolean(shareCandidate);
+
+    if (showDownloadFallback) {
+      upsertFallbackMediaButton({
+        host,
+        key: "download",
+        label:
+          downloadCandidate?.node.getAttribute("aria-label") ||
+          "Download media attachment",
+        text: "↓",
+        top: topOffset,
+        right: showShareFallback ? 64 : 16,
+        onClick: () => {
+          if (downloadCandidate?.node) {
+            if (dispatchProxyClick(downloadCandidate.node)) return;
+          }
+          if (activeMediaSourceUrl) {
+            triggerDownloadForUrl(activeMediaSourceUrl);
+          }
+        },
+      });
+    } else {
+      hideFallbackMediaButton("download");
+    }
+
+    if (showShareFallback && shareCandidate?.node) {
+      upsertFallbackMediaButton({
+        host,
+        key: "share",
+        label: shareCandidate.node.getAttribute("aria-label") || "Forward",
+        text: "↗",
+        top: topOffset,
+        right: 16,
+        onClick: () => {
+          dispatchProxyClick(shareCandidate.node);
+        },
+      });
+    } else {
+      hideFallbackMediaButton("share");
+    }
   };
 
   const resolveMode = (): MessagesViewportMode =>
@@ -1241,6 +1677,13 @@ ipcRenderer.on(
         pointer-events: none !important;
       }
 
+      html.${MEDIA_LOADING_CLASS} body > div[id^="mount_"],
+      html.${MEDIA_LOADING_CLASS} body > div[id^="mount_"] > div,
+      html.${MEDIA_LOADING_CLASS} [data-pagelet="root"] {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+      }
+
       /* Incoming call overlay: hide only Facebook global chrome controls,
          not the entire banner container (call controls can be hosted there). */
       html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Menu" i],
@@ -1273,6 +1716,25 @@ ipcRenderer.on(
         pointer-events: auto !important;
         -webkit-app-region: ${NON_DRAG_APP_REGION} !important;
       }
+
+      #${MEDIA_FALLBACK_CONTROLS_ID} .${MEDIA_FALLBACK_BUTTON_CLASS} {
+        position: fixed;
+        width: 32px;
+        height: 32px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(24, 25, 26, 0.88);
+        color: #fff;
+        font: 600 18px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        pointer-events: auto;
+        cursor: pointer;
+        z-index: 2147483647;
+        -webkit-app-region: ${NON_DRAG_APP_REGION} !important;
+      }
     `;
     document.head.appendChild(style);
   };
@@ -1293,7 +1755,8 @@ ipcRenderer.on(
       });
     }
 
-    const detectedIncomingCallOverlayVisible = detectIncomingCallOverlayVisible();
+    const detectedIncomingCallOverlayVisible =
+      detectIncomingCallOverlayVisible();
     const now = Date.now();
 
     if (detectedIncomingCallOverlayVisible) {
@@ -1310,7 +1773,9 @@ ipcRenderer.on(
     ) {
       const activeForMs = now - incomingCallHintActivatedAt;
       const missingForMs =
-        incomingCallLastDetectedAt > 0 ? now - incomingCallLastDetectedAt : activeForMs;
+        incomingCallLastDetectedAt > 0
+          ? now - incomingCallLastDetectedAt
+          : activeForMs;
       const reason = getIncomingCallHintClearReason({
         activeForMs,
         missingForMs,
@@ -1328,7 +1793,11 @@ ipcRenderer.on(
 
     const mediaSignals = mode === "media" ? collectMediaOverlaySignals() : null;
 
-    if (mode === "media" && !detectedIncomingCallOverlayVisible && !incomingCallOverlayHintActive) {
+    if (
+      mode === "media" &&
+      !detectedIncomingCallOverlayVisible &&
+      !incomingCallOverlayHintActive
+    ) {
       if (
         mediaSignals &&
         !hasMediaOverlayOpenHint() &&
@@ -1344,8 +1813,12 @@ ipcRenderer.on(
       }
 
       const markedActions = markMediaActions();
+      updateFallbackMediaControls(markedActions);
       document.documentElement.classList.add(MEDIA_CLEAN_CLASS);
-      if (mediaSignals && shouldHideMediaBannerDuringLoad(mediaSignals, markedActions)) {
+      if (
+        mediaSignals &&
+        shouldHideMediaBannerDuringLoad(mediaSignals, markedActions)
+      ) {
         document.documentElement.classList.add(MEDIA_LOADING_CLASS);
       } else {
         document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
@@ -1354,6 +1827,7 @@ ipcRenderer.on(
       document.documentElement.classList.remove(MEDIA_CLEAN_CLASS);
       document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
       clearMarkedMediaActions();
+      clearFallbackMediaControls();
     }
 
     const incomingCallOverlayVisible =
@@ -1431,25 +1905,145 @@ ipcRenderer.on(
     'a[href*="/messenger_media"]',
   ];
 
+  const findMediaOpenPreviewNode = (root: HTMLElement): HTMLElement | null => {
+    const directCandidates = [
+      root,
+      ...(Array.from(
+        root.querySelectorAll("img, video, [role='img']"),
+      ) as HTMLElement[]),
+    ];
+
+    for (const candidate of directCandidates) {
+      if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
+        continue;
+      }
+
+      const style = window.getComputedStyle(candidate);
+      const rect = candidate.getBoundingClientRect();
+      const hasBackgroundImage =
+        typeof style.backgroundImage === "string" &&
+        style.backgroundImage !== "none";
+      const looksLikeMediaNode =
+        candidate.matches("img, video, [role='img']") || hasBackgroundImage;
+      if (!looksLikeMediaNode) continue;
+      const largestDimension = Math.max(rect.width, rect.height);
+      const area = rect.width * rect.height;
+      if (largestDimension < 120 || area < 9000) continue;
+      if (rect.right <= 250) continue;
+      return candidate;
+    }
+
+    return null;
+  };
+
+  const parseBackgroundImageUrl = (
+    value: string | null | undefined,
+  ): string | null => {
+    const match = String(value || "").match(/url\((['"]?)(.*?)\1\)/i);
+    return match?.[2] || null;
+  };
+
+  const resolveMediaSourceFromNode = (
+    node: HTMLElement | null,
+  ): { url: string | null; kind: "image" | "video" | "unknown" } => {
+    if (!(node instanceof HTMLElement)) {
+      return { url: null, kind: "unknown" };
+    }
+
+    if (node instanceof HTMLImageElement) {
+      return {
+        url: node.currentSrc || node.src || null,
+        kind: "image",
+      };
+    }
+
+    if (node instanceof HTMLVideoElement) {
+      return {
+        url: node.currentSrc || node.src || node.poster || null,
+        kind: "video",
+      };
+    }
+
+    const mediaChild = node.querySelector("img, video") as
+      | HTMLImageElement
+      | HTMLVideoElement
+      | null;
+    if (mediaChild instanceof HTMLImageElement) {
+      return {
+        url: mediaChild.currentSrc || mediaChild.src || null,
+        kind: "image",
+      };
+    }
+    if (mediaChild instanceof HTMLVideoElement) {
+      return {
+        url:
+          mediaChild.currentSrc || mediaChild.src || mediaChild.poster || null,
+        kind: "video",
+      };
+    }
+
+    const style = window.getComputedStyle(node);
+    const backgroundUrl = parseBackgroundImageUrl(style.backgroundImage);
+    if (backgroundUrl) {
+      return {
+        url: backgroundUrl,
+        kind: "image",
+      };
+    }
+
+    return { url: null, kind: "unknown" };
+  };
+
+  const rememberMediaOpenSourceFromTarget = (
+    target: EventTarget | null,
+  ): void => {
+    if (!(target instanceof Element)) return;
+
+    const clickable = target.closest(
+      'button, [role="button"], a[href], [tabindex]',
+    );
+    const previewNode =
+      clickable instanceof HTMLElement
+        ? findMediaOpenPreviewNode(clickable)
+        : null;
+    const source = resolveMediaSourceFromNode(previewNode);
+    if (!source.url) return;
+
+    lastMediaOpenSourceUrl = source.url;
+    lastMediaOpenSourceKind = source.kind;
+  };
+
   const isMediaOpenActionTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) return false;
 
     const matched = target.closest(mediaOpenActionSelectors.join(", "));
     if (matched) return true;
 
-    const clickable = target.closest('button, [role="button"], a[href]');
+    const clickable = target.closest(
+      'button, [role="button"], a[href], [tabindex]',
+    );
     if (!(clickable instanceof HTMLElement)) return false;
     if (
-      clickable.closest('[role="banner"], [role="navigation"], [aria-label="Chats" i]')
+      clickable.closest(
+        '[role="banner"], [role="navigation"], [aria-label="Chats" i]',
+      )
     ) {
       return false;
     }
 
-    const mediaNode = clickable.querySelector("img, video");
-    if (!(mediaNode instanceof HTMLElement)) return false;
+    return findMediaOpenPreviewNode(clickable) !== null;
+  };
 
-    const rect = mediaNode.getBoundingClientRect();
-    return rect.width >= 120 && rect.height >= 120 && rect.right > 250;
+  const scheduleOpenFastPathChecks = (trigger: string): void => {
+    const delays = [0, 20, 52, 96, 160, 260, 420];
+    for (const delay of delays) {
+      window.setTimeout(() => {
+        applyComputedMediaOverlayVisibility("open-fast-path", {
+          trigger,
+          delay,
+        });
+      }, delay);
+    }
   };
 
   const scheduleDismissFastPathChecks = (trigger: string): void => {
@@ -1510,7 +2104,7 @@ ipcRenderer.on(
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["class", "style", "role"],
+      attributeFilter: ["class", "style", "role", "aria-hidden", "hidden"],
     });
   };
 
@@ -1566,16 +2160,26 @@ ipcRenderer.on(
     scheduleApply();
   };
 
-  (window as typeof window & {
-    __mdSetForcedMediaOverlayVisible?: (visible: boolean | null) => void;
-    __mdSetIncomingCallOverlayHint?: (visible: boolean, reason?: string) => void;
-  }).__mdSetForcedMediaOverlayVisible = (visible: boolean | null) => {
+  (
+    window as typeof window & {
+      __mdSetForcedMediaOverlayVisible?: (visible: boolean | null) => void;
+      __mdSetIncomingCallOverlayHint?: (
+        visible: boolean,
+        reason?: string,
+      ) => void;
+    }
+  ).__mdSetForcedMediaOverlayVisible = (visible: boolean | null) => {
     applyForcedMediaOverlayVisible(visible);
   };
 
-  (window as typeof window & {
-    __mdSetIncomingCallOverlayHint?: (visible: boolean, reason?: string) => void;
-  }).__mdSetIncomingCallOverlayHint = (
+  (
+    window as typeof window & {
+      __mdSetIncomingCallOverlayHint?: (
+        visible: boolean,
+        reason?: string,
+      ) => void;
+    }
+  ).__mdSetIncomingCallOverlayHint = (
     visible: boolean,
     reason = "window-hook",
   ) => {
@@ -1596,18 +2200,30 @@ ipcRenderer.on(
     if (payload.type === "md-incoming-call-overlay-hint") {
       const visible = payload.visible === true;
       const reason =
-        typeof payload.reason === "string"
-          ? payload.reason
-          : "message-event";
+        typeof payload.reason === "string" ? payload.reason : "message-event";
       applyIncomingCallOverlayHint(visible, reason);
     }
   });
 
   document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (isMediaOpenActionTarget(event.target)) {
+        rememberMediaOpenSourceFromTarget(event.target);
+        applyMediaOverlayOpenHint("open-pointerdown");
+        scheduleOpenFastPathChecks("open-pointerdown");
+      }
+    },
+    { passive: true, capture: true },
+  );
+
+  document.addEventListener(
     "click",
     (event) => {
       if (isMediaOpenActionTarget(event.target)) {
+        rememberMediaOpenSourceFromTarget(event.target);
         applyMediaOverlayOpenHint("open-click");
+        scheduleOpenFastPathChecks("open-click");
       }
       if (!isDismissActionTarget(event.target)) return;
       clearMediaOverlayOpenHint("dismiss-click");
@@ -1623,7 +2239,9 @@ ipcRenderer.on(
         (event.key === "Enter" || event.key === " ") &&
         isMediaOpenActionTarget(event.target)
       ) {
+        rememberMediaOpenSourceFromTarget(event.target);
         applyMediaOverlayOpenHint("open-key");
+        scheduleOpenFastPathChecks("open-key");
       }
       if (event.key !== "Enter" && event.key !== " ") return;
       if (!isDismissActionTarget(event.target)) return;
@@ -1736,7 +2354,7 @@ ipcRenderer.on(
     const target = el instanceof HTMLElement ? el : null;
     if (!target) return false;
 
-    if (target.closest('[aria-hidden="true"]') || target.closest('[hidden]')) {
+    if (target.closest('[aria-hidden="true"]') || target.closest("[hidden]")) {
       return false;
     }
 
@@ -2005,7 +2623,8 @@ ipcRenderer.on(
         ipcRenderer.send("incoming-call", incomingCallData);
 
         const evidence =
-          incomingCallData.evidence && typeof incomingCallData.evidence === "object"
+          incomingCallData.evidence &&
+          typeof incomingCallData.evidence === "object"
             ? incomingCallData.evidence
             : null;
 
@@ -2054,9 +2673,14 @@ ipcRenderer.on(
             "[Preload Bridge] Incoming call end signal deferred (overlay still/sticky)",
             { reason: endedReason, overlayStillVisible },
           );
-          sendIncomingCallOverlayHint(true, `incoming-call-ended-deferred:${endedReason}`);
+          sendIncomingCallOverlayHint(
+            true,
+            `incoming-call-ended-deferred:${endedReason}`,
+          );
           ensureIncomingCallOverlayHintHeartbeat();
-          scheduleIncomingCallOverlayHintRecheck("incoming-call-ended-deferred");
+          scheduleIncomingCallOverlayHintRecheck(
+            "incoming-call-ended-deferred",
+          );
         } else {
           console.log(
             "[Preload Bridge] Incoming call ended - clearing overlay hint",
@@ -2065,7 +2689,10 @@ ipcRenderer.on(
           clearIncomingCallOverlayHintTimers();
           incomingCallOverlayHintStartedAt = 0;
           incomingCallOverlayHintLastVisibleAt = 0;
-          sendIncomingCallOverlayHint(false, `incoming-call-ended:${endedReason}`);
+          sendIncomingCallOverlayHint(
+            false,
+            `incoming-call-ended:${endedReason}`,
+          );
         }
       } else if (event.data.type === "electron-recount-badge") {
         // Handle badge recount request from injected script (issue #38)
@@ -2326,9 +2953,10 @@ if (process.platform !== "darwin") {
 
     const normalizeConversationPath = (raw: string): string | null => {
       try {
-        const url = raw.startsWith("http://") || raw.startsWith("https://")
-          ? new URL(raw)
-          : new URL(raw, window.location.origin);
+        const url =
+          raw.startsWith("http://") || raw.startsWith("https://")
+            ? new URL(raw)
+            : new URL(raw, window.location.origin);
         const path =
           (url.pathname || "/").split(/[?#]/)[0].replace(/\/+$/, "") || "/";
         return path
@@ -2346,7 +2974,9 @@ if (process.platform !== "darwin") {
         return true;
       }
 
-      const ariaLabel = (conversationEl.getAttribute("aria-label") || "").toLowerCase();
+      const ariaLabel = (
+        conversationEl.getAttribute("aria-label") || ""
+      ).toLowerCase();
       if (ariaLabel.includes("unread message")) {
         return true;
       }
@@ -2401,7 +3031,7 @@ if (process.platform !== "darwin") {
       pushLabel(conversationEl.getAttribute("data-tooltip-content"));
 
       const metaNodes = conversationEl.querySelectorAll(
-        '[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]',
+        "[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]",
       );
       metaNodes.forEach((node) => {
         pushLabel(node.getAttribute("aria-label"));
@@ -2413,12 +3043,13 @@ if (process.platform !== "darwin") {
         }
       });
 
-      return labelSources.some((text) =>
-        text.includes("muted") ||
-        text.includes("notifications are off") ||
-        text.includes("notifications off") ||
-        text.includes("notification off") ||
-        text.includes("unmute"),
+      return labelSources.some(
+        (text) =>
+          text.includes("muted") ||
+          text.includes("notifications are off") ||
+          text.includes("notifications off") ||
+          text.includes("notification off") ||
+          text.includes("unmute"),
       );
     };
 
@@ -2428,7 +3059,9 @@ if (process.platform !== "darwin") {
       );
       if (navigationSidebar) return navigationSidebar;
 
-      const chatsGrid = document.querySelector('[role="grid"][aria-label="Chats"]');
+      const chatsGrid = document.querySelector(
+        '[role="grid"][aria-label="Chats"]',
+      );
       if (chatsGrid) {
         return chatsGrid.closest('[role="navigation"]') || chatsGrid;
       }
@@ -2462,7 +3095,9 @@ if (process.platform !== "darwin") {
         ).filter((row) => row.querySelector(chatLinkSelector));
 
         const rows = Array.from(
-          new Set(rowsFromLinks.size > 0 ? Array.from(rowsFromLinks) : fallbackRows),
+          new Set(
+            rowsFromLinks.size > 0 ? Array.from(rowsFromLinks) : fallbackRows,
+          ),
         ).filter((row) => {
           const el = row as HTMLElement;
           if (el.getAttribute("aria-hidden") === "true") return false;
@@ -2551,11 +3186,7 @@ if (process.platform !== "darwin") {
       trigger: string,
       snapshot: UnreadSnapshot,
     ): void => {
-      if (
-        nextCount === 0 &&
-        lastSentCount > 0 &&
-        !isAppFocused()
-      ) {
+      if (nextCount === 0 && lastSentCount > 0 && !isAppFocused()) {
         deferredZeroWhileUnfocused = true;
         console.log("[BadgeMonitor] Deferring clear while unfocused", {
           trigger,
@@ -2583,7 +3214,10 @@ if (process.platform !== "darwin") {
         sidebarFound: snapshot.dom.sidebarFound,
         rows: `${snapshot.dom.countedRows}/${snapshot.dom.totalRows}`,
       });
-      window.postMessage({ type: "electron-badge-update", count: nextCount }, "*");
+      window.postMessage(
+        { type: "electron-badge-update", count: nextCount },
+        "*",
+      );
     };
 
     const runRecount = (trigger: string): void => {
@@ -2683,7 +3317,7 @@ if (process.platform !== "darwin") {
     const isMarkUnreadReadAction = (target: EventTarget | null): boolean => {
       if (!(target instanceof Element)) return false;
       const actionEl = target.closest(
-        '[role="menuitem"], [role="button"], button, [aria-label], [title]'
+        '[role="menuitem"], [role="button"], button, [aria-label], [title]',
       );
       if (!actionEl) return false;
 
@@ -2716,21 +3350,32 @@ if (process.platform !== "darwin") {
       }, 400);
     };
 
-    document.addEventListener("click", (event) => {
-      scheduleActivityRecount();
-      if (isMarkUnreadReadAction(event.target)) {
-        // Mark unread/read is often applied asynchronously after the context menu closes.
-        // Burst recounts to make dock/taskbar badge update feel immediate.
-        scheduleRecountBurst("mark-toggle", [40, 180, 450, 900]);
-      }
-    }, { passive: true, capture: true });
+    document.addEventListener(
+      "click",
+      (event) => {
+        scheduleActivityRecount();
+        if (isMarkUnreadReadAction(event.target)) {
+          // Mark unread/read is often applied asynchronously after the context menu closes.
+          // Burst recounts to make dock/taskbar badge update feel immediate.
+          scheduleRecountBurst("mark-toggle", [40, 180, 450, 900]);
+        }
+      },
+      { passive: true, capture: true },
+    );
 
-    document.addEventListener("keydown", (event) => {
-      scheduleActivityRecount();
-      if ((event.key === "Enter" || event.key === " ") && isMarkUnreadReadAction(event.target)) {
-        scheduleRecountBurst("mark-toggle-key", [40, 180, 450, 900]);
-      }
-    }, { passive: true, capture: true });
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        scheduleActivityRecount();
+        if (
+          (event.key === "Enter" || event.key === " ") &&
+          isMarkUnreadReadAction(event.target)
+        ) {
+          scheduleRecountBurst("mark-toggle-key", [40, 180, 450, 900]);
+        }
+      },
+      { passive: true, capture: true },
+    );
 
     // Recount requested by injected notifications script.
     document.addEventListener(

@@ -21,7 +21,14 @@ type NotificationMatchResult = {
     | "no-candidates"
     | "low-confidence"
     | "ambiguous-candidates"
-    | "muted-conflict";
+    | "muted-conflict"
+    | "observed-row-mismatch";
+};
+
+type ObservedSidebarNotificationDecision = NotificationMatchResult & {
+  observedHref?: string;
+  matchedObservedHref: boolean;
+  shouldNotify: boolean;
 };
 
 type NotificationDeduper = {
@@ -40,8 +47,17 @@ type NotificationDecisionPolicyApi = {
     payload: NotificationPayload,
     unreadRows: NotificationCandidate[],
   ) => NotificationMatchResult;
+  resolveObservedSidebarNotificationTarget?: (
+    payload: NotificationPayload,
+    observedHref: string | undefined,
+    unreadRows: NotificationCandidate[],
+  ) => ObservedSidebarNotificationDecision;
   createNotificationDeduper: (ttlMs?: number) => NotificationDeduper;
   isLikelyGlobalFacebookNotification: (payload: NotificationPayload) => boolean;
+  isLikelySelfAuthoredMessagePreview: (payload: NotificationPayload) => boolean;
+  shouldSuppressSelfAuthoredNotification: (
+    payloads: Array<NotificationPayload | null | undefined>,
+  ) => boolean;
   classifyCallNotification: (
     payload: NotificationPayload,
   ) => NotificationCallClassification;
@@ -49,7 +65,7 @@ type NotificationDecisionPolicyApi = {
 
 const MIN_CONFIDENCE = 0.55;
 const AMBIGUITY_DELTA = 0.14;
-const MUTED_CONFLICT_SCORE_FLOOR = 0.20;
+const MUTED_CONFLICT_SCORE_FLOOR = 0.2;
 const TERSE_SENDER_BODY_PATTERNS: RegExp[] = [
   /^(?:[a-z0-9.'_-]+\s+)?sent (?:you )?a message$/i,
   /^(?:[a-z0-9.'_-]+\s+)?new message$/i,
@@ -89,10 +105,14 @@ function clampScore(value: number): number {
 function isTerseSenderTitlePayload(payload: NotificationPayload): boolean {
   const payloadBody = normalizeText(payload.body);
   if (!payloadBody) return true;
-  return TERSE_SENDER_BODY_PATTERNS.some((pattern) => pattern.test(payloadBody));
+  return TERSE_SENDER_BODY_PATTERNS.some((pattern) =>
+    pattern.test(payloadBody),
+  );
 }
 
-function createMutedConflictResult(confidence: number): NotificationMatchResult {
+function createMutedConflictResult(
+  confidence: number,
+): NotificationMatchResult {
   return {
     confidence,
     ambiguous: true,
@@ -190,7 +210,8 @@ function resolveNativeNotificationTarget(
   const topTitle = normalizeText(top.candidate.title);
   const topLooksLikeSenderTitle =
     Boolean(payloadTitle) && Boolean(topTitle) && payloadTitle === topTitle;
-  const terseSenderPayload = topLooksLikeSenderTitle && isTerseSenderTitlePayload(payload);
+  const terseSenderPayload =
+    topLooksLikeSenderTitle && isTerseSenderTitlePayload(payload);
 
   for (const alternative of scored.slice(1)) {
     if (!alternative.candidate.muted || top.candidate.muted) continue;
@@ -214,7 +235,11 @@ function resolveNativeNotificationTarget(
       alternativeBody.length > 0 &&
       alternativeBody.includes(payloadBody);
 
-    if (explicitMutedGroupReference || terseMutedGroupConflict || mutedGroupPreviewContainsBody) {
+    if (
+      explicitMutedGroupReference ||
+      terseMutedGroupConflict ||
+      mutedGroupPreviewContainsBody
+    ) {
       return createMutedConflictResult(top.score);
     }
   }
@@ -279,6 +304,49 @@ function resolveNativeNotificationTarget(
     ambiguous: false,
     muted: top.candidate.muted,
     reason: "matched",
+  };
+}
+
+function resolveObservedSidebarNotificationTarget(
+  payload: NotificationPayload,
+  observedHref: string | undefined,
+  unreadRows: NotificationCandidate[],
+): ObservedSidebarNotificationDecision {
+  const match = resolveNativeNotificationTarget(payload, unreadRows);
+  const normalizedObservedHref = normalizeText(observedHref || "");
+  const normalizedMatchedHref = normalizeText(match.matchedHref || "");
+  const matchedObservedHref = normalizedObservedHref
+    ? Boolean(normalizedMatchedHref) &&
+      normalizedMatchedHref === normalizedObservedHref
+    : Boolean(match.matchedHref);
+
+  if (match.ambiguous || !match.matchedHref || match.muted) {
+    return {
+      ...match,
+      observedHref: normalizedObservedHref || undefined,
+      matchedObservedHref,
+      shouldNotify: false,
+    };
+  }
+
+  if (normalizedObservedHref && !matchedObservedHref) {
+    return {
+      matchedHref: match.matchedHref,
+      confidence: match.confidence,
+      ambiguous: true,
+      muted: false,
+      reason: "observed-row-mismatch",
+      observedHref: normalizedObservedHref,
+      matchedObservedHref: false,
+      shouldNotify: false,
+    };
+  }
+
+  return {
+    ...match,
+    observedHref: normalizedObservedHref || undefined,
+    matchedObservedHref,
+    shouldNotify: true,
   };
 }
 
@@ -357,7 +425,9 @@ function classifyCallNotification(
     };
   }
 
-  const titlePattern = CALL_BODY_PATTERNS.find((pattern) => pattern.test(title));
+  const titlePattern = CALL_BODY_PATTERNS.find((pattern) =>
+    pattern.test(title),
+  );
   if (titlePattern) {
     return {
       isIncomingCall: true,
@@ -370,7 +440,9 @@ function classifyCallNotification(
   return { isIncomingCall: false, reason: "not-call", usedTitleOnly: false };
 }
 
-function isLikelyGlobalFacebookNotification(payload: NotificationPayload): boolean {
+function isLikelyGlobalFacebookNotification(
+  payload: NotificationPayload,
+): boolean {
   const title = normalizeText(payload.title);
   const body = normalizeText(payload.body);
 
@@ -395,6 +467,40 @@ function isLikelyGlobalFacebookNotification(payload: NotificationPayload): boole
   return titleIsFacebookShell && hasSocialSignal;
 }
 
+const SELF_AUTHORED_BODY_PATTERNS: RegExp[] = [
+  /^you(?::|\s|$)/i,
+  /^you sent\b/i,
+  /^you replied\b/i,
+  /^you reacted\b/i,
+  /^you liked\b/i,
+  /^you shared\b/i,
+  /^you mentioned\b/i,
+  /^you edited\b/i,
+  /^you removed\b/i,
+  /^you unsent\b/i,
+  /^sent by you\b/i,
+];
+
+function isLikelySelfAuthoredMessagePreview(
+  payload: NotificationPayload,
+): boolean {
+  const body = String(payload.body || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!body) return false;
+
+  return SELF_AUTHORED_BODY_PATTERNS.some((pattern) => pattern.test(body));
+}
+
+function shouldSuppressSelfAuthoredNotification(
+  payloads: Array<NotificationPayload | null | undefined>,
+): boolean {
+  return payloads.some((payload) => {
+    if (!payload) return false;
+    return isLikelySelfAuthoredMessagePreview(payload);
+  });
+}
+
 function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
   const ttl = Math.max(100, Math.floor(ttlMs));
   const seenByConversation = new Map<string, number>();
@@ -415,8 +521,11 @@ function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
 
 const policyApi: NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget,
+  resolveObservedSidebarNotificationTarget,
   createNotificationDeduper,
   isLikelyGlobalFacebookNotification,
+  isLikelySelfAuthoredMessagePreview,
+  shouldSuppressSelfAuthoredNotification,
   classifyCallNotification,
 };
 

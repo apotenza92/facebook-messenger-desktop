@@ -3,6 +3,20 @@ const path = require('path');
 const fs = require('fs');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DEFAULT_WINDOW_SIZES = [
+  { width: 1280, height: 900, tag: '1280x900' },
+  { width: 1040, height: 760, tag: '1040x760' },
+  { width: 860, height: 640, tag: '860x640' },
+];
+const TARGET_ROUTE_TYPES = [
+  'messenger_media',
+  'messages_media_viewer',
+  'attachment_preview',
+  'photo',
+  'video',
+  'story',
+  'reel',
+];
 
 function ts() {
   const d = new Date();
@@ -10,11 +24,50 @@ function ts() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function safeFilePart(input) {
+function safe(input) {
   return String(input || '')
     .replace(/https?:\/\//g, '')
     .replace(/[^a-zA-Z0-9._-]+/g, '_')
     .slice(0, 90);
+}
+
+function parseArgs(argv) {
+  const options = {
+    mode: 'direct',
+    appRoot: process.env.MESSENGER_APP_ROOT
+      ? path.resolve(process.env.MESSENGER_APP_ROOT)
+      : path.resolve(__dirname, '..'),
+    outputDir: '',
+    maxThreads: 40,
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--mode') {
+      options.mode = String(argv[++i] || '').trim().toLowerCase() || options.mode;
+    } else if (arg === '--output-dir') {
+      options.outputDir = path.resolve(argv[++i]);
+    } else if (arg === '--app-root') {
+      options.appRoot = path.resolve(argv[++i]);
+    } else if (arg === '--max-threads') {
+      options.maxThreads = Math.max(1, Number(argv[++i]) || options.maxThreads);
+    } else if (arg === '--help' || arg === '-h') {
+      console.log(`Usage: node scripts/test-issue45-real-resize-gui.js [options]\n\nOptions:\n  --mode <direct|click-flow>  direct = navigate chosen media URLs; click-flow = open first media from /media pages\n  --output-dir <dir>          Directory for screenshots and summary.json\n  --app-root <dir>            Alternate app root containing dist/main/main.js\n  --max-threads <n>           Max threads to scan while discovering candidates\n`);
+      process.exit(0);
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  if (!['direct', 'click-flow'].includes(options.mode)) {
+    throw new Error(`Unknown --mode value: ${options.mode}`);
+  }
+
+  if (!options.outputDir) {
+    options.outputDir = path.join(process.cwd(), 'test-screenshots', `issue45-real-resize-${options.mode}-${ts()}`);
+  }
+
+  return options;
 }
 
 async function withPrimaryWebContents(app, fn, payload) {
@@ -60,10 +113,10 @@ async function loadMessagesHome(app) {
   );
 }
 
-async function collectThreadUrls(app) {
+async function collectThreadUrls(app, totalPasses = 18) {
   return withPrimaryWebContents(
     app,
-    async (wc) => {
+    async (wc, totalPasses) => {
       const script = `
         (async () => {
           const normalize = (raw) => {
@@ -71,12 +124,8 @@ async function collectThreadUrls(app) {
             try {
               const abs = new URL(raw, window.location.origin);
               let pathname = abs.pathname || '/';
-              if (pathname.startsWith('/t/') || pathname.startsWith('/e2ee/t/')) {
-                pathname = '/messages' + pathname;
-              }
-              if (!(pathname.startsWith('/messages/t/') || pathname.startsWith('/messages/e2ee/t/'))) {
-                return null;
-              }
+              if (pathname.startsWith('/t/') || pathname.startsWith('/e2ee/t/')) pathname = '/messages' + pathname;
+              if (!(pathname.startsWith('/messages/t/') || pathname.startsWith('/messages/e2ee/t/'))) return null;
               return abs.origin + pathname;
             } catch {
               return null;
@@ -84,47 +133,37 @@ async function collectThreadUrls(app) {
           };
 
           const urls = new Set();
-          const totalPasses = 18;
-          const findSidebarScroller = () => {
-            const nav = document.querySelector('[role="navigation"]');
-            if (!(nav instanceof HTMLElement)) return document.scrollingElement || document.documentElement;
-            let best = nav;
-            const stack = [nav, ...Array.from(nav.querySelectorAll('div'))];
-            for (const node of stack) {
-              if (!(node instanceof HTMLElement)) continue;
-              if (node.scrollHeight > node.clientHeight + 120) {
-                if (node.clientHeight > best.clientHeight) best = node;
-              }
-            }
-            return best;
-          };
+          const nav = document.querySelector('[role="navigation"]');
+          let scroller = document.scrollingElement || document.documentElement;
+          if (nav instanceof HTMLElement) {
+            const cands = [nav, ...Array.from(nav.querySelectorAll('div'))].filter((el) => el.scrollHeight > el.clientHeight + 120);
+            cands.sort((a, b) => b.clientHeight - a.clientHeight);
+            if (cands[0]) scroller = cands[0];
+          }
 
           const collect = () => {
             const anchors = Array.from(document.querySelectorAll('a[href]'));
             for (const a of anchors) {
-              const normalized = normalize(a.getAttribute('href'));
-              if (normalized) urls.add(normalized);
+              const n = normalize(a.getAttribute('href'));
+              if (n) urls.add(n);
             }
           };
 
-          const scroller = findSidebarScroller();
           collect();
-          for (let i = 0; i < totalPasses; i++) {
-            const delta = Math.max(220, Math.round((scroller.clientHeight || window.innerHeight) * 0.8));
+          for (let i = 0; i < Number(totalPasses || 18); i++) {
+            const delta = Math.max(220, Math.round((scroller.clientHeight || innerHeight) * 0.8));
             scroller.scrollTop = Math.min(scroller.scrollTop + delta, scroller.scrollHeight);
             await new Promise((r) => setTimeout(r, 170));
             collect();
           }
-          for (let i = 0; i < totalPasses; i++) {
-            scroller.scrollTop = Math.max(0, scroller.scrollTop - 420);
-          }
+          scroller.scrollTop = 0;
 
           return Array.from(urls);
         })();
       `;
       return wc.executeJavaScript(script, true);
     },
-    null,
+    totalPasses,
   );
 }
 
@@ -133,8 +172,7 @@ function toMediaUrl(threadUrl) {
     const u = new URL(threadUrl);
     const m = u.pathname.match(/^\/messages\/(e2ee\/)?t\/([^/]+)/i);
     if (!m) return null;
-    const base = `/messages/${m[1] ? 'e2ee/' : ''}t/${m[2]}/media`;
-    return `${u.origin}${base}`;
+    return `${u.origin}/messages/${m[1] ? 'e2ee/' : ''}t/${m[2]}/media`;
   } catch {
     return null;
   }
@@ -197,9 +235,7 @@ async function collectMediaLinksFromCurrentPage(app) {
               if (!type) continue;
               try {
                 const abs = new URL(href, window.location.origin).href;
-                if (!links.has(abs)) {
-                  links.set(abs, { url: abs, routeType: type });
-                }
+                if (!links.has(abs)) links.set(abs, { url: abs, routeType: type });
               } catch {}
             }
           };
@@ -217,6 +253,49 @@ async function collectMediaLinksFromCurrentPage(app) {
             title: document.title,
             links: Array.from(links.values()),
           };
+        })();
+      `;
+      return wc.executeJavaScript(script, true);
+    },
+    null,
+  );
+}
+
+async function countMediaCandidatesOnMediaPage(app) {
+  const result = await collectMediaLinksFromCurrentPage(app);
+  return result.links || [];
+}
+
+async function openFirstMediaByClickFromCurrentPage(app) {
+  return withPrimaryWebContents(
+    app,
+    async (wc) => {
+      const script = `
+        (() => {
+          const isTarget = (href) => {
+            if (!href) return false;
+            const h = href.toLowerCase();
+            if (h.includes('/reel/?s=tab') || h === '/reel/' || h === '/reel') return false;
+            return h.includes('/messenger_media') || h.includes('/messages/media_viewer') || h.includes('/messages/attachment_preview') || h.includes('/photo') || h.includes('/photos') || h.includes('/video') || h.includes('/watch') || h.includes('/story') || h.includes('/stories');
+          };
+
+          const candidates = [];
+          for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+            const href = a.getAttribute('href') || '';
+            if (!isTarget(href)) continue;
+            const r = a.getBoundingClientRect();
+            if (r.width < 12 || r.height < 12) continue;
+            candidates.push({ node: a, href, top: r.top, area: r.width * r.height });
+          }
+
+          candidates.sort((a, b) => (a.top - b.top) || (b.area - a.area));
+          const c = candidates[0];
+          if (!c) return { opened: false, href: null };
+
+          c.node.scrollIntoView({ block: 'center', inline: 'nearest' });
+          const r = c.node.getBoundingClientRect();
+          c.node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+          return { opened: true, href: c.href };
         })();
       `;
       return wc.executeJavaScript(script, true);
@@ -254,26 +333,24 @@ async function inspectCurrentViewer(app) {
 
           const chooseClose = (arr) => {
             if (!arr.length) return null;
-            const sorted = [...arr].sort((a, b) => {
+            return [...arr].sort((a, b) => {
               const aEdge = Math.min(a.left, Math.max(0, window.innerWidth - a.right));
               const bEdge = Math.min(b.left, Math.max(0, window.innerWidth - b.right));
               if (aEdge !== bEdge) return aEdge - bEdge;
               if (a.top !== b.top) return a.top - b.top;
               return a.left - b.left;
-            });
-            return sorted[0];
+            })[0];
           };
 
           const chooseRight = (arr) => {
             if (!arr.length) return null;
-            const sorted = [...arr].sort((a, b) => {
+            return [...arr].sort((a, b) => {
               const ar = Math.max(0, window.innerWidth - a.right);
               const br = Math.max(0, window.innerWidth - b.right);
               if (ar !== br) return ar - br;
               if (a.top !== b.top) return a.top - b.top;
               return a.left - b.left;
-            });
-            return sorted[0];
+            })[0];
           };
 
           const closeAll = pick('[aria-label="Close" i],button[aria-label="Close" i],[aria-label*="Go back" i],button[aria-label*="Go back" i],[aria-label="Back" i],button[aria-label="Back" i]');
@@ -283,9 +360,6 @@ async function inspectCurrentViewer(app) {
           const close = chooseClose(closeAll);
           const download = chooseRight(downloadAll);
           const share = chooseRight(shareAll.filter((s) => !download || s.left !== download.left || s.top !== download.top));
-
-          const closePosition = close ? (close.left < window.innerWidth * 0.5 ? 'left' : 'right') : 'unknown';
-
           const toGapRight = (rect) => rect ? Math.max(0, Math.round(window.innerWidth - rect.right)) : null;
 
           return {
@@ -300,15 +374,8 @@ async function inspectCurrentViewer(app) {
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
               leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
-            closePosition,
-            controls: {
-              close,
-              download,
-              share,
-              closeAll,
-              downloadAll,
-              shareAll,
-            },
+            closePosition: close ? (close.left < window.innerWidth * 0.5 ? 'left' : 'right') : 'unknown',
+            controls: { close, download, share, closeAll, downloadAll, shareAll },
             gaps: {
               closeLeft: close ? close.left : null,
               closeRight: toGapRight(close),
@@ -335,7 +402,6 @@ function evaluateSymmetry(state) {
   const isLeft = state.closePosition === 'left' || state.classes.leftDismiss === true;
   const expectedDownload = isLeft ? state.gaps.closeLeft : state.gaps.closeRight + 48;
   const expectedShare = isLeft ? state.gaps.closeLeft + 48 : state.gaps.closeRight + 96;
-
   const near = (a, b, t = 5) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= t;
   const topAligned = near(download.top, close.top) && near(share.top, close.top);
   const gapAligned = near(state.gaps.downloadRight, expectedDownload) && near(state.gaps.shareRight, expectedShare);
@@ -358,13 +424,160 @@ function evaluateSymmetry(state) {
   };
 }
 
+async function closeViewer(app) {
+  return withPrimaryWebContents(
+    app,
+    async (wc) => {
+      const script = `
+        (() => {
+          const node = document.querySelector('[aria-label="Close" i],button[aria-label="Close" i],[aria-label*="Go back" i],button[aria-label*="Go back" i],[aria-label="Back" i],button[aria-label="Back" i]');
+          if (!(node instanceof HTMLElement)) return false;
+          const r = node.getBoundingClientRect();
+          node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2 }));
+          return true;
+        })();
+      `;
+      return wc.executeJavaScript(script, true);
+    },
+    null,
+  );
+}
+
+async function runDirectMode(app, options) {
+  const report = {
+    mode: 'direct',
+    candidatesByType: {},
+    routeTypeResults: [],
+    sizes: DEFAULT_WINDOW_SIZES,
+  };
+
+  const threads = await collectThreadUrls(app);
+  console.log('Threads discovered:', threads.length);
+
+  const candidatesByType = new Map();
+  for (const thread of threads.slice(0, options.maxThreads)) {
+    const mediaUrl = toMediaUrl(thread);
+    if (!mediaUrl) continue;
+
+    const nav = await navigate(app, mediaUrl);
+    if (!nav.ok) continue;
+    await wait(1100);
+
+    const media = await collectMediaLinksFromCurrentPage(app);
+    for (const link of media.links) {
+      if (!candidatesByType.has(link.routeType)) candidatesByType.set(link.routeType, []);
+      const arr = candidatesByType.get(link.routeType);
+      if (!arr.some((x) => x.url === link.url)) {
+        arr.push({ ...link, fromThread: thread, fromMediaPage: mediaUrl });
+      }
+    }
+  }
+
+  report.candidatesByType = Object.fromEntries(Array.from(candidatesByType.entries()).map(([k, v]) => [k, v.length]));
+
+  for (const routeType of TARGET_ROUTE_TYPES) {
+    const candidates = candidatesByType.get(routeType) || [];
+    if (candidates.length === 0) {
+      report.routeTypeResults.push({ routeType, status: 'missing', reason: 'no_real_candidate_found' });
+      continue;
+    }
+
+    const chosen = candidates[0];
+    const nav = await navigate(app, chosen.url);
+    if (!nav.ok) {
+      report.routeTypeResults.push({ routeType, status: 'missing', reason: 'navigate_failed', chosen });
+      continue;
+    }
+    await wait(1300);
+
+    const sizeResults = [];
+    for (const size of DEFAULT_WINDOW_SIZES) {
+      await setWindowSize(app, size.width, size.height);
+      await wait(750);
+      const state = await inspectCurrentViewer(app);
+      const symmetry = evaluateSymmetry(state);
+      const fileName = `${routeType}-${size.tag}-${safe(chosen.url)}.png`;
+      await captureWindow(app, path.join(options.outputDir, fileName));
+      sizeResults.push({ size, fileName, state, symmetry });
+    }
+
+    report.routeTypeResults.push({
+      routeType,
+      status: sizeResults.every((r) => r.symmetry.ok) ? 'ok' : 'needs_review',
+      chosen,
+      sizeResults,
+    });
+  }
+
+  return report;
+}
+
+async function runClickFlowMode(app, options) {
+  const summary = {
+    mode: 'click-flow',
+    testedThreads: [],
+    sizes: DEFAULT_WINDOW_SIZES,
+    results: [],
+  };
+
+  const threads = await collectThreadUrls(app);
+  console.log('Threads discovered:', threads.length);
+
+  const mediaThreads = [];
+  for (const thread of threads.slice(0, options.maxThreads)) {
+    const mediaUrl = toMediaUrl(thread);
+    if (!mediaUrl) continue;
+    const nav = await navigate(app, mediaUrl);
+    if (!nav.ok) continue;
+    await wait(900);
+    const links = await countMediaCandidatesOnMediaPage(app);
+    if (links.length > 0) {
+      mediaThreads.push({ thread, mediaUrl, linkCount: links.length });
+    }
+    if (mediaThreads.length >= 4) break;
+  }
+
+  summary.testedThreads = mediaThreads;
+
+  for (const t of mediaThreads) {
+    for (const size of DEFAULT_WINDOW_SIZES) {
+      await setWindowSize(app, size.width, size.height);
+      await wait(500);
+      await navigate(app, t.mediaUrl);
+      await wait(900);
+      const opened = await openFirstMediaByClickFromCurrentPage(app);
+      await wait(1300);
+      const state = await inspectCurrentViewer(app);
+      const evaluation = evaluateSymmetry(state);
+      const fileName = `${safe(t.thread)}-${size.tag}.png`;
+      await captureWindow(app, path.join(options.outputDir, fileName));
+
+      summary.results.push({
+        thread: t.thread,
+        mediaUrl: t.mediaUrl,
+        size,
+        opened,
+        fileName,
+        state,
+        evaluation,
+      });
+
+      await closeViewer(app).catch(() => {});
+      await wait(350);
+    }
+  }
+
+  return summary;
+}
+
 async function run() {
-  const outDir = path.join(process.cwd(), 'test-screenshots', `issue45-real-resize-${ts()}`);
-  fs.mkdirSync(outDir, { recursive: true });
-  console.log('Output folder:', outDir);
+  const options = parseArgs(process.argv.slice(2));
+  fs.mkdirSync(options.outputDir, { recursive: true });
+  console.log('Output folder:', options.outputDir);
+  console.log('Mode:', options.mode);
 
   const app = await electron.launch({
-    args: [path.join(__dirname, '../dist/main/main.js')],
+    args: [path.join(options.appRoot, 'dist/main/main.js')],
     env: { ...process.env, NODE_ENV: 'development' },
   });
 
@@ -373,106 +586,14 @@ async function run() {
     const homeUrl = await loadMessagesHome(app);
     console.log('Loaded:', homeUrl);
 
-    const threads = await collectThreadUrls(app);
-    console.log('Threads discovered:', threads.length);
+    const report = options.mode === 'click-flow'
+      ? await runClickFlowMode(app, options)
+      : await runDirectMode(app, options);
 
-    const candidatesByType = new Map();
-    for (const thread of threads.slice(0, 80)) {
-      const mediaUrl = toMediaUrl(thread);
-      if (!mediaUrl) continue;
-
-      const nav = await navigate(app, mediaUrl);
-      if (!nav.ok) continue;
-      await wait(1100);
-
-      const media = await collectMediaLinksFromCurrentPage(app);
-      for (const link of media.links) {
-        if (!candidatesByType.has(link.routeType)) {
-          candidatesByType.set(link.routeType, []);
-        }
-        const arr = candidatesByType.get(link.routeType);
-        if (!arr.some((x) => x.url === link.url)) {
-          arr.push({ ...link, fromThread: thread, fromMediaPage: mediaUrl });
-        }
-      }
-    }
-
-    const targetRouteTypes = [
-      'messenger_media',
-      'messages_media_viewer',
-      'attachment_preview',
-      'photo',
-      'video',
-      'story',
-      'reel',
-    ];
-
-    const sizes = [
-      { width: 1280, height: 900, tag: '1280x900' },
-      { width: 1040, height: 760, tag: '1040x760' },
-      { width: 860, height: 640, tag: '860x640' },
-    ];
-
-    const report = {
-      candidatesByType: Object.fromEntries(
-        Array.from(candidatesByType.entries()).map(([k, v]) => [k, v.length]),
-      ),
-      routeTypeResults: [],
-    };
-
-    for (const routeType of targetRouteTypes) {
-      const candidates = candidatesByType.get(routeType) || [];
-      if (candidates.length === 0) {
-        report.routeTypeResults.push({ routeType, status: 'missing', reason: 'no_real_candidate_found' });
-        continue;
-      }
-
-      const chosen = candidates[0];
-      const nav = await navigate(app, chosen.url);
-      if (!nav.ok) {
-        report.routeTypeResults.push({ routeType, status: 'missing', reason: 'navigate_failed', chosen });
-        continue;
-      }
-      await wait(1300);
-
-      const sizeResults = [];
-      for (const size of sizes) {
-        await setWindowSize(app, size.width, size.height);
-        await wait(750);
-        const state = await inspectCurrentViewer(app);
-        const symmetry = evaluateSymmetry(state);
-
-        const fileName = `${routeType}-${size.tag}-${safeFilePart(chosen.url)}.png`;
-        await captureWindow(app, path.join(outDir, fileName));
-
-        sizeResults.push({
-          size,
-          fileName,
-          state,
-          symmetry,
-        });
-      }
-
-      const allOk = sizeResults.every((r) => r.symmetry.ok === true);
-      report.routeTypeResults.push({
-        routeType,
-        status: allOk ? 'ok' : 'needs_review',
-        chosen,
-        sizeResults,
-      });
-    }
-
-    const summaryPath = path.join(outDir, 'summary.json');
+    const summaryPath = path.join(options.outputDir, 'summary.json');
     fs.writeFileSync(summaryPath, JSON.stringify(report, null, 2));
-
-    const okCount = report.routeTypeResults.filter((r) => r.status === 'ok').length;
-    const reviewCount = report.routeTypeResults.filter((r) => r.status === 'needs_review').length;
-    const missingCount = report.routeTypeResults.filter((r) => r.status === 'missing').length;
-
     console.log('Summary:', summaryPath);
-    console.log('Counts:', { okCount, reviewCount, missingCount, total: report.routeTypeResults.length });
-    console.log('Candidate counts:', report.candidatesByType);
-    console.log('Folder:', outDir);
+    console.log('Folder:', options.outputDir);
   } finally {
     await app.close().catch(() => {});
   }

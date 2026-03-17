@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.0-beta.30] - 2026-03-17
+
+### Fixed
+
+- **Issue #41 follow-up: stop more self-notification and marketplace routing regressions** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Force marketplace links back out to the system browser, including wrapped `facebook.com/messages/...?...u=...marketplace...` routes and same-frame link clicks that Facebook tries to keep inside the app.
+  - Broaden self-authored notification suppression so outgoing `You:` previews and similar website-side self-message variants do not generate native desktop notifications.
+  - Added a browser-assisted non-E2EE regression retest with zero leaked self-notifications during a real same-account website send.
+- **Muted notification matching hardening**
+  - Keep fail-closed behavior when notification text could belong to a muted group instead of an unmuted direct thread, reducing the chance of muted chat leaks.
+  - Expand muted sidebar detection across newer icon and accessibility-label variants.
+
+### Changed
+
+- **Issue #45 evidence and regression tooling cleanup** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Consolidated overlapping real-media GUI scripts into the maintained resize/live-type harnesses and documented the remaining evidence flow.
+  - Restored GUI routing coverage around marketplace external-open handling and added focused helpers for self-notification capture during live verification.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:window-open`
+- `node scripts/test-window-open-gui.js`
+- Real browser-assisted non-E2EE self-message retest on a `/messages/t/...` thread with zero captured desktop notifications
+
 ## [1.3.0-beta.29] - 2026-03-13
 
 ### Fixed
@@ -339,7 +365,7 @@
   - `npm run test:issue45:gui` for E2EE vs legacy media mode parity
   - `npm run test:issue45:buttons:gui` for pinned control spacing + resize behavior
   - `npm run test:issue45:live:scan:gui` and `npm run test:issue45:media-history:gui` for live chat/media discovery snapshots
-  - `npm run test:issue45:real:flow:resize:gui` for real media-history click flow checks across multiple window sizes
+  - `npm run test:issue45:real:resize:gui -- --mode click-flow` for real media-history click flow checks across multiple window sizes
 
 ## [1.3.0-beta.10] - 2026-02-25
 
@@ -393,7 +419,6 @@
 - **Issue #46 hardening: reduce non-messages notification leakage paths** ([#46](https://github.com/apotenza92/facebook-messenger-desktop/issues/46))
   - Scoped injected renderer notifications to Messages routes only (`/messages`, `/t/*`, `/e2ee/t/*`) to avoid forwarding non-chat Facebook notifications
 
-
 ## [1.3.0-beta.6] - 2026-02-24
 
 ### Fixed
@@ -406,7 +431,6 @@
   - Disabled legacy preload notification forwarding path that could emit unfiltered notifications before mute checks
   - Removed renderer native `notifications` permission allowlist so site notifications cannot bypass app-level mute filtering
 
-
 ## [1.3.0-beta.5] - 2026-02-23
 
 ### Fixed
@@ -415,7 +439,6 @@
   - Added route exclusions so auth-flow disclaimer banners do not appear on Facebook media/content viewer routes (photo/video/reels/stories/watch)
   - Added banner lifecycle cleanup on navigation and SPA route changes so injected banner DOM/CSS is removed when leaving login/verification/intermediate pages
   - Hardened session-state gating for intermediate banner injection to avoid false positives when cookie/session checks are unavailable
-
 
 ## [1.3.0-beta.4] - 2026-02-23
 

@@ -59,9 +59,7 @@ import {
   decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
 } from "./incoming-call-ipc-policy";
-import {
-  type IncomingCallEvidence,
-} from "../shared/incoming-call-evidence";
+import { type IncomingCallEvidence } from "../shared/incoming-call-evidence";
 import { autoUpdater } from "electron-updater";
 
 // On Linux AppImage: fork and detach from terminal so the command returns immediately
@@ -141,7 +139,9 @@ const isDev =
 const isBrokenPipeError = (error: unknown): boolean => {
   if (!error || typeof error !== "object") return false;
   const err = error as NodeJS.ErrnoException;
-  return err.code === "EPIPE" || /write\s+EPIPE/i.test(String(err.message || ""));
+  return (
+    err.code === "EPIPE" || /write\s+EPIPE/i.test(String(err.message || ""))
+  );
 };
 
 const installPipeErrorGuards = (): void => {
@@ -272,7 +272,10 @@ function formatIncomingCallCaller(raw: unknown): string | null {
       /\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi,
       " ",
     )
-    .replace(/\b(incoming|video|audio|call|from|on|messenger|facebook)\b/gi, " ")
+    .replace(
+      /\b(incoming|video|audio|call|from|on|messenger|facebook)\b/gi,
+      " ",
+    )
     .replace(/\s+/g, " ")
     .trim();
 
@@ -412,7 +415,10 @@ function pushMediaOverlayDebugEvent(event: MediaOverlayDebugEvent): void {
   try {
     const logsDir = app.getPath("logs");
     fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(getMediaOverlayDebugLogPath(), `${JSON.stringify(event)}\n`);
+    fs.appendFileSync(
+      getMediaOverlayDebugLogPath(),
+      `${JSON.stringify(event)}\n`,
+    );
   } catch {
     // Ignore debug log write failures.
   }
@@ -423,7 +429,9 @@ function readTailLinesFromFile(filePath: string, maxLines: number): string[] {
 
   try {
     const content = fs.readFileSync(filePath, "utf8");
-    const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const lines = content
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0);
     if (lines.length <= maxLines) return lines;
     return lines.slice(lines.length - maxLines);
   } catch {
@@ -460,32 +468,60 @@ function pushIncomingCallDebugEvent(event: IncomingCallDebugEvent): void {
   try {
     const logsDir = app.getPath("logs");
     fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(getIncomingCallDebugLogPath(), `${JSON.stringify(event)}\n`);
+    fs.appendFileSync(
+      getIncomingCallDebugLogPath(),
+      `${JSON.stringify(event)}\n`,
+    );
   } catch {
     // Ignore debug log write failures.
   }
 }
 
-async function exportIssue45DebugReport(): Promise<void> {
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const defaultFileName = `messenger-issue45-debug-${timestamp}.json`;
-  const defaultPath = path.join(app.getPath("desktop"), defaultFileName);
+type Issue45TestExportConfig = {
+  dir: string;
+  label: string;
+};
 
-  const saveDialogOptions: Electron.SaveDialogOptions = {
-    title: "Export Issue #45 Debug Report",
-    defaultPath,
-    filters: [{ name: "JSON", extensions: ["json"] }],
+function getIssue45TestExportConfig(): Issue45TestExportConfig | null {
+  const dir = process.env.MESSENGER_ISSUE45_TEST_EXPORT_DIR?.trim();
+  if (!dir) return null;
+
+  const label =
+    process.env.MESSENGER_ISSUE45_TEST_EXPORT_LABEL?.trim() || "issue45";
+  return {
+    dir: path.resolve(dir),
+    label,
   };
-  const saveResult = mainWindow
-    ? await dialog.showSaveDialog(mainWindow, saveDialogOptions)
-    : await dialog.showSaveDialog(saveDialogOptions);
+}
 
-  if (saveResult.canceled || !saveResult.filePath) {
+function shouldResetIssue45DebugLogOnStart(): boolean {
+  return (
+    process.env.MESSENGER_ISSUE45_TEST_RESET_DEBUG_LOG === "1" ||
+    process.env.MESSENGER_ISSUE45_TEST_RESET_DEBUG_LOG === "true"
+  );
+}
+
+function maybeResetIssue45DebugLogOnStart(): void {
+  if (!shouldResetIssue45DebugLogOnStart()) {
     return;
   }
 
+  try {
+    const debugLogPath = getMediaOverlayDebugLogPath();
+    if (fs.existsSync(debugLogPath)) {
+      fs.unlinkSync(debugLogPath);
+    }
+  } catch (error) {
+    console.warn(
+      "[Issue45Debug] Failed to reset media overlay debug log",
+      error,
+    );
+  }
+}
+
+function buildIssue45DebugReport(): Record<string, unknown> {
   const debugLogPath = getMediaOverlayDebugLogPath();
-  const report = {
+  return {
     generatedAt: new Date().toISOString(),
     app: {
       name: APP_DISPLAY_NAME,
@@ -516,9 +552,83 @@ async function exportIssue45DebugReport(): Promise<void> {
     inMemoryEvents: mediaOverlayDebugEvents,
     ndjsonTail: readTailLinesFromFile(debugLogPath, 2000),
   };
+}
+
+function writeIssue45DebugReport(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(buildIssue45DebugReport(), null, 2),
+    "utf8",
+  );
+}
+
+function copyIssue45DebugNdjson(destinationPath: string): void {
+  const debugLogPath = getMediaOverlayDebugLogPath();
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+
+  if (fs.existsSync(debugLogPath)) {
+    fs.copyFileSync(debugLogPath, destinationPath);
+    return;
+  }
+
+  fs.writeFileSync(destinationPath, "", "utf8");
+}
+
+function exportIssue45DebugArtifactsToDirectory(
+  dir: string,
+  label: string,
+): { reportPath: string; ndjsonPath: string } {
+  const safeLabel =
+    String(label || "issue45")
+      .trim()
+      .replace(/[^a-z0-9._-]+/gi, "-") || "issue45";
+  const reportPath = path.join(dir, `${safeLabel}-debug-report.json`);
+  const ndjsonPath = path.join(dir, `${safeLabel}-media-overlay-debug.ndjson`);
+
+  writeIssue45DebugReport(reportPath);
+  copyIssue45DebugNdjson(ndjsonPath);
+
+  return { reportPath, ndjsonPath };
+}
+
+function maybeAutoExportIssue45DebugArtifactsOnQuit(): void {
+  const config = getIssue45TestExportConfig();
+  if (!config) {
+    return;
+  }
 
   try {
-    fs.writeFileSync(saveResult.filePath, JSON.stringify(report, null, 2), "utf8");
+    const exported = exportIssue45DebugArtifactsToDirectory(
+      config.dir,
+      config.label,
+    );
+    console.log("[Issue45Debug] Auto-exported test artifacts", exported);
+  } catch (error) {
+    console.warn("[Issue45Debug] Failed to auto-export test artifacts", error);
+  }
+}
+
+async function exportIssue45DebugReport(): Promise<void> {
+  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
+  const defaultFileName = `messenger-issue45-debug-${timestamp}.json`;
+  const defaultPath = path.join(app.getPath("desktop"), defaultFileName);
+
+  const saveDialogOptions: Electron.SaveDialogOptions = {
+    title: "Export Issue #45 Debug Report",
+    defaultPath,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  };
+  const saveResult = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, saveDialogOptions)
+    : await dialog.showSaveDialog(saveDialogOptions);
+
+  if (saveResult.canceled || !saveResult.filePath) {
+    return;
+  }
+
+  try {
+    writeIssue45DebugReport(saveResult.filePath);
   } catch (error) {
     const errorDialogOptions: Electron.MessageBoxOptions = {
       type: "error",
@@ -684,6 +794,7 @@ if (process.platform === "win32") {
 const userDataPath = path.join(app.getPath("appData"), APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
+maybeResetIssue45DebugLogOnStart();
 
 pushMediaOverlayDebugEvent({
   timestamp: Date.now(),
@@ -1918,7 +2029,9 @@ async function injectNotificationScripts(
   if (fs.existsSync(notificationScriptPath)) {
     const notificationScript = fs.readFileSync(notificationScriptPath, "utf8");
     await webContents.executeJavaScript(notificationScript);
-    console.log("[Main Process] Notification override script injected successfully");
+    console.log(
+      "[Main Process] Notification override script injected successfully",
+    );
   } else {
     console.warn(
       "[Main Process] Notification script not found at:",
@@ -1943,6 +2056,8 @@ let currentIconVariant: IconVariant = "match";
 // on Linux/Windows where multiple instances might start before lock is checked
 // Skip for testing if SKIP_SINGLE_INSTANCE_LOCK is set
 const skipSingleInstance = process.env.SKIP_SINGLE_INSTANCE_LOCK === "true";
+const skipStartupPermissionPromptsForTests =
+  process.env.MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS === "true";
 const gotTheLock = skipSingleInstance || app.requestSingleInstanceLock();
 console.log(
   `[SingleInstance] Lock acquired: ${gotTheLock}${skipSingleInstance ? " (skipped for testing)" : ""}`,
@@ -3005,10 +3120,12 @@ function createWindow(source: string = "unknown"): void {
     const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
     const mediaOverlayVisible =
-      mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true;
-    const incomingCallOverlayVisible =
-      incomingCallOverlayVisibleByWebContentsId.get(contentView.webContents.id) ===
+      mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) ===
       true;
+    const incomingCallOverlayVisible =
+      incomingCallOverlayVisibleByWebContentsId.get(
+        contentView.webContents.id,
+      ) === true;
     // Keep crop scoped to core /messages chat routes. Media viewers and incoming
     // call overlays need their native controls visible.
     const isMessagesCropRoute =
@@ -3330,10 +3447,7 @@ function createWindow(source: string = "unknown"): void {
         const windowAction = decideWindowOpenAction(url);
 
         if (windowAction === "reroute-main-view") {
-          console.log(
-            "[Window] Rerouting media popup into main view:",
-            url,
-          );
+          console.log("[Window] Rerouting media popup into main view:", url);
           contentView?.webContents.loadURL(url).catch((err) => {
             console.error("[Window] Failed to reroute popup URL:", url, err);
           });
@@ -3501,8 +3615,7 @@ function createWindow(source: string = "unknown"): void {
 
           // Check both current URL and requesting URL (for about:blank windows)
           const isAllowedUrl =
-            isFacebookOrMessengerUrl(url) ||
-            url === "about:blank";
+            isFacebookOrMessengerUrl(url) || url === "about:blank";
           const isAllowedRequest = isFacebookOrMessengerUrl(requestingUrl);
 
           if (!isAllowedUrl && !isAllowedRequest) {
@@ -3749,7 +3862,10 @@ function createWindow(source: string = "unknown"): void {
 
       try {
         if (contentView) {
-          mediaViewerVisibleByWebContentsId.set(contentView.webContents.id, false);
+          mediaViewerVisibleByWebContentsId.set(
+            contentView.webContents.id,
+            false,
+          );
           await injectNotificationScripts(contentView.webContents);
         }
       } catch (error) {
@@ -3793,9 +3909,13 @@ function createWindow(source: string = "unknown"): void {
       if (
         contentView &&
         shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true
+        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) ===
+          true
       ) {
-        mediaViewerVisibleByWebContentsId.set(contentView.webContents.id, false);
+        mediaViewerVisibleByWebContentsId.set(
+          contentView.webContents.id,
+          false,
+        );
         console.log(
           "[ContentView] Forced media viewer state off after navigation:",
           url,
@@ -3853,9 +3973,13 @@ function createWindow(source: string = "unknown"): void {
       if (
         contentView &&
         shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) === true
+        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) ===
+          true
       ) {
-        mediaViewerVisibleByWebContentsId.set(contentView.webContents.id, false);
+        mediaViewerVisibleByWebContentsId.set(
+          contentView.webContents.id,
+          false,
+        );
         console.log(
           "[ContentView] Forced media viewer state off after in-page navigation:",
           url,
@@ -4141,10 +4265,7 @@ function createWindow(source: string = "unknown"): void {
         const windowAction = decideWindowOpenAction(url);
 
         if (windowAction === "reroute-main-view") {
-          console.log(
-            "[Window] Rerouting media popup into main view:",
-            url,
-          );
+          console.log("[Window] Rerouting media popup into main view:", url);
           mainWindow?.webContents.loadURL(url).catch((err) => {
             console.error("[Window] Failed to reroute popup URL:", url, err);
           });
@@ -4312,8 +4433,7 @@ function createWindow(source: string = "unknown"): void {
 
           // Check both current URL and requesting URL (for about:blank windows)
           const isAllowedUrl =
-            isFacebookOrMessengerUrl(url) ||
-            url === "about:blank";
+            isFacebookOrMessengerUrl(url) || url === "about:blank";
           const isAllowedRequest = isFacebookOrMessengerUrl(requestingUrl);
 
           if (!isAllowedUrl && !isAllowedRequest) {
@@ -4597,7 +4717,10 @@ function createWindow(source: string = "unknown"): void {
 
       try {
         if (mainWindow) {
-          mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
+          mediaViewerVisibleByWebContentsId.set(
+            mainWindow.webContents.id,
+            false,
+          );
           await injectNotificationScripts(mainWindow.webContents);
         }
       } catch (error) {
@@ -4634,7 +4757,8 @@ function createWindow(source: string = "unknown"): void {
       if (
         mainWindow &&
         shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) === true
+        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) ===
+          true
       ) {
         mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
         console.log(
@@ -4692,7 +4816,8 @@ function createWindow(source: string = "unknown"): void {
       if (
         mainWindow &&
         shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) === true
+        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) ===
+          true
       ) {
         mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
         console.log(
@@ -4747,12 +4872,18 @@ function createWindow(source: string = "unknown"): void {
   mainWindow.on("closed", () => {
     if (contentViewWebContentsId !== null) {
       mediaViewerVisibleByWebContentsId.delete(contentViewWebContentsId);
-      incomingCallOverlayVisibleByWebContentsId.delete(contentViewWebContentsId);
-      incomingCallOverlayLastHintAtByWebContentsId.delete(contentViewWebContentsId);
+      incomingCallOverlayVisibleByWebContentsId.delete(
+        contentViewWebContentsId,
+      );
+      incomingCallOverlayLastHintAtByWebContentsId.delete(
+        contentViewWebContentsId,
+      );
     }
     mediaViewerVisibleByWebContentsId.delete(mainWindowWebContentsId);
     incomingCallOverlayVisibleByWebContentsId.delete(mainWindowWebContentsId);
-    incomingCallOverlayLastHintAtByWebContentsId.delete(mainWindowWebContentsId);
+    incomingCallOverlayLastHintAtByWebContentsId.delete(
+      mainWindowWebContentsId,
+    );
     stopIncomingCallOverlayWatchdog();
     // Window is already destroyed at this point, just clean up references
     contentView = null;
@@ -6189,10 +6320,9 @@ async function handleResetAndLogout(): Promise<void> {
       _hasTriedMessagesOnce = false;
 
       // Get the session from the active webContents
-      const session =
-        contentView
-          ? contentView.webContents.session
-          : mainWindow?.webContents.session;
+      const session = contentView
+        ? contentView.webContents.session
+        : mainWindow?.webContents.session;
 
       if (session) {
         // Clear all cookies
@@ -6530,12 +6660,13 @@ function createApplicationMenu(): void {
     },
   };
 
-  const exportIssue45DebugReportMenuItem: Electron.MenuItemConstructorOptions = {
-    label: "Export Issue #45 Debug Report…",
-    click: () => {
-      void exportIssue45DebugReport();
-    },
-  };
+  const exportIssue45DebugReportMenuItem: Electron.MenuItemConstructorOptions =
+    {
+      label: "Export Issue #45 Debug Report…",
+      click: () => {
+        void exportIssue45DebugReport();
+      },
+    };
 
   const openLogsFolderMenuItem: Electron.MenuItemConstructorOptions = {
     label: "Open Logs Folder",
@@ -7054,10 +7185,7 @@ function readMacDoNotDisturbState(): boolean {
   let detected: boolean | null = null;
 
   try {
-    const value = systemPreferences.getUserDefault(
-      "doNotDisturb",
-      "boolean",
-    );
+    const value = systemPreferences.getUserDefault("doNotDisturb", "boolean");
     if (typeof value === "boolean") {
       detected = value;
     }
@@ -7091,9 +7219,7 @@ function readMacDoNotDisturbState(): boolean {
 type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
 
 function getMessengerWebContents(): Electron.WebContents | undefined {
-  return contentView
-    ? contentView.webContents
-    : mainWindow?.webContents;
+  return contentView ? contentView.webContents : mainWindow?.webContents;
 }
 
 function sendPowerStateToRenderer(state: PowerStateEvent): void {
@@ -7163,6 +7289,19 @@ function setupIpcHandlers(): void {
     }
   });
 
+  ipcMain.on("open-external-url", (_event, rawUrl: unknown) => {
+    const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+    if (!url) return;
+
+    shell.openExternal(url).catch((err) => {
+      console.error(
+        "[External Link] Failed to open URL from preload:",
+        url,
+        err,
+      );
+    });
+  });
+
   // Handle unread count updates
   ipcMain.on("update-unread-count", (event, count: number) => {
     console.log(`[IPC] Received update-unread-count: ${count}`);
@@ -7220,7 +7359,8 @@ function setupIpcHandlers(): void {
         url?: unknown;
       },
     ) => {
-      const targetContents = contentView?.webContents ?? mainWindow?.webContents;
+      const targetContents =
+        contentView?.webContents ?? mainWindow?.webContents;
       if (!targetContents || event.sender !== targetContents) {
         return;
       }
@@ -7293,7 +7433,9 @@ function setupIpcHandlers(): void {
         previousVisible: transition.previousVisible,
         nextVisible: transition.nextVisible,
         reason:
-          typeof payload === "object" && payload && typeof payload.reason === "string"
+          typeof payload === "object" &&
+          payload &&
+          typeof payload.reason === "string"
             ? payload.reason
             : undefined,
       });
@@ -7328,9 +7470,7 @@ function setupIpcHandlers(): void {
 
     pushMediaOverlayDebugEvent({
       timestamp:
-        typeof basePayload.timestamp === "number"
-          ? basePayload.timestamp
-          : now,
+        typeof basePayload.timestamp === "number" ? basePayload.timestamp : now,
       source: "preload",
       event:
         typeof basePayload.reason === "string"
@@ -7372,130 +7512,85 @@ function setupIpcHandlers(): void {
 
   // Handle incoming call - bring window to foreground
   // This is triggered when Messenger shows an incoming call popup
-  ipcMain.on(
-    "incoming-call",
-    (event, payload?: IncomingCallIpcPayload) => {
-      const escalation = decideIncomingCallSignalEscalation(payload);
-      const evidence = escalation.evidence as IncomingCallEvidence;
-      const now = Date.now();
-      const senderUrl = event.sender.getURL();
+  ipcMain.on("incoming-call", (event, payload?: IncomingCallIpcPayload) => {
+    const escalation = decideIncomingCallSignalEscalation(payload);
+    const evidence = escalation.evidence as IncomingCallEvidence;
+    const now = Date.now();
+    const senderUrl = event.sender.getURL();
 
-      pushIncomingCallDebugEvent({
-        timestamp: now,
-        source: "main",
-        event: "incoming-call-signal",
-        webContentsId: event.sender.id,
-        url: senderUrl,
-        dedupeKey: payload?.dedupeKey,
-        caller: payload?.caller,
-        rawSource: payload?.source,
-        evidenceSource: evidence.source,
-        confidence: evidence.confidence,
-        hasVisibleControls: evidence.hasVisibleControls,
-        matchedPattern: evidence.matchedPattern,
-        recoveryActive: evidence.recoveryActive === true,
-        escalation: escalation.reason,
-      });
+    pushIncomingCallDebugEvent({
+      timestamp: now,
+      source: "main",
+      event: "incoming-call-signal",
+      webContentsId: event.sender.id,
+      url: senderUrl,
+      dedupeKey: payload?.dedupeKey,
+      caller: payload?.caller,
+      rawSource: payload?.source,
+      evidenceSource: evidence.source,
+      confidence: evidence.confidence,
+      hasVisibleControls: evidence.hasVisibleControls,
+      matchedPattern: evidence.matchedPattern,
+      recoveryActive: evidence.recoveryActive === true,
+      escalation: escalation.reason,
+    });
 
-      console.log("[IPC] Incoming call detected - notification path armed", {
+    console.log("[IPC] Incoming call detected - notification path armed", {
+      dedupeKey: payload?.dedupeKey,
+      caller: payload?.caller,
+      source: payload?.source,
+      escalation: escalation.reason,
+    });
+
+    if (!escalation.shouldEscalate) {
+      console.log("[IPC] Incoming call signal ignored as low-confidence", {
         dedupeKey: payload?.dedupeKey,
         caller: payload?.caller,
         source: payload?.source,
-        escalation: escalation.reason,
+        reason: escalation.reason,
       });
-
-      if (!escalation.shouldEscalate) {
-        console.log("[IPC] Incoming call signal ignored as low-confidence", {
-          dedupeKey: payload?.dedupeKey,
-          caller: payload?.caller,
-          source: payload?.source,
-          reason: escalation.reason,
-        });
-        pushIncomingCallDebugEvent({
-          timestamp: now,
-          source: "main",
-          event: "incoming-call-suppressed",
-          webContentsId: event.sender.id,
-          url: senderUrl,
-          reason: escalation.reason,
-          evidenceSource: evidence.source,
-          confidence: evidence.confidence,
-          recoveryActive: evidence.recoveryActive === true,
-        });
-        return;
-      }
-
-      // Always emit a native incoming-call notification in addition to any
-      // Messenger/web notifications, but dedupe repeated detections of the same
-      // ringing event by key. For no-key detections, also apply a tiny jitter
-      // guard to avoid duplicate bursts from closely timed observers.
-      const decision = decideIncomingCallNativeNotification({
-        payload,
-        now,
-        notificationByKey: incomingCallNotificationByKey,
-        lastNoKeyIncomingCallNotificationAt: Math.max(
-          lastNoKeyIncomingCallNotificationAt,
-          activeIncomingCallNotificationSeenAt,
-        ),
+      pushIncomingCallDebugEvent({
+        timestamp: now,
+        source: "main",
+        event: "incoming-call-suppressed",
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        reason: escalation.reason,
+        evidenceSource: evidence.source,
+        confidence: evidence.confidence,
+        recoveryActive: evidence.recoveryActive === true,
       });
-      const caller = formatIncomingCallCaller(payload?.caller);
-      const notificationBody = caller
-        ? `${caller} is calling you on Messenger`
-        : "Someone is calling you on Messenger";
-      const notificationTag = decision.callKey
-        ? `incoming-call:${decision.callKey}`
-        : `incoming-call:${decision.now}`;
+      return;
+    }
 
-      if (!decision.shouldNotify) {
-        if (
-          notificationHandler &&
-          caller &&
-          activeIncomingCallNotificationTag === notificationTag &&
-          activeIncomingCallNotificationBody !== notificationBody
-        ) {
-          notificationHandler.showNotification({
-            title: "Incoming call",
-            body: notificationBody,
-            tag: notificationTag,
-            silent: false,
-            requireInteraction: true,
-          });
-          refreshIncomingCallNotificationReminder(
-            notificationTag,
-            notificationBody,
-            decision.now,
-          );
-        }
+    // Always emit a native incoming-call notification in addition to any
+    // Messenger/web notifications, but dedupe repeated detections of the same
+    // ringing event by key. For no-key detections, also apply a tiny jitter
+    // guard to avoid duplicate bursts from closely timed observers.
+    const decision = decideIncomingCallNativeNotification({
+      payload,
+      now,
+      notificationByKey: incomingCallNotificationByKey,
+      lastNoKeyIncomingCallNotificationAt: Math.max(
+        lastNoKeyIncomingCallNotificationAt,
+        activeIncomingCallNotificationSeenAt,
+      ),
+    });
+    const caller = formatIncomingCallCaller(payload?.caller);
+    const notificationBody = caller
+      ? `${caller} is calling you on Messenger`
+      : "Someone is calling you on Messenger";
+    const notificationTag = decision.callKey
+      ? `incoming-call:${decision.callKey}`
+      : `incoming-call:${decision.now}`;
 
-        console.log("[IPC] Incoming call native notification deduplicated", {
-          callKey: decision.callKey,
-          reason: decision.reason,
-        });
-        pushIncomingCallDebugEvent({
-          timestamp: now,
-          source: "main",
-          event: "incoming-call-notification-deduplicated",
-          webContentsId: event.sender.id,
-          url: senderUrl,
-          callKey: decision.callKey,
-          reason: decision.reason,
-          confidence: evidence.confidence,
-          evidenceSource: evidence.source,
-        });
-        return;
-      }
-
-      if (notificationHandler) {
-        incomingCallNotificationByKey.set(
-          decision.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
-          decision.now,
-        );
-        incomingCallNotificationByKey.set(
-          INCOMING_CALL_NO_KEY_MAP_KEY,
-          decision.now,
-        );
-        lastNoKeyIncomingCallNotificationAt = decision.now;
-
+    if (!decision.shouldNotify) {
+      if (
+        notificationHandler &&
+        caller &&
+        activeIncomingCallNotificationTag === notificationTag &&
+        activeIncomingCallNotificationBody !== notificationBody
+      ) {
         notificationHandler.showNotification({
           title: "Incoming call",
           body: notificationBody,
@@ -7503,33 +7598,75 @@ function setupIpcHandlers(): void {
           silent: false,
           requireInteraction: true,
         });
-
         refreshIncomingCallNotificationReminder(
           notificationTag,
           notificationBody,
           decision.now,
         );
-
-        console.log("[IPC] Incoming call native notification shown", {
-          callKey: decision.callKey,
-          caller,
-          notificationTag,
-        });
-        pushIncomingCallDebugEvent({
-          timestamp: now,
-          source: "main",
-          event: "incoming-call-notification-shown",
-          webContentsId: event.sender.id,
-          url: senderUrl,
-          callKey: decision.callKey,
-          caller,
-          notificationTag,
-          confidence: evidence.confidence,
-          evidenceSource: evidence.source,
-        });
       }
-    },
-  );
+
+      console.log("[IPC] Incoming call native notification deduplicated", {
+        callKey: decision.callKey,
+        reason: decision.reason,
+      });
+      pushIncomingCallDebugEvent({
+        timestamp: now,
+        source: "main",
+        event: "incoming-call-notification-deduplicated",
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        callKey: decision.callKey,
+        reason: decision.reason,
+        confidence: evidence.confidence,
+        evidenceSource: evidence.source,
+      });
+      return;
+    }
+
+    if (notificationHandler) {
+      incomingCallNotificationByKey.set(
+        decision.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
+        decision.now,
+      );
+      incomingCallNotificationByKey.set(
+        INCOMING_CALL_NO_KEY_MAP_KEY,
+        decision.now,
+      );
+      lastNoKeyIncomingCallNotificationAt = decision.now;
+
+      notificationHandler.showNotification({
+        title: "Incoming call",
+        body: notificationBody,
+        tag: notificationTag,
+        silent: false,
+        requireInteraction: true,
+      });
+
+      refreshIncomingCallNotificationReminder(
+        notificationTag,
+        notificationBody,
+        decision.now,
+      );
+
+      console.log("[IPC] Incoming call native notification shown", {
+        callKey: decision.callKey,
+        caller,
+        notificationTag,
+      });
+      pushIncomingCallDebugEvent({
+        timestamp: now,
+        source: "main",
+        event: "incoming-call-notification-shown",
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        callKey: decision.callKey,
+        caller,
+        notificationTag,
+        confidence: evidence.confidence,
+        evidenceSource: evidence.source,
+      });
+    }
+  });
 
   ipcMain.on("incoming-call-ended", (event, payload?: { reason?: string }) => {
     console.log("[IPC] Incoming call ended signal received", {
@@ -7557,10 +7694,9 @@ function setupIpcHandlers(): void {
   // Handle notification action (reply, etc.)
   ipcMain.on("notification-action", (event, action: string, data: any) => {
     // Content is in BrowserView on macOS/Windows, otherwise in mainWindow.
-    const targetContents =
-      contentView
-        ? contentView.webContents
-        : mainWindow?.webContents;
+    const targetContents = contentView
+      ? contentView.webContents
+      : mainWindow?.webContents;
     if (targetContents) {
       targetContents.send("notification-action-handler", action, data);
     }
@@ -7920,6 +8056,12 @@ function openNotificationSettings(): void {
 async function requestNotificationPermission(): Promise<void> {
   // Only needed on macOS
   if (process.platform !== "darwin") return;
+  if (skipStartupPermissionPromptsForTests) {
+    console.log(
+      "[Notification Permission] Skipping startup prompt for automated test run",
+    );
+    return;
+  }
 
   const currentVersion = app.getVersion();
   const state = readNotificationPermissionState();
@@ -8041,6 +8183,12 @@ async function requestNotificationPermission(): Promise<void> {
 // This prompts the user for permission on first launch to ensure calls work
 async function requestMediaPermissions(): Promise<void> {
   if (process.platform !== "darwin") return;
+  if (skipStartupPermissionPromptsForTests) {
+    console.log(
+      "[Media Permissions] Skipping startup prompts for automated test run",
+    );
+    return;
+  }
 
   try {
     // Check current permission status first
@@ -10149,6 +10297,9 @@ app.on("before-quit", () => {
 
   // Close download progress window if open
   hideDownloadProgress();
+
+  // Persist test-only Issue #45 debug artifacts before the process exits.
+  maybeAutoExportIssue45DebugArtifactsOnQuit();
 
   // Note: If an update was downloaded, autoInstallOnAppQuit (set to true in setupAutoUpdater)
   // will automatically install the update when the app quits.

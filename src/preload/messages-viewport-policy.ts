@@ -20,6 +20,7 @@ const MEDIA_ROUTE_PREFIXES = [
 ];
 
 const MEDIA_LOADING_BANNER_ROUTE_PREFIXES = [
+  "/messenger_media",
   "/messages/attachment_preview",
   "/messages/media_viewer",
   "/photo",
@@ -139,10 +140,14 @@ export function shouldTreatHintedMediaOverlayAsVisible(input: {
     return false;
   }
 
+  // Same-route E2EE media opens can briefly expose only a single dismiss/back
+  // control before the large photo and download/share chrome become measurable.
+  // Once an explicit user open hint exists, treat one visible dismiss control as
+  // enough overlay chrome to bypass the chat crop earlier.
   const hasOverlayChrome =
-    input.dismissCount >= 2 ||
+    input.dismissCount >= 1 ||
     input.hasLargeMedia ||
-    (input.dismissCount >= 1 && input.hasNavigationAction);
+    input.hasNavigationAction;
   if (!hasOverlayChrome) {
     return false;
   }
