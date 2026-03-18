@@ -1,3 +1,5 @@
+import { MESSAGES_MEDIA_VIEWER_PATH_PREFIXES } from "./url-policy";
+
 export type MessagesViewportMode = "chat" | "media" | "other";
 
 type ResolveViewportModeInput = {
@@ -5,27 +7,16 @@ type ResolveViewportModeInput = {
   mediaOverlayVisible: boolean;
 };
 
-const MEDIA_ROUTE_PREFIXES = [
-  "/messenger_media",
-  "/messages/attachment_preview",
-  "/messages/media_viewer",
-  "/photo",
-  "/photos",
-  "/video",
-  "/watch",
-  "/reel",
-  "/reels",
-  "/story",
-  "/stories",
-];
+const MEDIA_ROUTE_PREFIXES = [...MESSAGES_MEDIA_VIEWER_PATH_PREFIXES];
 
-const MEDIA_LOADING_BANNER_ROUTE_PREFIXES = [
-  "/messenger_media",
-  "/messages/attachment_preview",
-  "/messages/media_viewer",
-  "/photo",
-  "/photos",
-];
+const MEDIA_LOADING_BANNER_ROUTE_PREFIXES = MEDIA_ROUTE_PREFIXES.filter(
+  (prefix) =>
+    prefix === "/messenger_media" ||
+    prefix === "/messages/attachment_preview" ||
+    prefix === "/messages/media_viewer" ||
+    prefix === "/photo" ||
+    prefix === "/photos",
+);
 
 function matchesRoutePrefix(path: string, prefix: string): boolean {
   return (
@@ -39,9 +30,10 @@ function toPathname(input: string): string {
   if (!input) return "/";
 
   try {
-    const parsed = input.startsWith("http://") || input.startsWith("https://")
-      ? new URL(input)
-      : new URL(input, "https://www.facebook.com");
+    const parsed =
+      input.startsWith("http://") || input.startsWith("https://")
+        ? new URL(input)
+        : new URL(input, "https://www.facebook.com");
     return (parsed.pathname || "/").toLowerCase();
   } catch {
     const trimmed = (input.split(/[?#]/)[0] || "/").toLowerCase();
@@ -51,8 +43,8 @@ function toPathname(input: string): string {
 
 export function isMessagesMediaRoute(input: string): boolean {
   const path = toPathname(input);
-  return MEDIA_ROUTE_PREFIXES.some(
-    (prefix) => matchesRoutePrefix(path, prefix),
+  return MEDIA_ROUTE_PREFIXES.some((prefix) =>
+    matchesRoutePrefix(path, prefix),
   );
 }
 
@@ -79,7 +71,9 @@ export function resolveViewportMode(
   return "other";
 }
 
-export function shouldApplyMessagesCrop(input: ResolveViewportModeInput): boolean {
+export function shouldApplyMessagesCrop(
+  input: ResolveViewportModeInput,
+): boolean {
   return resolveViewportMode(input) === "chat";
 }
 
@@ -91,7 +85,11 @@ export function shouldHideMediaViewerBannerWhileLoading(input: {
   hasNavigationAction: boolean;
 }): boolean {
   const path = toPathname(input.urlPath);
-  if (!MEDIA_LOADING_BANNER_ROUTE_PREFIXES.some((prefix) => matchesRoutePrefix(path, prefix))) {
+  if (
+    !MEDIA_LOADING_BANNER_ROUTE_PREFIXES.some((prefix) =>
+      matchesRoutePrefix(path, prefix),
+    )
+  ) {
     return false;
   }
 
@@ -145,9 +143,7 @@ export function shouldTreatHintedMediaOverlayAsVisible(input: {
   // Once an explicit user open hint exists, treat one visible dismiss control as
   // enough overlay chrome to bypass the chat crop earlier.
   const hasOverlayChrome =
-    input.dismissCount >= 1 ||
-    input.hasLargeMedia ||
-    input.hasNavigationAction;
+    input.dismissCount >= 1 || input.hasLargeMedia || input.hasNavigationAction;
   if (!hasOverlayChrome) {
     return false;
   }

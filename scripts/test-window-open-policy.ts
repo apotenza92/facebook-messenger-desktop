@@ -1,5 +1,6 @@
 import {
   decideWindowOpenAction,
+  shouldReloadToMessagesHome,
   type WindowOpenAction,
 } from "../src/main/url-policy";
 import {
@@ -56,6 +57,28 @@ function run(): void {
   );
   expectAction(
     "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+    "open-external-browser",
+  );
+
+  // Wrapped/direct profile links should also escape to the system browser.
+  expectAction(
+    "https://www.facebook.com/profile.php?id=1234567890",
+    "open-external-browser",
+  );
+  expectAction(
+    "https://www.facebook.com/people/Example-Person/1234567890/",
+    "open-external-browser",
+  );
+  expectAction(
+    "https://www.facebook.com/example.username",
+    "open-external-browser",
+  );
+  expectAction(
+    "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D1234567890",
+    "open-external-browser",
+  );
+  expectAction(
+    "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fexample.username",
     "open-external-browser",
   );
 
@@ -211,6 +234,35 @@ function run(): void {
     exhaustedBootstrapBudget.allowed,
     false,
     "About:blank bootstrap should stop allowing hops after navigation budget is exhausted",
+  );
+
+  assertEqual(
+    shouldReloadToMessagesHome(
+      "https://www.facebook.com/profile.php?id=1234567890",
+    ),
+    true,
+    "Reload should reset direct profile routes back to Messenger home",
+  );
+  assertEqual(
+    shouldReloadToMessagesHome(
+      "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D1234567890",
+    ),
+    true,
+    "Reload should reset wrapped profile routes back to Messenger home",
+  );
+  assertEqual(
+    shouldReloadToMessagesHome(
+      "https://www.facebook.com/messages/t/1234567890",
+    ),
+    false,
+    "Reload should keep normal message threads in place",
+  );
+  assertEqual(
+    shouldReloadToMessagesHome(
+      "https://www.facebook.com/messages/media_viewer/?thread_id=123",
+    ),
+    false,
+    "Reload should keep message media viewers in place",
   );
 
   console.log("PASS window-open policy regression tests");

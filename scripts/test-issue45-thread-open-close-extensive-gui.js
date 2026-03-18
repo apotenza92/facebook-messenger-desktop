@@ -1,6 +1,6 @@
-const { _electron: electron } = require('playwright');
-const path = require('path');
-const fs = require('fs');
+const { _electron: electron } = require("playwright");
+const path = require("path");
+const fs = require("fs");
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const CLOSE_CONTROL_SELECTOR = [
@@ -20,38 +20,38 @@ const CLOSE_CONTROL_SELECTOR = [
   'button[aria-label="Back to Previous Page" i]',
   '[role="button"][aria-label="Back to Previous Page" i]',
   'a[href][aria-label="Back to Previous Page" i]',
-].join(', ');
+].join(", ");
 
 function ts() {
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
 function safe(input) {
-  return String(input || '')
-    .replace(/^https?:\/\//, '')
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+  return String(input || "")
+    .replace(/^https?:\/\//, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
     .slice(0, 90);
 }
 
 function classifyThreadRouteType(rawUrl) {
   try {
     const pathname = new URL(rawUrl).pathname.toLowerCase();
-    if (pathname.startsWith('/messages/e2ee/t/')) return 'e2ee';
-    if (pathname.startsWith('/messages/t/')) return 'non-e2ee';
+    if (pathname.startsWith("/messages/e2ee/t/")) return "e2ee";
+    if (pathname.startsWith("/messages/t/")) return "non-e2ee";
   } catch {}
-  return 'other';
+  return "other";
 }
 
 function normalizeThreadKey(rawUrl) {
   try {
-    const pathname = new URL(rawUrl).pathname.replace(/\/+$/, '') || '/';
+    const pathname = new URL(rawUrl).pathname.replace(/\/+$/, "") || "/";
     return pathname
-      .replace(/^\/messages\/e2ee\/t\//i, '/t/')
-      .replace(/^\/messages\/t\//i, '/t/');
+      .replace(/^\/messages\/e2ee\/t\//i, "/t/")
+      .replace(/^\/messages\/t\//i, "/t/");
   } catch {
-    return String(rawUrl || '');
+    return String(rawUrl || "");
   }
 }
 
@@ -59,7 +59,7 @@ async function withPrimaryWebContents(app, fn, payload) {
   return app.evaluate(
     async ({ BrowserWindow }, { fnSource, payload }) => {
       const win = BrowserWindow.getAllWindows()[0];
-      if (!win) throw new Error('No main window available');
+      if (!win) throw new Error("No main window available");
       const views = win.getBrowserViews();
       const wc = views.length > 0 ? views[0].webContents : win.webContents;
       const runner = eval(`(${fnSource})`);
@@ -70,13 +70,16 @@ async function withPrimaryWebContents(app, fn, payload) {
 }
 
 async function setWindowSize(app, width, height) {
-  return app.evaluate(({ BrowserWindow }, size) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (!win) throw new Error('No window');
-    win.setSize(size.width, size.height);
-    const b = win.getContentBounds();
-    return { width: b.width, height: b.height };
-  }, { width, height });
+  return app.evaluate(
+    ({ BrowserWindow }, size) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) throw new Error("No window");
+      win.setSize(size.width, size.height);
+      const b = win.getContentBounds();
+      return { width: b.width, height: b.height };
+    },
+    { width, height },
+  );
 }
 
 async function captureWindow(app, outPath) {
@@ -89,8 +92,8 @@ async function loadMessagesHome(app) {
   return withPrimaryWebContents(
     app,
     async (wc) => {
-      await wc.loadURL('https://www.facebook.com/messages/').catch(async () => {
-        await wc.loadURL('https://www.facebook.com/');
+      await wc.loadURL("https://www.facebook.com/messages/").catch(async () => {
+        await wc.loadURL("https://www.facebook.com/");
       });
       return wc.getURL();
     },
@@ -178,7 +181,7 @@ function toMediaPageUrl(threadUrl) {
     const u = new URL(threadUrl);
     const m = u.pathname.match(/^\/messages\/(e2ee\/)?t\/([^/]+)/i);
     if (!m) return null;
-    return `${u.origin}/messages/${m[1] ? 'e2ee/' : ''}t/${m[2]}/media`;
+    return `${u.origin}/messages/${m[1] ? "e2ee/" : ""}t/${m[2]}/media`;
   } catch {
     return null;
   }
@@ -410,59 +413,74 @@ function assert(cond, msg) {
 }
 
 async function run() {
-  const outDir = path.join(process.cwd(), 'test-screenshots', `issue45-extensive-thread-open-close-${ts()}`);
+  const outDir = path.join(
+    process.cwd(),
+    "test-screenshots",
+    `issue45-extensive-thread-open-close-${ts()}`,
+  );
   fs.mkdirSync(outDir, { recursive: true });
-  console.log('Output folder:', outDir);
+  console.log("Output folder:", outDir);
 
   const app = await electron.launch({
-    args: [path.join(__dirname, '../dist/main/main.js')],
-    env: { ...process.env, NODE_ENV: 'development' },
+    args: [path.join(__dirname, "../dist/main/main.js")],
+    env: {
+      ...process.env,
+      NODE_ENV: "development",
+      SKIP_SINGLE_INSTANCE_LOCK: "true",
+    },
   });
 
   const summary = {
     detection: {
-      method: 'Deep sidebar scan (160 passes) + route classification before normalization: /messages/e2ee/t/<id> = E2EE, /messages/t/<id> = non-E2EE, both normalized separately to /t/<id> for notification-style matching',
+      method:
+        "Deep sidebar scan (160 passes) + route classification before normalization: /messages/e2ee/t/<id> = E2EE, /messages/t/<id> = non-E2EE, both normalized separately to /t/<id> for notification-style matching",
       totalThreadsDiscovered: 0,
       discoveredByRouteType: {
         e2ee: 0,
-        'non-e2ee': 0,
+        "non-e2ee": 0,
       },
       selectedCandidateThreadsByRouteType: {
         e2ee: [],
-        'non-e2ee': [],
+        "non-e2ee": [],
       },
       coverageGaps: [],
     },
     sizes: [
-      { width: 1280, height: 900, tag: '1280x900' },
-      { width: 1040, height: 760, tag: '1040x760' },
-      { width: 860, height: 640, tag: '860x640' },
+      { width: 1280, height: 900, tag: "1280x900" },
+      { width: 1040, height: 760, tag: "1040x760" },
+      { width: 860, height: 640, tag: "860x640" },
     ],
     threads: [],
     runs: [],
     resultsByRouteType: {
       e2ee: { totalChecks: 0, failures: 0 },
-      'non-e2ee': { totalChecks: 0, failures: 0 },
+      "non-e2ee": { totalChecks: 0, failures: 0 },
     },
   };
 
   try {
     await wait(4500);
     const home = await loadMessagesHome(app);
-    console.log('Loaded:', home);
+    console.log("Loaded:", home);
 
     const allThreads = await collectThreadUrls(app);
-    const e2eeThreads = allThreads.filter((entry) => entry.routeType === 'e2ee');
-    const nonE2EEThreads = allThreads.filter((entry) => entry.routeType === 'non-e2ee');
+    const e2eeThreads = allThreads.filter(
+      (entry) => entry.routeType === "e2ee",
+    );
+    const nonE2EEThreads = allThreads.filter(
+      (entry) => entry.routeType === "non-e2ee",
+    );
 
     summary.detection.totalThreadsDiscovered = allThreads.length;
     summary.detection.discoveredByRouteType.e2ee = e2eeThreads.length;
-    summary.detection.discoveredByRouteType['non-e2ee'] = nonE2EEThreads.length;
+    summary.detection.discoveredByRouteType["non-e2ee"] = nonE2EEThreads.length;
 
     const selectedThreads = [];
 
-    for (const routeType of ['non-e2ee', 'e2ee']) {
-      const pool = (routeType === 'e2ee' ? e2eeThreads : nonE2EEThreads).slice(-12);
+    for (const routeType of ["non-e2ee", "e2ee"]) {
+      const pool = (routeType === "e2ee" ? e2eeThreads : nonE2EEThreads).slice(
+        -12,
+      );
       const withMedia = [];
 
       for (const thread of pool) {
@@ -484,15 +502,18 @@ async function run() {
         if (withMedia.length >= 3) break;
       }
 
-      summary.detection.selectedCandidateThreadsByRouteType[routeType] = withMedia.map((thread) => ({
-        url: thread.url,
-        normalizedThreadKey: thread.normalizedThreadKey,
-        mediaCount: thread.mediaCount,
-        mediaPage: thread.mediaPage,
-      }));
+      summary.detection.selectedCandidateThreadsByRouteType[routeType] =
+        withMedia.map((thread) => ({
+          url: thread.url,
+          normalizedThreadKey: thread.normalizedThreadKey,
+          mediaCount: thread.mediaCount,
+          mediaPage: thread.mediaPage,
+        }));
 
       if (withMedia.length === 0) {
-        summary.detection.coverageGaps.push(`No ${routeType} thread with media was available for this run.`);
+        summary.detection.coverageGaps.push(
+          `No ${routeType} thread with media was available for this run.`,
+        );
       }
 
       selectedThreads.push(...withMedia);
@@ -500,7 +521,7 @@ async function run() {
 
     summary.threads = selectedThreads;
 
-    console.log('Thread discovery:', {
+    console.log("Thread discovery:", {
       total: allThreads.length,
       e2ee: e2eeThreads.length,
       nonE2EE: nonE2EEThreads.length,
@@ -508,7 +529,10 @@ async function run() {
       coverageGaps: summary.detection.coverageGaps,
     });
 
-    assert(summary.threads.length > 0, 'No threads with media found for extensive coverage');
+    assert(
+      summary.threads.length > 0,
+      "No threads with media found for extensive coverage",
+    );
 
     let totalChecks = 0;
     let totalFailures = 0;
@@ -562,7 +586,7 @@ async function run() {
             run.opened = opened;
 
             if (!opened || !opened.opened) {
-              run.failureReason = 'no-media-opened-from-thread';
+              run.failureReason = "no-media-opened-from-thread";
               totalFailures += 1;
               summary.resultsByRouteType[thread.routeType].failures += 1;
               summary.runs.push(run);
@@ -591,8 +615,14 @@ async function run() {
             run.screenshots.push(closeShot);
 
             const switchTarget =
-              summary.threads.find((candidate) => candidate.url !== thread.url && candidate.routeType !== thread.routeType) ||
-              summary.threads.find((candidate) => candidate.url !== thread.url) ||
+              summary.threads.find(
+                (candidate) =>
+                  candidate.url !== thread.url &&
+                  candidate.routeType !== thread.routeType,
+              ) ||
+              summary.threads.find(
+                (candidate) => candidate.url !== thread.url,
+              ) ||
               thread;
             run.switchTarget = switchTarget.url;
             run.switchTargetRouteType = switchTarget.routeType;
@@ -617,15 +647,15 @@ async function run() {
             run.screenshots.push(switchShot);
 
             const isMessagesNonMediaUrl = (url) =>
-              typeof url === 'string' &&
-              url.includes('/messages/') &&
-              !url.includes('/messenger_media') &&
-              !url.includes('/messages/media_viewer') &&
-              !url.includes('/messages/attachment_preview') &&
-              !url.includes('/photo') &&
-              !url.includes('/video') &&
-              !url.includes('/story') &&
-              !url.includes('/reel');
+              typeof url === "string" &&
+              url.includes("/messages/") &&
+              !url.includes("/messenger_media") &&
+              !url.includes("/messages/media_viewer") &&
+              !url.includes("/messages/attachment_preview") &&
+              !url.includes("/photo") &&
+              !url.includes("/video") &&
+              !url.includes("/story") &&
+              !url.includes("/reel");
 
             const settled = run.after1800;
             const closeRecovered =
@@ -656,11 +686,11 @@ async function run() {
       }
     }
 
-    const summaryPath = path.join(outDir, 'summary.json');
+    const summaryPath = path.join(outDir, "summary.json");
     fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
 
-    console.log('Summary:', summaryPath);
-    console.log('Totals:', {
+    console.log("Summary:", summaryPath);
+    console.log("Totals:", {
       totalChecks,
       totalFailures,
       totalPasses: totalChecks - totalFailures,
@@ -670,23 +700,26 @@ async function run() {
 
     const failures = summary.runs.filter((r) => !r.pass);
     if (failures.length > 0) {
-      console.log('Failure sample:', failures.slice(0, 3));
+      console.log("Failure sample:", failures.slice(0, 3));
       throw new Error(`${failures.length} extensive GUI runs failed`);
     }
 
     if (summary.detection.coverageGaps.length > 0) {
       for (const gap of summary.detection.coverageGaps) {
-        console.log('NOTE:', gap);
+        console.log("NOTE:", gap);
       }
     }
 
-    console.log('PASS extensive thread open/close GUI test');
+    console.log("PASS extensive thread open/close GUI test");
   } finally {
     await app.close().catch(() => {});
   }
 }
 
 run().catch((error) => {
-  console.error('FAIL extensive thread open/close GUI test:', error.message || error);
+  console.error(
+    "FAIL extensive thread open/close GUI test:",
+    error.message || error,
+  );
   process.exit(1);
 });

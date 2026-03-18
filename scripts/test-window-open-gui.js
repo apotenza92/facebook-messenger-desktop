@@ -140,6 +140,38 @@ async function triggerSameFrameClick(electronApp, url) {
   }, url);
 }
 
+async function forcePrimaryTargetUrl(electronApp, url) {
+  await electronApp.evaluate(async ({ BrowserWindow }, targetUrl) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) throw new Error("No main window");
+
+    const views = win.getBrowserViews();
+    const wc = views.length > 0 ? views[0].webContents : win.webContents;
+    await wc.loadURL(targetUrl);
+  }, url);
+}
+
+async function reloadPrimaryTarget(electronApp) {
+  await electronApp.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    if (!menu) throw new Error("No application menu");
+
+    for (const item of menu.items) {
+      if (item.label !== "View" || !item.submenu) continue;
+      for (const subItem of item.submenu.items) {
+        if (subItem.label !== "Reload") continue;
+        if (typeof subItem.click !== "function") {
+          throw new Error("Reload menu item has no click handler");
+        }
+        subItem.click(undefined, undefined, undefined);
+        return;
+      }
+    }
+
+    throw new Error("Could not find Reload menu item");
+  });
+}
+
 async function triggerAboutBlankThenNavigate(electronApp, targetUrl) {
   await triggerAboutBlankNavigationSequence(electronApp, [targetUrl]);
 }
@@ -196,7 +228,13 @@ async function triggerAboutBlankNavigationSequence(
 
 async function runCase(electronApp, testCase) {
   const before = await readState(electronApp);
-  if (Array.isArray(testCase.bootstrapNavigationSequence)) {
+  if (testCase.forcePrimaryTargetUrl) {
+    await forcePrimaryTargetUrl(electronApp, testCase.forcePrimaryTargetUrl);
+  }
+
+  if (testCase.action === "reload") {
+    await reloadPrimaryTarget(electronApp);
+  } else if (Array.isArray(testCase.bootstrapNavigationSequence)) {
     await triggerAboutBlankNavigationSequence(
       electronApp,
       testCase.bootstrapNavigationSequence,
@@ -370,6 +408,37 @@ async function run() {
           newWindows: 0,
           externalUrl:
             "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+        },
+      },
+      {
+        name: "Profile link click opens external browser instead of navigating in-app",
+        url: "https://www.facebook.com/profile.php?id=1234567890",
+        sameFrameClick: true,
+        expected: {
+          newWindows: 0,
+          externalUrl: "https://www.facebook.com/profile.php?id=1234567890",
+        },
+      },
+      {
+        name: "Wrapped profile link click opens external browser instead of navigating in-app",
+        url: "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D1234567890",
+        sameFrameClick: true,
+        expected: {
+          newWindows: 0,
+          externalUrl:
+            "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D1234567890",
+        },
+      },
+      {
+        name: "Reload resets bad in-app profile route back to Messages home",
+        url: "https://www.facebook.com/profile.php?id=1234567890",
+        action: "reload",
+        forcePrimaryTargetUrl:
+          "https://www.facebook.com/profile.php?id=1234567890",
+        waitAfterMs: 1200,
+        expected: {
+          newWindows: 0,
+          inAppUrlContains: "https://www.facebook.com/messages/",
         },
       },
       {

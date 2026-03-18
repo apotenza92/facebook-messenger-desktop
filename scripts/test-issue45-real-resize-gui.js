@@ -1,70 +1,79 @@
-const { _electron: electron } = require('playwright');
-const path = require('path');
-const fs = require('fs');
+const { _electron: electron } = require("playwright");
+const path = require("path");
+const fs = require("fs");
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DEFAULT_WINDOW_SIZES = [
-  { width: 1280, height: 900, tag: '1280x900' },
-  { width: 1040, height: 760, tag: '1040x760' },
-  { width: 860, height: 640, tag: '860x640' },
+  { width: 1280, height: 900, tag: "1280x900" },
+  { width: 1040, height: 760, tag: "1040x760" },
+  { width: 860, height: 640, tag: "860x640" },
 ];
 const TARGET_ROUTE_TYPES = [
-  'messenger_media',
-  'messages_media_viewer',
-  'attachment_preview',
-  'photo',
-  'video',
-  'story',
-  'reel',
+  "messenger_media",
+  "messages_media_viewer",
+  "attachment_preview",
+  "photo",
+  "video",
+  "story",
+  "reel",
 ];
 
 function ts() {
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
 function safe(input) {
-  return String(input || '')
-    .replace(/https?:\/\//g, '')
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+  return String(input || "")
+    .replace(/https?:\/\//g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
     .slice(0, 90);
 }
 
 function parseArgs(argv) {
   const options = {
-    mode: 'direct',
+    mode: "direct",
     appRoot: process.env.MESSENGER_APP_ROOT
       ? path.resolve(process.env.MESSENGER_APP_ROOT)
-      : path.resolve(__dirname, '..'),
-    outputDir: '',
+      : path.resolve(__dirname, ".."),
+    outputDir: "",
     maxThreads: 40,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--mode') {
-      options.mode = String(argv[++i] || '').trim().toLowerCase() || options.mode;
-    } else if (arg === '--output-dir') {
+    if (arg === "--mode") {
+      options.mode =
+        String(argv[++i] || "")
+          .trim()
+          .toLowerCase() || options.mode;
+    } else if (arg === "--output-dir") {
       options.outputDir = path.resolve(argv[++i]);
-    } else if (arg === '--app-root') {
+    } else if (arg === "--app-root") {
       options.appRoot = path.resolve(argv[++i]);
-    } else if (arg === '--max-threads') {
+    } else if (arg === "--max-threads") {
       options.maxThreads = Math.max(1, Number(argv[++i]) || options.maxThreads);
-    } else if (arg === '--help' || arg === '-h') {
-      console.log(`Usage: node scripts/test-issue45-real-resize-gui.js [options]\n\nOptions:\n  --mode <direct|click-flow>  direct = navigate chosen media URLs; click-flow = open first media from /media pages\n  --output-dir <dir>          Directory for screenshots and summary.json\n  --app-root <dir>            Alternate app root containing dist/main/main.js\n  --max-threads <n>           Max threads to scan while discovering candidates\n`);
+    } else if (arg === "--help" || arg === "-h") {
+      console.log(
+        `Usage: node scripts/test-issue45-real-resize-gui.js [options]\n\nOptions:\n  --mode <direct|click-flow>  direct = navigate chosen media URLs; click-flow = open first media from /media pages\n  --output-dir <dir>          Directory for screenshots and summary.json\n  --app-root <dir>            Alternate app root containing dist/main/main.js\n  --max-threads <n>           Max threads to scan while discovering candidates\n`,
+      );
       process.exit(0);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
-  if (!['direct', 'click-flow'].includes(options.mode)) {
+  if (!["direct", "click-flow"].includes(options.mode)) {
     throw new Error(`Unknown --mode value: ${options.mode}`);
   }
 
   if (!options.outputDir) {
-    options.outputDir = path.join(process.cwd(), 'test-screenshots', `issue45-real-resize-${options.mode}-${ts()}`);
+    options.outputDir = path.join(
+      process.cwd(),
+      "test-screenshots",
+      `issue45-real-resize-${options.mode}-${ts()}`,
+    );
   }
 
   return options;
@@ -74,7 +83,7 @@ async function withPrimaryWebContents(app, fn, payload) {
   return app.evaluate(
     async ({ BrowserWindow }, { fnSource, payload }) => {
       const win = BrowserWindow.getAllWindows()[0];
-      if (!win) throw new Error('No main window available');
+      if (!win) throw new Error("No main window available");
       const views = win.getBrowserViews();
       const wc = views.length > 0 ? views[0].webContents : win.webContents;
       const runner = eval(`(${fnSource})`);
@@ -85,13 +94,16 @@ async function withPrimaryWebContents(app, fn, payload) {
 }
 
 async function setWindowSize(app, width, height) {
-  return app.evaluate(({ BrowserWindow }, size) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (!win) throw new Error('No window');
-    win.setSize(size.width, size.height);
-    const bounds = win.getContentBounds();
-    return { width: bounds.width, height: bounds.height };
-  }, { width, height });
+  return app.evaluate(
+    ({ BrowserWindow }, size) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) throw new Error("No window");
+      win.setSize(size.width, size.height);
+      const bounds = win.getContentBounds();
+      return { width: bounds.width, height: bounds.height };
+    },
+    { width, height },
+  );
 }
 
 async function captureWindow(app, outPath) {
@@ -104,8 +116,8 @@ async function loadMessagesHome(app) {
   return withPrimaryWebContents(
     app,
     async (wc) => {
-      await wc.loadURL('https://www.facebook.com/messages/').catch(async () => {
-        await wc.loadURL('https://www.facebook.com/');
+      await wc.loadURL("https://www.facebook.com/messages/").catch(async () => {
+        await wc.loadURL("https://www.facebook.com/");
       });
       return wc.getURL();
     },
@@ -119,6 +131,7 @@ async function collectThreadUrls(app, totalPasses = 18) {
     async (wc, totalPasses) => {
       const script = `
         (async () => {
+          const passCount = Number(${JSON.stringify(totalPasses)} || 18);
           const normalize = (raw) => {
             if (!raw) return null;
             try {
@@ -150,7 +163,7 @@ async function collectThreadUrls(app, totalPasses = 18) {
           };
 
           collect();
-          for (let i = 0; i < Number(totalPasses || 18); i++) {
+          for (let i = 0; i < passCount; i++) {
             const delta = Math.max(220, Math.round((scroller.clientHeight || innerHeight) * 0.8));
             scroller.scrollTop = Math.min(scroller.scrollTop + delta, scroller.scrollHeight);
             await new Promise((r) => setTimeout(r, 170));
@@ -172,7 +185,7 @@ function toMediaUrl(threadUrl) {
     const u = new URL(threadUrl);
     const m = u.pathname.match(/^\/messages\/(e2ee\/)?t\/([^/]+)/i);
     if (!m) return null;
-    return `${u.origin}/messages/${m[1] ? 'e2ee/' : ''}t/${m[2]}/media`;
+    return `${u.origin}/messages/${m[1] ? "e2ee/" : ""}t/${m[2]}/media`;
   } catch {
     return null;
   }
@@ -396,19 +409,28 @@ function evaluateSymmetry(state) {
   const download = state.controls.download;
   const share = state.controls.share;
   if (!close || !download || !share) {
-    return { ok: false, reason: 'missing_controls' };
+    return { ok: false, reason: "missing_controls" };
   }
 
-  const isLeft = state.closePosition === 'left' || state.classes.leftDismiss === true;
-  const expectedDownload = isLeft ? state.gaps.closeLeft : state.gaps.closeRight + 48;
-  const expectedShare = isLeft ? state.gaps.closeLeft + 48 : state.gaps.closeRight + 96;
-  const near = (a, b, t = 5) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= t;
-  const topAligned = near(download.top, close.top) && near(share.top, close.top);
-  const gapAligned = near(state.gaps.downloadRight, expectedDownload) && near(state.gaps.shareRight, expectedShare);
+  const isLeft =
+    state.closePosition === "left" || state.classes.leftDismiss === true;
+  const expectedDownload = isLeft
+    ? state.gaps.closeLeft
+    : state.gaps.closeRight + 48;
+  const expectedShare = isLeft
+    ? state.gaps.closeLeft + 48
+    : state.gaps.closeRight + 96;
+  const near = (a, b, t = 5) =>
+    typeof a === "number" && typeof b === "number" && Math.abs(a - b) <= t;
+  const topAligned =
+    near(download.top, close.top) && near(share.top, close.top);
+  const gapAligned =
+    near(state.gaps.downloadRight, expectedDownload) &&
+    near(state.gaps.shareRight, expectedShare);
 
   return {
     ok: topAligned && gapAligned,
-    reason: topAligned && gapAligned ? 'ok' : 'misaligned',
+    reason: topAligned && gapAligned ? "ok" : "misaligned",
     metrics: {
       closeTop: close.top,
       downloadTop: download.top,
@@ -445,14 +467,14 @@ async function closeViewer(app) {
 
 async function runDirectMode(app, options) {
   const report = {
-    mode: 'direct',
+    mode: "direct",
     candidatesByType: {},
     routeTypeResults: [],
     sizes: DEFAULT_WINDOW_SIZES,
   };
 
   const threads = await collectThreadUrls(app);
-  console.log('Threads discovered:', threads.length);
+  console.log("Threads discovered:", threads.length);
 
   const candidatesByType = new Map();
   for (const thread of threads.slice(0, options.maxThreads)) {
@@ -465,7 +487,8 @@ async function runDirectMode(app, options) {
 
     const media = await collectMediaLinksFromCurrentPage(app);
     for (const link of media.links) {
-      if (!candidatesByType.has(link.routeType)) candidatesByType.set(link.routeType, []);
+      if (!candidatesByType.has(link.routeType))
+        candidatesByType.set(link.routeType, []);
       const arr = candidatesByType.get(link.routeType);
       if (!arr.some((x) => x.url === link.url)) {
         arr.push({ ...link, fromThread: thread, fromMediaPage: mediaUrl });
@@ -473,19 +496,30 @@ async function runDirectMode(app, options) {
     }
   }
 
-  report.candidatesByType = Object.fromEntries(Array.from(candidatesByType.entries()).map(([k, v]) => [k, v.length]));
+  report.candidatesByType = Object.fromEntries(
+    Array.from(candidatesByType.entries()).map(([k, v]) => [k, v.length]),
+  );
 
   for (const routeType of TARGET_ROUTE_TYPES) {
     const candidates = candidatesByType.get(routeType) || [];
     if (candidates.length === 0) {
-      report.routeTypeResults.push({ routeType, status: 'missing', reason: 'no_real_candidate_found' });
+      report.routeTypeResults.push({
+        routeType,
+        status: "missing",
+        reason: "no_real_candidate_found",
+      });
       continue;
     }
 
     const chosen = candidates[0];
     const nav = await navigate(app, chosen.url);
     if (!nav.ok) {
-      report.routeTypeResults.push({ routeType, status: 'missing', reason: 'navigate_failed', chosen });
+      report.routeTypeResults.push({
+        routeType,
+        status: "missing",
+        reason: "navigate_failed",
+        chosen,
+      });
       continue;
     }
     await wait(1300);
@@ -503,7 +537,7 @@ async function runDirectMode(app, options) {
 
     report.routeTypeResults.push({
       routeType,
-      status: sizeResults.every((r) => r.symmetry.ok) ? 'ok' : 'needs_review',
+      status: sizeResults.every((r) => r.symmetry.ok) ? "ok" : "needs_review",
       chosen,
       sizeResults,
     });
@@ -514,14 +548,14 @@ async function runDirectMode(app, options) {
 
 async function runClickFlowMode(app, options) {
   const summary = {
-    mode: 'click-flow',
+    mode: "click-flow",
     testedThreads: [],
     sizes: DEFAULT_WINDOW_SIZES,
     results: [],
   };
 
   const threads = await collectThreadUrls(app);
-  console.log('Threads discovered:', threads.length);
+  console.log("Threads discovered:", threads.length);
 
   const mediaThreads = [];
   for (const thread of threads.slice(0, options.maxThreads)) {
@@ -573,33 +607,38 @@ async function runClickFlowMode(app, options) {
 async function run() {
   const options = parseArgs(process.argv.slice(2));
   fs.mkdirSync(options.outputDir, { recursive: true });
-  console.log('Output folder:', options.outputDir);
-  console.log('Mode:', options.mode);
+  console.log("Output folder:", options.outputDir);
+  console.log("Mode:", options.mode);
 
   const app = await electron.launch({
-    args: [path.join(options.appRoot, 'dist/main/main.js')],
-    env: { ...process.env, NODE_ENV: 'development' },
+    args: [path.join(options.appRoot, "dist/main/main.js")],
+    env: {
+      ...process.env,
+      NODE_ENV: "development",
+      SKIP_SINGLE_INSTANCE_LOCK: "true",
+    },
   });
 
   try {
     await wait(4500);
     const homeUrl = await loadMessagesHome(app);
-    console.log('Loaded:', homeUrl);
+    console.log("Loaded:", homeUrl);
 
-    const report = options.mode === 'click-flow'
-      ? await runClickFlowMode(app, options)
-      : await runDirectMode(app, options);
+    const report =
+      options.mode === "click-flow"
+        ? await runClickFlowMode(app, options)
+        : await runDirectMode(app, options);
 
-    const summaryPath = path.join(options.outputDir, 'summary.json');
+    const summaryPath = path.join(options.outputDir, "summary.json");
     fs.writeFileSync(summaryPath, JSON.stringify(report, null, 2));
-    console.log('Summary:', summaryPath);
-    console.log('Folder:', options.outputDir);
+    console.log("Summary:", summaryPath);
+    console.log("Folder:", options.outputDir);
   } finally {
     await app.close().catch(() => {});
   }
 }
 
 run().catch((err) => {
-  console.error('FAIL real resize capture:', err.message || err);
+  console.error("FAIL real resize capture:", err.message || err);
   process.exit(1);
 });

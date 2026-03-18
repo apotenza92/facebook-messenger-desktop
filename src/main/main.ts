@@ -36,6 +36,7 @@ import {
   isFacebookOrMessengerUrl,
   isMessagesMediaViewerRoute,
   isMessagesRoute,
+  shouldReloadToMessagesHome,
   shouldOpenInApp,
   decideWindowOpenAction,
 } from "./url-policy";
@@ -1806,6 +1807,14 @@ function reloadMessengerTarget(
     return;
   }
 
+  if (shouldReloadToMessagesHome(currentUrl)) {
+    console.log("[Reload] Resetting off-scope route back to Messenger home");
+    target.loadURL(MESSAGES_HOME_URL).catch((error) => {
+      console.error("[Reload] Failed to reset Messenger home:", error);
+    });
+    return;
+  }
+
   if (ignoreCache) {
     target.reloadIgnoringCache();
   } else {
@@ -1844,11 +1853,9 @@ const VERIFICATION_BANNER_JS = `
 
 // Check if this is any Facebook page (for showing consistent banner during login flow)
 function isFacebookIntermediatePage(url: string): boolean {
-  let path = "";
   try {
     const urlObj = new URL(url);
     if (!isFacebookHost(urlObj.hostname)) return false;
-    path = urlObj.pathname.toLowerCase();
   } catch {
     return false;
   }
@@ -1858,17 +1865,7 @@ function isFacebookIntermediatePage(url: string): boolean {
   // Don't show while on the actual Messenger UI.
   if (isMessagesRoute(url)) return false;
   // Don't show on regular Facebook content pages (image/video/story viewers, etc.).
-  if (
-    path.startsWith("/messenger_media") ||
-    path.startsWith("/photo") ||
-    path.startsWith("/photos") ||
-    path.startsWith("/video") ||
-    path.startsWith("/watch") ||
-    path.startsWith("/reel") ||
-    path.startsWith("/reels") ||
-    path.startsWith("/story") ||
-    path.startsWith("/stories")
-  ) {
+  if (isMessagesMediaViewerRoute(url)) {
     return false;
   }
 

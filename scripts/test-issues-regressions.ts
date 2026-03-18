@@ -558,8 +558,12 @@ const runViewportPolicyTests = () => {
     path.join(APP_ROOT, "src/preload/preload.ts"),
     "utf8",
   );
+  const mediaActionPolicySource = fs.readFileSync(
+    path.join(APP_ROOT, "src/preload/media-action-policy.ts"),
+    "utf8",
+  );
   assert(
-    /Back to Previous Page/.test(preloadSource),
+    /Back to Previous Page/.test(mediaActionPolicySource),
     "#49 media dismiss selectors should include the real Back to Previous Page label",
   );
   assert(
@@ -567,6 +571,10 @@ const runViewportPolicyTests = () => {
       preloadSource,
     ),
     "#49 media close ranking should reuse the shared dismiss selector source",
+  );
+  assert(
+    /getDismissActionPriority/.test(preloadSource),
+    "#49 media close ranking should prioritize the real dismiss label before fallback history actions",
   );
 };
 

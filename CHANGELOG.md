@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.3.0-beta.31] - 2026-03-18
+
+### Fixed
+
+- **Issue #41 follow-up: real media/profile regressions for items 1, 2, and 4** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Stop non-E2EE media viewers from stacking overlapping fallback/native buttons and ensure close returns to the originating chat instead of drifting to the newest thread.
+  - Restore same-route E2EE media controls on real attachment/photo flows so close, download, and forward buttons appear as a single clean cluster.
+  - Route Facebook profile links back out to the system browser again, including wrapped in-thread profile URLs, and make refresh reset stray in-app profile pages back to `facebook.com/messages`.
+
+### Changed
+
+- **Issue #45 regression harness cleanup** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Removed the old synthetic fixture-based GUI scripts and consolidated validation onto real-target discovery/capture flows.
+  - Added pinned real GUI checks for the exact non-E2EE close-return path and a real E2EE same-route attachment/photo thread.
+
+### Validation
+
+- `npm run build`
+- `npm run test:window-open`
+- `npm run test:issues:deterministic`
+- `npm run test:issue45:live:types:gui -- --thread-alias non-e2ee-check --thread-url "https://www.facebook.com/messages/t/6860983763931910/" --media-url "https://www.facebook.com/messenger_media/?attachment_id=2647398358969687&message_id=mid.%24gABhgB0QPEwajKarbymc-GWN1MKmF&thread_id=6860983763931910"`
+- `npm run test:issue45:e2ee:same-route:current:gui`
+- `npm run test:issues:e2e`
+- Real direct non-E2EE close-return check on `https://www.facebook.com/messages/t/6860983763931910/` -> `messenger_media` -> close -> same thread restored
+
 ## [1.3.0-beta.30] - 2026-03-17
 
 ### Fixed

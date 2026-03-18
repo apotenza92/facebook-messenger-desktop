@@ -14,6 +14,14 @@ import {
   shouldKeepIncomingCallHintActive,
   shouldTreatIncomingCallUiAsVisible,
 } from "./incoming-call-overlay-hint-policy";
+import { decideWindowOpenAction } from "./url-policy";
+import {
+  dismissActionSelectors,
+  getDismissActionPriority,
+  mediaDownloadSelectors,
+  mediaNavigationSelectors,
+  mediaShareSelectors,
+} from "./media-action-policy";
 
 const incomingCallAnswerSelectors = [
   '[aria-label*="Answer" i]',
@@ -307,60 +315,12 @@ ipcRenderer.on(
   const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 30;
   const NON_DRAG_APP_REGION = "no-drag";
   const MEDIA_ACTION_TOP_OFFSET = 8;
+  const MEDIA_FALLBACK_ACTION_TOP_OFFSET = 10;
   const MEDIA_ACTION_CLOSE_LEFT_OFFSET = 16;
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
 
-  type AriaSelectorMatcher =
-    | { type: "exact"; value: string }
-    | { type: "contains"; value: string };
-
-  const buildActionSelectors = (matchers: AriaSelectorMatcher[]): string[] => {
-    const selectors = new Set<string>();
-    const targets = ['[role="button"]', "button", "a[href]"];
-
-    for (const matcher of matchers) {
-      const attribute =
-        matcher.type === "exact"
-          ? `[aria-label="${matcher.value}" i]`
-          : `[aria-label*="${matcher.value}" i]`;
-
-      selectors.add(attribute);
-      for (const target of targets) {
-        selectors.add(`${target}${attribute}`);
-      }
-    }
-
-    return Array.from(selectors);
-  };
-
-  const dismissActionSelectors = buildActionSelectors([
-    { type: "exact", value: "Close" },
-    { type: "exact", value: "Back" },
-    { type: "contains", value: "Go back" },
-    { type: "exact", value: "Back to Previous Page" },
-  ]);
-  const mediaDownloadSelectors = [
-    '[aria-label*="Download" i][role="button"]',
-    'button[aria-label*="Download" i]',
-    '[aria-label*="Save" i][role="button"]',
-    'button[aria-label*="Save" i]',
-  ];
-  const mediaShareSelectors = [
-    '[aria-label*="Share" i][role="button"]',
-    'button[aria-label*="Share" i]',
-    '[aria-label*="Forward" i][role="button"]',
-    'button[aria-label*="Forward" i]',
-  ];
-  const mediaNavigationSelectors = [
-    '[aria-label*="Next" i][role="button"]',
-    'button[aria-label*="Next" i]',
-    '[aria-label*="Previous" i][role="button"]',
-    'button[aria-label*="Previous" i]',
-    '[aria-label*="Prev" i][role="button"]',
-    'button[aria-label*="Prev" i]',
-  ];
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
   const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 10_000;
@@ -386,6 +346,7 @@ ipcRenderer.on(
   let lastMediaOverlayDebugSentAt = 0;
   let lastMediaOpenSourceUrl: string | null = null;
   let lastMediaOpenSourceKind: "image" | "video" | "unknown" = "unknown";
+  let lastMessagesThreadBaseUrl: string | null = null;
   const mediaActionClasses = [
     MEDIA_CLOSE_ACTION_CLASS,
     MEDIA_DOWNLOAD_ACTION_CLASS,
@@ -404,8 +365,18 @@ ipcRenderer.on(
     "inset-inline-start",
     "inset-inline-end",
   ];
+  const fallbackHiddenStyleProperties = [
+    "visibility",
+    "opacity",
+    "pointer-events",
+  ];
   const pinnedMediaActionNodes = new Set<HTMLElement>();
   const pinnedMediaActionOriginalStyles = new Map<
+    HTMLElement,
+    Map<string, { hadValue: boolean; value: string; priority: string }>
+  >();
+  const fallbackHiddenActionNodes = new Set<HTMLElement>();
+  const fallbackHiddenActionOriginalStyles = new Map<
     HTMLElement,
     Map<string, { hadValue: boolean; value: string; priority: string }>
   >();
@@ -419,50 +390,66 @@ ipcRenderer.on(
     }
   };
 
-  const isFacebookHostname = (hostname: string): boolean =>
-    hostname === "facebook.com" || hostname.endsWith(".facebook.com");
-
-  const parseNavigationUrl = (input: string): URL | null => {
-    try {
-      if (input.startsWith("http://") || input.startsWith("https://")) {
-        return new URL(input);
-      }
-      return new URL(input, "https://www.facebook.com");
-    } catch {
-      return null;
-    }
-  };
-
-  const extractNestedNavigationUrl = (parsed: URL): string | null => {
-    for (const key of ["u", "url", "href", "link", "next"]) {
-      const value = parsed.searchParams.get(key);
-      if (value) return value;
-    }
-    return null;
-  };
-
-  const isMarketplaceNavigationUrl = (input: string, depth = 0): boolean => {
-    if (depth > 2) return false;
-    const parsed = parseNavigationUrl(input);
-    if (!parsed) return false;
-
-    if (
-      isFacebookHostname(parsed.hostname) &&
-      parsed.pathname.toLowerCase().includes("/marketplace")
-    ) {
-      return true;
-    }
-
-    const nestedUrl = extractNestedNavigationUrl(parsed);
-    return nestedUrl ? isMarketplaceNavigationUrl(nestedUrl, depth + 1) : false;
-  };
-
   const findClosestAnchor = (
     target: EventTarget | null,
   ): HTMLAnchorElement | null => {
     if (!(target instanceof Element)) return null;
     const anchor = target.closest("a[href]");
     return anchor instanceof HTMLAnchorElement ? anchor : null;
+  };
+
+  const extractMessagesThreadBaseUrl = (input: string): string | null => {
+    try {
+      const parsed = new URL(input, "https://www.facebook.com");
+      if (
+        parsed.hostname !== "facebook.com" &&
+        !parsed.hostname.endsWith(".facebook.com")
+      ) {
+        return null;
+      }
+
+      const match = parsed.pathname.match(/^\/messages\/(e2ee\/)?t\/([^/]+)/i);
+      if (!match) return null;
+
+      const e2eeSegment = match[1] ? "e2ee/" : "";
+      return `${parsed.origin}/messages/${e2eeSegment}t/${match[2]}/`;
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberCurrentMessagesThreadBaseUrl = (): void => {
+    const nextThreadBaseUrl = extractMessagesThreadBaseUrl(
+      window.location.href,
+    );
+    if (nextThreadBaseUrl) {
+      lastMessagesThreadBaseUrl = nextThreadBaseUrl;
+    }
+  };
+
+  const resolveMediaRouteThreadReturnUrl = (): string | null => {
+    if (lastMessagesThreadBaseUrl) {
+      return lastMessagesThreadBaseUrl;
+    }
+
+    const currentThreadBaseUrl = extractMessagesThreadBaseUrl(
+      window.location.href,
+    );
+    if (currentThreadBaseUrl) {
+      return currentThreadBaseUrl;
+    }
+
+    try {
+      const parsed = new URL(window.location.href);
+      const threadId = parsed.searchParams.get("thread_id");
+      if (threadId && /^\d+$/.test(threadId)) {
+        return `https://www.facebook.com/messages/t/${threadId}/`;
+      }
+    } catch {
+      // Ignore malformed fallback URLs.
+    }
+
+    return null;
   };
 
   document.addEventListener(
@@ -472,7 +459,9 @@ ipcRenderer.on(
       if (!anchor) return;
 
       const href = anchor.href;
-      if (!href || !isMarketplaceNavigationUrl(href)) return;
+      if (!href || decideWindowOpenAction(href) !== "open-external-browser") {
+        return;
+      }
 
       event.preventDefault();
       event.stopPropagation();
@@ -930,8 +919,108 @@ ipcRenderer.on(
     pinnedMediaActionOriginalStyles.delete(node);
   };
 
+  const setFallbackHiddenStyle = (
+    node: HTMLElement,
+    property: string,
+    value: string,
+  ): void => {
+    let originalStyles = fallbackHiddenActionOriginalStyles.get(node);
+    if (!originalStyles) {
+      originalStyles = new Map();
+      fallbackHiddenActionOriginalStyles.set(node, originalStyles);
+    }
+
+    if (!originalStyles.has(property)) {
+      const existingValue = node.style.getPropertyValue(property);
+      const existingPriority = node.style.getPropertyPriority(property);
+      originalStyles.set(property, {
+        hadValue: existingValue.length > 0,
+        value: existingValue,
+        priority: existingPriority,
+      });
+    }
+
+    node.style.setProperty(property, value, "important");
+  };
+
+  const restoreFallbackHiddenStyles = (node: HTMLElement): void => {
+    const originalStyles = fallbackHiddenActionOriginalStyles.get(node);
+    if (!originalStyles) {
+      for (const property of fallbackHiddenStyleProperties) {
+        node.style.removeProperty(property);
+      }
+      return;
+    }
+
+    for (const property of fallbackHiddenStyleProperties) {
+      const snapshot = originalStyles.get(property);
+      if (!snapshot) {
+        node.style.removeProperty(property);
+        continue;
+      }
+
+      if (snapshot.hadValue) {
+        node.style.setProperty(property, snapshot.value, snapshot.priority);
+      } else {
+        node.style.removeProperty(property);
+      }
+    }
+
+    fallbackHiddenActionOriginalStyles.delete(node);
+  };
+
+  const clearTemporarilyHiddenFallbackActions = (): void => {
+    for (const node of fallbackHiddenActionNodes) {
+      restoreFallbackHiddenStyles(node);
+    }
+    fallbackHiddenActionNodes.clear();
+  };
+
+  const hideActionNodeForFallback = (node: HTMLElement | null): void => {
+    if (!(node instanceof HTMLElement)) return;
+    setFallbackHiddenStyle(node, "visibility", "hidden");
+    setFallbackHiddenStyle(node, "opacity", "0");
+    setFallbackHiddenStyle(node, "pointer-events", "none");
+    fallbackHiddenActionNodes.add(node);
+  };
+
+  const hideMatchingVisibleElementsForFallback = (
+    selectors: string[],
+    maxCount: number,
+  ): void => {
+    const nodes = new Set<HTMLElement>();
+
+    for (const selector of selectors) {
+      const matches = document.querySelectorAll(
+        selector,
+      ) as NodeListOf<HTMLElement>;
+      for (const match of Array.from(matches)) {
+        if (!isMediaOverlayElementVisible(match)) continue;
+
+        const rect = match.getBoundingClientRect();
+        if (rect.top > 160 || rect.bottom < -24) continue;
+        nodes.add(match);
+
+        const interactive = match.closest(
+          'button, [role="button"], a[href], [tabindex]',
+        );
+        if (interactive instanceof HTMLElement) {
+          nodes.add(interactive);
+        }
+      }
+    }
+
+    let count = 0;
+    for (const node of nodes) {
+      hideActionNodeForFallback(node);
+      count += 1;
+      if (count >= maxCount) break;
+    }
+  };
+
   const clearMarkedMediaActions = (): void => {
     document.documentElement.classList.remove(MEDIA_LEFT_DISMISS_CLASS);
+    clearTemporarilyHiddenFallbackActions();
 
     for (const node of pinnedMediaActionNodes) {
       restorePinnedStyles(node);
@@ -982,6 +1071,11 @@ ipcRenderer.on(
   };
 
   const isPinnedActionHitVisible = (node: HTMLElement): boolean => {
+    const hitVisible = isActionHitVisible(node);
+    return hitVisible;
+  };
+
+  const isActionHitVisible = (node: HTMLElement): boolean => {
     const rect = node.getBoundingClientRect();
     if (rect.width < 6 || rect.height < 6) return false;
 
@@ -1099,6 +1193,14 @@ ipcRenderer.on(
     );
 
     candidates.sort((a, b) => {
+      const aPriority = getDismissActionPriority(
+        a.node.getAttribute("aria-label") || a.node.textContent || "",
+      );
+      const bPriority = getDismissActionPriority(
+        b.node.getAttribute("aria-label") || b.node.textContent || "",
+      );
+      if (aPriority !== bPriority) return aPriority - bPriority;
+
       const aLeftDist = Math.abs(a.rect.left);
       const aRightDist = Math.abs(window.innerWidth - a.rect.right);
       const bLeftDist = Math.abs(b.rect.left);
@@ -1114,6 +1216,37 @@ ipcRenderer.on(
     return candidates;
   };
 
+  const isSameRouteE2EEMediaViewer = (): boolean => {
+    const path = window.location.pathname.toLowerCase();
+    if (!path.startsWith("/messages/e2ee/t/")) return false;
+
+    return (
+      resolveViewportMode({
+        urlPath: window.location.pathname,
+        mediaOverlayVisible,
+      }) === "media"
+    );
+  };
+
+  const pickPreferredCloseCandidate = (
+    candidates: ActionCandidate[],
+  ): ActionCandidate | null => {
+    const preferredVisible = candidates.find((candidate) => {
+      const priority = getDismissActionPriority(
+        candidate.node.getAttribute("aria-label") ||
+          candidate.node.textContent ||
+          "",
+      );
+      return priority <= 1 && isMediaOverlayElementVisible(candidate.node);
+    });
+    if (preferredVisible) return preferredVisible;
+
+    const anyVisible = candidates.find((candidate) =>
+      isMediaOverlayElementVisible(candidate.node),
+    );
+    return anyVisible || candidates[0] || null;
+  };
+
   const markMediaActions = (): MarkedMediaActionState => {
     clearMarkedMediaActions();
 
@@ -1123,6 +1256,11 @@ ipcRenderer.on(
       downloadMarked: false,
       shareMarked: false,
     };
+
+    if (isSameRouteE2EEMediaViewer()) {
+      return markedState;
+    }
+
     let usingRightDismissLayout = true;
     let pinnedTopOffset = MEDIA_ACTION_TOP_OFFSET;
     let mirroredEdgeGap = MEDIA_ACTION_CLOSE_LEFT_OFFSET;
@@ -1205,27 +1343,13 @@ ipcRenderer.on(
     };
 
     applyPinnedRightAction(
-      [
-        '[aria-label*="Download" i][role="button"]',
-        'button[aria-label*="Download" i]',
-        '[aria-label*="Download" i]',
-        '[aria-label*="Save" i][role="button"]',
-        'button[aria-label*="Save" i]',
-        '[aria-label*="Save" i]',
-      ],
+      mediaDownloadSelectors,
       MEDIA_DOWNLOAD_ACTION_CLASS,
       downloadOffset,
     );
 
     applyPinnedRightAction(
-      [
-        '[aria-label*="Share" i][role="button"]',
-        'button[aria-label*="Share" i]',
-        '[aria-label*="Share" i]',
-        '[aria-label*="Forward" i][role="button"]',
-        'button[aria-label*="Forward" i]',
-        '[aria-label*="Forward" i]',
-      ],
+      mediaShareSelectors,
       MEDIA_SHARE_ACTION_CLASS,
       shareOffset,
     );
@@ -1387,85 +1511,144 @@ ipcRenderer.on(
   const updateFallbackMediaControls = (
     markedActions: MarkedMediaActionState,
   ): void => {
-    const closeCandidate = rankEdgeCloseCandidates(
+    clearTemporarilyHiddenFallbackActions();
+
+    const useUnifiedFallbackActions = isSameRouteE2EEMediaViewer();
+
+    const closeCandidates = rankEdgeCloseCandidates(
       dismissActionSelectors,
       new Set<HTMLElement>(),
-    )[0];
+    );
+    const closeCandidate = useUnifiedFallbackActions
+      ? pickPreferredCloseCandidate(closeCandidates)
+      : closeCandidates[0] || null;
     const closeNode = closeCandidate?.node || null;
     const closeRect = closeCandidate?.rect || null;
     const closePinnedVisible = closeNode
       ? isPinnedActionHitVisible(closeNode)
       : false;
+    const closeDirectVisible = closeNode
+      ? isMediaOverlayElementVisible(closeNode)
+      : false;
+    const closePriority = closeNode
+      ? getDismissActionPriority(
+          closeNode.getAttribute("aria-label") || closeNode.textContent || "",
+        )
+      : Number.POSITIVE_INFINITY;
+    const closeUsable = markedActions.closeMarked
+      ? closePinnedVisible
+      : closeDirectVisible;
+    const closeReturnUrl = resolveMediaRouteThreadReturnUrl();
+    const routeBasedMediaViewer =
+      resolveViewportMode({
+        urlPath: window.location.pathname,
+        mediaOverlayVisible: false,
+      }) === "media";
+    const useCustomCloseFallback =
+      Boolean(closeReturnUrl) &&
+      routeBasedMediaViewer &&
+      (!closeNode || closePriority >= 2 || !closeUsable);
     const closeNeedsFallback =
-      closeRect !== null &&
-      (!markedActions.closeMarked ||
-        !closePinnedVisible ||
-        closeRect.left < 8 ||
-        closeRect.right > window.innerWidth - 8 ||
-        closeNode?.closest('[aria-hidden="true"]') !== null);
+      useUnifiedFallbackActions ||
+      useCustomCloseFallback ||
+      (closeRect !== null &&
+        (!closeUsable ||
+          closeRect.left < 8 ||
+          closeRect.right > window.innerWidth - 8 ||
+          closeNode?.closest('[aria-hidden="true"]') !== null));
 
-    const downloadCandidate = !markedActions.downloadMarked
+    const downloadCandidates = !markedActions.downloadMarked
       ? rankRightActionCandidates(
-          [
-            '[aria-label*="Download" i][role="button"]',
-            'button[aria-label*="Download" i]',
-            '[aria-label*="Download" i]',
-            '[aria-label*="Save" i][role="button"]',
-            'button[aria-label*="Save" i]',
-            '[aria-label*="Save" i]',
-          ],
+          mediaDownloadSelectors,
           new Set<HTMLElement>(),
           0,
-        )[0]
-      : null;
+        )
+      : [];
+    const downloadCandidate = downloadCandidates[0] || null;
 
-    const shareCandidate = !markedActions.shareMarked
+    const shareCandidates = !markedActions.shareMarked
       ? rankRightActionCandidates(
-          [
-            '[aria-label*="Share" i][role="button"]',
-            'button[aria-label*="Share" i]',
-            '[aria-label*="Share" i]',
-            '[aria-label*="Forward" i][role="button"]',
-            'button[aria-label*="Forward" i]',
-            '[aria-label*="Forward" i]',
-          ],
+          mediaShareSelectors,
           new Set<HTMLElement>(),
           0,
-        )[0]
-      : null;
+        )
+      : [];
+    const shareCandidate = shareCandidates[0] || null;
 
     const activeMediaSourceUrl = resolveActiveMediaSourceUrl();
-    const topOffset = closeRect ? Math.max(8, Math.round(closeRect.top)) : 8;
-    const closeOnLeft =
-      closeRect !== null
+    const topOffset = closeRect
+      ? Math.max(8, Math.round(closeRect.top))
+      : MEDIA_FALLBACK_ACTION_TOP_OFFSET;
+    const alignedFallbackRightLayout =
+      useUnifiedFallbackActions || useCustomCloseFallback;
+    const fallbackTopOffset = alignedFallbackRightLayout
+      ? Math.max(MEDIA_FALLBACK_ACTION_TOP_OFFSET, topOffset)
+      : topOffset;
+    if (alignedFallbackRightLayout) {
+      document.documentElement.classList.remove(MEDIA_LEFT_DISMISS_CLASS);
+    }
+    const closeOnLeft = alignedFallbackRightLayout
+      ? false
+      : closeRect !== null
         ? Math.abs(closeRect.left) <=
           Math.abs(window.innerWidth - closeRect.right)
         : true;
 
     const host = getOrCreateFallbackMediaControlsHost();
 
-    if (closeNeedsFallback && closeNode) {
+    if (closeNeedsFallback && (closeNode || closeReturnUrl)) {
       upsertFallbackMediaButton({
         host,
         key: "close",
-        label: closeNode.getAttribute("aria-label") || "Close",
+        label:
+          (useCustomCloseFallback ? "Close" : null) ||
+          closeNode?.getAttribute("aria-label") ||
+          "Close",
         text: "×",
-        top: topOffset,
+        top: fallbackTopOffset,
         ...(closeOnLeft
           ? { left: MEDIA_ACTION_CLOSE_LEFT_OFFSET }
           : { right: 16 }),
         onClick: () => {
+          if (useCustomCloseFallback && closeReturnUrl) {
+            window.location.href = closeReturnUrl;
+            return;
+          }
           dispatchProxyClick(closeNode);
         },
       });
+      if (useUnifiedFallbackActions) {
+        hideMatchingVisibleElementsForFallback(dismissActionSelectors, 10);
+      } else if (useCustomCloseFallback && closeNode && closePriority >= 2) {
+        hideActionNodeForFallback(closeNode);
+      }
     } else {
       hideFallbackMediaButton("close");
     }
 
+    const downloadDirectVisible = downloadCandidate?.node
+      ? !alignedFallbackRightLayout &&
+        isMediaOverlayElementVisible(downloadCandidate.node)
+      : false;
+    const shareDirectVisible = shareCandidate?.node
+      ? !alignedFallbackRightLayout &&
+        isMediaOverlayElementVisible(shareCandidate.node)
+      : false;
+
     const showDownloadFallback = Boolean(
-      downloadCandidate || activeMediaSourceUrl,
+      (useUnifiedFallbackActions &&
+        (downloadCandidate || activeMediaSourceUrl)) ||
+      (!markedActions.downloadMarked &&
+        !downloadDirectVisible &&
+        downloadCandidate) ||
+      (!markedActions.downloadMarked &&
+        !downloadDirectVisible &&
+        activeMediaSourceUrl),
     );
-    const showShareFallback = Boolean(shareCandidate);
+    const showShareFallback = Boolean(
+      (useUnifiedFallbackActions && shareCandidate) ||
+      (!markedActions.shareMarked && !shareDirectVisible && shareCandidate),
+    );
 
     if (showDownloadFallback) {
       upsertFallbackMediaButton({
@@ -1475,8 +1658,8 @@ ipcRenderer.on(
           downloadCandidate?.node.getAttribute("aria-label") ||
           "Download media attachment",
         text: "↓",
-        top: topOffset,
-        right: showShareFallback ? 64 : 16,
+        top: fallbackTopOffset,
+        right: alignedFallbackRightLayout ? 64 : showShareFallback ? 64 : 16,
         onClick: () => {
           if (downloadCandidate?.node) {
             if (dispatchProxyClick(downloadCandidate.node)) return;
@@ -1486,6 +1669,11 @@ ipcRenderer.on(
           }
         },
       });
+      if (useUnifiedFallbackActions) {
+        hideMatchingVisibleElementsForFallback(mediaDownloadSelectors, 10);
+      } else if (alignedFallbackRightLayout && downloadCandidate?.node) {
+        hideActionNodeForFallback(downloadCandidate.node);
+      }
     } else {
       hideFallbackMediaButton("download");
     }
@@ -1496,12 +1684,21 @@ ipcRenderer.on(
         key: "share",
         label: shareCandidate.node.getAttribute("aria-label") || "Forward",
         text: "↗",
-        top: topOffset,
-        right: 16,
+        top: fallbackTopOffset,
+        right: alignedFallbackRightLayout
+          ? showDownloadFallback
+            ? 112
+            : 64
+          : 16,
         onClick: () => {
           dispatchProxyClick(shareCandidate.node);
         },
       });
+      if (useUnifiedFallbackActions) {
+        hideMatchingVisibleElementsForFallback(mediaShareSelectors, 10);
+      } else if (alignedFallbackRightLayout) {
+        hideActionNodeForFallback(shareCandidate.node);
+      }
     } else {
       hideFallbackMediaButton("share");
     }
@@ -1719,8 +1916,8 @@ ipcRenderer.on(
 
       #${MEDIA_FALLBACK_CONTROLS_ID} .${MEDIA_FALLBACK_BUTTON_CLASS} {
         position: fixed;
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         display: none;
         align-items: center;
         justify-content: center;
@@ -1728,7 +1925,7 @@ ipcRenderer.on(
         border-radius: 999px;
         background: rgba(24, 25, 26, 0.88);
         color: #fff;
-        font: 600 18px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+        font: 600 20px/1 -apple-system, BlinkMacSystemFont, sans-serif;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
         pointer-events: auto;
         cursor: pointer;
@@ -1893,10 +2090,13 @@ ipcRenderer.on(
 
   const mediaOpenActionSelectors = [
     '[aria-label^="View photo" i]',
+    '[aria-label^="View image" i]',
     '[aria-label^="View video" i]',
     '[aria-label^="View attachment" i]',
     '[aria-label^="Open photo" i]',
+    '[aria-label^="Open image" i]',
     '[aria-label^="Open video" i]',
+    '[aria-label^="Open attachment" i]',
     'a[href*="/photo/"]',
     'a[href*="/photos/"]',
     'a[href*="/video/"]',
@@ -1928,8 +2128,8 @@ ipcRenderer.on(
       if (!looksLikeMediaNode) continue;
       const largestDimension = Math.max(rect.width, rect.height);
       const area = rect.width * rect.height;
-      if (largestDimension < 120 || area < 9000) continue;
-      if (rect.right <= 250) continue;
+      if (largestDimension < 72 || area < 4096) continue;
+      if (rect.right <= 180) continue;
       return candidate;
     }
 
@@ -1998,6 +2198,8 @@ ipcRenderer.on(
     target: EventTarget | null,
   ): void => {
     if (!(target instanceof Element)) return;
+
+    rememberCurrentMessagesThreadBaseUrl();
 
     const clickable = target.closest(
       'button, [role="button"], a[href], [tabindex]',
@@ -2254,6 +2456,7 @@ ipcRenderer.on(
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       startObservers();
+      rememberCurrentMessagesThreadBaseUrl();
       mediaOverlayVisible = detectMediaOverlayVisible();
       sendMediaOverlayDebug("dom-content-loaded", {
         force: true,
@@ -2264,6 +2467,7 @@ ipcRenderer.on(
     });
   } else {
     startObservers();
+    rememberCurrentMessagesThreadBaseUrl();
     mediaOverlayVisible = detectMediaOverlayVisible();
     sendMediaOverlayDebug("init-ready", {
       force: true,
@@ -2279,6 +2483,7 @@ ipcRenderer.on(
     if (currentUrl !== lastUrl) {
       const previousUrl = lastUrl;
       lastUrl = currentUrl;
+      rememberCurrentMessagesThreadBaseUrl();
       clearMediaOverlayOpenHint("url-change");
       sendMediaOverlayDebug("url-change", {
         force: true,
