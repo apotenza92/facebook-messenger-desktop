@@ -23,6 +23,8 @@ type NotificationMatchResult = {
     | "ambiguous-candidates"
     | "muted-conflict"
     | "observed-row-mismatch";
+  ambiguityReason?: "placeholder-title";
+  placeholderTitle?: string;
 };
 
 type ObservedSidebarNotificationDecision = NotificationMatchResult & {
@@ -72,6 +74,14 @@ const TERSE_SENDER_BODY_PATTERNS: RegExp[] = [
   /^(?:[a-z0-9.'_-]+\s+)?sent (?:an? )?(?:photo|video|attachment|gif|sticker)$/i,
 ];
 
+const PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS: RegExp[] = [
+  /^facebook user(?:\s+\d+)?$/i,
+  /^new message$/i,
+  /^new messages$/i,
+  /^\d+\s+new messages?$/i,
+  /^messenger notification$/i,
+];
+
 function normalizeText(value: string): string {
   return (value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -112,13 +122,36 @@ function isTerseSenderTitlePayload(payload: NotificationPayload): boolean {
 
 function createMutedConflictResult(
   confidence: number,
+  options: {
+    ambiguityReason?: "placeholder-title";
+    placeholderTitle?: string;
+  } = {},
 ): NotificationMatchResult {
   return {
     confidence,
     ambiguous: true,
     muted: true,
     reason: "muted-conflict",
+    ambiguityReason: options.ambiguityReason,
+    placeholderTitle: options.placeholderTitle,
   };
+}
+
+function getPlaceholderNotificationTitle(
+  payload: NotificationPayload,
+): string | null {
+  const normalizedTitle = normalizeText(payload.title);
+  if (!normalizedTitle) return null;
+
+  if (
+    PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS.some((pattern) =>
+      pattern.test(normalizedTitle),
+    )
+  ) {
+    return normalizedTitle;
+  }
+
+  return null;
 }
 
 function computeCandidateScore(
@@ -195,8 +228,19 @@ function resolveNativeNotificationTarget(
 
   const top = scored[0];
   const second = scored[1];
+  const placeholderTitle = getPlaceholderNotificationTitle(payload);
+  const hasMutedUnreadCandidate = unreadRows.some(
+    (candidate) => candidate.muted,
+  );
 
   if (!top || top.score < MIN_CONFIDENCE) {
+    if (placeholderTitle && hasMutedUnreadCandidate) {
+      return createMutedConflictResult(top?.score ?? 0, {
+        ambiguityReason: "placeholder-title",
+        placeholderTitle,
+      });
+    }
+
     return {
       confidence: top?.score ?? 0,
       ambiguous: true,
@@ -241,6 +285,30 @@ function resolveNativeNotificationTarget(
       mutedGroupPreviewContainsBody
     ) {
       return createMutedConflictResult(top.score);
+    }
+  }
+
+  if (placeholderTitle && hasMutedUnreadCandidate) {
+    const payloadBody = normalizeText(payload.body);
+    const mutedPreviewOverlap = scored.some(
+      (entry) =>
+        entry.candidate.muted &&
+        entry.score >= MUTED_CONFLICT_SCORE_FLOOR &&
+        ((payloadBody.length >= 4 &&
+          normalizeText(entry.candidate.body).includes(payloadBody)) ||
+          tokenOverlapRatio(
+            tokenize(payloadBody),
+            tokenize(
+              `${entry.candidate.title || ""} ${entry.candidate.body || ""}`,
+            ),
+          ) >= 0.5),
+    );
+
+    if (mutedPreviewOverlap) {
+      return createMutedConflictResult(top.score, {
+        ambiguityReason: "placeholder-title",
+        placeholderTitle,
+      });
     }
   }
 
@@ -455,8 +523,12 @@ function isLikelyGlobalFacebookNotification(
   const titleIsFacebookShell =
     title === "facebook" ||
     title.startsWith("facebook ") ||
+    /^facebook user(?:\b|$)/.test(title) ||
     title === "meta" ||
-    title.startsWith("meta ");
+    title.startsWith("meta ") ||
+    title === "new message" ||
+    title === "new messages" ||
+    /^\d+\s+new messages?$/.test(title);
 
   const hasSocialSignal = GLOBAL_SOCIAL_BODY_PATTERNS.some((pattern) =>
     pattern.test(body),
@@ -479,6 +551,10 @@ const SELF_AUTHORED_BODY_PATTERNS: RegExp[] = [
   /^you removed\b/i,
   /^you unsent\b/i,
   /^sent by you\b/i,
+  // Messenger can surface the local composer preview as "Draft: …" when an
+  // incoming message lands before the draft is sent. Treat that as self-authored
+  // so we fail closed instead of leaking the unsent text via a desktop alert.
+  /^draft:(?:\s|$)/i,
 ];
 
 function isLikelySelfAuthoredMessagePreview(

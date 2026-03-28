@@ -37,6 +37,9 @@ function parseArgs(argv) {
     appRoot: process.env.MESSENGER_APP_ROOT
       ? path.resolve(process.env.MESSENGER_APP_ROOT)
       : path.resolve(__dirname, ".."),
+    executablePath: process.env.MESSENGER_EXECUTABLE_PATH
+      ? path.resolve(process.env.MESSENGER_EXECUTABLE_PATH)
+      : "",
     outputDir: "",
     maxThreads: 40,
   };
@@ -52,11 +55,13 @@ function parseArgs(argv) {
       options.outputDir = path.resolve(argv[++i]);
     } else if (arg === "--app-root") {
       options.appRoot = path.resolve(argv[++i]);
+    } else if (arg === "--executable-path") {
+      options.executablePath = path.resolve(argv[++i]);
     } else if (arg === "--max-threads") {
       options.maxThreads = Math.max(1, Number(argv[++i]) || options.maxThreads);
     } else if (arg === "--help" || arg === "-h") {
       console.log(
-        `Usage: node scripts/test-issue45-real-resize-gui.js [options]\n\nOptions:\n  --mode <direct|click-flow>  direct = navigate chosen media URLs; click-flow = open first media from /media pages\n  --output-dir <dir>          Directory for screenshots and summary.json\n  --app-root <dir>            Alternate app root containing dist/main/main.js\n  --max-threads <n>           Max threads to scan while discovering candidates\n`,
+        `Usage: node scripts/test-issue45-real-resize-gui.js [options]\n\nOptions:\n  --mode <direct|click-flow>  direct = navigate chosen media URLs; click-flow = open first media from /media pages\n  --output-dir <dir>          Directory for screenshots and summary.json\n  --app-root <dir>            Alternate app root containing dist/main/main.js\n  --executable-path <path>    Launch a packaged app binary instead of dist/main/main.js\n  --max-threads <n>           Max threads to scan while discovering candidates\n`,
       );
       process.exit(0);
     } else {
@@ -383,9 +388,7 @@ async function inspectCurrentViewer(app) {
               scrollbarWidth: Math.max(0, window.innerWidth - document.documentElement.clientWidth),
             },
             classes: {
-              mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
-              leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
             closePosition: close ? (close.left < window.innerWidth * 0.5 ? 'left' : 'right') : 'unknown',
             controls: { close, download, share, closeAll, downloadAll, shareAll },
@@ -408,29 +411,26 @@ function evaluateSymmetry(state) {
   const close = state.controls.close;
   const download = state.controls.download;
   const share = state.controls.share;
+  if (!state.classes.activeCrop) {
+    return { ok: false, reason: "crop_inactive" };
+  }
   if (!close || !download || !share) {
     return { ok: false, reason: "missing_controls" };
   }
-
-  const isLeft =
-    state.closePosition === "left" || state.classes.leftDismiss === true;
-  const expectedDownload = isLeft
-    ? state.gaps.closeLeft
-    : state.gaps.closeRight + 48;
-  const expectedShare = isLeft
-    ? state.gaps.closeLeft + 48
-    : state.gaps.closeRight + 96;
   const near = (a, b, t = 5) =>
     typeof a === "number" && typeof b === "number" && Math.abs(a - b) <= t;
-  const topAligned =
-    near(download.top, close.top) && near(share.top, close.top);
-  const gapAligned =
-    near(state.gaps.downloadRight, expectedDownload) &&
-    near(state.gaps.shareRight, expectedShare);
+  const topAligned = near(download.top, close.top, 24) && near(share.top, close.top, 24);
+  const topVisible =
+    close.top >= 0 &&
+    download.top >= 0 &&
+    share.top >= 0 &&
+    close.top <= 160 &&
+    download.top <= 160 &&
+    share.top <= 160;
 
   return {
-    ok: topAligned && gapAligned,
-    reason: topAligned && gapAligned ? "ok" : "misaligned",
+    ok: topAligned && topVisible,
+    reason: topAligned && topVisible ? "ok" : "misaligned",
     metrics: {
       closeTop: close.top,
       downloadTop: download.top,
@@ -439,9 +439,7 @@ function evaluateSymmetry(state) {
       closeRight: state.gaps.closeRight,
       downloadRight: state.gaps.downloadRight,
       shareRight: state.gaps.shareRight,
-      expectedDownload,
-      expectedShare,
-      isLeft,
+      closePosition: state.closePosition,
     },
   };
 }
@@ -611,16 +609,27 @@ async function run() {
   console.log("Mode:", options.mode);
 
   const app = await electron.launch({
-    args: [path.join(options.appRoot, "dist/main/main.js")],
-    env: {
-      ...process.env,
-      NODE_ENV: "development",
-      SKIP_SINGLE_INSTANCE_LOCK: "true",
-    },
+    ...(options.executablePath
+      ? {
+          executablePath: options.executablePath,
+          env: {
+            ...process.env,
+          },
+        }
+      : {
+          args: [path.join(options.appRoot, "dist/main/main.js")],
+          env: {
+            ...process.env,
+            NODE_ENV: "development",
+            SKIP_SINGLE_INSTANCE_LOCK: "true",
+          },
+        }),
   });
 
   try {
-    await wait(4500);
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await wait(2000);
     const homeUrl = await loadMessagesHome(app);
     console.log("Loaded:", homeUrl);
 

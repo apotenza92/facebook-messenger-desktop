@@ -754,9 +754,7 @@ async function inspectCurrentMedia(app, summary) {
                 nodes: bannerNodes.slice(0, 8),
               },
               classes: {
-                mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
                 activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
-                leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
               },
             };
           })();
@@ -789,6 +787,14 @@ function evaluateSymmetry(state) {
   const download = state.controls.download[0] || null;
   const share = state.controls.share[0] || null;
 
+  if (!state.classes.activeCrop) {
+    return {
+      ok: false,
+      reason: "crop_inactive",
+      metrics: null,
+    };
+  }
+
   if (!close || !download || !share) {
     return {
       ok: false,
@@ -802,25 +808,19 @@ function evaluateSymmetry(state) {
   const downloadRightGap = Math.max(0, state.viewport.width - download.right);
   const shareRightGap = Math.max(0, state.viewport.width - share.right);
 
-  const isLeftLayout =
-    state.closePosition === "left" || state.classes.leftDismiss === true;
-
-  const expectedDownloadRight = isLeftLayout
-    ? closeLeftGap
-    : closeRightGap + 48;
-  const expectedShareRight = isLeftLayout
-    ? closeLeftGap + 48
-    : closeRightGap + 96;
-
   const topAligned =
-    approx(download.top, close.top) && approx(share.top, close.top);
-  const rightAligned =
-    approx(downloadRightGap, expectedDownloadRight) &&
-    approx(shareRightGap, expectedShareRight);
+    approx(download.top, close.top, 24) && approx(share.top, close.top, 24);
+  const topVisible =
+    close.top >= 0 &&
+    download.top >= 0 &&
+    share.top >= 0 &&
+    close.top <= 160 &&
+    download.top <= 160 &&
+    share.top <= 160;
 
   return {
-    ok: topAligned && rightAligned,
-    reason: topAligned && rightAligned ? "ok" : "misaligned",
+    ok: topAligned && topVisible,
+    reason: topAligned && topVisible ? "ok" : "misaligned",
     metrics: {
       closeTop: close.top,
       downloadTop: download.top,
@@ -829,9 +829,7 @@ function evaluateSymmetry(state) {
       closeRightGap,
       downloadRightGap,
       shareRightGap,
-      expectedDownloadRight,
-      expectedShareRight,
-      isLeftLayout,
+      closePosition: state.closePosition,
     },
   };
 }

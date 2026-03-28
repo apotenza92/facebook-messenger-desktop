@@ -377,9 +377,7 @@ async function inspectState(app) {
             url: window.location.href,
             viewport: { width: viewportWidth, height: viewportHeight },
             classes: {
-              mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
-              leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
             controls: {
               close: dedupe(inViewport(close)),
@@ -410,15 +408,13 @@ function evaluateState(state) {
   const shareCount = state.visibleCluster.share.length;
 
   const fixed =
-    state.classes.mediaClean === true &&
-    state.classes.activeCrop === false &&
+    state.classes.activeCrop === true &&
     closeCount === 1 &&
     downloadCount === 1 &&
     shareCount === 1;
 
   let reason = "fixed";
-  if (!state.classes.mediaClean) reason = "media-clean-missing";
-  else if (state.classes.activeCrop) reason = "crop-still-active";
+  if (!state.classes.activeCrop) reason = "crop-inactive";
   else if (closeCount === 0) reason = "close-missing";
   else if (downloadCount === 0) reason = "download-missing";
   else if (shareCount === 0) reason = "share-missing";

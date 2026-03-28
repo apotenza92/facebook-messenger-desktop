@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.0-beta.32] - 2026-03-28
+
+### Fixed
+
+- **Issue #41 follow-up: switch `facebook.com/messages` chrome cleanup to a window-level crop** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Moved normal chat top-bar suppression to a BrowserView crop so the hidden Facebook chrome no longer leaves a bottom gutter or flashes back in during scroll/reflow.
+  - During unanswered incoming calls, incoming-call hint state now blocks whole-banner suppression so actionable incoming controls stay available while the Facebook bar remains hidden.
+  - Hardened call-state parsing around mute/unmute labels so active call controls remain stable under the new crop path.
+
+### Changed
+
+- **Call and media regression validation hardening**
+  - Extended live incoming-ring validation to hold for 15 seconds and verify that hidden Facebook chrome does not come back while incoming call actions stay available.
+  - Hardened the live call harness around Electron startup/teardown, trusted popup clicks, and repeated mute/unmute cycles so the real-account regression runs are more reliable.
+- **Electron runtime update**
+  - Updated Electron to `40.8.0`.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- Real two-account live call validation:
+  - unanswered incoming ring held for 15 seconds with hidden Facebook chrome and actionable incoming controls still available
+  - unanswered outgoing ring
+  - answered calls in both directions with 5 mute/unmute cycles and no white-window crash
+
 ## [1.3.0-beta.31] - 2026-03-18
 
 ### Fixed

@@ -1,22 +1,22 @@
-import { MESSAGES_MEDIA_VIEWER_PATH_PREFIXES } from "./url-policy";
+import {
+  MESSAGES_MEDIA_VIEWER_PATH_PREFIXES,
+} from "./url-policy";
 
 export type MessagesViewportMode = "chat" | "media" | "other";
 
+export type MessagesViewportStatePayload = {
+  url: string;
+  routeKind: MessagesViewportMode;
+  headerHeight: number | null;
+  shouldCrop: boolean;
+};
+
 type ResolveViewportModeInput = {
   urlPath: string;
-  mediaOverlayVisible: boolean;
+  mediaOverlayVisible?: boolean;
 };
 
 const MEDIA_ROUTE_PREFIXES = [...MESSAGES_MEDIA_VIEWER_PATH_PREFIXES];
-
-const MEDIA_LOADING_BANNER_ROUTE_PREFIXES = MEDIA_ROUTE_PREFIXES.filter(
-  (prefix) =>
-    prefix === "/messenger_media" ||
-    prefix === "/messages/attachment_preview" ||
-    prefix === "/messages/media_viewer" ||
-    prefix === "/photo" ||
-    prefix === "/photos",
-);
 
 function matchesRoutePrefix(path: string, prefix: string): boolean {
   return (
@@ -41,6 +41,17 @@ function toPathname(input: string): string {
   }
 }
 
+function normalizeViewportMeasurement(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  if (rounded < 0) return 0;
+  if (rounded > 240) return 240;
+  return rounded;
+}
+
 export function isMessagesMediaRoute(input: string): boolean {
   const path = toPathname(input);
   return MEDIA_ROUTE_PREFIXES.some((prefix) =>
@@ -60,12 +71,17 @@ export function isMessagesChatRoute(input: string): boolean {
 export function resolveViewportMode(
   input: ResolveViewportModeInput,
 ): MessagesViewportMode {
-  if (isMessagesMediaRoute(input.urlPath)) {
+  const path = toPathname(input.urlPath);
+
+  if (isMessagesMediaRoute(path)) {
     return "media";
   }
 
-  if (isMessagesChatRoute(input.urlPath)) {
-    return input.mediaOverlayVisible ? "media" : "chat";
+  if (isMessagesChatRoute(path)) {
+    if (input.mediaOverlayVisible === true) {
+      return "media";
+    }
+    return "chat";
   }
 
   return "other";
@@ -77,133 +93,22 @@ export function shouldApplyMessagesCrop(
   return resolveViewportMode(input) === "chat";
 }
 
-export function shouldHideMediaViewerBannerWhileLoading(input: {
+export function resolveMessagesViewportState(input: {
+  url: string;
   urlPath: string;
-  hasDismissAction: boolean;
-  hasDownloadAction: boolean;
-  hasShareAction: boolean;
-  hasNavigationAction: boolean;
-}): boolean {
-  const path = toPathname(input.urlPath);
-  if (
-    !MEDIA_LOADING_BANNER_ROUTE_PREFIXES.some((prefix) =>
-      matchesRoutePrefix(path, prefix),
-    )
-  ) {
-    return false;
-  }
-
-  return !(
-    input.hasDismissAction ||
-    input.hasDownloadAction ||
-    input.hasShareAction ||
-    input.hasNavigationAction
-  );
-}
-
-export function shouldKeepMediaViewerBannerHiddenDuringLoadingWindow(input: {
-  loadingWindowActive: boolean;
-  routeBasedLoading: boolean;
-  hintedOverlayLoading: boolean;
-  hasMarkedCloseAction: boolean;
-  hasMarkedDownloadAction: boolean;
-  hasMarkedShareAction: boolean;
-  hasVisibleNavigationAction: boolean;
-}): boolean {
-  if (!input.loadingWindowActive) {
-    return false;
-  }
-
-  if (
-    input.hasMarkedCloseAction ||
-    input.hasMarkedDownloadAction ||
-    input.hasMarkedShareAction ||
-    input.hasVisibleNavigationAction
-  ) {
-    return false;
-  }
-
-  return input.routeBasedLoading || input.hintedOverlayLoading;
-}
-
-export function shouldTreatHintedMediaOverlayAsVisible(input: {
-  dismissCount: number;
-  hasDownloadAction: boolean;
-  hasShareAction: boolean;
-  hasNavigationAction: boolean;
-  hasLargeMedia: boolean;
-  hasPendingOpenHint: boolean;
-}): boolean {
-  if (!input.hasPendingOpenHint) {
-    return false;
-  }
-
-  // Same-route E2EE media opens can briefly expose only a single dismiss/back
-  // control before the large photo and download/share chrome become measurable.
-  // Once an explicit user open hint exists, treat one visible dismiss control as
-  // enough overlay chrome to bypass the chat crop earlier.
-  const hasOverlayChrome =
-    input.dismissCount >= 1 || input.hasLargeMedia || input.hasNavigationAction;
-  if (!hasOverlayChrome) {
-    return false;
-  }
-
-  return (
-    input.hasDownloadAction ||
-    input.hasShareAction ||
-    input.hasNavigationAction ||
-    hasOverlayChrome
-  );
-}
-
-export function shouldTreatDetectedMediaOverlayAsVisible(input: {
-  modeFromPath: MessagesViewportMode;
-  threadSubtabRoute: boolean;
-  hasDismissAction: boolean;
-  dismissCount: number;
-  hasDownloadAction: boolean;
-  hasShareAction: boolean;
-  hasNavigationAction: boolean;
-  hasLargeMedia: boolean;
-  hasPendingOpenHint: boolean;
-}): boolean {
-  if (input.modeFromPath === "media") {
-    return true;
-  }
-
-  if (input.threadSubtabRoute || !input.hasDismissAction) {
-    return false;
-  }
-
-  if (
-    shouldTreatHintedMediaOverlayAsVisible({
-      dismissCount: input.dismissCount,
-      hasDownloadAction: input.hasDownloadAction,
-      hasShareAction: input.hasShareAction,
-      hasNavigationAction: input.hasNavigationAction,
-      hasLargeMedia: input.hasLargeMedia,
-      hasPendingOpenHint: input.hasPendingOpenHint,
-    })
-  ) {
-    return true;
-  }
-
-  // Chat threads can expose share actions next to large inline media after
-  // dismissing a viewer. Keep share-only detection stricter than download or
-  // navigation so normal thread chrome cannot get stuck in media mode.
-  return (
-    (input.hasDismissAction && input.hasNavigationAction) ||
-    (input.hasDownloadAction && input.hasLargeMedia) ||
-    (input.hasShareAction && input.hasLargeMedia && input.dismissCount >= 2)
-  );
-}
-
-export function resolveMediaViewerStateVisible(input: {
-  mediaOverlayVisible: boolean;
-  incomingCallOverlayVisible: boolean;
-}): boolean {
-  // The media-viewer-state IPC channel is consumed by main-process media routing
-  // and must remain scoped to media overlays only.
-  // Incoming-call overlays are tracked on a separate hint channel.
-  return input.mediaOverlayVisible;
+  headerHeight?: number | null;
+  mediaOverlayVisible?: boolean;
+}): MessagesViewportStatePayload {
+  return {
+    url: input.url,
+    routeKind: resolveViewportMode({
+      urlPath: input.urlPath,
+      mediaOverlayVisible: input.mediaOverlayVisible,
+    }),
+    headerHeight: normalizeViewportMeasurement(input.headerHeight),
+    shouldCrop: shouldApplyMessagesCrop({
+      urlPath: input.urlPath,
+      mediaOverlayVisible: input.mediaOverlayVisible,
+    }),
+  };
 }

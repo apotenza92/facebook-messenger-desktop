@@ -1,12 +1,15 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
-  MessagesViewportMode,
-  resolveMediaViewerStateVisible,
+  type FacebookHeaderSuppressionMode,
+  resolveEffectiveFacebookHeaderSuppressionMode,
+  resolveFacebookHeaderSuppressionMode,
+  shouldKeepFacebookHeaderSuppressionActive,
+} from "./facebook-header-suppression-policy";
+import {
+  type MessagesViewportMode,
+  type MessagesViewportStatePayload,
+  resolveMessagesViewportState,
   resolveViewportMode,
-  shouldApplyMessagesCrop,
-  shouldTreatDetectedMediaOverlayAsVisible,
-  shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
-  shouldHideMediaViewerBannerWhileLoading,
 } from "./messages-viewport-policy";
 import {
   getIncomingCallHintClearReason,
@@ -14,10 +17,9 @@ import {
   shouldKeepIncomingCallHintActive,
   shouldTreatIncomingCallUiAsVisible,
 } from "./incoming-call-overlay-hint-policy";
-import { decideWindowOpenAction } from "./url-policy";
+import { decideWindowOpenAction, resolveWrappedNavigationTarget } from "./url-policy";
 import {
   dismissActionSelectors,
-  getDismissActionPriority,
   mediaDownloadSelectors,
   mediaNavigationSelectors,
   mediaShareSelectors,
@@ -285,8 +287,8 @@ ipcRenderer.on(
   },
 );
 
-// BrowserView bounds crop removes the Facebook top bar; this keeps the messages
-// app root tall enough so we don't expose a blank bottom gap on some layouts.
+// Hide Facebook global chrome inside Messenger routes without shifting the
+// entire viewport. This keeps media and call controls in their native positions.
 (function setupMessagesViewportCompensation() {
   const isDesktop =
     process.platform === "darwin" ||
@@ -296,27 +298,13 @@ ipcRenderer.on(
 
   const STYLE_ID = "md-fb-messages-viewport-fix-style";
   const ACTIVE_CLASS = "md-fb-messages-viewport-fix";
-  const MEDIA_CLEAN_CLASS = "md-fb-media-viewer-clean";
-  const MEDIA_LOADING_CLASS = "md-fb-media-viewer-loading";
-  const INCOMING_CALL_CLEAN_CLASS = "md-fb-incoming-call-clean";
-  const MEDIA_LEFT_DISMISS_CLASS = "md-fb-media-dismiss-left";
-  const MEDIA_CLOSE_ACTION_CLASS = "md-fb-media-action-close";
-  const MEDIA_DOWNLOAD_ACTION_CLASS = "md-fb-media-action-download";
-  const MEDIA_SHARE_ACTION_CLASS = "md-fb-media-action-share";
-  const MEDIA_FALLBACK_CONTROLS_ID = "md-fb-media-fallback-controls";
-  const MEDIA_FALLBACK_BUTTON_CLASS = "md-fb-media-fallback-button";
-  const MEDIA_FALLBACK_CONTROL_ATTR = "data-md-fb-fallback-control";
-  const HEADER_HEIGHT_CSS_VAR = "--md-fb-header-height";
-  const DEFAULT_HEADER_HEIGHT = 56;
-  const MIN_HEADER_HEIGHT = DEFAULT_HEADER_HEIGHT;
-  const MAX_HEADER_HEIGHT = 120;
-  const HEADER_SEND_DEBOUNCE_MS = 120;
+  const COLLAPSE_CLASS = "md-fb-messages-header-collapsed";
+  const HEADER_HIDDEN_ATTR = "data-md-fb-header-suppression";
+  const HIDDEN_CHROME_ATTR = "data-md-fb-hidden-chrome";
+  const SHELL_STRETCH_ATTR = "data-md-fb-shell-stretch";
+  const SHELL_TARGET_HEIGHT_VAR = "--md-fb-shell-target-height";
   const MEDIA_OVERLAY_TRANSITION_MS = 50;
   const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 30;
-  const NON_DRAG_APP_REGION = "no-drag";
-  const MEDIA_ACTION_TOP_OFFSET = 8;
-  const MEDIA_FALLBACK_ACTION_TOP_OFFSET = 10;
-  const MEDIA_ACTION_CLOSE_LEFT_OFFSET = 16;
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
@@ -324,62 +312,125 @@ ipcRenderer.on(
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
   const INCOMING_CALL_HINT_MAX_WITHOUT_DETECTION_MS = 10_000;
-  const MEDIA_OPEN_HINT_DURATION_MS = 4_000;
+  const DEFAULT_MESSAGES_HEADER_HEIGHT = 56;
+  const HEADER_SUPPRESSION_REAPPLY_GRACE_MS = 600;
 
   let pendingApply = false;
-  let pendingSend = false;
-  let currentHeaderHeight = DEFAULT_HEADER_HEIGHT;
-  let lastSentHeaderHeight = DEFAULT_HEADER_HEIGHT;
   let mediaOverlayVisible = false;
   let forcedMediaOverlayVisible: boolean | null = null;
   let incomingCallOverlayHintActive = false;
   let incomingCallHintActivatedAt = 0;
   let incomingCallLastDetectedAt = 0;
   let incomingCallDetectedSinceHint = false;
-  let mediaOverlayOpenHintUntil = 0;
-  let mediaOverlayOpenHintTimer: number | null = null;
   let mediaOverlayTransitionTimer: number | null = null;
   let viewportStateSendTimer: number | null = null;
   let viewportRecoveryTimerIds: number[] = [];
-  let lastSentViewportState: { visible: boolean; url: string } | null = null;
+  let lastSentViewportState: MessagesViewportStatePayload | null = null;
   let lastViewportMode: MessagesViewportMode | null = null;
   let lastMediaOverlayDebugSentAt = 0;
-  let lastMediaOpenSourceUrl: string | null = null;
-  let lastMediaOpenSourceKind: "image" | "video" | "unknown" = "unknown";
-  let lastMessagesThreadBaseUrl: string | null = null;
-  const mediaActionClasses = [
-    MEDIA_CLOSE_ACTION_CLASS,
-    MEDIA_DOWNLOAD_ACTION_CLASS,
-    MEDIA_SHARE_ACTION_CLASS,
+  let lastHeaderSuppressionDebugSignature = "";
+  let lastHeaderSuppressionState: Record<string, unknown> = {
+    active: false,
+    bannerCount: 0,
+    hiddenBannerCount: 0,
+    hiddenChromeCount: 0,
+    mode: "off",
+  };
+  type MediaHeaderOverlayKind =
+    | "menu"
+    | "messenger"
+    | "notifications"
+    | "account";
+  type HeaderSuppressionSnapshot = {
+    active: boolean;
+    shouldCollapse: boolean;
+    bannerCount: number;
+    hiddenBannerCount: number;
+    hiddenChromeCount: number;
+    mode: FacebookHeaderSuppressionMode;
+    requestedMode: FacebookHeaderSuppressionMode;
+    hasFacebookNavSignal: boolean;
+    preservedMessengerControlsDetected: boolean;
+    reusedIncomingSafeMode: boolean;
+    incomingCallOverlayHintActive: boolean;
+    collapseHeight: number;
+    bannerTargets: Array<{
+      node: HTMLElement;
+      mode: "hide-banner" | "hide-facebook-nav-descendants";
+    }>;
+    hiddenChromeTargets: HTMLElement[];
+    shellTarget: HTMLElement | null;
+    shellTargetHeight: number | null;
+  };
+  let activeMediaHeaderOverlayKind: MediaHeaderOverlayKind | null = null;
+  let lastAppliedHeaderSuppressionSnapshot: HeaderSuppressionSnapshot | null =
+    null;
+  let lastHeaderSuppressionDetectedAt = 0;
+  let lastInterceptedExternalNavigation:
+    | {
+        url: string;
+        at: number;
+      }
+    | null = null;
+
+  const MEDIA_HEADER_HOME_LINK_MAX_TOP = 140;
+  const MEDIA_HEADER_HOME_LINK_MAX_LEFT = 240;
+  const MEDIA_HEADER_OVERLAY_MIN_WIDTH = 140;
+  const MEDIA_HEADER_OVERLAY_MIN_HEIGHT = 40;
+  const MEDIA_HEADER_OVERLAY_MIN_LEFT_RATIO = 0.45;
+  const MEDIA_HEADER_MENU_OVERLAY_MIN_LEFT_RATIO = 0.25;
+  const MEDIA_HEADER_NON_NAVIGATION_LABEL_PATTERN =
+    /\b(close|back|go back|download|share|forward|next|previous)\b/i;
+  const MEDIA_HEADER_OVERLAY_HINTS: Record<
+    MediaHeaderOverlayKind,
+    RegExp[]
+  > = {
+    menu: [
+      /\bmenu\b/i,
+      /\bcreate\b/i,
+      /\bfeeds?\b/i,
+      /\bgroups?\b/i,
+      /\bevents?\b/i,
+    ],
+    messenger: [
+      /\bchats?\b/i,
+      /\bsee all in messenger\b/i,
+      /\bsearch messenger\b/i,
+    ],
+    notifications: [
+      /\bnotifications?\b/i,
+      /\bsee previous notifications\b/i,
+      /\bsee all\b/i,
+    ],
+    account: [
+      /\bsettings\s*&\s*privacy\b/i,
+      /\bhelp\s*&\s*support\b/i,
+      /\blog out\b/i,
+      /\bdisplay\s*&\s*accessibility\b/i,
+      /\bsee all profiles\b/i,
+    ],
+  };
+  const MEDIA_HEADER_OVERLAY_LINK_HINTS: Record<
+    MediaHeaderOverlayKind,
+    RegExp[]
+  > = {
+    menu: [/\bevents?\b/i, /\bfriends?\b/i, /\bgroups?\b/i, /\bfeeds?\b/i],
+    messenger: [/\bsee all in messenger\b/i, /\bsee all\b/i],
+    notifications: [/\bsee all\b/i, /\bsee previous notifications\b/i],
+    account: [/\bsee all profiles\b/i, /\bprivacy\b/i, /\bterms\b/i],
+  };
+  const MEDIA_HEADER_TOGGLE_PATTERNS: Array<{
+    kind: MediaHeaderOverlayKind;
+    pattern: RegExp;
+  }> = [
+    { kind: "menu", pattern: /\bmenu\b/i },
+    { kind: "messenger", pattern: /\bmessenger\b/i },
+    { kind: "notifications", pattern: /\bnotifications?\b/i },
+    {
+      kind: "account",
+      pattern: /\b(account controls and settings|your profile|account)\b/i,
+    },
   ];
-  const pinnedStyleProperties = [
-    "position",
-    "top",
-    "right",
-    "left",
-    "margin",
-    "transform",
-    "z-index",
-    "pointer-events",
-    "-webkit-app-region",
-    "inset-inline-start",
-    "inset-inline-end",
-  ];
-  const fallbackHiddenStyleProperties = [
-    "visibility",
-    "opacity",
-    "pointer-events",
-  ];
-  const pinnedMediaActionNodes = new Set<HTMLElement>();
-  const pinnedMediaActionOriginalStyles = new Map<
-    HTMLElement,
-    Map<string, { hadValue: boolean; value: string; priority: string }>
-  >();
-  const fallbackHiddenActionNodes = new Set<HTMLElement>();
-  const fallbackHiddenActionOriginalStyles = new Map<
-    HTMLElement,
-    Map<string, { hadValue: boolean; value: string; priority: string }>
-  >();
 
   const isFacebookHost = (): boolean => {
     try {
@@ -398,77 +449,451 @@ ipcRenderer.on(
     return anchor instanceof HTMLAnchorElement ? anchor : null;
   };
 
-  const extractMessagesThreadBaseUrl = (input: string): string | null => {
+  const rememberExternalOpen = (
+    url: string,
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    const payload = {
+      url,
+      reason,
+      at: Date.now(),
+      route: window.location.href,
+      ...extra,
+    };
+
     try {
-      const parsed = new URL(input, "https://www.facebook.com");
-      if (
-        parsed.hostname !== "facebook.com" &&
-        !parsed.hostname.endsWith(".facebook.com")
-      ) {
-        return null;
-      }
-
-      const match = parsed.pathname.match(/^\/messages\/(e2ee\/)?t\/([^/]+)/i);
-      if (!match) return null;
-
-      const e2eeSegment = match[1] ? "e2ee/" : "";
-      return `${parsed.origin}/messages/${e2eeSegment}t/${match[2]}/`;
+      (
+        window as Window & {
+          __mdLastExternalNavigation?: Record<string, unknown>;
+        }
+      ).__mdLastExternalNavigation = payload;
     } catch {
+      // Ignore debug state failures.
+    }
+
+    try {
+      document.documentElement.setAttribute("data-md-last-external-url", url);
+      document.documentElement.setAttribute(
+        "data-md-last-external-reason",
+        reason,
+      );
+      document.documentElement.setAttribute(
+        "data-md-last-external-at",
+        String(payload.at),
+      );
+    } catch {
+      // Ignore DOM debug state failures.
+    }
+  };
+
+  const openExternalUrl = (
+    input: string,
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    const url = resolveWrappedNavigationTarget(input) ?? input;
+    lastInterceptedExternalNavigation = {
+      url,
+      at: Date.now(),
+    };
+    rememberExternalOpen(url, reason, extra);
+    ipcRenderer.send("open-external-url", url);
+  };
+
+  const shouldSkipDuplicateExternalIntercept = (input: string): boolean => {
+    const url = resolveWrappedNavigationTarget(input) ?? input;
+    if (!lastInterceptedExternalNavigation) {
+      return false;
+    }
+
+    return (
+      lastInterceptedExternalNavigation.url === url &&
+      Date.now() - lastInterceptedExternalNavigation.at <= 1500
+    );
+  };
+
+  const isMediaRoute = (): boolean => resolveMode() === "media";
+
+  const isFacebookHomeUrl = (input: string): boolean => {
+    try {
+      const parsed = new URL(input, window.location.origin);
+      const hostname = parsed.hostname.toLowerCase();
+      return (
+        (hostname === "facebook.com" || hostname.endsWith(".facebook.com")) &&
+        (parsed.pathname === "/" || parsed.pathname === "")
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const isMessagesThreadNavigationUrl = (input: string): boolean => {
+    try {
+      const parsed = new URL(input, window.location.origin);
+      return /^\/messages\/(?:e2ee\/)?t\/?/i.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  };
+
+  const getMediaHeaderToggleKind = (
+    target: EventTarget | null,
+  ): MediaHeaderOverlayKind | null => {
+    if (!(target instanceof Element)) return null;
+
+    const interactive =
+      target.closest("button") ||
+      target.closest('[role="button"]') ||
+      target.closest("a[role='button']") ||
+      target.closest("a[href]");
+    if (!(interactive instanceof HTMLElement) || !isAriaVisible(interactive)) {
       return null;
     }
-  };
 
-  const rememberCurrentMessagesThreadBaseUrl = (): void => {
-    const nextThreadBaseUrl = extractMessagesThreadBaseUrl(
-      window.location.href,
-    );
-    if (nextThreadBaseUrl) {
-      lastMessagesThreadBaseUrl = nextThreadBaseUrl;
-    }
-  };
-
-  const resolveMediaRouteThreadReturnUrl = (): string | null => {
-    if (lastMessagesThreadBaseUrl) {
-      return lastMessagesThreadBaseUrl;
+    const rect = interactive.getBoundingClientRect();
+    if (
+      rect.top > 72 ||
+      rect.height > 80 ||
+      rect.width > 220 ||
+      rect.right < window.innerWidth - 260
+    ) {
+      return null;
     }
 
-    const currentThreadBaseUrl = extractMessagesThreadBaseUrl(
-      window.location.href,
-    );
-    if (currentThreadBaseUrl) {
-      return currentThreadBaseUrl;
-    }
+    const label = extractInteractiveLabel(target);
+    if (!label) return null;
 
-    try {
-      const parsed = new URL(window.location.href);
-      const threadId = parsed.searchParams.get("thread_id");
-      if (threadId && /^\d+$/.test(threadId)) {
-        return `https://www.facebook.com/messages/t/${threadId}/`;
+    for (const entry of MEDIA_HEADER_TOGGLE_PATTERNS) {
+      if (entry.pattern.test(label)) {
+        return entry.kind;
       }
-    } catch {
-      // Ignore malformed fallback URLs.
     }
 
     return null;
   };
 
-  document.addEventListener(
-    "click",
-    (event) => {
+  const isMediaHeaderFacebookButton = (anchor: HTMLAnchorElement): boolean => {
+    if (!isAriaVisible(anchor)) {
+      return false;
+    }
+
+    const resolvedHref = resolveWrappedNavigationTarget(anchor.href) ?? anchor.href;
+    if (!isFacebookHomeUrl(resolvedHref)) {
+      return false;
+    }
+
+    const rect = anchor.getBoundingClientRect();
+    if (rect.top > MEDIA_HEADER_HOME_LINK_MAX_TOP) {
+      return false;
+    }
+
+    if (rect.left > MEDIA_HEADER_HOME_LINK_MAX_LEFT) {
+      return false;
+    }
+
+    const label = normalizeLabelText(
+      anchor.getAttribute("aria-label") ||
+        anchor.getAttribute("title") ||
+        anchor.textContent,
+    );
+
+    return /facebook/i.test(label) || rect.width >= 24;
+  };
+
+  const resolveMediaHeaderExternalBinding = (
+    anchor: HTMLAnchorElement,
+  ): {
+    reason: string;
+    extra?: Record<string, unknown>;
+  } | null => {
+    if (!isMediaRoute() || !isAriaVisible(anchor)) {
+      return null;
+    }
+
+    const href = anchor.href;
+    if (!href) {
+      return null;
+    }
+
+    if (isMediaHeaderFacebookButton(anchor)) {
+      return { reason: "media-facebook-button" };
+    }
+
+    const label = extractInteractiveLabel(anchor);
+    if (
+      MEDIA_HEADER_NON_NAVIGATION_LABEL_PATTERN.test(label) ||
+      getMediaHeaderToggleKind(anchor)
+    ) {
+      return null;
+    }
+
+    const overlayContext = resolveMediaHeaderOverlayContext(anchor);
+    if (overlayContext) {
+      return {
+        reason: "media-header-overlay-link",
+        extra: { overlayKind: overlayContext.kind },
+      };
+    }
+
+    const anchorRect = anchor.getBoundingClientRect();
+    if (
+      activeMediaHeaderOverlayKind &&
+      anchorRect.left >= window.innerWidth * MEDIA_HEADER_OVERLAY_MIN_LEFT_RATIO &&
+      !MEDIA_HEADER_NON_NAVIGATION_LABEL_PATTERN.test(label) &&
+      (matchesMediaHeaderOverlayLink(activeMediaHeaderOverlayKind, label) ||
+        activeMediaHeaderOverlayKind === "menu" ||
+        activeMediaHeaderOverlayKind === "notifications" ||
+        activeMediaHeaderOverlayKind === "account" ||
+        (activeMediaHeaderOverlayKind === "messenger" &&
+          (/\/messages\/(?:e2ee\/)?t\/?/i.test(href) ||
+            /see all in messenger/i.test(label))))
+    ) {
+      return {
+        reason: "media-header-overlay-link",
+        extra: { overlayKind: activeMediaHeaderOverlayKind },
+      };
+    }
+
+    if (
+      isMessagesThreadNavigationUrl(href) &&
+      anchorRect.left >= window.innerWidth * MEDIA_HEADER_OVERLAY_MIN_LEFT_RATIO &&
+      anchorRect.top <= window.innerHeight * 0.45
+    ) {
+      return { reason: "media-thread-link" };
+    }
+
+    return null;
+  };
+
+  const resolveMediaHeaderOverlayContext = (
+    target: Element | null,
+  ): {
+    kind: MediaHeaderOverlayKind;
+    root: HTMLElement;
+  } | null => {
+    let current = target instanceof HTMLElement ? target : null;
+
+    while (current instanceof HTMLElement && current !== document.body) {
+      if (!isAriaVisible(current)) {
+        current = current.parentElement;
+        continue;
+      }
+
+      const rect = current.getBoundingClientRect();
+      const hint = normalizeLabelText(
+        [
+          current.getAttribute("aria-label"),
+          current.getAttribute("title"),
+          current.textContent,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ).slice(0, 1000);
+
+      for (const [kind, patterns] of Object.entries(
+        MEDIA_HEADER_OVERLAY_HINTS,
+      ) as Array<[MediaHeaderOverlayKind, RegExp[]]>) {
+        const matches = patterns.some((pattern) => pattern.test(hint));
+        if (!matches) {
+          continue;
+        }
+
+        if (activeMediaHeaderOverlayKind && activeMediaHeaderOverlayKind !== kind) {
+          continue;
+        }
+
+        const minLeftRatio =
+          kind === "menu"
+            ? MEDIA_HEADER_MENU_OVERLAY_MIN_LEFT_RATIO
+            : MEDIA_HEADER_OVERLAY_MIN_LEFT_RATIO;
+        if (
+          rect.top > window.innerHeight - 24 ||
+          rect.bottom < 24 ||
+          rect.width < MEDIA_HEADER_OVERLAY_MIN_WIDTH ||
+          rect.height < MEDIA_HEADER_OVERLAY_MIN_HEIGHT ||
+          rect.left < window.innerWidth * minLeftRatio
+        ) {
+          continue;
+        }
+
+        return { kind, root: current };
+      }
+
+      current = current.parentElement;
+    }
+
+    return null;
+  };
+
+  const matchesMediaHeaderOverlayLink = (
+    kind: MediaHeaderOverlayKind | null,
+    label: string,
+  ): boolean => {
+    if (!kind || !label) {
+      return false;
+    }
+
+    return MEDIA_HEADER_OVERLAY_LINK_HINTS[kind].some((pattern) =>
+      pattern.test(label),
+    );
+  };
+
+  const bindMediaHeaderExternalAnchors = (): void => {
+    if (!isMediaRoute()) {
+      return;
+    }
+
+    for (const candidate of Array.from(document.querySelectorAll("a[href]"))) {
+      if (!(candidate instanceof HTMLAnchorElement)) {
+        continue;
+      }
+
+      if (candidate.dataset.mdMediaHeaderExternalBound === "true") {
+        continue;
+      }
+
+      if (!resolveMediaHeaderExternalBinding(candidate)) {
+        continue;
+      }
+
+      const handler = (event: Event): void => {
+        const binding = resolveMediaHeaderExternalBinding(candidate);
+        if (!binding) {
+          return;
+        }
+
+        const href = candidate.href;
+        if (!href) {
+          return;
+        }
+
+        if (
+          event.type === "click" &&
+          shouldSkipDuplicateExternalIntercept(href)
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+          return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        openExternalUrl(href, binding.reason, binding.extra ?? {});
+      };
+
+      candidate.addEventListener("mousedown", handler, { capture: true });
+      candidate.addEventListener("click", handler, { capture: true });
+      candidate.dataset.mdMediaHeaderExternalBound = "true";
+    }
+  };
+
+  const handleDocumentNavigationEvent = (event: MouseEvent): void => {
+      const mediaToggleKind = isMediaRoute()
+        ? getMediaHeaderToggleKind(event.target)
+        : null;
+      if (mediaToggleKind) {
+        activeMediaHeaderOverlayKind = mediaToggleKind;
+        return;
+      }
+
       const anchor = findClosestAnchor(event.target);
       if (!anchor) return;
 
       const href = anchor.href;
-      if (!href || decideWindowOpenAction(href) !== "open-external-browser") {
+      if (!href) {
+        return;
+      }
+
+      if (
+        event.type === "click" &&
+        shouldSkipDuplicateExternalIntercept(href)
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        return;
+      }
+
+      if (isMediaRoute()) {
+        const label = extractInteractiveLabel(anchor);
+        if (isMediaHeaderFacebookButton(anchor)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+          openExternalUrl(href, "media-facebook-button");
+          return;
+        }
+
+        if (
+          isMessagesThreadNavigationUrl(href) &&
+          !MEDIA_HEADER_NON_NAVIGATION_LABEL_PATTERN.test(label)
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+          openExternalUrl(href, "media-thread-link");
+          return;
+        }
+
+        const anchorRect = anchor.getBoundingClientRect();
+        const overlayContext = resolveMediaHeaderOverlayContext(anchor);
+        if (overlayContext) {
+          if (
+            !MEDIA_HEADER_NON_NAVIGATION_LABEL_PATTERN.test(label) &&
+            !getMediaHeaderToggleKind(anchor)
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            event.stopPropagation();
+            openExternalUrl(href, "media-header-overlay-link", {
+              overlayKind: overlayContext.kind,
+            });
+            return;
+          }
+        }
+
+        if (
+          activeMediaHeaderOverlayKind &&
+          anchorRect.left >= window.innerWidth * MEDIA_HEADER_OVERLAY_MIN_LEFT_RATIO &&
+          !MEDIA_HEADER_NON_NAVIGATION_LABEL_PATTERN.test(label) &&
+          !getMediaHeaderToggleKind(anchor) &&
+          (matchesMediaHeaderOverlayLink(activeMediaHeaderOverlayKind, label) ||
+            activeMediaHeaderOverlayKind === "menu" ||
+            activeMediaHeaderOverlayKind === "notifications" ||
+            (activeMediaHeaderOverlayKind === "messenger" &&
+              (/\/messages\/t\/?$/i.test(href) ||
+                /see all in messenger/i.test(label))))
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+          openExternalUrl(href, "media-header-overlay-link", {
+            overlayKind: activeMediaHeaderOverlayKind,
+          });
+          return;
+        }
+      }
+
+      const windowAction = decideWindowOpenAction(href);
+      if (windowAction !== "open-external-browser") {
         return;
       }
 
       event.preventDefault();
+      event.stopImmediatePropagation();
       event.stopPropagation();
-      ipcRenderer.send("open-external-url", href);
-    },
-    { capture: true },
-  );
+      openExternalUrl(href, "window-open-policy");
+  };
+
+  document.addEventListener("mousedown", handleDocumentNavigationEvent, {
+    capture: true,
+  });
+  document.addEventListener("click", handleDocumentNavigationEvent, {
+    capture: true,
+  });
 
   const isAriaVisible = (el: Element | null): boolean => {
     if (!el) return false;
@@ -509,10 +934,7 @@ ipcRenderer.on(
 
   const isMediaOverlayElementVisible = (el: Element | null): boolean => {
     if (!el) return false;
-    if (
-      el.closest("[hidden]") ||
-      el.closest(`[${MEDIA_FALLBACK_CONTROL_ATTR}="true"]`)
-    ) {
+    if (el.closest("[hidden]")) {
       return false;
     }
 
@@ -655,17 +1077,10 @@ ipcRenderer.on(
     hasLargeMedia: boolean;
   };
 
-  type MarkedMediaActionState = {
-    closeMarked: boolean;
-    downloadMarked: boolean;
-    shareMarked: boolean;
-  };
-
   const collectMediaOverlaySignals = (): MediaOverlaySignals => {
     const path = window.location.pathname.toLowerCase();
     const modeFromPath = resolveViewportMode({
       urlPath: path,
-      mediaOverlayVisible: false,
     });
 
     const dismissSelector = dismissActionSelectors.join(", ");
@@ -702,17 +1117,24 @@ ipcRenderer.on(
   const evaluateMediaOverlayVisible = (
     signals: MediaOverlaySignals,
   ): boolean => {
-    return shouldTreatDetectedMediaOverlayAsVisible({
-      modeFromPath: signals.modeFromPath,
-      threadSubtabRoute: signals.threadSubtabRoute,
-      hasDismissAction: signals.hasDismissAction,
-      dismissCount: signals.dismissCount,
-      hasDownloadAction: signals.hasDownloadAction,
-      hasShareAction: signals.hasShareAction,
-      hasNavigationAction: signals.hasNavigationAction,
-      hasLargeMedia: signals.hasLargeMedia,
-      hasPendingOpenHint: hasMediaOverlayOpenHint(),
-    });
+    if (signals.modeFromPath === "media") {
+      return true;
+    }
+
+    if (signals.threadSubtabRoute || !signals.hasDismissAction) {
+      return false;
+    }
+
+    return (
+      (signals.hasDismissAction && signals.hasNavigationAction) ||
+      (signals.hasDownloadAction && signals.hasLargeMedia) ||
+      (signals.hasDismissAction &&
+        signals.hasShareAction &&
+        signals.hasLargeMedia) ||
+      (signals.hasShareAction &&
+        signals.hasLargeMedia &&
+        signals.dismissCount >= 2)
+    );
   };
 
   const sendMediaOverlayDebug = (
@@ -734,6 +1156,24 @@ ipcRenderer.on(
       const signals = collectMediaOverlaySignals();
       const computedVisible = evaluateMediaOverlayVisible(signals);
       const incomingCallOverlayVisible = detectIncomingCallOverlayVisible();
+      const viewportState =
+        extra.viewportState &&
+        typeof extra.viewportState === "object" &&
+        !Array.isArray(extra.viewportState)
+          ? (extra.viewportState as MessagesViewportStatePayload)
+          : buildViewportStatePayload();
+      const composerOverlayState =
+        extra.composerOverlayState &&
+        typeof extra.composerOverlayState === "object" &&
+        !Array.isArray(extra.composerOverlayState)
+          ? extra.composerOverlayState
+          : collectComposerOverlayState();
+      const callSurfaceState =
+        extra.callSurfaceState &&
+        typeof extra.callSurfaceState === "object" &&
+        !Array.isArray(extra.callSurfaceState)
+          ? extra.callSurfaceState
+          : collectCallSurfaceState();
       ipcRenderer.send(MEDIA_OVERLAY_DEBUG_CHANNEL, {
         timestamp: now,
         reason,
@@ -750,13 +1190,12 @@ ipcRenderer.on(
           forcedMediaOverlayVisible === true,
         signals,
         classes: {
-          mediaClean:
-            document.documentElement.classList.contains(MEDIA_CLEAN_CLASS),
           activeCrop: document.documentElement.classList.contains(ACTIVE_CLASS),
-          leftDismiss: document.documentElement.classList.contains(
-            MEDIA_LEFT_DISMISS_CLASS,
-          ),
         },
+        viewportState,
+        headerSuppressionState: lastHeaderSuppressionState,
+        composerOverlayState,
+        callSurfaceState,
         ...extra,
       });
     } catch {
@@ -781,981 +1220,886 @@ ipcRenderer.on(
     return evaluateMediaOverlayVisible(signals);
   };
 
-  const hasMediaOverlayOpenHint = (): boolean =>
-    mediaOverlayOpenHintUntil > Date.now();
-
-  const shouldHideMediaBannerDuringLoad = (
-    signals: MediaOverlaySignals,
-    markedActions: MarkedMediaActionState,
-  ): boolean => {
-    return shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
-      loadingWindowActive: hasMediaOverlayOpenHint(),
-      routeBasedLoading: shouldHideMediaViewerBannerWhileLoading({
-        urlPath: signals.path,
-        hasDismissAction: signals.hasDismissAction,
-        hasDownloadAction: signals.hasDownloadAction,
-        hasShareAction: signals.hasShareAction,
-        hasNavigationAction: signals.hasNavigationAction,
-      }),
-      hintedOverlayLoading:
-        !signals.hasDownloadAction &&
-        !signals.hasShareAction &&
-        !signals.hasNavigationAction &&
-        (signals.dismissCount >= 2 || signals.hasLargeMedia),
-      hasMarkedCloseAction: markedActions.closeMarked,
-      hasMarkedDownloadAction: markedActions.downloadMarked,
-      hasMarkedShareAction: markedActions.shareMarked,
-      hasVisibleNavigationAction: signals.hasNavigationAction,
+  const resolveMode = (): MessagesViewportMode =>
+    resolveViewportMode({
+      urlPath: window.location.pathname,
+      mediaOverlayVisible: mediaOverlayVisible || detectMediaOverlayVisible(),
     });
-  };
 
-  const scheduleMediaOpenHintExpiry = (): void => {
-    if (mediaOverlayOpenHintTimer !== null) {
-      clearTimeout(mediaOverlayOpenHintTimer);
-      mediaOverlayOpenHintTimer = null;
-    }
+  const normalizeLabelText = (value: string | null | undefined): string =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
 
-    if (!hasMediaOverlayOpenHint()) return;
+  const extractInteractiveLabel = (target: EventTarget | null): string => {
+    if (!(target instanceof Element)) return "";
 
-    const remainingMs = Math.max(0, mediaOverlayOpenHintUntil - Date.now());
-    mediaOverlayOpenHintTimer = window.setTimeout(() => {
-      mediaOverlayOpenHintTimer = null;
-      if (!hasMediaOverlayOpenHint()) {
-        sendMediaOverlayDebug("media-open-hint-expired", { force: true });
-        scheduleMediaOverlayRecheck();
-        scheduleApply();
-        scheduleViewportStateSend(true);
-      }
-    }, remainingMs + 5);
-  };
+    const candidates = [
+      target.closest("button"),
+      target.closest('[role="button"]'),
+      target.closest("a[role='button']"),
+      target.closest("[aria-label]"),
+      target,
+    ];
 
-  const clearMediaOverlayOpenHint = (reason: string): void => {
-    const hadHint = hasMediaOverlayOpenHint();
-    mediaOverlayOpenHintUntil = 0;
-    if (mediaOverlayOpenHintTimer !== null) {
-      clearTimeout(mediaOverlayOpenHintTimer);
-      mediaOverlayOpenHintTimer = null;
-    }
-    if (!hadHint) return;
-
-    sendMediaOverlayDebug("media-open-hint-cleared", {
-      force: true,
-      reason,
-    });
-  };
-
-  const primeMediaOverlayOpenHint = (reason: string): void => {
-    const nextUntil = Date.now() + MEDIA_OPEN_HINT_DURATION_MS;
-    if (nextUntil <= mediaOverlayOpenHintUntil) return;
-
-    mediaOverlayOpenHintUntil = nextUntil;
-    sendMediaOverlayDebug("media-open-hint-primed", {
-      force: true,
-      reason,
-      expiresInMs: MEDIA_OPEN_HINT_DURATION_MS,
-    });
-    scheduleMediaOpenHintExpiry();
-  };
-
-  const applyMediaOverlayOpenHint = (reason: string): void => {
-    primeMediaOverlayOpenHint(reason);
-    sendMediaOverlayDebug("media-open-hint", {
-      force: true,
-      reason,
-      expiresInMs: MEDIA_OPEN_HINT_DURATION_MS,
-    });
-    scheduleMediaOverlayRecheck();
-    scheduleApply();
-    scheduleViewportStateSend(true);
-  };
-
-  const setPinnedStyle = (
-    node: HTMLElement,
-    property: string,
-    value: string,
-  ): void => {
-    let originalStyles = pinnedMediaActionOriginalStyles.get(node);
-    if (!originalStyles) {
-      originalStyles = new Map();
-      pinnedMediaActionOriginalStyles.set(node, originalStyles);
-    }
-
-    if (!originalStyles.has(property)) {
-      const existingValue = node.style.getPropertyValue(property);
-      const existingPriority = node.style.getPropertyPriority(property);
-      originalStyles.set(property, {
-        hadValue: existingValue.length > 0,
-        value: existingValue,
-        priority: existingPriority,
-      });
-    }
-
-    node.style.setProperty(property, value, "important");
-  };
-
-  const restorePinnedStyles = (node: HTMLElement): void => {
-    const originalStyles = pinnedMediaActionOriginalStyles.get(node);
-    if (!originalStyles) {
-      for (const property of pinnedStyleProperties) {
-        node.style.removeProperty(property);
-      }
-      return;
-    }
-
-    for (const property of pinnedStyleProperties) {
-      const snapshot = originalStyles.get(property);
-      if (!snapshot) {
-        node.style.removeProperty(property);
-        continue;
-      }
-
-      if (snapshot.hadValue) {
-        node.style.setProperty(property, snapshot.value, snapshot.priority);
-      } else {
-        node.style.removeProperty(property);
-      }
-    }
-
-    pinnedMediaActionOriginalStyles.delete(node);
-  };
-
-  const setFallbackHiddenStyle = (
-    node: HTMLElement,
-    property: string,
-    value: string,
-  ): void => {
-    let originalStyles = fallbackHiddenActionOriginalStyles.get(node);
-    if (!originalStyles) {
-      originalStyles = new Map();
-      fallbackHiddenActionOriginalStyles.set(node, originalStyles);
-    }
-
-    if (!originalStyles.has(property)) {
-      const existingValue = node.style.getPropertyValue(property);
-      const existingPriority = node.style.getPropertyPriority(property);
-      originalStyles.set(property, {
-        hadValue: existingValue.length > 0,
-        value: existingValue,
-        priority: existingPriority,
-      });
-    }
-
-    node.style.setProperty(property, value, "important");
-  };
-
-  const restoreFallbackHiddenStyles = (node: HTMLElement): void => {
-    const originalStyles = fallbackHiddenActionOriginalStyles.get(node);
-    if (!originalStyles) {
-      for (const property of fallbackHiddenStyleProperties) {
-        node.style.removeProperty(property);
-      }
-      return;
-    }
-
-    for (const property of fallbackHiddenStyleProperties) {
-      const snapshot = originalStyles.get(property);
-      if (!snapshot) {
-        node.style.removeProperty(property);
-        continue;
-      }
-
-      if (snapshot.hadValue) {
-        node.style.setProperty(property, snapshot.value, snapshot.priority);
-      } else {
-        node.style.removeProperty(property);
-      }
-    }
-
-    fallbackHiddenActionOriginalStyles.delete(node);
-  };
-
-  const clearTemporarilyHiddenFallbackActions = (): void => {
-    for (const node of fallbackHiddenActionNodes) {
-      restoreFallbackHiddenStyles(node);
-    }
-    fallbackHiddenActionNodes.clear();
-  };
-
-  const hideActionNodeForFallback = (node: HTMLElement | null): void => {
-    if (!(node instanceof HTMLElement)) return;
-    setFallbackHiddenStyle(node, "visibility", "hidden");
-    setFallbackHiddenStyle(node, "opacity", "0");
-    setFallbackHiddenStyle(node, "pointer-events", "none");
-    fallbackHiddenActionNodes.add(node);
-  };
-
-  const hideMatchingVisibleElementsForFallback = (
-    selectors: string[],
-    maxCount: number,
-  ): void => {
-    const nodes = new Set<HTMLElement>();
-
-    for (const selector of selectors) {
-      const matches = document.querySelectorAll(
-        selector,
-      ) as NodeListOf<HTMLElement>;
-      for (const match of Array.from(matches)) {
-        if (!isMediaOverlayElementVisible(match)) continue;
-
-        const rect = match.getBoundingClientRect();
-        if (rect.top > 160 || rect.bottom < -24) continue;
-        nodes.add(match);
-
-        const interactive = match.closest(
-          'button, [role="button"], a[href], [tabindex]',
-        );
-        if (interactive instanceof HTMLElement) {
-          nodes.add(interactive);
-        }
-      }
-    }
-
-    let count = 0;
-    for (const node of nodes) {
-      hideActionNodeForFallback(node);
-      count += 1;
-      if (count >= maxCount) break;
-    }
-  };
-
-  const clearMarkedMediaActions = (): void => {
-    document.documentElement.classList.remove(MEDIA_LEFT_DISMISS_CLASS);
-    clearTemporarilyHiddenFallbackActions();
-
-    for (const node of pinnedMediaActionNodes) {
-      restorePinnedStyles(node);
-    }
-    pinnedMediaActionNodes.clear();
-
-    for (const className of mediaActionClasses) {
-      const nodes = document.querySelectorAll(`.${className}`);
-      for (const node of Array.from(nodes)) {
-        node.classList.remove(className);
-      }
-    }
-  };
-
-  const pinMediaAction = (
-    node: HTMLElement,
-    anchor: "left" | "right",
-    offsetPx: number,
-    topOffsetPx = MEDIA_ACTION_TOP_OFFSET,
-  ): void => {
-    setPinnedStyle(node, "position", "fixed");
-    setPinnedStyle(node, "top", `${topOffsetPx}px`);
-    setPinnedStyle(node, "margin", "0");
-    setPinnedStyle(node, "transform", "none");
-    setPinnedStyle(node, "z-index", "2147483647");
-    setPinnedStyle(node, "pointer-events", "auto");
-    setPinnedStyle(node, "-webkit-app-region", NON_DRAG_APP_REGION);
-
-    if (anchor === "right") {
-      const scrollbarWidth = Math.max(
-        0,
-        window.innerWidth - document.documentElement.clientWidth,
+    for (const candidate of candidates) {
+      if (!(candidate instanceof HTMLElement)) continue;
+      const label = normalizeLabelText(
+        candidate.getAttribute("aria-label") ||
+          candidate.getAttribute("title") ||
+          candidate.textContent,
       );
-      const effectiveRight = Math.max(0, offsetPx - scrollbarWidth);
-      setPinnedStyle(node, "right", `${effectiveRight}px`);
-      setPinnedStyle(node, "left", "auto");
-    } else {
-      setPinnedStyle(node, "left", `${offsetPx}px`);
-      setPinnedStyle(node, "right", "auto");
-    }
-
-    pinnedMediaActionNodes.add(node);
-  };
-
-  const unpinMediaAction = (node: HTMLElement): void => {
-    restorePinnedStyles(node);
-    pinnedMediaActionNodes.delete(node);
-  };
-
-  const isPinnedActionHitVisible = (node: HTMLElement): boolean => {
-    const hitVisible = isActionHitVisible(node);
-    return hitVisible;
-  };
-
-  const isActionHitVisible = (node: HTMLElement): boolean => {
-    const rect = node.getBoundingClientRect();
-    if (rect.width < 6 || rect.height < 6) return false;
-
-    const x = Math.min(
-      window.innerWidth - 1,
-      Math.max(1, rect.left + rect.width / 2),
-    );
-    const y = Math.min(
-      window.innerHeight - 1,
-      Math.max(1, rect.top + rect.height / 2),
-    );
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-
-    const topNode = document.elementFromPoint(x, y);
-    if (!(topNode instanceof Element)) return false;
-    return topNode === node || node.contains(topNode);
-  };
-
-  const pinMediaActionWithValidation = (
-    node: HTMLElement,
-    anchor: "left" | "right",
-    offsetPx: number,
-    topOffsetPx = MEDIA_ACTION_TOP_OFFSET,
-  ): boolean => {
-    pinMediaAction(node, anchor, offsetPx, topOffsetPx);
-    if (isPinnedActionHitVisible(node)) {
-      return true;
-    }
-
-    unpinMediaAction(node);
-    return false;
-  };
-
-  const resolveInteractiveActionNode = (node: HTMLElement): HTMLElement => {
-    const interactive = node.closest(
-      'button, [role="button"], a[href], [tabindex]',
-    );
-    if (interactive instanceof HTMLElement) {
-      return interactive;
-    }
-    return node;
-  };
-
-  type ActionCandidate = {
-    node: HTMLElement;
-    rect: DOMRect;
-    area: number;
-  };
-
-  const collectActionCandidates = (
-    selectors: string[],
-    excludedNodes: Set<HTMLElement>,
-  ): ActionCandidate[] => {
-    const nodes = new Set<HTMLElement>();
-    for (const selector of selectors) {
-      const matches = document.querySelectorAll(
-        selector,
-      ) as NodeListOf<HTMLElement>;
-      for (const match of Array.from(matches)) {
-        const resolved = resolveInteractiveActionNode(match);
-        if (excludedNodes.has(resolved)) continue;
-        nodes.add(resolved);
+      if (label) {
+        return label.slice(0, 160);
       }
     }
 
-    const candidates: ActionCandidate[] = [];
-    for (const node of nodes) {
-      if (!isMediaOverlayElementVisible(node)) continue;
+    return "";
+  };
+
+  const FACEBOOK_CHROME_SELECTORS = [
+    '[aria-label="Menu" i]',
+    '[aria-label="Messenger" i]',
+    '[aria-label*="Notifications" i]',
+    '[aria-label*="Account controls and settings" i]',
+    '[aria-label="Your profile" i]',
+    '[aria-label="Facebook" i]',
+    '[aria-label="Home" i]',
+    '[aria-label="Search" i]',
+    '[aria-label*="Search Facebook" i]',
+    'input[placeholder*="Search Facebook" i]',
+    'a[href="/"]',
+    'a[href="https://www.facebook.com/"]',
+    'a[href="/messages/"]',
+    'a[href*="/notifications/"]',
+    'a[href*="/friends/"]',
+    'a[href*="/watch/"]',
+    'a[href*="/marketplace/"]',
+  ];
+  const FACEBOOK_CHROME_HINT_PATTERN =
+    /\b(facebook|home|menu|notifications|account controls|your profile|search facebook|friends|watch|marketplace|messenger)\b/i;
+  const PRESERVED_MESSENGER_CONTROL_PATTERN =
+    /\b(answer|accept|decline|ignore|join|close|download|share|forward|next|previous|call|video call|audio call|mute|unmute|end call|hang up|details|info)\b/i;
+  const TOP_CHROME_SCAN_MAX_TOP = 72;
+  const HEADER_CONTAINER_TOP_TOLERANCE = 48;
+  const HEADER_CONTAINER_MIN_HEIGHT = 24;
+  const HEADER_CONTAINER_MAX_HEIGHT = 240;
+  const HEADER_CONTAINER_MAX_BOTTOM = 180;
+  const HEADER_CONTAINER_MIN_WIDTH_RATIO = 0.4;
+  const TOP_LEFT_CHROME_MAX_TOP = 84;
+  const TOP_LEFT_CHROME_MAX_LEFT = 160;
+  const TOP_LEFT_CHROME_MIN_SIZE = 24;
+  const TOP_LEFT_CHROME_MAX_SIZE = 64;
+  const TOP_LEFT_CHROME_SQUARE_TOLERANCE = 12;
+  const TOP_STRIP_MAX_TOP = 64;
+  const TOP_STRIP_MAX_LEFT = 24;
+  const TOP_STRIP_MIN_WIDTH = 80;
+  const TOP_STRIP_MAX_WIDTH = 180;
+  const TOP_STRIP_MIN_HEIGHT = 32;
+  const TOP_STRIP_MAX_HEIGHT = 72;
+
+  const isLikelyTopHeaderContainer = (candidate: HTMLElement): boolean => {
+    if (!isAriaVisible(candidate)) {
+      return false;
+    }
+
+    const rect = candidate.getBoundingClientRect();
+    if (rect.top > HEADER_CONTAINER_TOP_TOLERANCE) {
+      return false;
+    }
+
+    if (
+      rect.height < HEADER_CONTAINER_MIN_HEIGHT ||
+      rect.height > HEADER_CONTAINER_MAX_HEIGHT
+    ) {
+      return false;
+    }
+
+    if (rect.bottom > HEADER_CONTAINER_MAX_BOTTOM) {
+      return false;
+    }
+
+    return rect.width >= window.innerWidth * HEADER_CONTAINER_MIN_WIDTH_RATIO;
+  };
+
+  const collectVisibleTopChromeNodes = (): HTMLElement[] => {
+    const matches = new Set<HTMLElement>();
+
+    for (const selector of FACEBOOK_CHROME_SELECTORS) {
+      let nodes: NodeListOf<Element>;
+      try {
+        nodes = document.querySelectorAll(selector);
+      } catch {
+        continue;
+      }
+
+      for (const node of Array.from(nodes)) {
+        if (!(node instanceof HTMLElement) || !isAriaVisible(node)) {
+          continue;
+        }
+
+        const rect = node.getBoundingClientRect();
+        if (rect.top > TOP_CHROME_SCAN_MAX_TOP) {
+          continue;
+        }
+
+        matches.add(node);
+      }
+    }
+
+    const fallbackCandidates = document.querySelectorAll(
+      "button, [role='button'], a[href]",
+    );
+
+    for (const node of Array.from(fallbackCandidates)) {
+      if (!(node instanceof HTMLElement) || !isAriaVisible(node)) {
+        continue;
+      }
 
       const rect = node.getBoundingClientRect();
-      if (rect.width < 6 || rect.height < 6) continue;
-      if (rect.top < -200 || rect.top > 300) continue;
       if (
-        rect.width > MAX_ACTION_NODE_DIMENSION ||
-        rect.height > MAX_ACTION_NODE_DIMENSION
+        rect.top > TOP_LEFT_CHROME_MAX_TOP ||
+        rect.left > TOP_LEFT_CHROME_MAX_LEFT
       ) {
         continue;
       }
 
-      candidates.push({
-        node,
-        rect,
-        area: rect.width * rect.height,
-      });
-    }
-
-    return candidates;
-  };
-
-  const rankRightActionCandidates = (
-    selectors: string[],
-    excludedNodes: Set<HTMLElement>,
-    minRightFraction = 0.35,
-  ): ActionCandidate[] => {
-    const candidates = collectActionCandidates(selectors, excludedNodes).filter(
-      (candidate) =>
-        candidate.rect.right >= window.innerWidth * minRightFraction,
-    );
-
-    candidates.sort((a, b) => {
-      if (a.rect.right !== b.rect.right) return b.rect.right - a.rect.right;
-      if (a.rect.top !== b.rect.top) return a.rect.top - b.rect.top;
-      return a.area - b.area;
-    });
-
-    return candidates;
-  };
-
-  const rankEdgeCloseCandidates = (
-    selectors: string[],
-    excludedNodes: Set<HTMLElement>,
-  ): ActionCandidate[] => {
-    const candidates = collectActionCandidates(selectors, excludedNodes).filter(
-      (candidate) => candidate.rect.top <= 140,
-    );
-
-    candidates.sort((a, b) => {
-      const aPriority = getDismissActionPriority(
-        a.node.getAttribute("aria-label") || a.node.textContent || "",
-      );
-      const bPriority = getDismissActionPriority(
-        b.node.getAttribute("aria-label") || b.node.textContent || "",
-      );
-      if (aPriority !== bPriority) return aPriority - bPriority;
-
-      const aLeftDist = Math.abs(a.rect.left);
-      const aRightDist = Math.abs(window.innerWidth - a.rect.right);
-      const bLeftDist = Math.abs(b.rect.left);
-      const bRightDist = Math.abs(window.innerWidth - b.rect.right);
-      const aEdgeDist = Math.min(aLeftDist, aRightDist);
-      const bEdgeDist = Math.min(bLeftDist, bRightDist);
-
-      if (aEdgeDist !== bEdgeDist) return aEdgeDist - bEdgeDist;
-      if (a.rect.top !== b.rect.top) return a.rect.top - b.rect.top;
-      return a.area - b.area;
-    });
-
-    return candidates;
-  };
-
-  const isSameRouteE2EEMediaViewer = (): boolean => {
-    const path = window.location.pathname.toLowerCase();
-    if (!path.startsWith("/messages/e2ee/t/")) return false;
-
-    return (
-      resolveViewportMode({
-        urlPath: window.location.pathname,
-        mediaOverlayVisible,
-      }) === "media"
-    );
-  };
-
-  const pickPreferredCloseCandidate = (
-    candidates: ActionCandidate[],
-  ): ActionCandidate | null => {
-    const preferredVisible = candidates.find((candidate) => {
-      const priority = getDismissActionPriority(
-        candidate.node.getAttribute("aria-label") ||
-          candidate.node.textContent ||
-          "",
-      );
-      return priority <= 1 && isMediaOverlayElementVisible(candidate.node);
-    });
-    if (preferredVisible) return preferredVisible;
-
-    const anyVisible = candidates.find((candidate) =>
-      isMediaOverlayElementVisible(candidate.node),
-    );
-    return anyVisible || candidates[0] || null;
-  };
-
-  const markMediaActions = (): MarkedMediaActionState => {
-    clearMarkedMediaActions();
-
-    const selectedNodes = new Set<HTMLElement>();
-    const markedState: MarkedMediaActionState = {
-      closeMarked: false,
-      downloadMarked: false,
-      shareMarked: false,
-    };
-
-    if (isSameRouteE2EEMediaViewer()) {
-      return markedState;
-    }
-
-    let usingRightDismissLayout = true;
-    let pinnedTopOffset = MEDIA_ACTION_TOP_OFFSET;
-    let mirroredEdgeGap = MEDIA_ACTION_CLOSE_LEFT_OFFSET;
-
-    const closeCandidates = rankEdgeCloseCandidates(
-      dismissActionSelectors,
-      selectedNodes,
-    );
-
-    for (const candidate of closeCandidates) {
-      const closeNode = candidate.node;
-      const leftDistance = Math.max(0, Math.round(candidate.rect.left));
-      const rightDistance = Math.max(
-        0,
-        Math.round(window.innerWidth - candidate.rect.right),
-      );
-      const isRightDismiss = rightDistance < leftDistance;
-
-      const intersectsViewport =
-        candidate.rect.right >= 8 &&
-        candidate.rect.left <= window.innerWidth - 8 &&
-        candidate.rect.bottom >= 8 &&
-        candidate.rect.top <= window.innerHeight - 8;
-      if (!intersectsViewport && !isPinnedActionHitVisible(closeNode)) {
+      if (
+        rect.width < TOP_LEFT_CHROME_MIN_SIZE ||
+        rect.height < TOP_LEFT_CHROME_MIN_SIZE ||
+        rect.width > TOP_LEFT_CHROME_MAX_SIZE ||
+        rect.height > TOP_LEFT_CHROME_MAX_SIZE
+      ) {
         continue;
       }
 
-      closeNode.classList.add(MEDIA_CLOSE_ACTION_CLASS);
-      selectedNodes.add(closeNode);
-      markedState.closeMarked = true;
-      usingRightDismissLayout = isRightDismiss;
-      pinnedTopOffset = Math.max(
-        MEDIA_ACTION_TOP_OFFSET,
-        Math.round(candidate.rect.top),
-      );
-      mirroredEdgeGap = Math.max(
-        MEDIA_ACTION_CLOSE_LEFT_OFFSET,
-        isRightDismiss ? rightDistance : leftDistance,
-      );
-
-      if (!isRightDismiss) {
-        document.documentElement.classList.add(MEDIA_LEFT_DISMISS_CLASS);
+      if (
+        Math.abs(rect.width - rect.height) > TOP_LEFT_CHROME_SQUARE_TOLERANCE
+      ) {
+        continue;
       }
-      break;
+
+      const hint = getHeaderNodeHint(node);
+      if (PRESERVED_MESSENGER_CONTROL_PATTERN.test(hint)) {
+        continue;
+      }
+
+      matches.add(node);
     }
 
-    const downloadOffset = usingRightDismissLayout
-      ? mirroredEdgeGap + 48
-      : mirroredEdgeGap;
-    const shareOffset = usingRightDismissLayout
-      ? mirroredEdgeGap + 96
-      : mirroredEdgeGap + 48;
+    return Array.from(matches);
+  };
 
-    const applyPinnedRightAction = (
-      selectors: string[],
-      className: string,
-      offset: number,
-    ): void => {
-      const candidates = rankRightActionCandidates(selectors, selectedNodes);
-      for (const candidate of candidates) {
-        const node = candidate.node;
-        node.classList.add(className);
-        const pinned = pinMediaActionWithValidation(
-          node,
-          "right",
-          offset,
-          pinnedTopOffset,
-        );
-        if (pinned) {
-          selectedNodes.add(node);
-          if (className === MEDIA_DOWNLOAD_ACTION_CLASS) {
-            markedState.downloadMarked = true;
-          } else if (className === MEDIA_SHARE_ACTION_CLASS) {
-            markedState.shareMarked = true;
-          }
-          return;
+  const collectLingeringTopStripTargets = (): HTMLElement[] => {
+    const matches = new Set<HTMLElement>();
+    const anchors = document.querySelectorAll(
+      '[aria-label="Exit typeahead" i], [aria-label="Back to Previous Page" i]',
+    );
+
+    for (const anchor of Array.from(anchors)) {
+      let current = anchor instanceof HTMLElement ? anchor : null;
+      let target: HTMLElement | null = null;
+
+      while (current instanceof HTMLElement && current !== document.body) {
+        const rect = current.getBoundingClientRect();
+        if (
+          isAriaVisible(current) &&
+          rect.top <= TOP_STRIP_MAX_TOP &&
+          rect.left <= TOP_STRIP_MAX_LEFT &&
+          rect.width >= TOP_STRIP_MIN_WIDTH &&
+          rect.width <= TOP_STRIP_MAX_WIDTH &&
+          rect.height >= TOP_STRIP_MIN_HEIGHT &&
+          rect.height <= TOP_STRIP_MAX_HEIGHT
+        ) {
+          target = current;
         }
-        node.classList.remove(className);
+        current = current.parentElement;
       }
-    };
 
-    applyPinnedRightAction(
-      mediaDownloadSelectors,
-      MEDIA_DOWNLOAD_ACTION_CLASS,
-      downloadOffset,
-    );
-
-    applyPinnedRightAction(
-      mediaShareSelectors,
-      MEDIA_SHARE_ACTION_CLASS,
-      shareOffset,
-    );
-
-    return markedState;
-  };
-
-  const dispatchProxyClick = (node: HTMLElement | null): boolean => {
-    if (!(node instanceof HTMLElement)) return false;
-
-    try {
-      node.click();
-    } catch {
-      // Fall through to synthetic events below.
-    }
-
-    const rect = node.getBoundingClientRect();
-    const clientX = Math.max(1, rect.left + rect.width / 2);
-    const clientY = Math.max(1, rect.top + rect.height / 2);
-    for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
-      try {
-        const EventCtor = type === "pointerdown" ? PointerEvent : MouseEvent;
-        node.dispatchEvent(
-          new EventCtor(type, {
-            bubbles: true,
-            cancelable: true,
-            clientX,
-            clientY,
-            pointerId: 1,
-            pointerType: "mouse",
-            isPrimary: true,
-          }),
-        );
-      } catch {
-        // Ignore synthetic dispatch failures.
+      if (target) {
+        matches.add(target);
       }
     }
 
-    return true;
+    return Array.from(matches);
   };
 
-  const clearFallbackMediaControls = (): void => {
-    document.getElementById(MEDIA_FALLBACK_CONTROLS_ID)?.remove();
-  };
+  const resolveTopHeaderContainer = (
+    chromeNodes: HTMLElement[],
+  ): HTMLElement | null => {
+    const topStripCounts = new Map<HTMLElement, number>();
+    const sampleXs = [
+      12,
+      Math.max(12, Math.round(window.innerWidth / 2)),
+      Math.max(12, window.innerWidth - 12),
+    ];
+    const sampleYs = [8, 24, 40];
 
-  const getOrCreateFallbackMediaControlsHost = (): HTMLElement => {
-    const existing = document.getElementById(MEDIA_FALLBACK_CONTROLS_ID);
-    if (existing instanceof HTMLElement) {
-      return existing;
+    for (const x of sampleXs) {
+      for (const y of sampleYs) {
+        for (const hit of document.elementsFromPoint(x, y)) {
+          if (!(hit instanceof HTMLElement)) {
+            continue;
+          }
+
+          let current: HTMLElement | null = hit;
+          const seenForPoint = new Set<HTMLElement>();
+          while (current instanceof HTMLElement && current !== document.body) {
+            if (
+              isLikelyTopHeaderContainer(current) &&
+              !seenForPoint.has(current)
+            ) {
+              topStripCounts.set(current, (topStripCounts.get(current) ?? 0) + 1);
+              seenForPoint.add(current);
+            }
+            current = current.parentElement;
+          }
+        }
+      }
     }
 
-    const host = document.createElement("div");
-    host.id = MEDIA_FALLBACK_CONTROLS_ID;
-    host.setAttribute(MEDIA_FALLBACK_CONTROL_ATTR, "true");
-    host.style.position = "fixed";
-    host.style.inset = "0";
-    host.style.pointerEvents = "none";
-    host.style.zIndex = "2147483646";
-    document.body.appendChild(host);
-    return host;
-  };
+    const rankedTopStripCandidates = Array.from(topStripCounts.entries())
+      .filter(([candidate]) => candidate !== document.documentElement)
+      .sort((a, b) => {
+        if (b[1] !== a[1]) {
+          return b[1] - a[1];
+        }
 
-  const upsertFallbackMediaButton = (input: {
-    host: HTMLElement;
-    key: string;
-    label: string;
-    text: string;
-    top: number;
-    left?: number;
-    right?: number;
-    onClick: () => void;
-  }): void => {
-    const buttonId = `${MEDIA_FALLBACK_CONTROLS_ID}-${input.key}`;
-    let button = document.getElementById(buttonId) as HTMLButtonElement | null;
-    if (!(button instanceof HTMLButtonElement)) {
-      button = document.createElement("button");
-      button.id = buttonId;
-      button.type = "button";
-      button.className = MEDIA_FALLBACK_BUTTON_CLASS;
-      button.setAttribute(MEDIA_FALLBACK_CONTROL_ATTR, "true");
-      input.host.appendChild(button);
+        const rectA = a[0].getBoundingClientRect();
+        const rectB = b[0].getBoundingClientRect();
+        if (rectB.width !== rectA.width) {
+          return rectB.width - rectA.width;
+        }
+
+        return rectA.height - rectB.height;
+      });
+
+    const topStripContainer = rankedTopStripCandidates[0]?.[0] ?? null;
+    if (topStripContainer instanceof HTMLElement) {
+      return topStripContainer;
     }
 
-    button.setAttribute("aria-label", input.label);
-    button.textContent = input.text;
-    button.style.top = `${Math.max(8, Math.round(input.top))}px`;
-    button.style.left =
-      typeof input.left === "number" ? `${input.left}px` : "auto";
-    button.style.right =
-      typeof input.right === "number" ? `${input.right}px` : "auto";
-    button.style.display = "flex";
-    button.onclick = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      input.onClick();
-    };
+    const counts = new Map<HTMLElement, number>();
+
+    for (const chromeNode of chromeNodes) {
+      let current: HTMLElement | null = chromeNode;
+      const seenForNode = new Set<HTMLElement>();
+
+      while (current instanceof HTMLElement && current !== document.body) {
+        if (isLikelyTopHeaderContainer(current) && !seenForNode.has(current)) {
+          counts.set(current, (counts.get(current) ?? 0) + 1);
+          seenForNode.add(current);
+        }
+        current = current.parentElement;
+      }
+    }
+
+    const ranked = Array.from(counts.entries())
+      .filter(([candidate]) => candidate !== document.documentElement)
+      .sort((a, b) => {
+        if (b[1] !== a[1]) {
+          return b[1] - a[1];
+        }
+
+        const rectA = a[0].getBoundingClientRect();
+        const rectB = b[0].getBoundingClientRect();
+        if (rectB.width !== rectA.width) {
+          return rectB.width - rectA.width;
+        }
+
+        return rectA.height - rectB.height;
+      });
+
+    return ranked[0]?.[0] ?? null;
   };
 
-  const hideFallbackMediaButton = (key: string): void => {
-    const button = document.getElementById(
-      `${MEDIA_FALLBACK_CONTROLS_ID}-${key}`,
+  const resolveTopHeaderHideTarget = (
+    banner: HTMLElement,
+  ): HTMLElement => {
+    let target = banner;
+    let current = banner.parentElement;
+
+    while (current instanceof HTMLElement && current !== document.body) {
+      if (!isLikelyTopHeaderContainer(current)) {
+        break;
+      }
+
+      target = current;
+      current = current.parentElement;
+    }
+
+    return target;
+  };
+
+  const getHeaderInteractiveNodes = (container: HTMLElement): HTMLElement[] => {
+    return Array.from(
+      container.querySelectorAll(
+        "button, [role='button'], a[href], input, [aria-label], [title]",
+      ),
+    ).filter((node): node is HTMLElement => node instanceof HTMLElement);
+  };
+
+  const getHeaderNodeHint = (node: HTMLElement): string => {
+    const href =
+      node instanceof HTMLAnchorElement
+        ? node.href
+        : node.getAttribute("href") || "";
+    const placeholder = node.getAttribute("placeholder") || "";
+    return normalizeLabelText(
+      [
+        node.getAttribute("aria-label"),
+        node.getAttribute("title"),
+        placeholder,
+        href,
+        node.textContent,
+      ]
+        .filter(Boolean)
+        .join(" "),
     );
-    if (button instanceof HTMLElement) {
-      button.style.display = "none";
-    }
   };
 
-  const resolveActiveMediaSourceUrl = (): string | null => {
-    const nodes = Array.from(
-      document.querySelectorAll("img, video, [role='img']"),
-    ) as HTMLElement[];
-    const centerX = window.innerWidth / 2;
-    const centerY = window.innerHeight / 2;
+  const getFacebookChromeNodes = (
+    container: HTMLElement,
+    nodes: HTMLElement[],
+  ): HTMLElement[] => {
+    const matches = new Set<HTMLElement>();
 
     for (const node of nodes) {
-      if (!isAriaVisible(node)) continue;
-
-      const rect = node.getBoundingClientRect();
-      if (rect.width < 180 && rect.height < 180) continue;
-      if (rect.width * rect.height < 30000) continue;
-      if (rect.bottom < 24 || rect.top > window.innerHeight - 24) continue;
-      const containsCenter =
-        centerX >= rect.left &&
-        centerX <= rect.right &&
-        centerY >= rect.top &&
-        centerY <= rect.bottom;
-      if (!containsCenter) continue;
-
-      const source = resolveMediaSourceFromNode(node);
-      if (source.url) {
-        lastMediaOpenSourceUrl = source.url;
-        lastMediaOpenSourceKind = source.kind;
-        return source.url;
+      const hint = getHeaderNodeHint(node);
+      const matchesSelector = FACEBOOK_CHROME_SELECTORS.some((selector) => {
+        try {
+          return node.matches(selector);
+        } catch {
+          return false;
+        }
+      });
+      if (!matchesSelector && !FACEBOOK_CHROME_HINT_PATTERN.test(hint)) {
+        continue;
       }
+
+      let target: HTMLElement = node;
+      while (
+        target.parentElement instanceof HTMLElement &&
+        target.parentElement !== container
+      ) {
+        target = target.parentElement;
+      }
+      matches.add(target);
     }
 
-    return lastMediaOpenSourceUrl;
+    return Array.from(matches);
   };
 
-  const triggerDownloadForUrl = (rawUrl: string): boolean => {
-    if (!rawUrl) return false;
+  const hasPreservedMessengerControlsInBanner = (
+    nodes: HTMLElement[],
+  ): boolean => {
+    return nodes.some((node) => {
+      const hint = getHeaderNodeHint(node);
+      return PRESERVED_MESSENGER_CONTROL_PATTERN.test(hint);
+    });
+  };
 
-    try {
-      const anchor = document.createElement("a");
-      anchor.href = rawUrl;
-      anchor.download = "";
-      anchor.rel = "noopener noreferrer";
-      anchor.target = "_blank";
-      anchor.style.display = "none";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      return true;
-    } catch {
+  const setInactiveHeaderSuppressionState = (
+    extra: Record<string, unknown> = {},
+  ): void => {
+    lastHeaderSuppressionState = {
+      active: false,
+      bannerCount: 0,
+      hiddenBannerCount: 0,
+      hiddenChromeCount: 0,
+      mode: "off",
+      requestedMode: "off",
+      hasFacebookNavSignal: false,
+      preservedMessengerControlsDetected: false,
+      reusedIncomingSafeMode: false,
+      incomingCallOverlayHintActive,
+      stickyRecovery: false,
+      ...extra,
+    };
+  };
+
+  const setHeaderSuppressionStateFromSnapshot = (
+    snapshot: HeaderSuppressionSnapshot,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    lastHeaderSuppressionState = {
+      active: snapshot.active,
+      bannerCount: snapshot.bannerCount,
+      hiddenBannerCount: snapshot.hiddenBannerCount,
+      hiddenChromeCount: snapshot.hiddenChromeCount,
+      mode: snapshot.mode,
+      requestedMode: snapshot.requestedMode,
+      hasFacebookNavSignal: snapshot.hasFacebookNavSignal,
+      preservedMessengerControlsDetected:
+        snapshot.preservedMessengerControlsDetected,
+      reusedIncomingSafeMode: snapshot.reusedIncomingSafeMode,
+      incomingCallOverlayHintActive: snapshot.incomingCallOverlayHintActive,
+      stickyRecovery: false,
+      ...extra,
+    };
+  };
+
+  const maybeSendHeaderSuppressionDebug = (reason: string): void => {
+    const signature = JSON.stringify(lastHeaderSuppressionState);
+    if (signature === lastHeaderSuppressionDebugSignature) {
+      return;
+    }
+
+    lastHeaderSuppressionDebugSignature = signature;
+    sendMediaOverlayDebug(reason, {
+      force: true,
+      headerSuppressionState: lastHeaderSuppressionState,
+    });
+  };
+
+  const clearHeaderSuppressionMarkers = (): void => {
+    document.documentElement.classList.remove(COLLAPSE_CLASS);
+    document.documentElement.style.removeProperty(
+      "--md-fb-header-collapse-height",
+    );
+    document.documentElement.style.removeProperty("--md-fb-shell-bottom-gap");
+    document.documentElement.style.removeProperty(SHELL_TARGET_HEIGHT_VAR);
+    document
+      .querySelectorAll(
+        `[${HEADER_HIDDEN_ATTR}], [${HIDDEN_CHROME_ATTR}], [${SHELL_STRETCH_ATTR}]`,
+      )
+      .forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        node.removeAttribute(HEADER_HIDDEN_ATTR);
+        node.removeAttribute(HIDDEN_CHROME_ATTR);
+        node.removeAttribute(SHELL_STRETCH_ATTR);
+      });
+  };
+
+  const hasConnectedHeaderSuppressionTargets = (
+    snapshot: HeaderSuppressionSnapshot | null,
+  ): boolean => {
+    if (!snapshot || !snapshot.active) {
       return false;
     }
+
+    return (
+      snapshot.bannerTargets.some(({ node }) => node.isConnected) ||
+      snapshot.hiddenChromeTargets.some((node) => node.isConnected)
+    );
   };
 
-  const updateFallbackMediaControls = (
-    markedActions: MarkedMediaActionState,
+  const getStickyHeaderSuppressionSnapshot = (
+    snapshot: HeaderSuppressionSnapshot | null,
+  ): HeaderSuppressionSnapshot | null => {
+    if (!snapshot || !snapshot.active) {
+      return null;
+    }
+
+    if (!incomingCallOverlayHintActive || snapshot.mode !== "hide-banner") {
+      return snapshot;
+    }
+
+    const bannerTargets = snapshot.bannerTargets.filter(
+      (target) => target.mode !== "hide-banner",
+    );
+    const hiddenChromeCount = snapshot.hiddenChromeTargets.length;
+    const active = bannerTargets.length > 0 || hiddenChromeCount > 0;
+
+    return {
+      ...snapshot,
+      active,
+      shouldCollapse: false,
+      hiddenBannerCount: 0,
+      hiddenChromeCount,
+      mode: active ? "hide-facebook-nav-descendants" : "off",
+      bannerTargets,
+      collapseHeight: 0,
+      reusedIncomingSafeMode: true,
+      incomingCallOverlayHintActive: true,
+    };
+  };
+
+  const applyHeaderSuppressionSnapshot = (
+    snapshot: HeaderSuppressionSnapshot,
   ): void => {
-    clearTemporarilyHiddenFallbackActions();
-
-    const useUnifiedFallbackActions = isSameRouteE2EEMediaViewer();
-
-    const closeCandidates = rankEdgeCloseCandidates(
-      dismissActionSelectors,
-      new Set<HTMLElement>(),
-    );
-    const closeCandidate = useUnifiedFallbackActions
-      ? pickPreferredCloseCandidate(closeCandidates)
-      : closeCandidates[0] || null;
-    const closeNode = closeCandidate?.node || null;
-    const closeRect = closeCandidate?.rect || null;
-    const closePinnedVisible = closeNode
-      ? isPinnedActionHitVisible(closeNode)
-      : false;
-    const closeDirectVisible = closeNode
-      ? isMediaOverlayElementVisible(closeNode)
-      : false;
-    const closePriority = closeNode
-      ? getDismissActionPriority(
-          closeNode.getAttribute("aria-label") || closeNode.textContent || "",
-        )
-      : Number.POSITIVE_INFINITY;
-    const closeUsable = markedActions.closeMarked
-      ? closePinnedVisible
-      : closeDirectVisible;
-    const closeReturnUrl = resolveMediaRouteThreadReturnUrl();
-    const routeBasedMediaViewer =
-      resolveViewportMode({
-        urlPath: window.location.pathname,
-        mediaOverlayVisible: false,
-      }) === "media";
-    const useCustomCloseFallback =
-      Boolean(closeReturnUrl) &&
-      routeBasedMediaViewer &&
-      (!closeNode || closePriority >= 2 || !closeUsable);
-    const closeNeedsFallback =
-      useUnifiedFallbackActions ||
-      useCustomCloseFallback ||
-      (closeRect !== null &&
-        (!closeUsable ||
-          closeRect.left < 8 ||
-          closeRect.right > window.innerWidth - 8 ||
-          closeNode?.closest('[aria-hidden="true"]') !== null));
-
-    const downloadCandidates = !markedActions.downloadMarked
-      ? rankRightActionCandidates(
-          mediaDownloadSelectors,
-          new Set<HTMLElement>(),
-          0,
-        )
-      : [];
-    const downloadCandidate = downloadCandidates[0] || null;
-
-    const shareCandidates = !markedActions.shareMarked
-      ? rankRightActionCandidates(
-          mediaShareSelectors,
-          new Set<HTMLElement>(),
-          0,
-        )
-      : [];
-    const shareCandidate = shareCandidates[0] || null;
-
-    const activeMediaSourceUrl = resolveActiveMediaSourceUrl();
-    const topOffset = closeRect
-      ? Math.max(8, Math.round(closeRect.top))
-      : MEDIA_FALLBACK_ACTION_TOP_OFFSET;
-    const alignedFallbackRightLayout =
-      useUnifiedFallbackActions || useCustomCloseFallback;
-    const fallbackTopOffset = alignedFallbackRightLayout
-      ? Math.max(MEDIA_FALLBACK_ACTION_TOP_OFFSET, topOffset)
-      : topOffset;
-    if (alignedFallbackRightLayout) {
-      document.documentElement.classList.remove(MEDIA_LEFT_DISMISS_CLASS);
-    }
-    const closeOnLeft = alignedFallbackRightLayout
-      ? false
-      : closeRect !== null
-        ? Math.abs(closeRect.left) <=
-          Math.abs(window.innerWidth - closeRect.right)
-        : true;
-
-    const host = getOrCreateFallbackMediaControlsHost();
-
-    if (closeNeedsFallback && (closeNode || closeReturnUrl)) {
-      upsertFallbackMediaButton({
-        host,
-        key: "close",
-        label:
-          (useCustomCloseFallback ? "Close" : null) ||
-          closeNode?.getAttribute("aria-label") ||
-          "Close",
-        text: "×",
-        top: fallbackTopOffset,
-        ...(closeOnLeft
-          ? { left: MEDIA_ACTION_CLOSE_LEFT_OFFSET }
-          : { right: 16 }),
-        onClick: () => {
-          if (useCustomCloseFallback && closeReturnUrl) {
-            window.location.href = closeReturnUrl;
-            return;
-          }
-          dispatchProxyClick(closeNode);
-        },
-      });
-      if (useUnifiedFallbackActions) {
-        hideMatchingVisibleElementsForFallback(dismissActionSelectors, 10);
-      } else if (useCustomCloseFallback && closeNode && closePriority >= 2) {
-        hideActionNodeForFallback(closeNode);
-      }
-    } else {
-      hideFallbackMediaButton("close");
-    }
-
-    const downloadDirectVisible = downloadCandidate?.node
-      ? !alignedFallbackRightLayout &&
-        isMediaOverlayElementVisible(downloadCandidate.node)
-      : false;
-    const shareDirectVisible = shareCandidate?.node
-      ? !alignedFallbackRightLayout &&
-        isMediaOverlayElementVisible(shareCandidate.node)
-      : false;
-
-    const showDownloadFallback = Boolean(
-      (useUnifiedFallbackActions &&
-        (downloadCandidate || activeMediaSourceUrl)) ||
-      (!markedActions.downloadMarked &&
-        !downloadDirectVisible &&
-        downloadCandidate) ||
-      (!markedActions.downloadMarked &&
-        !downloadDirectVisible &&
-        activeMediaSourceUrl),
-    );
-    const showShareFallback = Boolean(
-      (useUnifiedFallbackActions && shareCandidate) ||
-      (!markedActions.shareMarked && !shareDirectVisible && shareCandidate),
+    document.documentElement.classList.toggle(ACTIVE_CLASS, snapshot.active);
+    document.documentElement.classList.toggle(
+      COLLAPSE_CLASS,
+      snapshot.active && snapshot.shouldCollapse && snapshot.collapseHeight > 0,
     );
 
-    if (showDownloadFallback) {
-      upsertFallbackMediaButton({
-        host,
-        key: "download",
-        label:
-          downloadCandidate?.node.getAttribute("aria-label") ||
-          "Download media attachment",
-        text: "↓",
-        top: fallbackTopOffset,
-        right: alignedFallbackRightLayout ? 64 : showShareFallback ? 64 : 16,
-        onClick: () => {
-          if (downloadCandidate?.node) {
-            if (dispatchProxyClick(downloadCandidate.node)) return;
-          }
-          if (activeMediaSourceUrl) {
-            triggerDownloadForUrl(activeMediaSourceUrl);
-          }
-        },
-      });
-      if (useUnifiedFallbackActions) {
-        hideMatchingVisibleElementsForFallback(mediaDownloadSelectors, 10);
-      } else if (alignedFallbackRightLayout && downloadCandidate?.node) {
-        hideActionNodeForFallback(downloadCandidate.node);
-      }
-    } else {
-      hideFallbackMediaButton("download");
+    if (!snapshot.active) {
+      return;
     }
 
-    if (showShareFallback && shareCandidate?.node) {
-      upsertFallbackMediaButton({
-        host,
-        key: "share",
-        label: shareCandidate.node.getAttribute("aria-label") || "Forward",
-        text: "↗",
-        top: fallbackTopOffset,
-        right: alignedFallbackRightLayout
-          ? showDownloadFallback
-            ? 112
-            : 64
-          : 16,
-        onClick: () => {
-          dispatchProxyClick(shareCandidate.node);
-        },
-      });
-      if (useUnifiedFallbackActions) {
-        hideMatchingVisibleElementsForFallback(mediaShareSelectors, 10);
-      } else if (alignedFallbackRightLayout) {
-        hideActionNodeForFallback(shareCandidate.node);
+    for (const { node, mode } of snapshot.bannerTargets) {
+      if (!node.isConnected) continue;
+      node.setAttribute(HEADER_HIDDEN_ATTR, mode);
+    }
+
+    for (const node of snapshot.hiddenChromeTargets) {
+      if (!node.isConnected) continue;
+      node.setAttribute(HIDDEN_CHROME_ATTR, "true");
+    }
+
+    if (snapshot.shouldCollapse && snapshot.collapseHeight > 0) {
+      document.documentElement.style.setProperty(
+        "--md-fb-header-collapse-height",
+        `${Math.round(snapshot.collapseHeight)}px`,
+      );
+
+      if (
+        snapshot.shellTarget instanceof HTMLElement &&
+        snapshot.shellTarget.isConnected &&
+        snapshot.shellTargetHeight !== null
+      ) {
+        snapshot.shellTarget.setAttribute(SHELL_STRETCH_ATTR, "true");
+        document.documentElement.style.setProperty(
+          SHELL_TARGET_HEIGHT_VAR,
+          `${snapshot.shellTargetHeight}px`,
+        );
       }
-    } else {
-      hideFallbackMediaButton("share");
     }
   };
 
-  const resolveMode = (): MessagesViewportMode =>
-    resolveViewportMode({
-      urlPath: window.location.pathname,
-      mediaOverlayVisible,
-    });
+  const buildHeaderSuppressionSnapshot = (): HeaderSuppressionSnapshot => {
+    const topChromeNodes = collectVisibleTopChromeNodes();
+    const headerContainer = resolveTopHeaderContainer(topChromeNodes);
+    const banners =
+      headerContainer instanceof HTMLElement ? [headerContainer] : [];
+    const bannerTargets: HeaderSuppressionSnapshot["bannerTargets"] = [];
+    const topChromeHideTargets = new Set<HTMLElement>();
+    const incomingCallBannerProtectionActive = incomingCallOverlayHintActive;
+    let collapseHeight = 0;
 
-  const clampHeaderHeight = (value: number): number => {
-    if (!Number.isFinite(value)) return DEFAULT_HEADER_HEIGHT;
-    return Math.max(
-      MIN_HEADER_HEIGHT,
-      Math.min(MAX_HEADER_HEIGHT, Math.round(value)),
-    );
-  };
+    let hiddenBannerCount = 0;
+    let hiddenChromeCount = 0;
+    let lastMode: FacebookHeaderSuppressionMode = "off";
+    let lastRequestedMode: FacebookHeaderSuppressionMode = "off";
+    let hasFacebookNavSignal = topChromeNodes.length > 0;
+    let preservedMessengerControlsDetected = false;
+    let reusedIncomingSafeMode = false;
 
-  const measureHeaderHeight = (): number => {
-    const banners = Array.from(
-      document.querySelectorAll('[role="banner"]'),
-    ) as HTMLElement[];
-
-    let topAnchoredBannerBottom = 0;
     for (const banner of banners) {
-      const rect = banner.getBoundingClientRect();
-      // Facebook's global top bar is anchored at the top edge.
-      if (rect.top > 12) continue;
-      if (rect.height < 20) continue;
-      topAnchoredBannerBottom = Math.max(topAnchoredBannerBottom, rect.bottom);
+      const nodes = getHeaderInteractiveNodes(banner);
+      const chromeNodes = getFacebookChromeNodes(banner, nodes);
+      const hideTarget = resolveTopHeaderHideTarget(banner);
+      const hasPreservedMessengerControls =
+        hasPreservedMessengerControlsInBanner(nodes);
+      const requestedMode = resolveFacebookHeaderSuppressionMode({
+        isMessagesSurface: true,
+        hasTopAnchoredBanner: true,
+        hasFacebookNavSignal: chromeNodes.length > 0,
+        hasPreservedMessengerControls,
+      });
+      const mode = resolveEffectiveFacebookHeaderSuppressionMode({
+        requestedMode,
+        incomingCallOverlayHintActive: incomingCallBannerProtectionActive,
+        hasFacebookNavSignal:
+          chromeNodes.length > 0 || topChromeNodes.length > 0,
+        previousMode: lastAppliedHeaderSuppressionSnapshot?.mode ?? null,
+      });
+      lastRequestedMode = requestedMode;
+      lastMode = mode;
+      hasFacebookNavSignal =
+        hasFacebookNavSignal ||
+        chromeNodes.length > 0 ||
+        topChromeNodes.length > 0;
+      preservedMessengerControlsDetected =
+        preservedMessengerControlsDetected || hasPreservedMessengerControls;
+      reusedIncomingSafeMode =
+        reusedIncomingSafeMode || requestedMode !== mode;
+
+      if (mode === "hide-banner") {
+        hiddenBannerCount += 1;
+        collapseHeight = Math.max(
+          collapseHeight,
+          hideTarget.getBoundingClientRect().height,
+        );
+      } else if (mode === "hide-facebook-nav-descendants") {
+        bannerTargets.push({ node: banner, mode });
+      }
+
+      for (const chromeNode of chromeNodes) {
+        topChromeHideTargets.add(chromeNode);
+      }
     }
 
-    if (topAnchoredBannerBottom > 0) {
-      return clampHeaderHeight(topAnchoredBannerBottom);
+    for (const chromeNode of topChromeNodes) {
+      topChromeHideTargets.add(chromeNode);
     }
 
-    return DEFAULT_HEADER_HEIGHT;
+    if (!incomingCallBannerProtectionActive) {
+      for (const stripTarget of collectLingeringTopStripTargets()) {
+        hiddenBannerCount += 1;
+        collapseHeight = Math.max(
+          collapseHeight,
+          stripTarget.getBoundingClientRect().height,
+        );
+      }
+    }
+
+    const hiddenChromeTargets = Array.from(topChromeHideTargets);
+    hiddenChromeCount = hiddenChromeTargets.length;
+    if (hiddenChromeCount > 0 && lastMode === "off") {
+      lastMode = "hide-facebook-nav-descendants";
+    }
+
+    if (hiddenBannerCount > 0) {
+      collapseHeight = Math.max(collapseHeight, 48);
+    }
+
+    const shouldCollapseMessagesSurface =
+      hiddenBannerCount > 0 ||
+      (hiddenChromeCount > 0 &&
+        /^\/messages\/(?:e2ee\/)?t\//i.test(window.location.pathname));
+
+    const active = hiddenBannerCount > 0 || hiddenChromeCount > 0;
+    if (hiddenBannerCount === 0 && shouldCollapseMessagesSurface) {
+      const topChromeBottom = topChromeNodes.reduce((maxBottom, node) => {
+        return Math.max(maxBottom, node.getBoundingClientRect().bottom);
+      }, 0);
+      collapseHeight = Math.max(
+        collapseHeight,
+        Math.max(32, topChromeBottom - 20),
+      );
+    }
+
+    const snapshot: HeaderSuppressionSnapshot = {
+      active,
+      shouldCollapse: false,
+      bannerCount: banners.length,
+      hiddenBannerCount,
+      hiddenChromeCount,
+      mode: lastMode,
+      requestedMode: lastRequestedMode,
+      hasFacebookNavSignal,
+      preservedMessengerControlsDetected,
+      reusedIncomingSafeMode,
+      incomingCallOverlayHintActive: incomingCallBannerProtectionActive,
+      collapseHeight,
+      bannerTargets,
+      hiddenChromeTargets,
+      shellTarget: null,
+      shellTargetHeight: null,
+    };
+
+    return snapshot;
   };
 
-  const setHeaderHeight = (height: number): void => {
-    currentHeaderHeight = clampHeaderHeight(height);
-    document.documentElement.style.setProperty(
-      HEADER_HEIGHT_CSS_VAR,
-      `${currentHeaderHeight}px`,
+  const applyFacebookHeaderSuppression = (): void => {
+    const routeKind = resolveMode();
+    const previousSnapshot = getStickyHeaderSuppressionSnapshot(
+      lastAppliedHeaderSuppressionSnapshot,
     );
+    clearHeaderSuppressionMarkers();
+
+    if (routeKind !== "chat") {
+      document.documentElement.classList.remove(ACTIVE_CLASS);
+      activeMediaHeaderOverlayKind =
+        routeKind === "media" ? activeMediaHeaderOverlayKind : null;
+      lastAppliedHeaderSuppressionSnapshot = null;
+      lastHeaderSuppressionDetectedAt = 0;
+      setInactiveHeaderSuppressionState({
+        incomingCallOverlayHintActive,
+      });
+      maybeSendHeaderSuppressionDebug("header-suppression-state");
+      return;
+    }
+
+    const snapshot = buildHeaderSuppressionSnapshot();
+    if (snapshot.active) {
+      applyHeaderSuppressionSnapshot(snapshot);
+      lastAppliedHeaderSuppressionSnapshot = snapshot;
+      lastHeaderSuppressionDetectedAt = Date.now();
+      setHeaderSuppressionStateFromSnapshot(snapshot);
+      maybeSendHeaderSuppressionDebug("header-suppression-state");
+      return;
+    }
+
+    const missingForMs =
+      lastHeaderSuppressionDetectedAt > 0
+        ? Date.now() - lastHeaderSuppressionDetectedAt
+        : Number.POSITIVE_INFINITY;
+    if (
+      hasConnectedHeaderSuppressionTargets(previousSnapshot) &&
+      shouldKeepFacebookHeaderSuppressionActive({
+        previousActive: previousSnapshot?.active === true,
+        currentActive: snapshot.active,
+        missingForMs,
+        graceMs: HEADER_SUPPRESSION_REAPPLY_GRACE_MS,
+      })
+    ) {
+      applyHeaderSuppressionSnapshot(previousSnapshot!);
+      lastAppliedHeaderSuppressionSnapshot = previousSnapshot;
+      setHeaderSuppressionStateFromSnapshot(previousSnapshot!, {
+        stickyRecovery: true,
+        missingForMs,
+      });
+      maybeSendHeaderSuppressionDebug("header-suppression-state");
+      return;
+    }
+
+    lastAppliedHeaderSuppressionSnapshot = null;
+    lastHeaderSuppressionDetectedAt = 0;
+    document.documentElement.classList.remove(ACTIVE_CLASS);
+    setInactiveHeaderSuppressionState({
+      incomingCallOverlayHintActive,
+    });
+    maybeSendHeaderSuppressionDebug("header-suppression-state");
   };
 
-  const scheduleHeaderHeightSend = (): void => {
-    if (pendingSend) return;
-    pendingSend = true;
-    window.setTimeout(() => {
-      pendingSend = false;
-      if (Math.abs(currentHeaderHeight - lastSentHeaderHeight) < 2) return;
-      lastSentHeaderHeight = currentHeaderHeight;
-      ipcRenderer.send("messages-header-height", currentHeaderHeight);
-    }, HEADER_SEND_DEBOUNCE_MS);
+  type ComposerOverlayDebugState = {
+    emojiPickerVisible: boolean;
+    portalRootVisible: boolean;
+    anchorVisible: boolean;
+  };
+
+  const collectComposerOverlayState = (): ComposerOverlayDebugState => {
+    const emojiTriggerSelectors = [
+      '[aria-label*="emoji" i]',
+      '[title*="emoji" i]',
+      '[data-testid*="emoji"]',
+    ];
+    const overlaySelectors = [
+      "[role='dialog']",
+      "[role='menu']",
+      "[role='listbox']",
+      "[role='grid']",
+      "[aria-modal='true']",
+      "[data-testid*='popover']",
+      "[data-testid*='emoji']",
+    ];
+    const overlayHintPattern = /\b(emoji|emojis|sticker|stickers|gif|gifs)\b/i;
+
+    const anchorVisible = emojiTriggerSelectors.some((selector) =>
+      Array.from(document.querySelectorAll(selector)).some((node) =>
+        isAriaVisible(node),
+      ),
+    );
+
+    const portalRootVisible = overlaySelectors.some((selector) =>
+      Array.from(document.querySelectorAll(selector)).some((node) => {
+        if (!(node instanceof HTMLElement) || !isAriaVisible(node)) {
+          return false;
+        }
+        if (node.closest("[role='banner']")) {
+          return false;
+        }
+
+        const label = normalizeLabelText(
+          node.getAttribute("aria-label") ||
+            node.getAttribute("title") ||
+            node.textContent,
+        );
+        if (overlayHintPattern.test(label.slice(0, 240))) {
+          return true;
+        }
+
+        const childLabels = Array.from(
+          node.querySelectorAll("button, [role='button'], [aria-label]"),
+        )
+          .slice(0, 12)
+          .map((child) => extractInteractiveLabel(child))
+          .filter(Boolean);
+        return childLabels.some((childLabel) =>
+          overlayHintPattern.test(childLabel),
+        );
+      }),
+    );
+
+    return {
+      emojiPickerVisible: anchorVisible && portalRootVisible,
+      portalRootVisible,
+      anchorVisible,
+    };
+  };
+
+  const collectCallSurfaceState = (): {
+    callWindowOpen: boolean;
+    isMuted: boolean | null;
+  } => {
+    const controls = Array.from(
+      document.querySelectorAll("button, [role='button'], a[role='button']"),
+    );
+    let callWindowOpen = false;
+    let isMuted: boolean | null = null;
+
+    for (const control of controls) {
+      if (!(control instanceof HTMLElement) || !isAriaVisible(control)) {
+        continue;
+      }
+
+      const label = extractInteractiveLabel(control);
+      if (!label) continue;
+
+      if (
+        /\b(end call|hang up|leave call|disconnect|mute|unmute|turn off camera|turn on camera|speaker)\b/i.test(
+          label,
+        )
+      ) {
+        callWindowOpen = true;
+      }
+
+      const normalizedLabel = label.toLowerCase();
+      if (normalizedLabel.includes("unmute")) {
+        isMuted = true;
+      } else if (normalizedLabel.includes("mute") && isMuted === null) {
+        isMuted = false;
+      }
+    }
+
+    return { callWindowOpen, isMuted };
+  };
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const label = extractInteractiveLabel(event.target);
+      if (!label) return;
+
+      let interactionKind: "emoji" | "call-mute-toggle" | null = null;
+      if (/\bemoji\b/i.test(label)) {
+        interactionKind = "emoji";
+      } else if (/\b(?:mute|unmute)\b/i.test(label)) {
+        interactionKind = "call-mute-toggle";
+      }
+
+      if (!interactionKind) return;
+
+      window.setTimeout(() => {
+        const composerOverlayState = collectComposerOverlayState();
+        const callSurfaceState = collectCallSurfaceState();
+        sendMediaOverlayDebug("renderer-interaction", {
+          force: true,
+          interactionKind,
+          interactionLabel: label,
+          viewportState: buildViewportStatePayload(),
+          composerOverlayState,
+          callSurfaceState,
+        });
+        scheduleViewportStateSend(true);
+        scheduleApply();
+      }, 0);
+    },
+    { capture: true },
+  );
+
+  const buildViewportStatePayload = (): MessagesViewportStatePayload => {
+    const headerHeight =
+      resolveMode() === "chat"
+        ? Math.max(
+            DEFAULT_MESSAGES_HEADER_HEIGHT,
+            Math.round(
+              lastAppliedHeaderSuppressionSnapshot?.collapseHeight ??
+                DEFAULT_MESSAGES_HEADER_HEIGHT,
+            ),
+          )
+        : null;
+
+    return resolveMessagesViewportState({
+      url: window.location.href,
+      urlPath: window.location.pathname,
+      headerHeight,
+      mediaOverlayVisible:
+        mediaOverlayVisible || detectMediaOverlayVisible(),
+    });
   };
 
   const scheduleViewportStateSend = (force = false): void => {
@@ -1765,32 +2109,23 @@ ipcRenderer.on(
 
     viewportStateSendTimer = window.setTimeout(() => {
       viewportStateSendTimer = null;
-      // IMPORTANT: `media-viewer-state` is consumed by main to toggle the
-      // media-overlay crop bypass. Keep this channel scoped to media-only state.
-      // Incoming-call overlays are tracked separately via incoming-call-overlay-hint.
-      const payload = {
-        visible: resolveMediaViewerStateVisible({
-          mediaOverlayVisible,
-          incomingCallOverlayVisible:
-            incomingCallOverlayHintActive || detectIncomingCallOverlayVisible(),
-        }),
-        url: window.location.href,
-      };
+      const viewportState = buildViewportStatePayload();
       const unchanged =
         !force &&
         lastSentViewportState !== null &&
-        lastSentViewportState.visible === payload.visible &&
-        lastSentViewportState.url === payload.url;
+        JSON.stringify(lastSentViewportState) === JSON.stringify(viewportState);
       if (unchanged) return;
 
-      lastSentViewportState = payload;
-      ipcRenderer.send("media-viewer-state", payload);
+      lastSentViewportState = viewportState;
+      ipcRenderer.send("messages-viewport-state", viewportState);
       sendMediaOverlayDebug("viewport-state-send", {
         force,
-        sentVisible: payload.visible,
-        incomingCallOverlayVisible: detectIncomingCallOverlayVisible(),
+        sentVisible: mediaOverlayVisible,
+        incomingCallOverlayVisible:
+          incomingCallOverlayHintActive || detectIncomingCallOverlayVisible(),
         incomingCallOverlayHintActive,
         effectiveOverlayVisible: getViewportOverlayVisible(),
+        viewportState,
       });
     }, VIEWPORT_STATE_SEND_DEBOUNCE_MS);
   };
@@ -1801,136 +2136,45 @@ ipcRenderer.on(
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-      html.${ACTIVE_CLASS},
-      html.${ACTIVE_CLASS} body {
-        overflow: hidden !important;
-        height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
-        min-height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
+      html.${ACTIVE_CLASS} [${HEADER_HIDDEN_ATTR}="hide-banner"] {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
       }
 
-      html.${ACTIVE_CLASS} body > div[id^="mount_"],
-      html.${ACTIVE_CLASS} body > div[id^="mount_"] > div,
-      html.${ACTIVE_CLASS} [data-pagelet="root"] {
-        height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
-        min-height: calc(100vh + var(${HEADER_HEIGHT_CSS_VAR}, ${DEFAULT_HEADER_HEIGHT}px)) !important;
+      html.${ACTIVE_CLASS} [${HIDDEN_CHROME_ATTR}="true"] {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
       }
 
-      /* Remove residual top-edge divider/shadow from Facebook's fixed header layer */
-      html.${ACTIVE_CLASS} [role="banner"],
-      html.${ACTIVE_CLASS} [role="banner"]::before,
-      html.${ACTIVE_CLASS} [role="banner"]::after {
+      html.${ACTIVE_CLASS} [${HEADER_HIDDEN_ATTR}="hide-facebook-nav-descendants"],
+      html.${ACTIVE_CLASS} [${HEADER_HIDDEN_ATTR}="hide-facebook-nav-descendants"]::before,
+      html.${ACTIVE_CLASS} [${HEADER_HIDDEN_ATTR}="hide-facebook-nav-descendants"]::after {
         box-shadow: none !important;
         filter: none !important;
         border-bottom: none !important;
       }
 
-      /* Keep the top edge under native titlebar uniform in light mode */
-      @media (prefers-color-scheme: light) {
-        html.${ACTIVE_CLASS},
-        html.${ACTIVE_CLASS} body,
-        html.${ACTIVE_CLASS} body > div[id^="mount_"],
-        html.${ACTIVE_CLASS} body > div[id^="mount_"] > div,
-        html.${ACTIVE_CLASS} [data-pagelet="root"] {
-          background-color: #F2F4F7 !important;
-        }
-
-        html.${ACTIVE_CLASS} body::before {
-          content: "";
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 8px;
-          background: #F2F4F7;
-          pointer-events: none;
-          z-index: 2147483647;
-        }
+      html.${ACTIVE_CLASS}.${COLLAPSE_CLASS} body > div[id^="mount_"],
+      html.${ACTIVE_CLASS}.${COLLAPSE_CLASS} body > div[id^="mount_"] > div,
+      html.${ACTIVE_CLASS}.${COLLAPSE_CLASS} [data-pagelet="root"] {
+        margin-top: calc(-1 * var(--md-fb-header-collapse-height, 0px)) !important;
+        padding-top: 0 !important;
+        min-height: calc(100vh + var(--md-fb-header-collapse-height, 0px)) !important;
       }
 
-      /* On media viewer, hide Facebook global top-right controls (menu, messenger, bell, profile)
-         but keep media controls like Close/Download visible. */
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Menu" i],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Messenger" i],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label*="Notifications" i],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label*="Account controls and settings" i],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Your profile" i],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] [aria-label="Facebook" i],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="/"],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="https://www.facebook.com/"],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href*="/notifications/"],
-      html.${MEDIA_CLEAN_CLASS} [role="banner"] a[href="/messages/"] {
-        display: none !important;
-        visibility: hidden !important;
-        pointer-events: none !important;
+      html.${ACTIVE_CLASS}.${COLLAPSE_CLASS} [${SHELL_STRETCH_ATTR}="true"] {
+        min-height: var(${SHELL_TARGET_HEIGHT_VAR}, auto) !important;
+        height: var(${SHELL_TARGET_HEIGHT_VAR}, auto) !important;
+        max-height: none !important;
       }
 
-      /* Route-based media viewers can render Facebook's banner shell before
-         the real viewer controls mount. Hide that shell until media chrome exists. */
-      html.${MEDIA_LOADING_CLASS} [role="banner"],
-      html.${MEDIA_LOADING_CLASS} [role="banner"]::before,
-      html.${MEDIA_LOADING_CLASS} [role="banner"]::after {
-        opacity: 0 !important;
-        visibility: hidden !important;
-        pointer-events: none !important;
-      }
-
-      html.${MEDIA_LOADING_CLASS} body > div[id^="mount_"],
-      html.${MEDIA_LOADING_CLASS} body > div[id^="mount_"] > div,
-      html.${MEDIA_LOADING_CLASS} [data-pagelet="root"] {
+      html.${ACTIVE_CLASS} body > div[id^="mount_"],
+      html.${ACTIVE_CLASS} body > div[id^="mount_"] > div,
+      html.${ACTIVE_CLASS} [data-pagelet="root"] {
         margin-top: 0 !important;
         padding-top: 0 !important;
-      }
-
-      /* Incoming call overlay: hide only Facebook global chrome controls,
-         not the entire banner container (call controls can be hosted there). */
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Menu" i],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Messenger" i],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label*="Notifications" i],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label*="Account controls and settings" i],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Your profile" i],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] [aria-label="Facebook" i],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href="/"],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href="https://www.facebook.com/"],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href*="/notifications/"],
-      html.${INCOMING_CALL_CLEAN_CLASS} [role="banner"] a[href="/messages/"] {
-        display: none !important;
-        visibility: hidden !important;
-        pointer-events: none !important;
-      }
-
-      /* Collapse residual top spacing Facebook leaves while incoming call UI is active. */
-      html.${INCOMING_CALL_CLEAN_CLASS} body > div[id^="mount_"],
-      html.${INCOMING_CALL_CLEAN_CLASS} body > div[id^="mount_"] > div,
-      html.${INCOMING_CALL_CLEAN_CLASS} [data-pagelet="root"] {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-      }
-
-      /* Never let detected media actions fall into a drag region. */
-      html.${MEDIA_CLEAN_CLASS} .${MEDIA_CLOSE_ACTION_CLASS},
-      html.${MEDIA_CLEAN_CLASS} .${MEDIA_DOWNLOAD_ACTION_CLASS},
-      html.${MEDIA_CLEAN_CLASS} .${MEDIA_SHARE_ACTION_CLASS} {
-        pointer-events: auto !important;
-        -webkit-app-region: ${NON_DRAG_APP_REGION} !important;
-      }
-
-      #${MEDIA_FALLBACK_CONTROLS_ID} .${MEDIA_FALLBACK_BUTTON_CLASS} {
-        position: fixed;
-        width: 36px;
-        height: 36px;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        border: 0;
-        border-radius: 999px;
-        background: rgba(24, 25, 26, 0.88);
-        color: #fff;
-        font: 600 20px/1 -apple-system, BlinkMacSystemFont, sans-serif;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-        pointer-events: auto;
-        cursor: pointer;
-        z-index: 2147483647;
-        -webkit-app-region: ${NON_DRAG_APP_REGION} !important;
       }
     `;
     document.head.appendChild(style);
@@ -1940,13 +2184,16 @@ ipcRenderer.on(
     if (!document.head) return;
     ensureStyleTag();
 
-    const mode = resolveMode();
-    if (mode !== lastViewportMode) {
-      const previousMode = lastViewportMode;
-      lastViewportMode = mode;
-      scheduleViewportStateSend(true);
-      sendMediaOverlayDebug("viewport-mode-change", {
-        force: true,
+      const mode = resolveMode();
+      if (mode !== lastViewportMode) {
+        const previousMode = lastViewportMode;
+        lastViewportMode = mode;
+        if (mode !== "media") {
+          activeMediaHeaderOverlayKind = null;
+        }
+        scheduleViewportStateSend(true);
+        sendMediaOverlayDebug("viewport-mode-change", {
+          force: true,
         previousMode,
         nextMode: mode,
       });
@@ -1988,68 +2235,8 @@ ipcRenderer.on(
       }
     }
 
-    const mediaSignals = mode === "media" ? collectMediaOverlaySignals() : null;
-
-    if (
-      mode === "media" &&
-      !detectedIncomingCallOverlayVisible &&
-      !incomingCallOverlayHintActive
-    ) {
-      if (
-        mediaSignals &&
-        !hasMediaOverlayOpenHint() &&
-        shouldHideMediaViewerBannerWhileLoading({
-          urlPath: mediaSignals.path,
-          hasDismissAction: mediaSignals.hasDismissAction,
-          hasDownloadAction: mediaSignals.hasDownloadAction,
-          hasShareAction: mediaSignals.hasShareAction,
-          hasNavigationAction: mediaSignals.hasNavigationAction,
-        })
-      ) {
-        primeMediaOverlayOpenHint("media-route-loading");
-      }
-
-      const markedActions = markMediaActions();
-      updateFallbackMediaControls(markedActions);
-      document.documentElement.classList.add(MEDIA_CLEAN_CLASS);
-      if (
-        mediaSignals &&
-        shouldHideMediaBannerDuringLoad(mediaSignals, markedActions)
-      ) {
-        document.documentElement.classList.add(MEDIA_LOADING_CLASS);
-      } else {
-        document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
-      }
-    } else {
-      document.documentElement.classList.remove(MEDIA_CLEAN_CLASS);
-      document.documentElement.classList.remove(MEDIA_LOADING_CLASS);
-      clearMarkedMediaActions();
-      clearFallbackMediaControls();
-    }
-
-    const incomingCallOverlayVisible =
-      incomingCallOverlayHintActive || detectedIncomingCallOverlayVisible;
-    if (incomingCallOverlayVisible) {
-      document.documentElement.classList.add(INCOMING_CALL_CLEAN_CLASS);
-    } else {
-      document.documentElement.classList.remove(INCOMING_CALL_CLEAN_CLASS);
-    }
-
-    const shouldCropMessagesViewport =
-      !incomingCallOverlayVisible &&
-      shouldApplyMessagesCrop({
-        urlPath: window.location.pathname,
-        mediaOverlayVisible: getViewportOverlayVisible(),
-      });
-
-    if (shouldCropMessagesViewport) {
-      document.documentElement.classList.add(ACTIVE_CLASS);
-      setHeaderHeight(measureHeaderHeight());
-      scheduleHeaderHeightSend();
-    } else {
-      document.documentElement.classList.remove(ACTIVE_CLASS);
-      document.documentElement.style.removeProperty(HEADER_HEIGHT_CSS_VAR);
-    }
+    applyFacebookHeaderSuppression();
+    bindMediaHeaderExternalAnchors();
   };
 
   const applyComputedMediaOverlayVisibility = (
@@ -2081,183 +2268,6 @@ ipcRenderer.on(
       mediaOverlayTransitionTimer = null;
       applyComputedMediaOverlayVisibility("recheck-visible-change");
     }, MEDIA_OVERLAY_TRANSITION_MS);
-  };
-
-  const isDismissActionTarget = (target: EventTarget | null): boolean => {
-    if (!(target instanceof Element)) return false;
-    return target.closest(dismissActionSelectors.join(", ")) !== null;
-  };
-
-  const mediaOpenActionSelectors = [
-    '[aria-label^="View photo" i]',
-    '[aria-label^="View image" i]',
-    '[aria-label^="View video" i]',
-    '[aria-label^="View attachment" i]',
-    '[aria-label^="Open photo" i]',
-    '[aria-label^="Open image" i]',
-    '[aria-label^="Open video" i]',
-    '[aria-label^="Open attachment" i]',
-    'a[href*="/photo/"]',
-    'a[href*="/photos/"]',
-    'a[href*="/video/"]',
-    'a[href*="/messages/media_viewer"]',
-    'a[href*="/messages/attachment_preview"]',
-    'a[href*="/messenger_media"]',
-  ];
-
-  const findMediaOpenPreviewNode = (root: HTMLElement): HTMLElement | null => {
-    const directCandidates = [
-      root,
-      ...(Array.from(
-        root.querySelectorAll("img, video, [role='img']"),
-      ) as HTMLElement[]),
-    ];
-
-    for (const candidate of directCandidates) {
-      if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
-        continue;
-      }
-
-      const style = window.getComputedStyle(candidate);
-      const rect = candidate.getBoundingClientRect();
-      const hasBackgroundImage =
-        typeof style.backgroundImage === "string" &&
-        style.backgroundImage !== "none";
-      const looksLikeMediaNode =
-        candidate.matches("img, video, [role='img']") || hasBackgroundImage;
-      if (!looksLikeMediaNode) continue;
-      const largestDimension = Math.max(rect.width, rect.height);
-      const area = rect.width * rect.height;
-      if (largestDimension < 72 || area < 4096) continue;
-      if (rect.right <= 180) continue;
-      return candidate;
-    }
-
-    return null;
-  };
-
-  const parseBackgroundImageUrl = (
-    value: string | null | undefined,
-  ): string | null => {
-    const match = String(value || "").match(/url\((['"]?)(.*?)\1\)/i);
-    return match?.[2] || null;
-  };
-
-  const resolveMediaSourceFromNode = (
-    node: HTMLElement | null,
-  ): { url: string | null; kind: "image" | "video" | "unknown" } => {
-    if (!(node instanceof HTMLElement)) {
-      return { url: null, kind: "unknown" };
-    }
-
-    if (node instanceof HTMLImageElement) {
-      return {
-        url: node.currentSrc || node.src || null,
-        kind: "image",
-      };
-    }
-
-    if (node instanceof HTMLVideoElement) {
-      return {
-        url: node.currentSrc || node.src || node.poster || null,
-        kind: "video",
-      };
-    }
-
-    const mediaChild = node.querySelector("img, video") as
-      | HTMLImageElement
-      | HTMLVideoElement
-      | null;
-    if (mediaChild instanceof HTMLImageElement) {
-      return {
-        url: mediaChild.currentSrc || mediaChild.src || null,
-        kind: "image",
-      };
-    }
-    if (mediaChild instanceof HTMLVideoElement) {
-      return {
-        url:
-          mediaChild.currentSrc || mediaChild.src || mediaChild.poster || null,
-        kind: "video",
-      };
-    }
-
-    const style = window.getComputedStyle(node);
-    const backgroundUrl = parseBackgroundImageUrl(style.backgroundImage);
-    if (backgroundUrl) {
-      return {
-        url: backgroundUrl,
-        kind: "image",
-      };
-    }
-
-    return { url: null, kind: "unknown" };
-  };
-
-  const rememberMediaOpenSourceFromTarget = (
-    target: EventTarget | null,
-  ): void => {
-    if (!(target instanceof Element)) return;
-
-    rememberCurrentMessagesThreadBaseUrl();
-
-    const clickable = target.closest(
-      'button, [role="button"], a[href], [tabindex]',
-    );
-    const previewNode =
-      clickable instanceof HTMLElement
-        ? findMediaOpenPreviewNode(clickable)
-        : null;
-    const source = resolveMediaSourceFromNode(previewNode);
-    if (!source.url) return;
-
-    lastMediaOpenSourceUrl = source.url;
-    lastMediaOpenSourceKind = source.kind;
-  };
-
-  const isMediaOpenActionTarget = (target: EventTarget | null): boolean => {
-    if (!(target instanceof Element)) return false;
-
-    const matched = target.closest(mediaOpenActionSelectors.join(", "));
-    if (matched) return true;
-
-    const clickable = target.closest(
-      'button, [role="button"], a[href], [tabindex]',
-    );
-    if (!(clickable instanceof HTMLElement)) return false;
-    if (
-      clickable.closest(
-        '[role="banner"], [role="navigation"], [aria-label="Chats" i]',
-      )
-    ) {
-      return false;
-    }
-
-    return findMediaOpenPreviewNode(clickable) !== null;
-  };
-
-  const scheduleOpenFastPathChecks = (trigger: string): void => {
-    const delays = [0, 20, 52, 96, 160, 260, 420];
-    for (const delay of delays) {
-      window.setTimeout(() => {
-        applyComputedMediaOverlayVisibility("open-fast-path", {
-          trigger,
-          delay,
-        });
-      }, delay);
-    }
-  };
-
-  const scheduleDismissFastPathChecks = (trigger: string): void => {
-    const delays = [0, 20, 52, 96];
-    for (const delay of delays) {
-      window.setTimeout(() => {
-        applyComputedMediaOverlayVisibility("dismiss-fast-path", {
-          trigger,
-          delay,
-        });
-      }, delay);
-    }
   };
 
   const scheduleApply = (): void => {
@@ -2408,28 +2418,11 @@ ipcRenderer.on(
   });
 
   document.addEventListener(
-    "pointerdown",
-    (event) => {
-      if (isMediaOpenActionTarget(event.target)) {
-        rememberMediaOpenSourceFromTarget(event.target);
-        applyMediaOverlayOpenHint("open-pointerdown");
-        scheduleOpenFastPathChecks("open-pointerdown");
-      }
-    },
-    { passive: true, capture: true },
-  );
-
-  document.addEventListener(
     "click",
-    (event) => {
-      if (isMediaOpenActionTarget(event.target)) {
-        rememberMediaOpenSourceFromTarget(event.target);
-        applyMediaOverlayOpenHint("open-click");
-        scheduleOpenFastPathChecks("open-click");
-      }
-      if (!isDismissActionTarget(event.target)) return;
-      clearMediaOverlayOpenHint("dismiss-click");
-      scheduleDismissFastPathChecks("dismiss-click");
+    (_event) => {
+      scheduleMediaOverlayRecheck();
+      scheduleApply();
+      scheduleViewportStateSend(true);
     },
     { passive: true, capture: true },
   );
@@ -2437,18 +2430,10 @@ ipcRenderer.on(
   document.addEventListener(
     "keydown",
     (event) => {
-      if (
-        (event.key === "Enter" || event.key === " ") &&
-        isMediaOpenActionTarget(event.target)
-      ) {
-        rememberMediaOpenSourceFromTarget(event.target);
-        applyMediaOverlayOpenHint("open-key");
-        scheduleOpenFastPathChecks("open-key");
-      }
       if (event.key !== "Enter" && event.key !== " ") return;
-      if (!isDismissActionTarget(event.target)) return;
-      clearMediaOverlayOpenHint("dismiss-key");
-      scheduleDismissFastPathChecks("dismiss-key");
+      scheduleMediaOverlayRecheck();
+      scheduleApply();
+      scheduleViewportStateSend(true);
     },
     { passive: true, capture: true },
   );
@@ -2456,7 +2441,6 @@ ipcRenderer.on(
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       startObservers();
-      rememberCurrentMessagesThreadBaseUrl();
       mediaOverlayVisible = detectMediaOverlayVisible();
       sendMediaOverlayDebug("dom-content-loaded", {
         force: true,
@@ -2467,7 +2451,6 @@ ipcRenderer.on(
     });
   } else {
     startObservers();
-    rememberCurrentMessagesThreadBaseUrl();
     mediaOverlayVisible = detectMediaOverlayVisible();
     sendMediaOverlayDebug("init-ready", {
       force: true,
@@ -2483,8 +2466,6 @@ ipcRenderer.on(
     if (currentUrl !== lastUrl) {
       const previousUrl = lastUrl;
       lastUrl = currentUrl;
-      rememberCurrentMessagesThreadBaseUrl();
-      clearMediaOverlayOpenHint("url-change");
       sendMediaOverlayDebug("url-change", {
         force: true,
         previousUrl,
@@ -2524,6 +2505,29 @@ ipcRenderer.on(
       scheduleViewportRecovery(`power-${state}`);
     }
   });
+
+  ipcRenderer.on(
+    "trigger-viewport-recovery",
+    (_event, payload?: { reason?: string; delay?: number; timestamp?: number }) => {
+      const reason =
+        typeof payload?.reason === "string"
+          ? payload.reason
+          : "main-process-request";
+      sendMediaOverlayDebug("viewport-recovery-trigger", {
+        force: true,
+        reason,
+        delay:
+          typeof payload?.delay === "number" ? payload.delay : undefined,
+        timestamp:
+          typeof payload?.timestamp === "number"
+            ? payload.timestamp
+            : undefined,
+      });
+      scheduleViewportRecovery(reason);
+      scheduleApply();
+      scheduleViewportStateSend(true);
+    },
+  );
 })();
 
 // Listen for notification events from the injected script

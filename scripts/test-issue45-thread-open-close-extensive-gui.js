@@ -370,9 +370,7 @@ async function inspectState(app) {
             mediaRouteType,
             topLabels,
             classes: {
-              mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
-              leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
             counts: {
               close: document.querySelectorAll(closeSelector).length,
@@ -660,13 +658,11 @@ async function run() {
             const settled = run.after1800;
             const closeRecovered =
               isMessagesNonMediaUrl(settled.url) &&
-              settled.classes.mediaClean === false &&
               settled.classes.activeCrop === true;
 
             const switchSettled = run.afterSwitch1500;
             const switchRecovered =
               isMessagesNonMediaUrl(switchSettled.url) &&
-              switchSettled.classes.mediaClean === false &&
               switchSettled.classes.activeCrop === true;
 
             run.pass = closeRecovered && switchRecovered;

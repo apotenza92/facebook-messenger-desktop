@@ -10,13 +10,9 @@ const APP_ROOT = process.env.MESSENGER_APP_ROOT
   : path.resolve(__dirname, "..");
 
 const {
-  resolveMediaViewerStateVisible,
+  resolveMessagesViewportState,
   resolveViewportMode,
   shouldApplyMessagesCrop,
-  shouldTreatDetectedMediaOverlayAsVisible,
-  shouldKeepMediaViewerBannerHiddenDuringLoadingWindow,
-  shouldHideMediaViewerBannerWhileLoading,
-  shouldTreatHintedMediaOverlayAsVisible,
 } = require(path.join(APP_ROOT, "src/preload/messages-viewport-policy"));
 const loadIncomingCallHintPolicy = () =>
   require(
@@ -30,7 +26,11 @@ const loadIncomingCallIpcPolicy = () =>
   require(path.join(APP_ROOT, "src/main/incoming-call-ipc-policy.ts"));
 const loadIncomingCallEvidence = () =>
   require(path.join(APP_ROOT, "src/shared/incoming-call-evidence.ts"));
-const { isMessagesRoute, isMessagesMediaViewerRoute } = require(
+const loadFacebookHeaderSuppressionPolicy = () =>
+  require(
+    path.join(APP_ROOT, "src/preload/facebook-header-suppression-policy.ts"),
+  );
+const { decideWindowOpenAction, isMessagesSurfaceRoute } = require(
   path.join(APP_ROOT, "src/main/url-policy"),
 );
 
@@ -48,36 +48,8 @@ const assertEqual = <T>(actual: T, expected: T, message: string) => {
   }
 };
 
-const isMessagesMediaPopupUrl = (url: string): boolean => {
-  if (!url) return false;
-  if (!url.startsWith("http://") && !url.startsWith("https://")) return false;
-
-  try {
-    const parsed = new URL(url);
-    const path = parsed.pathname.toLowerCase();
-    return (
-      path === "/messages/attachment_preview" ||
-      path.startsWith("/messages/attachment_preview/") ||
-      path === "/messages/media_viewer" ||
-      path.startsWith("/messages/media_viewer/")
-    );
-  } catch {
-    return false;
-  }
-};
-
-const shouldApplyMainCrop = (input: {
-  url: string;
-  mediaViewerVisible: boolean;
-  incomingCallOverlayVisible: boolean;
-}): boolean => {
-  return (
-    isMessagesRoute(input.url) &&
-    !isMessagesMediaViewerRoute(input.url) &&
-    !isMessagesMediaPopupUrl(input.url) &&
-    !input.mediaViewerVisible &&
-    !input.incomingCallOverlayVisible
-  );
+const shouldApplyMainCrop = (input: { url: string }): boolean => {
+  return isMessagesSurfaceRoute(input.url);
 };
 
 const parseCliArgs = (
@@ -229,352 +201,240 @@ const buildMutedConflictEvidence = () => {
 const runViewportPolicyTests = () => {
   const expectMode = (
     path: string,
-    mediaOverlayVisible: boolean,
     expectedMode: ViewportMode,
     expectedCrop: boolean,
+    extra: {
+      mediaOverlayVisible?: boolean;
+    } = {},
   ) => {
-    const mode = resolveViewportMode({ urlPath: path, mediaOverlayVisible });
+    const mode = resolveViewportMode({
+      urlPath: path,
+      mediaOverlayVisible: extra.mediaOverlayVisible,
+    });
     const crop = shouldApplyMessagesCrop({
       urlPath: path,
-      mediaOverlayVisible,
+      mediaOverlayVisible: extra.mediaOverlayVisible,
     });
     assertEqual(
       mode,
       expectedMode,
-      `#45 viewport mode mismatch for ${path} (visible=${mediaOverlayVisible})`,
+      `#45 viewport mode mismatch for ${path}`,
     );
     assertEqual(
       crop,
       expectedCrop,
-      `#45 crop mismatch for ${path} (visible=${mediaOverlayVisible})`,
+      `#45 crop mismatch for ${path}`,
     );
   };
 
   // Core #45 deterministic checks
-  expectMode("/messages/t/123", false, "chat", true);
-  expectMode("/messages/t/123", true, "media", false);
-  expectMode("/messages/e2ee/t/123", false, "chat", true);
-  expectMode("/messages/e2ee/t/123", true, "media", false);
-  expectMode("/messages/media_viewer.123", false, "media", false);
-  expectMode("/messenger_media/?attachment_id=123", false, "media", false);
-  expectMode("/photo/123", false, "media", false);
-  expectMode("/settings", false, "other", false);
+  expectMode("/messages/t/123", "chat", true);
+  expectMode("/messages/e2ee/t/123", "chat", true);
+  expectMode("/messages/media_viewer.123", "media", false);
+  expectMode("/messenger_media/?attachment_id=123", "media", false);
+  expectMode("/photo/123", "media", false);
+  expectMode("/settings", "other", false);
+
+  expectMode("/messages/t/123", "media", false, {
+    mediaOverlayVisible: true,
+  });
+  expectMode("/messages/e2ee/t/123", "media", false, {
+    mediaOverlayVisible: true,
+  });
+
+  const viewportState = resolveMessagesViewportState({
+    url: "https://www.facebook.com/messages/e2ee/t/123",
+    urlPath: "/messages/e2ee/t/123",
+    headerHeight: 56,
+  });
+  assertEqual(
+    viewportState.routeKind,
+    "chat",
+    "#45 viewport state should classify E2EE thread routes as chat layout",
+  );
+  assertEqual(
+    viewportState.shouldCrop,
+    true,
+    "#45 viewport state should keep the permanent crop for E2EE chat routes",
+  );
+
+  const overlayViewportState = resolveMessagesViewportState({
+    url: "https://www.facebook.com/messages/e2ee/t/123",
+    urlPath: "/messages/e2ee/t/123",
+    headerHeight: 56,
+    mediaOverlayVisible: true,
+  });
+  assertEqual(
+    overlayViewportState.routeKind,
+    "media",
+    "#45 same-route E2EE media viewer should switch to media layout",
+  );
+  assertEqual(
+    overlayViewportState.shouldCrop,
+    false,
+    "#45 same-route E2EE media viewer should disable chat crop",
+  );
 
   // Transition sequence reproducing "first chat works, subsequent chats break"
   const sequence: Array<{
     path: string;
-    visible: boolean;
     mode: ViewportMode;
     crop: boolean;
   }> = [
-    { path: "/messages/t/first", visible: false, mode: "chat", crop: true },
-    { path: "/messages/t/first", visible: true, mode: "media", crop: false },
-    { path: "/messages/t/first", visible: false, mode: "chat", crop: true },
-    { path: "/messages/t/second", visible: false, mode: "chat", crop: true },
-    { path: "/messages/t/second", visible: true, mode: "media", crop: false },
-    { path: "/messages/t/second", visible: false, mode: "chat", crop: true },
-    { path: "/messages/t/first", visible: true, mode: "media", crop: false },
-    { path: "/messages/t/first", visible: false, mode: "chat", crop: true },
+    { path: "/messages/t/first", mode: "chat", crop: true },
+    { path: "/messages/media_viewer.123", mode: "media", crop: false },
+    { path: "/messages/t/first", mode: "chat", crop: true },
+    { path: "/messages/t/second", mode: "chat", crop: true },
+    { path: "/messenger_media/?attachment_id=2", mode: "media", crop: false },
+    { path: "/messages/t/second", mode: "chat", crop: true },
+    { path: "/photo/42", mode: "media", crop: false },
+    { path: "/messages/t/first", mode: "chat", crop: true },
   ];
 
   sequence.forEach((step, index) => {
-    expectMode(step.path, step.visible, step.mode, step.crop);
+    expectMode(step.path, step.mode, step.crop);
     assertEqual(
       step.mode === "chat",
       step.crop,
       `#45 sequence stale crop state at step ${index + 1}`,
     );
   });
+};
 
-  // Incoming-call overlays must not contaminate media-viewer IPC state.
+const runWindowOpenRoutingTests = () => {
   assertEqual(
-    resolveMediaViewerStateVisible({
-      mediaOverlayVisible: false,
-      incomingCallOverlayVisible: true,
-    }),
-    false,
-    "#47 incoming-call overlay should not force media-viewer-state visible",
+    decideWindowOpenAction("https://www.facebook.com/messages/t/123"),
+    "reroute-main-view",
+    "#45 chat popups should still reroute into the main Messenger surface",
   );
   assertEqual(
-    resolveMediaViewerStateVisible({
-      mediaOverlayVisible: true,
-      incomingCallOverlayVisible: false,
-    }),
-    true,
-    "#47 real media overlay should continue forcing media-viewer-state visible",
-  );
-
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/photo/123",
-      hasDismissAction: false,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-    }),
-    true,
-    "#49 photo route should hide the Facebook banner while viewer controls are still loading",
-  );
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/messages/media_viewer.123",
-      hasDismissAction: false,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-    }),
-    true,
-    "#49 messages media viewer route should hide the Facebook banner while viewer controls are still loading",
-  );
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/messenger_media/?attachment_id=123",
-      hasDismissAction: false,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-    }),
-    true,
-    "#49 messenger_media route should hide the Facebook banner while viewer controls are still loading",
-  );
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/photo/123",
-      hasDismissAction: true,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-    }),
-    false,
-    "#49 photo route should stop hiding the banner once dismiss controls mount",
-  );
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/video/123",
-      hasDismissAction: false,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-    }),
-    false,
-    "#49 non-photo media routes should keep their existing banner behavior",
-  );
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/messages/t/123",
-      hasDismissAction: false,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-    }),
-    false,
-    "#49 chat routes should never enter the media-loading banner suppression state",
-  );
-  assertEqual(
-    shouldHideMediaViewerBannerWhileLoading({
-      urlPath: "/photo/123",
-      hasDismissAction: false,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: true,
-    }),
-    false,
-    "#49 photo route should stop hiding the banner once viewer navigation mounts",
-  );
-  assertEqual(
-    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
-      loadingWindowActive: true,
-      routeBasedLoading: true,
-      hintedOverlayLoading: false,
-      hasMarkedCloseAction: false,
-      hasMarkedDownloadAction: false,
-      hasMarkedShareAction: false,
-      hasVisibleNavigationAction: false,
-    }),
-    true,
-    "#49 loading window should keep the banner hidden while route-based media chrome is still absent",
-  );
-  assertEqual(
-    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
-      loadingWindowActive: true,
-      routeBasedLoading: true,
-      hintedOverlayLoading: false,
-      hasMarkedCloseAction: true,
-      hasMarkedDownloadAction: false,
-      hasMarkedShareAction: false,
-      hasVisibleNavigationAction: false,
-    }),
-    false,
-    "#49 loading banner must stop hiding once a close action has been captured",
-  );
-  assertEqual(
-    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
-      loadingWindowActive: true,
-      routeBasedLoading: true,
-      hintedOverlayLoading: false,
-      hasMarkedCloseAction: false,
-      hasMarkedDownloadAction: false,
-      hasMarkedShareAction: false,
-      hasVisibleNavigationAction: true,
-    }),
-    false,
-    "#49 loading banner must stop hiding once viewer navigation is visible",
-  );
-  assertEqual(
-    shouldKeepMediaViewerBannerHiddenDuringLoadingWindow({
-      loadingWindowActive: false,
-      routeBasedLoading: true,
-      hintedOverlayLoading: true,
-      hasMarkedCloseAction: false,
-      hasMarkedDownloadAction: false,
-      hasMarkedShareAction: false,
-      hasVisibleNavigationAction: false,
-    }),
-    false,
-    "#49 loading banner suppression must expire when the bounded loading window ends",
-  );
-  assertEqual(
-    shouldTreatHintedMediaOverlayAsVisible({
-      dismissCount: 1,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-      hasLargeMedia: false,
-      hasPendingOpenHint: true,
-    }),
-    true,
-    "#49 pending open hint should treat a single dismiss control as enough same-route overlay chrome",
-  );
-  assertEqual(
-    shouldTreatHintedMediaOverlayAsVisible({
-      dismissCount: 2,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-      hasLargeMedia: false,
-      hasPendingOpenHint: true,
-    }),
-    true,
-    "#49 pending open hint should force media mode once overlay dismiss chrome appears",
-  );
-  assertEqual(
-    shouldTreatHintedMediaOverlayAsVisible({
-      dismissCount: 1,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-      hasLargeMedia: true,
-      hasPendingOpenHint: true,
-    }),
-    true,
-    "#49 pending open hint should force media mode once large media appears",
-  );
-  assertEqual(
-    shouldTreatHintedMediaOverlayAsVisible({
-      dismissCount: 1,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: true,
-      hasLargeMedia: false,
-      hasPendingOpenHint: true,
-    }),
-    true,
-    "#49 pending open hint should force media mode once dismiss plus photo navigation chrome appears",
-  );
-  assertEqual(
-    shouldTreatHintedMediaOverlayAsVisible({
-      dismissCount: 2,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-      hasLargeMedia: false,
-      hasPendingOpenHint: false,
-    }),
-    false,
-    "#49 overlay chrome without a pending hint should still wait for stable media signals",
-  );
-  assertEqual(
-    shouldTreatDetectedMediaOverlayAsVisible({
-      modeFromPath: "chat",
-      threadSubtabRoute: false,
-      hasDismissAction: true,
-      dismissCount: 1,
-      hasDownloadAction: false,
-      hasShareAction: false,
-      hasNavigationAction: false,
-      hasLargeMedia: false,
-      hasPendingOpenHint: true,
-    }),
-    true,
-    "#49 same-route chat overlays should enter media mode once a hinted dismiss control appears",
-  );
-  assertEqual(
-    shouldTreatDetectedMediaOverlayAsVisible({
-      modeFromPath: "chat",
-      threadSubtabRoute: false,
-      hasDismissAction: true,
-      dismissCount: 1,
-      hasDownloadAction: false,
-      hasShareAction: true,
-      hasNavigationAction: false,
-      hasLargeMedia: true,
-      hasPendingOpenHint: false,
-    }),
-    false,
-    "#49 chat thread share actions plus a large inline image must not keep media mode stuck after close",
-  );
-  assertEqual(
-    shouldTreatDetectedMediaOverlayAsVisible({
-      modeFromPath: "chat",
-      threadSubtabRoute: false,
-      hasDismissAction: true,
-      dismissCount: 1,
-      hasDownloadAction: true,
-      hasShareAction: false,
-      hasNavigationAction: false,
-      hasLargeMedia: true,
-      hasPendingOpenHint: false,
-    }),
-    true,
-    "#49 download plus large media should still count as a real overlay on chat routes",
-  );
-  assertEqual(
-    shouldTreatDetectedMediaOverlayAsVisible({
-      modeFromPath: "chat",
-      threadSubtabRoute: false,
-      hasDismissAction: true,
-      dismissCount: 2,
-      hasDownloadAction: false,
-      hasShareAction: true,
-      hasNavigationAction: false,
-      hasLargeMedia: true,
-      hasPendingOpenHint: false,
-    }),
-    true,
-    "#49 share-only overlays should still count once strong dismiss chrome is present",
-  );
-
-  const preloadSource = fs.readFileSync(
-    path.join(APP_ROOT, "src/preload/preload.ts"),
-    "utf8",
-  );
-  const mediaActionPolicySource = fs.readFileSync(
-    path.join(APP_ROOT, "src/preload/media-action-policy.ts"),
-    "utf8",
-  );
-  assert(
-    /Back to Previous Page/.test(mediaActionPolicySource),
-    "#49 media dismiss selectors should include the real Back to Previous Page label",
-  );
-  assert(
-    /rankEdgeCloseCandidates\(\s*dismissActionSelectors,\s*selectedNodes,\s*\)/m.test(
-      preloadSource,
+    decideWindowOpenAction(
+      "https://www.facebook.com/messenger_media/?attachment_id=123",
     ),
-    "#49 media close ranking should reuse the shared dismiss selector source",
+    "reroute-main-view",
+    "#45 messenger_media routes should stay in the main Messenger surface",
   );
+  assertEqual(
+    decideWindowOpenAction("https://www.facebook.com/messages/media_viewer.123"),
+    "reroute-main-view",
+    "#45 media_viewer routes should stay in the main Messenger surface",
+  );
+};
+
+const runHeaderSuppressionPolicyTests = () => {
+  const headerSuppressionPolicy = loadFacebookHeaderSuppressionPolicy();
   assert(
-    /getDismissActionPriority/.test(preloadSource),
-    "#49 media close ranking should prioritize the real dismiss label before fallback history actions",
+    typeof headerSuppressionPolicy.resolveEffectiveFacebookHeaderSuppressionMode ===
+      "function",
+    "header suppression policy missing effective-mode resolver",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveFacebookHeaderSuppressionMode({
+      isMessagesSurface: true,
+      hasTopAnchoredBanner: true,
+      hasFacebookNavSignal: true,
+      hasPreservedMessengerControls: false,
+    }),
+    "hide-banner",
+    "#45 pure Facebook global header should be hidden as a banner",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveFacebookHeaderSuppressionMode({
+      isMessagesSurface: true,
+      hasTopAnchoredBanner: true,
+      hasFacebookNavSignal: true,
+      hasPreservedMessengerControls: true,
+    }),
+    "hide-facebook-nav-descendants",
+    "#47 mixed banner should hide only Facebook chrome descendants",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveFacebookHeaderSuppressionMode({
+      isMessagesSurface: true,
+      hasTopAnchoredBanner: true,
+      hasFacebookNavSignal: false,
+      hasPreservedMessengerControls: true,
+    }),
+    "off",
+    "#45 unknown top banner should fail open",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveEffectiveFacebookHeaderSuppressionMode({
+      requestedMode: "hide-banner",
+      incomingCallOverlayHintActive: true,
+      hasFacebookNavSignal: true,
+      previousMode: null,
+    }),
+    "hide-facebook-nav-descendants",
+    "#47 incoming-call hint should downgrade whole-banner suppression to descendant-only hiding",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveEffectiveFacebookHeaderSuppressionMode({
+      requestedMode: "hide-banner",
+      incomingCallOverlayHintActive: true,
+      hasFacebookNavSignal: false,
+      previousMode: null,
+    }),
+    "off",
+    "#47 incoming-call hint should fail open instead of hiding the whole banner when chrome descendants are missing",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveEffectiveFacebookHeaderSuppressionMode({
+      requestedMode: "hide-banner",
+      incomingCallOverlayHintActive: true,
+      hasFacebookNavSignal: false,
+      previousMode: "hide-facebook-nav-descendants",
+    }),
+    "hide-facebook-nav-descendants",
+    "#47 incoming-call hint should retain the prior descendant-only mode through short DOM misses",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.shouldKeepFacebookHeaderSuppressionActive({
+      previousActive: true,
+      currentActive: false,
+      missingForMs: 240,
+      graceMs: 600,
+    }),
+    true,
+    "#45 header suppression should survive short Messenger reflow gaps",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.shouldKeepFacebookHeaderSuppressionActive({
+      previousActive: true,
+      currentActive: false,
+      missingForMs: 900,
+      graceMs: 600,
+    }),
+    false,
+    "#45 header suppression should clear once the reflow grace window expires",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveMessagesShellTargetHeight({
+      viewportHeight: 900,
+      shellTop: 48,
+      collapseHeight: 56,
+    }),
+    900,
+    "#45 shell stretch should account for the collapsed header offset to avoid a bottom gap",
+  );
+
+  assertEqual(
+    headerSuppressionPolicy.resolveMessagesShellTargetHeight({
+      viewportHeight: 900,
+      shellTop: 96,
+      collapseHeight: 40,
+    }),
+    844,
+    "#45 shell stretch should preserve any remaining top inset after partial collapse",
   );
 };
 
@@ -655,8 +515,6 @@ const runIncomingCallOverlayLifecycleTests = () => {
   assertEqual(
     shouldApplyMainCrop({
       url: chatUrl,
-      mediaViewerVisible: false,
-      incomingCallOverlayVisible: false,
     }),
     true,
     "#47 main crop should be enabled before incoming-call hint",
@@ -678,12 +536,9 @@ const runIncomingCallOverlayLifecycleTests = () => {
   assertEqual(
     shouldApplyMainCrop({
       url: chatUrl,
-      mediaViewerVisible: false,
-      incomingCallOverlayVisible:
-        state.visibleByWebContentsId.get(webContentsId) === true,
     }),
-    false,
-    "#47 main crop should be disabled while incoming-call hint is visible",
+    true,
+    "#47 main crop should stay enabled while incoming-call hint is visible",
   );
 
   const heartbeat =
@@ -726,9 +581,6 @@ const runIncomingCallOverlayLifecycleTests = () => {
   assertEqual(
     shouldApplyMainCrop({
       url: chatUrl,
-      mediaViewerVisible: false,
-      incomingCallOverlayVisible:
-        state.visibleByWebContentsId.get(webContentsId) === true,
     }),
     true,
     "#47 main crop should be restored after incoming-call hint clears",
@@ -765,9 +617,6 @@ const runIncomingCallOverlayLifecycleTests = () => {
   assertEqual(
     shouldApplyMainCrop({
       url: chatUrl,
-      mediaViewerVisible: false,
-      incomingCallOverlayVisible:
-        state.visibleByWebContentsId.get(webContentsId) === true,
     }),
     true,
     "#47 crop should be restored after stale incoming-call state recovery",
@@ -1301,6 +1150,79 @@ const runNotificationPolicyTests = () => {
     "#46 muted-conflict should not resolve a matchedHref",
   );
 
+  const placeholderTitleMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Facebook User",
+        body: "Alex sent a message",
+      },
+      [
+        {
+          href: "/t/alex",
+          title: "Alex",
+          body: "sent a message",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/project-squad",
+          title: "Project Squad",
+          body: "Alex sent a message",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    placeholderTitleMutedConflict.reason,
+    "muted-conflict",
+    "#46 placeholder-title notifications should fail closed when a muted candidate overlaps",
+  );
+  assertEqual(
+    placeholderTitleMutedConflict.ambiguityReason,
+    "placeholder-title",
+    "#46 placeholder-title notifications should record the placeholder ambiguity reason",
+  );
+  assertEqual(
+    placeholderTitleMutedConflict.placeholderTitle,
+    "facebook user",
+    "#46 placeholder-title notifications should preserve the normalized placeholder title for diagnostics",
+  );
+
+  const newMessageMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "New Message",
+        body: "Shipped the fix",
+      },
+      [
+        {
+          href: "/t/direct-thread",
+          title: "Alex",
+          body: "Shipped the fix",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/release-group",
+          title: "Release Squad",
+          body: "Shipped the fix",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    newMessageMutedConflict.reason,
+    "muted-conflict",
+    "#46 generic New Message notifications should fail closed when muted previews overlap",
+  );
+  assertEqual(
+    newMessageMutedConflict.ambiguityReason,
+    "placeholder-title",
+    "#46 generic New Message notifications should be classified as placeholder-title ambiguity",
+  );
+
   const mutedGroupTitleMatch =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
@@ -1472,6 +1394,17 @@ const runNotificationPolicyTests = () => {
     "#46 should suppress non-message Facebook activity notifications",
   );
 
+  const facebookUserSocialSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "Facebook User",
+      body: "Sam commented on your post",
+    });
+  assertEqual(
+    facebookUserSocialSuppressed,
+    true,
+    "#46 should suppress generic Facebook User activity notifications",
+  );
+
   const directMessageNotSuppressed =
     notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
       title: "Taylor",
@@ -1503,6 +1436,17 @@ const runNotificationPolicyTests = () => {
     selfAuthoredAttachmentMessage,
     true,
     "#41 should suppress self-authored attachment previews",
+  );
+
+  const selfAuthoredDraftPreview =
+    notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
+      title: "Account A",
+      body: "Draft: still typing this reply",
+    });
+  assertEqual(
+    selfAuthoredDraftPreview,
+    true,
+    "#41 should suppress unsent draft previews",
   );
 
   const incomingMessagePreview =
@@ -1542,6 +1486,23 @@ const runNotificationPolicyTests = () => {
     selfAuthoredPayloadMismatchSuppressed,
     true,
     "#41 should suppress self-authored notifications even when sidebar text drops the You prefix",
+  );
+
+  const draftPayloadMismatchSuppressed =
+    notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification([
+      {
+        title: "Account A",
+        body: "New message",
+      },
+      {
+        title: "Account A",
+        body: "Draft: still typing this reply",
+      },
+    ]);
+  assertEqual(
+    draftPayloadMismatchSuppressed,
+    true,
+    "#41 should suppress notifications when the matched sidebar preview is still a local draft",
   );
 
   const incomingPayloadMismatchNotSuppressed =
@@ -1725,6 +1686,8 @@ const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
   }
 
   runViewportPolicyTests();
+  runWindowOpenRoutingTests();
+  runHeaderSuppressionPolicyTests();
   runIncomingCallOverlayLifecycleTests();
   runIncomingCallHintPolicyTests();
   runIncomingCallIpcPolicyTests();

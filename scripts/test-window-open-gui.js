@@ -232,6 +232,10 @@ async function runCase(electronApp, testCase) {
     await forcePrimaryTargetUrl(electronApp, testCase.forcePrimaryTargetUrl);
   }
 
+  if (typeof testCase.waitBeforeMs === "number") {
+    await wait(testCase.waitBeforeMs);
+  }
+
   if (testCase.action === "reload") {
     await reloadPrimaryTarget(electronApp);
   } else if (Array.isArray(testCase.bootstrapNavigationSequence)) {
@@ -406,8 +410,7 @@ async function run() {
         sameFrameClick: true,
         expected: {
           newWindows: 0,
-          externalUrl:
-            "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+          externalUrl: "https://www.facebook.com/marketplace/item/1234567890",
         },
       },
       {
@@ -423,10 +426,10 @@ async function run() {
         name: "Wrapped profile link click opens external browser instead of navigating in-app",
         url: "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D1234567890",
         sameFrameClick: true,
+        waitBeforeMs: 1700,
         expected: {
           newWindows: 0,
-          externalUrl:
-            "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D1234567890",
+          externalUrl: "https://www.facebook.com/profile.php?id=1234567890",
         },
       },
       {

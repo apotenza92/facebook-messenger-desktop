@@ -205,9 +205,7 @@ async function inspectState(app) {
             url: window.location.href,
             normalizedThreadKey: normalizeThreadKey(window.location.href),
             classes: {
-              mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
-              leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
             closeCount: document.querySelectorAll('[aria-label="Close" i],button[aria-label="Close" i],[aria-label*="Go back" i],button[aria-label*="Go back" i],[aria-label="Back" i],button[aria-label="Back" i],[aria-label="Back to Previous Page" i],button[aria-label="Back to Previous Page" i]').length,
             downloadCount: document.querySelectorAll('[aria-label*="Download" i],button[aria-label*="Download" i],[aria-label*="Save" i],button[aria-label*="Save" i]').length,
@@ -288,7 +286,7 @@ async function run() {
       await wait(1400);
 
       const openState = await inspectState(app);
-      if (!openState.classes.mediaClean) continue;
+      if (!openState.classes.activeCrop || openState.closeCount === 0) continue;
 
       await closeMedia(app);
       await wait(700);
@@ -302,10 +300,6 @@ async function run() {
       console.log("  afterShort:", afterShort);
       console.log("  afterSettled:", afterSettled);
 
-      assert(
-        afterSettled.classes.mediaClean === false,
-        "mediaClean stayed on after close",
-      );
       assert(
         afterSettled.classes.activeCrop === true,
         "activeCrop did not return after close",

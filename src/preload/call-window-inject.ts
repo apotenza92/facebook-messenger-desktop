@@ -14,11 +14,111 @@
   // Track streams we capture via RTCPeerConnection interception
   const activeStreams = new Set<MediaStream>();
   const activePeerConnections = new Set<RTCPeerConnection>();
+  let hasSeenActiveCallUi = false;
+  let callWindowStateTimer: number | null = null;
+  let lastCallWindowStateSignature = "";
 
   // Store original getUserMedia for nuclear option
   const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(
     navigator.mediaDevices,
   );
+
+  function emitCallWindowState(reason: string): void {
+    const controls = Array.from(
+      document.querySelectorAll('button, [role="button"], a[role="button"]'),
+    );
+
+    const isVisible = (node: Element | null): node is HTMLElement => {
+      if (!(node instanceof HTMLElement)) return false;
+      if (node.closest('[aria-hidden="true"]') || node.closest("[hidden]")) {
+        return false;
+      }
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 4 && rect.height >= 4;
+    };
+
+    const activeControlLabels = controls
+      .filter((node) => isVisible(node))
+      .map((node) =>
+        String(
+          node.getAttribute("aria-label") ||
+            node.getAttribute("title") ||
+            node.textContent ||
+            "",
+        )
+          .replace(/\s+/g, " ")
+          .trim(),
+      )
+      .filter(Boolean)
+      .filter((label) =>
+        /\b(end call|hang up|leave call|disconnect|mute|unmute|turn off camera|turn on camera|speaker)\b/i.test(
+          label,
+        ),
+      )
+      .slice(0, 20);
+
+    const statusText =
+      String(document.body?.innerText || "")
+        .replace(/\s+/g, " ")
+        .match(
+          /(ongoing call|calling|ringing|call ended|call declined|no answer|busy|answered elsewhere)/i,
+        )?.[0] || null;
+
+    const callWindowOpen =
+      activeControlLabels.length > 0 ||
+      Boolean(statusText && !/call ended/i.test(statusText));
+    if (callWindowOpen) {
+      hasSeenActiveCallUi = true;
+    }
+
+    const isMuted = activeControlLabels.some((label) =>
+      label.toLowerCase().includes("unmute"),
+    )
+      ? true
+      : activeControlLabels.some((label) =>
+            label.toLowerCase().includes("mute"),
+          )
+        ? false
+        : null;
+
+    const payload = {
+      reason,
+      callWindowOpen,
+      isMuted,
+      popupVsMainWindow: "child-window",
+      activeControlLabels,
+      statusText,
+      url: window.location.href,
+      title: document.title,
+      timestamp: Date.now(),
+    };
+
+    const signature = JSON.stringify(payload);
+    if (signature === lastCallWindowStateSignature) {
+      return;
+    }
+    lastCallWindowStateSignature = signature;
+
+    try {
+      window.postMessage({ type: "md-call-window-state", payload }, "*");
+    } catch {
+      // Ignore postMessage failures
+    }
+  }
+
+  function scheduleCallWindowState(reason: string): void {
+    if (callWindowStateTimer !== null) {
+      window.clearTimeout(callWindowStateTimer);
+    }
+    callWindowStateTimer = window.setTimeout(() => {
+      callWindowStateTimer = null;
+      emitCallWindowState(reason);
+    }, 0);
+  }
 
   /**
    * Intercept RTCPeerConnection to track media streams
@@ -41,22 +141,22 @@
     };
 
     // Track remote streams
-    pc.addEventListener('track', (event) => {
+    pc.addEventListener("track", (event) => {
       event.streams.forEach((s) => activeStreams.add(s));
     });
 
-    pc.addEventListener('connectionstatechange', () => {
+    pc.addEventListener("connectionstatechange", () => {
       if (
-        pc.connectionState === 'closed' ||
-        pc.connectionState === 'failed' ||
-        pc.connectionState === 'disconnected'
+        pc.connectionState === "closed" ||
+        pc.connectionState === "failed" ||
+        pc.connectionState === "disconnected"
       ) {
         activePeerConnections.delete(pc);
       }
     });
 
-    pc.addEventListener('signalingstatechange', () => {
-      if (pc.signalingState === 'closed') {
+    pc.addEventListener("signalingstatechange", () => {
+      if (pc.signalingState === "closed") {
         activePeerConnections.delete(pc);
       }
     });
@@ -71,7 +171,7 @@
    */
   function scanForMediaStreams(): MediaStream[] {
     const streams: MediaStream[] = [];
-    document.querySelectorAll('audio, video').forEach((el) => {
+    document.querySelectorAll("audio, video").forEach((el) => {
       const mediaEl = el as HTMLMediaElement;
       if (mediaEl.srcObject instanceof MediaStream) {
         streams.push(mediaEl.srcObject);
@@ -89,7 +189,7 @@
     // 1. Stop tracked streams from RTCPeerConnection
     activeStreams.forEach((stream) => {
       stream.getTracks().forEach((track) => {
-        if (track.readyState !== 'ended') {
+        if (track.readyState !== "ended") {
           track.stop();
           tracksStopped++;
         }
@@ -100,7 +200,7 @@
     // 2. Scan DOM for any streams we missed
     scanForMediaStreams().forEach((stream) => {
       stream.getTracks().forEach((track) => {
-        if (track.readyState !== 'ended') {
+        if (track.readyState !== "ended") {
           track.stop();
           tracksStopped++;
         }
@@ -111,7 +211,7 @@
     activePeerConnections.forEach((pc) => {
       pc.getSenders().forEach((sender) => {
         const track = sender.track;
-        if (track && track.readyState !== 'ended') {
+        if (track && track.readyState !== "ended") {
           track.stop();
           tracksStopped++;
         }
@@ -119,7 +219,7 @@
 
       pc.getReceivers().forEach((receiver) => {
         const track = receiver.track;
-        if (track && track.readyState !== 'ended') {
+        if (track && track.readyState !== "ended") {
           track.stop();
           tracksStopped++;
         }
@@ -132,9 +232,7 @@
       originalGetUserMedia({ audio: true })
         .then((stream) => {
           stream.getTracks().forEach((track) => {
-            console.log(
-              `[Call Window] Releasing microphone: ${track.label}`,
-            );
+            console.log(`[Call Window] Releasing microphone: ${track.label}`);
             track.stop();
           });
         })
@@ -168,16 +266,20 @@
   let hasDetectedCallEnd = false;
 
   function hasCallEndedSignal(text: string): boolean {
-    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    const normalized = String(text || "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!normalized) return false;
     return callEndedPatterns.some((p) => p.test(normalized));
   }
 
   function handleCallEnded(): void {
     if (hasDetectedCallEnd) return;
+    if (!hasSeenActiveCallUi) return;
     hasDetectedCallEnd = true;
 
-    stopAllMediaTracks('call ended');
+    emitCallWindowState("call-ended");
+    stopAllMediaTracks("call ended");
 
     // Reset after delay for multiple calls in same window
     setTimeout(() => {
@@ -188,16 +290,16 @@
   // Observe DOM for call-ended indicators
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      if (mutation.type === 'childList') {
+      if (mutation.type === "childList") {
         for (const node of Array.from(mutation.addedNodes)) {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            const text = (node as Element).textContent || '';
+            const text = (node as Element).textContent || "";
             if (hasCallEndedSignal(text)) {
               handleCallEnded();
               return;
             }
           } else if (node.nodeType === Node.TEXT_NODE) {
-            if (hasCallEndedSignal(node.nodeValue || '')) {
+            if (hasCallEndedSignal(node.nodeValue || "")) {
               handleCallEnded();
               return;
             }
@@ -205,14 +307,14 @@
         }
       }
 
-      if (mutation.type === 'characterData') {
+      if (mutation.type === "characterData") {
         const node = mutation.target;
         if (node.nodeType === Node.TEXT_NODE) {
-          if (hasCallEndedSignal(node.nodeValue || '')) {
+          if (hasCallEndedSignal(node.nodeValue || "")) {
             handleCallEnded();
             return;
           }
-          const parentText = node.parentElement?.textContent || '';
+          const parentText = node.parentElement?.textContent || "";
           if (hasCallEndedSignal(parentText)) {
             handleCallEnded();
             return;
@@ -220,6 +322,8 @@
         }
       }
     }
+
+    scheduleCallWindowState("mutation");
   });
 
   if (document.body) {
@@ -229,21 +333,44 @@
       characterData: true,
     });
   } else {
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener("DOMContentLoaded", () => {
       observer.observe(document.body, {
         childList: true,
         subtree: true,
         characterData: true,
       });
+      scheduleCallWindowState("domcontentloaded");
     });
   }
 
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const label = String(
+        target
+          .closest('button, [role="button"], a[role="button"]')
+          ?.getAttribute("aria-label") ||
+          target.textContent ||
+          "",
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!/\b(?:mute|unmute)\b/i.test(label)) return;
+      scheduleCallWindowState("mute-toggle-click");
+    },
+    { capture: true },
+  );
+
+  scheduleCallWindowState("injected");
+
   // Cleanup on window close
-  window.addEventListener('beforeunload', () => {
-    stopAllMediaTracks('window closing');
+  window.addEventListener("beforeunload", () => {
+    stopAllMediaTracks("window closing");
   });
 
-  window.addEventListener('pagehide', () => {
-    stopAllMediaTracks('page hide');
+  window.addEventListener("pagehide", () => {
+    stopAllMediaTracks("page hide");
   });
 })();

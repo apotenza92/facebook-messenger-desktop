@@ -175,9 +175,36 @@ async function withPrimaryWebContents(app, fn, payload) {
   );
 }
 
+async function waitForAnyWindow(app, timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const windows = app.windows();
+    if (windows.length > 0) {
+      return windows[0];
+    }
+
+    const browserWindowCount = await app
+      .evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+      .catch(() => 0);
+    if (browserWindowCount > 0) {
+      const refreshedWindows = app.windows();
+      if (refreshedWindows.length > 0) {
+        return refreshedWindows[0];
+      }
+    }
+
+    await wait(250);
+  }
+
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for any Electron window`,
+  );
+}
+
 async function captureWindow(app, outPath) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  const page = await app.firstWindow();
+  const page = await waitForAnyWindow(app);
   await page.screenshot({ path: outPath });
 }
 
@@ -345,9 +372,7 @@ async function inspectSurface(app) {
             path,
             routeType,
             classes: {
-              mediaClean: document.documentElement.classList.contains('md-fb-media-viewer-clean'),
               activeCrop: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
-              leftDismiss: document.documentElement.classList.contains('md-fb-media-dismiss-left'),
             },
             controls,
           };
@@ -362,10 +387,9 @@ async function inspectSurface(app) {
 function evaluateSurface(state) {
   const sameRouteViewer =
     state.routeType === "e2ee-thread" &&
-    (state.classes.mediaClean ||
-      state.controls.download.length > 0 ||
+    (state.controls.download.length > 0 ||
       state.controls.share.length > 0 ||
-      (state.controls.close.length > 0 && state.classes.activeCrop === false));
+      state.controls.close.length > 0);
 
   const counts = {
     close: state.controls.close.length,
@@ -375,7 +399,6 @@ function evaluateSurface(state) {
 
   const fixed =
     sameRouteViewer &&
-    state.classes.mediaClean === true &&
     state.classes.activeCrop === false &&
     counts.close === 1 &&
     counts.download === 1 &&
@@ -383,7 +406,6 @@ function evaluateSurface(state) {
 
   let reason = "fixed";
   if (!sameRouteViewer) reason = "viewer-not-open";
-  else if (!state.classes.mediaClean) reason = "media-clean-missing";
   else if (state.classes.activeCrop) reason = "crop-still-active";
   else if (counts.close === 0) reason = "close-missing";
   else if (counts.download === 0) reason = "download-missing";
@@ -771,6 +793,7 @@ async function run() {
   });
 
   try {
+    await waitForAnyWindow(app);
     await wait(4500);
     const loaded = await loadMessagesHome(app);
     console.log("Loaded:", loaded);

@@ -14,6 +14,7 @@ import {
   nativeTheme,
   powerMonitor,
   desktopCapturer,
+  type WebContents,
 } from "electron";
 import { spawn, exec } from "child_process";
 import { promisify } from "util";
@@ -36,6 +37,7 @@ import {
   isFacebookOrMessengerUrl,
   isMessagesMediaViewerRoute,
   isMessagesRoute,
+  isMessagesSurfaceRoute,
   shouldReloadToMessagesHome,
   shouldOpenInApp,
   decideWindowOpenAction,
@@ -44,6 +46,7 @@ import {
   ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
   shouldAllowAboutBlankChildBootstrapNavigation,
 } from "./about-blank-bootstrap-policy";
+import { type MessagesViewportStatePayload } from "../preload/messages-viewport-policy";
 import {
   applyIncomingCallOverlayHintSignal,
   clearIncomingCallOverlayHintState,
@@ -177,6 +180,13 @@ console.log(
   `[App] Starting at ${appStartTime} on ${process.platform} ${process.arch}`,
 );
 
+// Work around a renderer crash seen when Messenger opens the voice recorder UI.
+// Recent crash reports point into Chromium's Fontations font backend, so keep
+// Chromium on the older font path until we can confirm an Electron upgrade
+// resolves it cleanly.
+app.commandLine.appendSwitch("disable-features", "FontationsFontBackend");
+console.log("[Chromium] Disabled feature: FontationsFontBackend");
+
 // In dev mode, kill any existing production Messenger instances to avoid conflicts
 if (isDev) {
   try {
@@ -246,16 +256,21 @@ let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking
 const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar show
 const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
-const MIN_MESSAGES_TOP_CROP = DEFAULT_MESSAGES_TOP_CROP;
+const MIN_MESSAGES_TOP_CROP = 48;
 const MAX_MESSAGES_TOP_CROP = 120;
-const MESSAGES_TOP_SEAM_TRIM = 0;
 const INCOMING_CALL_OVERLAY_HINT_TTL_MS = 30_000;
 const INCOMING_CALL_OVERLAY_WATCHDOG_INTERVAL_MS = 5_000;
 
-let dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 let applyContentViewBoundsHandler: (() => void) | null = null;
 let lastMessagesUnreadCount = 0;
-const mediaViewerVisibleByWebContentsId = new Map<number, boolean>();
+const messagesViewportStateByWebContentsId = new Map<
+  number,
+  MessagesViewportStatePayload
+>();
+const latestRendererDebugStateByWebContentsId = new Map<
+  number,
+  Record<string, unknown>
+>();
 const incomingCallOverlayVisibleByWebContentsId = new Map<number, boolean>();
 const incomingCallOverlayLastHintAtByWebContentsId = new Map<number, number>();
 const incomingCallOverlayHintState: IncomingCallOverlayHintState = {
@@ -263,6 +278,16 @@ const incomingCallOverlayHintState: IncomingCallOverlayHintState = {
   lastHintAtByWebContentsId: incomingCallOverlayLastHintAtByWebContentsId,
 };
 let incomingCallOverlayWatchdogTimer: NodeJS.Timeout | null = null;
+
+function normalizeMessagesTopCrop(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+
+  return Math.max(
+    MIN_MESSAGES_TOP_CROP,
+    Math.min(MAX_MESSAGES_TOP_CROP, Math.round(parsed)),
+  );
+}
 
 function formatIncomingCallCaller(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
@@ -425,6 +450,39 @@ function pushMediaOverlayDebugEvent(event: MediaOverlayDebugEvent): void {
   }
 }
 
+function requestMessagesViewportRecovery(reason: string): void {
+  const targetContents = contentView?.webContents ?? null;
+  if (!targetContents || targetContents.isDestroyed()) {
+    return;
+  }
+
+  const timestamp = Date.now();
+  pushMediaOverlayDebugEvent({
+    timestamp,
+    source: "main",
+    event: "request-viewport-recovery",
+    webContentsId: targetContents.id,
+    url: targetContents.getURL(),
+    reason,
+  });
+
+  const delays = [0, 150, 700];
+  for (const delay of delays) {
+    setTimeout(() => {
+      try {
+        if (targetContents.isDestroyed()) return;
+        targetContents.send("trigger-viewport-recovery", {
+          reason,
+          delay,
+          timestamp,
+        });
+      } catch {
+        // Ignore transient IPC/send failures during teardown.
+      }
+    }, delay);
+  }
+}
+
 function readTailLinesFromFile(filePath: string, maxLines: number): string[] {
   if (!fs.existsSync(filePath)) return [];
 
@@ -539,9 +597,6 @@ function buildIssue45DebugReport(): Record<string, unknown> {
       mediaOverlayDebugLog: debugLogPath,
     },
     currentState: {
-      mediaViewerVisibleByWebContentsId: Array.from(
-        mediaViewerVisibleByWebContentsId.entries(),
-      ),
       incomingCallOverlayVisibleByWebContentsId: Array.from(
         incomingCallOverlayVisibleByWebContentsId.entries(),
       ),
@@ -716,15 +771,6 @@ const defaultWindowState: WindowState = {
   height: 750,
 };
 
-function normalizeMessagesTopCrop(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.max(
-    MIN_MESSAGES_TOP_CROP,
-    Math.min(MAX_MESSAGES_TOP_CROP, Math.round(parsed)),
-  );
-}
-
 // Detect if this is a beta app installation
 // Check multiple signals: version string, app path, executable name
 // This ensures beta detection works even when a stable version is installed via beta channel
@@ -783,6 +829,251 @@ const APP_DISPLAY_NAME = isDev
     : "Messenger";
 app.setName(APP_DISPLAY_NAME);
 
+type RendererFailureDebugEvent = {
+  timestamp: number;
+  event: string;
+  label: string;
+  webContentsId?: number;
+  url?: string;
+  reason?: string;
+  exitCode?: number;
+  processType?: string;
+  serviceName?: string;
+  name?: string;
+  [key: string]: unknown;
+};
+
+const activeRendererFailureDialogs = new Set<number>();
+
+function getRendererFailureDebugLogPath(): string {
+  return path.join(app.getPath("logs"), "renderer-failure-debug.ndjson");
+}
+
+function pushRendererFailureDebugEvent(event: RendererFailureDebugEvent): void {
+  try {
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(
+      getRendererFailureDebugLogPath(),
+      `${JSON.stringify(event)}\n`,
+    );
+  } catch {
+    // Ignore debug log write failures.
+  }
+}
+
+function getRendererFailureContext(
+  webContentsId: number,
+): Record<string, unknown> {
+  const viewportState = messagesViewportStateByWebContentsId.get(webContentsId);
+  const latestDebugState =
+    latestRendererDebugStateByWebContentsId.get(webContentsId);
+  const callSurfaceState =
+    latestDebugState?.callSurfaceState &&
+    typeof latestDebugState.callSurfaceState === "object"
+      ? (latestDebugState.callSurfaceState as Record<string, unknown>)
+      : null;
+
+  return {
+    viewportState,
+    latestDebugState,
+    callWindowOpen:
+      typeof latestDebugState?.callWindowOpen === "boolean"
+        ? latestDebugState.callWindowOpen
+        : typeof callSurfaceState?.callWindowOpen === "boolean"
+          ? callSurfaceState.callWindowOpen
+          : undefined,
+    isMuted:
+      typeof latestDebugState?.isMuted === "boolean"
+        ? latestDebugState.isMuted
+        : typeof callSurfaceState?.isMuted === "boolean"
+          ? callSurfaceState.isMuted
+          : undefined,
+    popupVsMainWindow:
+      typeof latestDebugState?.popupVsMainWindow === "string"
+        ? latestDebugState.popupVsMainWindow
+        : undefined,
+    threadType:
+      typeof latestDebugState?.threadType === "string"
+        ? latestDebugState.threadType
+        : undefined,
+    composerActionsVisible:
+      typeof latestDebugState?.composerActionsVisible === "boolean"
+        ? latestDebugState.composerActionsVisible
+        : undefined,
+    emojiPickerVisible:
+      typeof latestDebugState?.emojiPickerVisible === "boolean"
+        ? latestDebugState.emojiPickerVisible
+        : undefined,
+    headerSuppressionState:
+      latestDebugState?.headerSuppressionState &&
+      typeof latestDebugState.headerSuppressionState === "object"
+        ? latestDebugState.headerSuppressionState
+        : undefined,
+  };
+}
+
+function getMessengerDesktopUserAgent(): string {
+  const chromeVersion = process.versions.chrome;
+
+  // Keep Messenger on a Chromium desktop code path. Pretending to be Safari
+  // or Firefox can steer newer media features, like voice recording, into a
+  // browser-specific implementation that does not match Electron's runtime.
+  if (process.platform === "win32") {
+    return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36 Edg/${chromeVersion}`;
+  }
+
+  if (process.platform === "darwin") {
+    return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36 Edg/${chromeVersion}`;
+  }
+
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36 Edg/${chromeVersion}`;
+}
+
+function getRecoveryWindow(
+  webContents: WebContents,
+  ownerWindow?: BrowserWindow | null,
+): BrowserWindow | null {
+  if (ownerWindow && !ownerWindow.isDestroyed()) {
+    return ownerWindow;
+  }
+
+  const directOwner = BrowserWindow.fromWebContents(webContents);
+  if (directOwner && !directOwner.isDestroyed()) {
+    return directOwner;
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow;
+  }
+
+  return null;
+}
+
+function reloadWebContentsSafely(webContents: WebContents): void {
+  if (webContents.isDestroyed()) return;
+
+  try {
+    const currentUrl = webContents.getURL();
+    if (currentUrl && currentUrl !== "about:blank") {
+      webContents.reload();
+      return;
+    }
+
+    void webContents.loadURL(MESSAGES_HOME_URL);
+  } catch (error) {
+    console.error("[Renderer Failure] Reload failed:", error);
+  }
+}
+
+function promptForRendererRecovery(
+  webContents: WebContents,
+  message: string,
+  detail: string,
+  ownerWindow?: BrowserWindow | null,
+): void {
+  if (webContents.isDestroyed()) return;
+  const webContentsId = webContents.id;
+  if (activeRendererFailureDialogs.has(webContentsId)) {
+    return;
+  }
+
+  const targetWindow = getRecoveryWindow(webContents, ownerWindow);
+  if (!targetWindow) return;
+
+  activeRendererFailureDialogs.add(webContentsId);
+
+  void dialog
+    .showMessageBox(targetWindow, {
+      type: "warning",
+      title: APP_DISPLAY_NAME,
+      message,
+      detail,
+      buttons: ["Reload", "Dismiss"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    })
+    .then(({ response }) => {
+      if (response === 0) {
+        reloadWebContentsSafely(webContents);
+      }
+    })
+    .catch((error) => {
+      console.error(
+        "[Renderer Failure] Failed to show recovery dialog:",
+        error,
+      );
+    })
+    .finally(() => {
+      activeRendererFailureDialogs.delete(webContentsId);
+    });
+}
+
+function attachWebContentsFailureHandlers(
+  webContents: WebContents,
+  label: string,
+  ownerWindow?: BrowserWindow | null,
+): void {
+  webContents.on("render-process-gone", (_event, details) => {
+    const context = getRendererFailureContext(webContents.id);
+    const event = {
+      timestamp: Date.now(),
+      event: "render-process-gone",
+      label,
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? "" : webContents.getURL(),
+      reason: details.reason,
+      exitCode: details.exitCode,
+      ...context,
+    };
+    pushRendererFailureDebugEvent(event);
+    console.error(`[Renderer Failure] ${label} render process gone`, event);
+
+    promptForRendererRecovery(
+      webContents,
+      "Messenger content crashed",
+      `${label} stopped unexpectedly (${details.reason}, exit code ${details.exitCode}).\n\nA debug log was written to:\n${getRendererFailureDebugLogPath()}`,
+      ownerWindow,
+    );
+  });
+
+  webContents.on("unresponsive", () => {
+    const context = getRendererFailureContext(webContents.id);
+    const event = {
+      timestamp: Date.now(),
+      event: "unresponsive",
+      label,
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? "" : webContents.getURL(),
+      ...context,
+    };
+    pushRendererFailureDebugEvent(event);
+    console.error(`[Renderer Failure] ${label} became unresponsive`, event);
+
+    promptForRendererRecovery(
+      webContents,
+      "Messenger stopped responding",
+      `${label} is not responding.\n\nYou can reload now, or dismiss this message and wait a bit longer.\n\nA debug log was written to:\n${getRendererFailureDebugLogPath()}`,
+      ownerWindow,
+    );
+  });
+
+  webContents.on("responsive", () => {
+    const context = getRendererFailureContext(webContents.id);
+    const event = {
+      timestamp: Date.now(),
+      event: "responsive",
+      label,
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? "" : webContents.getURL(),
+      ...context,
+    };
+    pushRendererFailureDebugEvent(event);
+    console.log(`[Renderer Failure] ${label} is responsive again`, event);
+  });
+}
+
 // Set AppUserModelId for Windows taskbar icon and grouping (must be set before app is ready)
 // Use different ID for beta to allow side-by-side installation
 if (process.platform === "win32") {
@@ -796,6 +1087,21 @@ const userDataPath = path.join(app.getPath("appData"), APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
 maybeResetIssue45DebugLogOnStart();
+
+app.on("child-process-gone", (_event, details) => {
+  const event = {
+    timestamp: Date.now(),
+    event: "child-process-gone",
+    label: "app",
+    processType: details.type,
+    reason: details.reason,
+    exitCode: details.exitCode,
+    serviceName: "serviceName" in details ? details.serviceName : undefined,
+    name: "name" in details ? details.name : undefined,
+  };
+  pushRendererFailureDebugEvent(event);
+  console.error("[Renderer Failure] Child process gone", event);
+});
 
 pushMediaOverlayDebugEvent({
   timestamp: Date.now(),
@@ -1393,50 +1699,27 @@ function shouldAllowInternalNavigation(url: string): boolean {
   return shouldOpenInApp(url);
 }
 
-function isMessagesMediaPopupUrl(input: string): boolean {
-  if (!input) return false;
-  if (!isFacebookOrMessengerUrl(input)) return false;
-  if (isMessagesMediaViewerRoute(input)) return true;
+type MessengerSurfaceTarget = {
+  parentWindow: BrowserWindow;
+  targetWebContents: Electron.WebContents;
+  label: string;
+};
 
-  try {
-    const parsed = new URL(input);
-    const path = parsed.pathname.toLowerCase();
-    return (
-      path === "/messages/attachment_preview" ||
-      path.startsWith("/messages/attachment_preview/") ||
-      path === "/messages/media_viewer" ||
-      path.startsWith("/messages/media_viewer/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function shouldForceMediaViewerStateOff(url: string): boolean {
-  if (!isMessagesRoute(url)) return false;
-  if (isMessagesMediaViewerRoute(url)) return false;
-  if (isMessagesMediaPopupUrl(url)) return false;
-  return true;
-}
-
-function maybeRecoverMediaViewerStateAfterIncomingCallClear(
-  webContentsId: number,
-  urlForLog: string,
-  eventName: string,
+function loadUrlIntoMessengerTarget(
+  target: MessengerSurfaceTarget,
+  url: string,
+  reason: string,
 ): void {
-  if (
-    shouldForceMediaViewerStateOff(urlForLog) &&
-    mediaViewerVisibleByWebContentsId.get(webContentsId) === true
-  ) {
-    mediaViewerVisibleByWebContentsId.set(webContentsId, false);
-    pushMediaOverlayDebugEvent({
-      timestamp: Date.now(),
-      source: "main",
-      event: eventName,
-      webContentsId,
-      url: urlForLog,
-    });
-  }
+  if (!url) return;
+
+  console.log(`[Window] Loading URL into ${target.label} (${reason}):`, url);
+  target.targetWebContents.loadURL(url).catch((error) => {
+    console.error(
+      `[Window] Failed to load URL into ${target.label} (${reason}):`,
+      url,
+      error,
+    );
+  });
 }
 
 function clearIncomingCallOverlayStateForWebContents(
@@ -1466,12 +1749,6 @@ function clearIncomingCallOverlayStateForWebContents(
     nextVisible: false,
     reason,
   });
-
-  maybeRecoverMediaViewerStateAfterIncomingCallClear(
-    webContents.id,
-    urlForLog,
-    "media-viewer-state-recovered-after-incoming-call",
-  );
 
   return true;
 }
@@ -1936,13 +2213,6 @@ async function getBannerKindForUrl(
   webContents: Electron.WebContents,
   url: string,
 ): Promise<LoginBannerKind> {
-  if (
-    mediaViewerVisibleByWebContentsId.get(webContents.id) === true &&
-    isMessagesRoute(url)
-  ) {
-    return null;
-  }
-
   if (isLoginPage(url)) return "login";
   if (isVerificationPage(url)) return "verification";
   if (!isFacebookIntermediatePage(url)) return null;
@@ -3068,6 +3338,7 @@ function createWindow(source: string = "unknown"): void {
       enableWebSQL: false,
     },
   });
+  attachWebContentsFailureHandlers(mainWindow.webContents, "Main window");
   const mainWindowWebContentsId = mainWindow.webContents.id;
   let contentViewWebContentsId: number | null = null;
 
@@ -3106,38 +3377,30 @@ function createWindow(source: string = "unknown"): void {
     }
   }
 
-  // For BrowserView-backed platforms, crop the Messages surface top header
-  // using view bounds to avoid layout side effects inside the page DOM.
   const initialViewBounds = mainWindow.getContentBounds();
-  const contentOffset = 0;
-  dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
 
   const applyContentViewBounds = () => {
     if (!mainWindow || !contentView) return;
     const bounds = mainWindow.getContentBounds();
     const currentUrl = contentView.webContents.getURL();
-    const mediaOverlayVisible =
-      mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) ===
-      true;
-    const incomingCallOverlayVisible =
-      incomingCallOverlayVisibleByWebContentsId.get(
-        contentView.webContents.id,
-      ) === true;
-    // Keep crop scoped to core /messages chat routes. Media viewers and incoming
-    // call overlays need their native controls visible.
-    const isMessagesCropRoute =
-      isMessagesRoute(currentUrl) &&
-      !isMessagesMediaViewerRoute(currentUrl) &&
-      !isMessagesMediaPopupUrl(currentUrl) &&
-      !mediaOverlayVisible &&
-      !incomingCallOverlayVisible;
-    const crop = isMessagesCropRoute ? dynamicMessagesTopCrop : 0;
-    const seamTrim = isMessagesCropRoute ? MESSAGES_TOP_SEAM_TRIM : 0;
+    const viewportState = messagesViewportStateByWebContentsId.get(
+      contentView.webContents.id,
+    );
+    const shouldCrop =
+      viewportState?.shouldCrop === true ||
+      (viewportState === undefined &&
+        isMessagesSurfaceRoute(currentUrl) &&
+        !isMessagesMediaViewerRoute(currentUrl));
+    const crop = shouldCrop
+      ? normalizeMessagesTopCrop(viewportState?.headerHeight) ??
+        DEFAULT_MESSAGES_TOP_CROP
+      : 0;
+
     contentView.setBounds({
       x: 0,
-      y: contentOffset - crop - seamTrim,
+      y: -crop,
       width: bounds.width,
-      height: bounds.height - contentOffset + crop + seamTrim,
+      height: bounds.height + crop,
     });
   };
   applyContentViewBoundsHandler = applyContentViewBounds;
@@ -3155,15 +3418,20 @@ function createWindow(source: string = "unknown"): void {
         enableWebSQL: false,
       },
     });
+    attachWebContentsFailureHandlers(
+      contentView.webContents,
+      "Messenger content view",
+      mainWindow,
+    );
     contentViewWebContentsId = contentView.webContents.id;
 
     mainWindow.addBrowserView(contentView);
     // Initial bounds before we know the destination route.
     contentView.setBounds({
       x: 0,
-      y: contentOffset,
+      y: 0,
       width: initialViewBounds.width,
-      height: initialViewBounds.height - contentOffset,
+      height: initialViewBounds.height,
     });
     contentView.setAutoResize({ width: true, height: true });
 
@@ -3375,13 +3643,7 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
-    // Use platform-specific user agent to match native browser behavior.
-    const chromeVersion = process.versions.chrome;
-    const userAgent = isMac
-      ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15"
-      : process.platform === "win32"
-        ? `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36 Edg/${chromeVersion}`
-        : `Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0`;
+    const userAgent = getMessengerDesktopUserAgent();
     contentView.webContents.session.setUserAgent(userAgent);
     console.log("[UserAgent] Set to:", userAgent);
 
@@ -3444,10 +3706,15 @@ function createWindow(source: string = "unknown"): void {
         const windowAction = decideWindowOpenAction(url);
 
         if (windowAction === "reroute-main-view") {
-          console.log("[Window] Rerouting media popup into main view:", url);
-          contentView?.webContents.loadURL(url).catch((err) => {
-            console.error("[Window] Failed to reroute popup URL:", url, err);
-          });
+          loadUrlIntoMessengerTarget(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: contentView!.webContents,
+              label: "Messenger content view",
+            },
+            url,
+            "content-view-window-open",
+          );
           return { action: "deny" };
         }
 
@@ -3501,6 +3768,11 @@ function createWindow(source: string = "unknown"): void {
         frameName: details.frameName,
         options: details.options,
       });
+      attachWebContentsFailureHandlers(
+        childWindow.webContents,
+        "Messenger child window",
+        childWindow,
+      );
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
       // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
@@ -3559,17 +3831,15 @@ function createWindow(source: string = "unknown"): void {
         event.preventDefault();
 
         if (navigationAction === "reroute-main-view") {
-          console.log(
-            "[Window] Rerouting media child navigation into main view:",
+          loadUrlIntoMessengerTarget(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: contentView!.webContents,
+              label: "Messenger content view",
+            },
             navigationUrl,
+            "call-child-navigation",
           );
-          contentView?.webContents.loadURL(navigationUrl).catch((err) => {
-            console.error(
-              "[Window] Failed to reroute child navigation URL:",
-              navigationUrl,
-              err,
-            );
-          });
           childWindow.close();
           return;
         }
@@ -3859,10 +4129,6 @@ function createWindow(source: string = "unknown"): void {
 
       try {
         if (contentView) {
-          mediaViewerVisibleByWebContentsId.set(
-            contentView.webContents.id,
-            false,
-          );
           await injectNotificationScripts(contentView.webContents);
         }
       } catch (error) {
@@ -3903,30 +4169,6 @@ function createWindow(source: string = "unknown"): void {
         );
       }
 
-      if (
-        contentView &&
-        shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) ===
-          true
-      ) {
-        mediaViewerVisibleByWebContentsId.set(
-          contentView.webContents.id,
-          false,
-        );
-        console.log(
-          "[ContentView] Forced media viewer state off after navigation:",
-          url,
-        );
-        pushMediaOverlayDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "forced-state-off-did-navigate",
-          webContentsId: contentView.webContents.id,
-          url,
-          nextVisible: false,
-        });
-      }
-
       applyContentViewBounds();
       console.log(
         "[ContentView] did-navigate:",
@@ -3965,30 +4207,6 @@ function createWindow(source: string = "unknown"): void {
           "did-navigate-in-page",
           "incoming-call-overlay-hint-reset-did-navigate-in-page",
         );
-      }
-
-      if (
-        contentView &&
-        shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(contentView.webContents.id) ===
-          true
-      ) {
-        mediaViewerVisibleByWebContentsId.set(
-          contentView.webContents.id,
-          false,
-        );
-        console.log(
-          "[ContentView] Forced media viewer state off after in-page navigation:",
-          url,
-        );
-        pushMediaOverlayDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "forced-state-off-did-navigate-in-page",
-          webContentsId: contentView.webContents.id,
-          url,
-          nextVisible: false,
-        });
       }
 
       applyContentViewBounds();
@@ -4193,12 +4411,7 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
-    // Set Edge/Firefox user agent - Facebook may be blocking Chrome/Electron
-    const chromeVersion = process.versions.chrome;
-    const userAgent =
-      process.platform === "win32"
-        ? `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36 Edg/${chromeVersion}`
-        : `Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0`;
+    const userAgent = getMessengerDesktopUserAgent();
     mainWindow.webContents.session.setUserAgent(userAgent);
     console.log("[UserAgent] Set to:", userAgent);
 
@@ -4258,14 +4471,18 @@ function createWindow(source: string = "unknown"): void {
           disposition,
         });
 
-        // Media viewers opened from messages should stay in the main view so
         const windowAction = decideWindowOpenAction(url);
 
         if (windowAction === "reroute-main-view") {
-          console.log("[Window] Rerouting media popup into main view:", url);
-          mainWindow?.webContents.loadURL(url).catch((err) => {
-            console.error("[Window] Failed to reroute popup URL:", url, err);
-          });
+          loadUrlIntoMessengerTarget(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: mainWindow!.webContents,
+              label: "Main window",
+            },
+            url,
+            "main-window-window-open",
+          );
           return { action: "deny" };
         }
 
@@ -4319,6 +4536,11 @@ function createWindow(source: string = "unknown"): void {
         frameName: details.frameName,
         options: details.options,
       });
+      attachWebContentsFailureHandlers(
+        childWindow.webContents,
+        "Messenger child window",
+        childWindow,
+      );
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
       // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
@@ -4377,17 +4599,15 @@ function createWindow(source: string = "unknown"): void {
         event.preventDefault();
 
         if (navigationAction === "reroute-main-view") {
-          console.log(
-            "[Window] Rerouting media child navigation into main view:",
+          loadUrlIntoMessengerTarget(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: mainWindow!.webContents,
+              label: "Main window",
+            },
             navigationUrl,
+            "call-child-navigation-main-window",
           );
-          mainWindow?.webContents.loadURL(navigationUrl).catch((err) => {
-            console.error(
-              "[Window] Failed to reroute child navigation URL:",
-              navigationUrl,
-              err,
-            );
-          });
           childWindow.close();
           return;
         }
@@ -4714,10 +4934,6 @@ function createWindow(source: string = "unknown"): void {
 
       try {
         if (mainWindow) {
-          mediaViewerVisibleByWebContentsId.set(
-            mainWindow.webContents.id,
-            false,
-          );
           await injectNotificationScripts(mainWindow.webContents);
         }
       } catch (error) {
@@ -4749,27 +4965,6 @@ function createWindow(source: string = "unknown"): void {
           "did-navigate-mainwindow",
           "incoming-call-overlay-hint-reset-mainwindow-did-navigate",
         );
-      }
-
-      if (
-        mainWindow &&
-        shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) ===
-          true
-      ) {
-        mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
-        console.log(
-          "[MainWindow] Forced media viewer state off after navigation:",
-          url,
-        );
-        pushMediaOverlayDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "forced-state-off-mainwindow-did-navigate",
-          webContentsId: mainWindow.webContents.id,
-          url,
-          nextVisible: false,
-        });
       }
 
       console.log(
@@ -4810,27 +5005,6 @@ function createWindow(source: string = "unknown"): void {
         );
       }
 
-      if (
-        mainWindow &&
-        shouldForceMediaViewerStateOff(url) &&
-        mediaViewerVisibleByWebContentsId.get(mainWindow.webContents.id) ===
-          true
-      ) {
-        mediaViewerVisibleByWebContentsId.set(mainWindow.webContents.id, false);
-        console.log(
-          "[MainWindow] Forced media viewer state off after in-page navigation:",
-          url,
-        );
-        pushMediaOverlayDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "forced-state-off-mainwindow-did-navigate-in-page",
-          webContentsId: mainWindow.webContents.id,
-          url,
-          nextVisible: false,
-        });
-      }
-
       console.log("[MainWindow] In-page navigation to:", url);
 
       // Track Facebook auth flow via SPA navigation
@@ -4868,7 +5042,8 @@ function createWindow(source: string = "unknown"): void {
   // Handle window closed
   mainWindow.on("closed", () => {
     if (contentViewWebContentsId !== null) {
-      mediaViewerVisibleByWebContentsId.delete(contentViewWebContentsId);
+      messagesViewportStateByWebContentsId.delete(contentViewWebContentsId);
+      latestRendererDebugStateByWebContentsId.delete(contentViewWebContentsId);
       incomingCallOverlayVisibleByWebContentsId.delete(
         contentViewWebContentsId,
       );
@@ -4876,7 +5051,8 @@ function createWindow(source: string = "unknown"): void {
         contentViewWebContentsId,
       );
     }
-    mediaViewerVisibleByWebContentsId.delete(mainWindowWebContentsId);
+    messagesViewportStateByWebContentsId.delete(mainWindowWebContentsId);
+    latestRendererDebugStateByWebContentsId.delete(mainWindowWebContentsId);
     incomingCallOverlayVisibleByWebContentsId.delete(mainWindowWebContentsId);
     incomingCallOverlayLastHintAtByWebContentsId.delete(
       mainWindowWebContentsId,
@@ -4885,7 +5061,6 @@ function createWindow(source: string = "unknown"): void {
     // Window is already destroyed at this point, just clean up references
     contentView = null;
     applyContentViewBoundsHandler = null;
-    dynamicMessagesTopCrop = DEFAULT_MESSAGES_TOP_CROP;
     mainWindow = null;
   });
 
@@ -7329,61 +7504,60 @@ function setupIpcHandlers(): void {
     syncWindowTitleFromCurrentPage();
   });
 
-  // Header height measured in preload; use it to tune BrowserView crop per platform/zoom/layout.
-  ipcMain.on("messages-header-height", (event, rawHeight: unknown) => {
-    const targetContents = contentView?.webContents ?? mainWindow?.webContents;
-    if (!targetContents || event.sender !== targetContents) {
-      return;
-    }
-
-    const normalizedHeight = normalizeMessagesTopCrop(rawHeight);
-    if (normalizedHeight === null) return;
-    if (Math.abs(normalizedHeight - dynamicMessagesTopCrop) < 2) return;
-
-    dynamicMessagesTopCrop = normalizedHeight;
-    console.log(
-      `[ContentView] Updated messages header crop to ${dynamicMessagesTopCrop}px`,
-    );
-    applyContentViewBoundsHandler?.();
-  });
-
   ipcMain.on(
-    "media-viewer-state",
-    (
-      event,
-      payload?: {
-        visible?: unknown;
-        url?: unknown;
-      },
-    ) => {
+    "messages-viewport-state",
+    (event, rawPayload?: Partial<MessagesViewportStatePayload> | null) => {
       const targetContents =
         contentView?.webContents ?? mainWindow?.webContents;
       if (!targetContents || event.sender !== targetContents) {
         return;
       }
 
-      const visible = payload?.visible === true;
-      const previous =
-        mediaViewerVisibleByWebContentsId.get(event.sender.id) === true;
-      if (visible === previous) {
+      const normalizedPayload: MessagesViewportStatePayload = {
+        url:
+          typeof rawPayload?.url === "string"
+            ? rawPayload.url
+            : event.sender.getURL(),
+        routeKind:
+          rawPayload?.routeKind === "chat" ||
+          rawPayload?.routeKind === "media" ||
+          rawPayload?.routeKind === "other"
+            ? rawPayload.routeKind
+            : "other",
+        headerHeight:
+          typeof rawPayload?.headerHeight === "number" &&
+          Number.isFinite(rawPayload.headerHeight)
+            ? Math.max(0, Math.round(rawPayload.headerHeight))
+            : null,
+        shouldCrop: rawPayload?.shouldCrop === true,
+      };
+
+      const previous = messagesViewportStateByWebContentsId.get(
+        event.sender.id,
+      );
+      const unchanged =
+        previous !== undefined &&
+        JSON.stringify(previous) === JSON.stringify(normalizedPayload);
+      if (unchanged) {
         return;
       }
 
-      mediaViewerVisibleByWebContentsId.set(event.sender.id, visible);
-
-      const urlForLog =
-        typeof payload?.url === "string" ? payload.url : event.sender.getURL();
-      console.log(
-        `[ContentView] Media viewer state updated: visible=${visible}, url=${urlForLog}`,
+      messagesViewportStateByWebContentsId.set(
+        event.sender.id,
+        normalizedPayload,
       );
+      latestRendererDebugStateByWebContentsId.set(event.sender.id, {
+        ...(latestRendererDebugStateByWebContentsId.get(event.sender.id) || {}),
+        viewportState: normalizedPayload,
+      });
+
       pushMediaOverlayDebugEvent({
         timestamp: Date.now(),
         source: "main",
-        event: "media-viewer-state",
+        event: "messages-viewport-state",
         webContentsId: event.sender.id,
-        previousVisible: previous,
-        nextVisible: visible,
-        url: urlForLog,
+        url: normalizedPayload.url,
+        viewportState: normalizedPayload,
       });
 
       applyContentViewBoundsHandler?.();
@@ -7437,23 +7611,6 @@ function setupIpcHandlers(): void {
             : undefined,
       });
 
-      if (visible) {
-        // Incoming-call overlays can be misclassified as media overlays by
-        // preload heuristics. Force media state off on chat routes so we don't
-        // leave call-layout gap artifacts behind.
-        maybeRecoverMediaViewerStateAfterIncomingCallClear(
-          event.sender.id,
-          urlForLog,
-          "media-viewer-state-forced-off-incoming-call",
-        );
-      } else {
-        maybeRecoverMediaViewerStateAfterIncomingCallClear(
-          event.sender.id,
-          urlForLog,
-          "media-viewer-state-recovered-after-incoming-call",
-        );
-      }
-
       applyContentViewBoundsHandler?.();
     },
   );
@@ -7464,6 +7621,43 @@ function setupIpcHandlers(): void {
       payload && typeof payload === "object"
         ? (payload as Record<string, unknown>)
         : {};
+
+    latestRendererDebugStateByWebContentsId.set(event.sender.id, {
+      ...(latestRendererDebugStateByWebContentsId.get(event.sender.id) || {}),
+      lastDebugEvent:
+        typeof basePayload.reason === "string"
+          ? basePayload.reason
+          : "media-overlay-debug",
+      interactionKind:
+        typeof basePayload.interactionKind === "string"
+          ? basePayload.interactionKind
+          : undefined,
+      interactionLabel:
+        typeof basePayload.interactionLabel === "string"
+          ? basePayload.interactionLabel
+          : undefined,
+      viewportState:
+        basePayload.viewportState &&
+        typeof basePayload.viewportState === "object" &&
+        !Array.isArray(basePayload.viewportState)
+          ? basePayload.viewportState
+          : messagesViewportStateByWebContentsId.get(event.sender.id),
+      headerSuppressionState:
+        basePayload.headerSuppressionState &&
+        typeof basePayload.headerSuppressionState === "object"
+          ? basePayload.headerSuppressionState
+          : undefined,
+      composerOverlayState:
+        basePayload.composerOverlayState &&
+        typeof basePayload.composerOverlayState === "object"
+          ? basePayload.composerOverlayState
+          : undefined,
+      callSurfaceState:
+        basePayload.callSurfaceState &&
+        typeof basePayload.callSurfaceState === "object"
+          ? basePayload.callSurfaceState
+          : undefined,
+    });
 
     pushMediaOverlayDebugEvent({
       timestamp:
@@ -7480,6 +7674,67 @@ function setupIpcHandlers(): void {
           : event.sender.getURL(),
       ...basePayload,
     });
+  });
+
+  ipcMain.on("call-window-state", (event, payload) => {
+    const basePayload =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : {};
+    const url =
+      typeof basePayload.url === "string"
+        ? basePayload.url
+        : event.sender.getURL();
+    const threadType = /\/messages\/e2ee\/t\/[^/]+/i.test(url)
+      ? "e2ee"
+      : /\/messages\/t\/[^/]+/i.test(url)
+        ? "standard"
+        : "unknown";
+    const normalizedState = {
+      lastDebugEvent: "call-window-state",
+      callWindowOpen: basePayload.callWindowOpen === true,
+      isMuted:
+        typeof basePayload.isMuted === "boolean" ? basePayload.isMuted : null,
+      popupVsMainWindow: "child-window",
+      threadType,
+      callSurfaceState: {
+        reason:
+          typeof basePayload.reason === "string"
+            ? basePayload.reason
+            : undefined,
+        callWindowOpen: basePayload.callWindowOpen === true,
+        isMuted:
+          typeof basePayload.isMuted === "boolean" ? basePayload.isMuted : null,
+        statusText:
+          typeof basePayload.statusText === "string"
+            ? basePayload.statusText
+            : undefined,
+        activeControlLabels: Array.isArray(basePayload.activeControlLabels)
+          ? basePayload.activeControlLabels
+          : undefined,
+      },
+    };
+
+    latestRendererDebugStateByWebContentsId.set(event.sender.id, {
+      ...(latestRendererDebugStateByWebContentsId.get(event.sender.id) || {}),
+      ...normalizedState,
+    });
+
+    pushMediaOverlayDebugEvent({
+      timestamp:
+        typeof basePayload.timestamp === "number"
+          ? basePayload.timestamp
+          : Date.now(),
+      source: "preload",
+      event: "call-window-state",
+      webContentsId: event.sender.id,
+      url,
+      ...normalizedState,
+    });
+
+    if (basePayload.callWindowOpen === false) {
+      requestMessagesViewportRecovery("child-call-window-closed");
+    }
   });
 
   ipcMain.on("incoming-call-debug", (event, payload) => {

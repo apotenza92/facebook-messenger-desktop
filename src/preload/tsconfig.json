@@ -3,11 +3,12 @@
   "compilerOptions": {
     "lib": ["ES2020", "DOM"],
     "types": ["node"],
-    "outDir": "../../dist/preload",
-    "rootDir": "."
+    "outDir": "../../dist",
+    "rootDir": ".."
   },
   "include": [
     "./preload.ts",
+    "./facebook-header-suppression-policy.ts",
     "./incoming-call-overlay-hint-policy.ts",
     "./media-action-policy.ts",
     "./messages-viewport-policy.ts",
@@ -15,7 +16,8 @@
     "./url-policy.ts",
     "./notifications-inject.ts",
     "./call-window-preload.ts",
-    "./call-window-inject.ts"
+    "./call-window-inject.ts",
+    "../shared/url-policy.ts"
   ],
   "exclude": []
 }

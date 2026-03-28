@@ -253,11 +253,10 @@ export function decideWindowOpenAction(input: string): WindowOpenAction {
     return "allow-child-window";
   }
 
-  if (isMessengerUrl && isMessagesRoute(resolvedInput)) {
-    return "reroute-main-view";
-  }
-
-  if (isMessengerUrl && isMessagesMediaViewerRoute(resolvedInput)) {
+  if (
+    isMessengerUrl &&
+    (isMessagesRoute(resolvedInput) || isMessagesMediaViewerRoute(resolvedInput))
+  ) {
     return "reroute-main-view";
   }
 

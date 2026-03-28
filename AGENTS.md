@@ -46,6 +46,26 @@ assets/tray/        # System tray icons
 
 **Never delete released beta changelogs**: When creating a stable release, add a new stable entry summarizing the changes but keep all the individual beta version entries below it. Beta changelogs that have been published to users must be preserved for historical reference.
 
+### Privacy / Naming Rules
+
+**Never use people's real names in public-facing text you write** unless the user explicitly tells you to do so for that exact text.
+
+Applies to:
+- GitHub comments/issues/PRs
+- `CHANGELOG.md`
+- release notes
+- evidence summaries / README files
+- any other user-facing or public project text
+
+Use neutral descriptions or aliases instead, e.g.:
+- `reporter`
+- `tester`
+- `user A` / `user B`
+- `account A` / `account B`
+- thread IDs / route types instead of real names
+
+Real names may still appear when strictly necessary for live local testing notes or existing private thread/account references, but do **not** copy them into public-facing output by default.
+
 ## Release Process
 
 ### How to Release
