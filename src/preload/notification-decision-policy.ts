@@ -78,6 +78,10 @@ const PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS: RegExp[] = [
   /^facebook user(?:\s+\d+)?$/i,
   /^new message$/i,
   /^new messages$/i,
+  /^notification$/i,
+  /^notifications$/i,
+  /^new notification$/i,
+  /^new notifications$/i,
   /^\d+\s+new messages?$/i,
   /^messenger notification$/i,
 ];
@@ -420,19 +424,29 @@ function resolveObservedSidebarNotificationTarget(
 
 const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
   /commented on your/i,
+  /replied to your/i,
+  /replied to a comment/i,
   /reacted to your/i,
   /liked your/i,
   /shared your/i,
   /mentioned you in/i,
   /tagged you/i,
   /friend request/i,
+  /sent you a friend request/i,
   /accepted your friend request/i,
+  /followed you/i,
   /new friend suggestion/i,
   /is live now/i,
   /posted in/i,
   /new post in/i,
+  /posted a new (?:photo|video|reel|story)/i,
   /invited you/i,
   /birthday/i,
+  /suggested for you/i,
+  /shared a memory/i,
+  /updated (?:their|his|her) (?:profile|cover) photo/i,
+  /updated (?:their|his|her) status/i,
+  /added (?:a new )?story/i,
   /new notification/i,
   /new notifications/i,
 ];
@@ -526,6 +540,10 @@ function isLikelyGlobalFacebookNotification(
     /^facebook user(?:\b|$)/.test(title) ||
     title === "meta" ||
     title.startsWith("meta ") ||
+    title === "notification" ||
+    title === "notifications" ||
+    title === "new notification" ||
+    title === "new notifications" ||
     title === "new message" ||
     title === "new messages" ||
     /^\d+\s+new messages?$/.test(title);

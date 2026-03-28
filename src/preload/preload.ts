@@ -2082,6 +2082,7 @@ ipcRenderer.on(
   );
 
   const buildViewportStatePayload = (): MessagesViewportStatePayload => {
+    const composerOverlayState = collectComposerOverlayState();
     const headerHeight =
       resolveMode() === "chat"
         ? Math.max(
@@ -2099,6 +2100,7 @@ ipcRenderer.on(
       headerHeight,
       mediaOverlayVisible:
         mediaOverlayVisible || detectMediaOverlayVisible(),
+      composerOverlayVisible: composerOverlayState.emojiPickerVisible,
     });
   };
 

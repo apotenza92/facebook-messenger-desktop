@@ -66,6 +66,33 @@ async function withPrimaryWebContents(app, fn, payload) {
   );
 }
 
+async function waitForAnyWindow(app, timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const windows = app.windows();
+    if (windows.length > 0) {
+      return windows[0];
+    }
+
+    const browserWindowCount = await app
+      .evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+      .catch(() => 0);
+    if (browserWindowCount > 0) {
+      const refreshedWindows = app.windows();
+      if (refreshedWindows.length > 0) {
+        return refreshedWindows[0];
+      }
+    }
+
+    await wait(250);
+  }
+
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for any Electron window`,
+  );
+}
+
 async function evaluateInElectronPage(app, script) {
   return withPrimaryWebContents(
     app,
@@ -262,7 +289,7 @@ async function main() {
   );
 
   try {
-    const page = await app.firstWindow();
+    const page = await waitForAnyWindow(app);
     await page.waitForLoadState("domcontentloaded");
     await wait(1500);
 

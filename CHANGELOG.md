@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.0-beta.33] - 2026-03-29
+
+### Fixed
+
+- **Issue #41 follow-up: composer overlays and generic notification leak hardening** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Temporarily disable the BrowserView chat crop while emoji/sticker/GIF composer overlays are open so the composer stays responsive instead of freezing behind the cropped messages surface.
+  - Harden generic notification suppression for Facebook-shell/social-activity payloads and fail closed more often on generic `Notification`-style titles.
+  - Keep the existing `Draft:` self-authored suppression path covered in deterministic regression tests.
+
+### Changed
+
+- **Emoji GUI validation hardening**
+  - Updated the emoji composer GUI harness to wait for real Electron windows instead of depending on Playwright's flaky `firstWindow()` event path.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `node scripts/test-emoji-composer-gui.js --cycles 5`
+
 ## [1.3.0-beta.32] - 2026-03-28
 
 ### Fixed

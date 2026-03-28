@@ -205,15 +205,18 @@ const runViewportPolicyTests = () => {
     expectedCrop: boolean,
     extra: {
       mediaOverlayVisible?: boolean;
+      composerOverlayVisible?: boolean;
     } = {},
   ) => {
     const mode = resolveViewportMode({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
+      composerOverlayVisible: extra.composerOverlayVisible,
     });
     const crop = shouldApplyMessagesCrop({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
+      composerOverlayVisible: extra.composerOverlayVisible,
     });
     assertEqual(
       mode,
@@ -240,6 +243,9 @@ const runViewportPolicyTests = () => {
   });
   expectMode("/messages/e2ee/t/123", "media", false, {
     mediaOverlayVisible: true,
+  });
+  expectMode("/messages/t/123", "chat", false, {
+    composerOverlayVisible: true,
   });
 
   const viewportState = resolveMessagesViewportState({
@@ -273,6 +279,23 @@ const runViewportPolicyTests = () => {
     overlayViewportState.shouldCrop,
     false,
     "#45 same-route E2EE media viewer should disable chat crop",
+  );
+
+  const composerOverlayViewportState = resolveMessagesViewportState({
+    url: "https://www.facebook.com/messages/t/123",
+    urlPath: "/messages/t/123",
+    headerHeight: 56,
+    composerOverlayVisible: true,
+  });
+  assertEqual(
+    composerOverlayViewportState.routeKind,
+    "chat",
+    "#41 emoji/composer overlays should not change the underlying chat route classification",
+  );
+  assertEqual(
+    composerOverlayViewportState.shouldCrop,
+    false,
+    "#41 emoji/composer overlays should temporarily disable the BrowserView crop",
   );
 
   // Transition sequence reproducing "first chat works, subsequent chats break"
@@ -1223,6 +1246,40 @@ const runNotificationPolicyTests = () => {
     "#46 generic New Message notifications should be classified as placeholder-title ambiguity",
   );
 
+  const notificationTitleMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Notification",
+        body: "Shipped the fix",
+      },
+      [
+        {
+          href: "/t/direct-thread",
+          title: "Alex",
+          body: "Shipped the fix",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/release-group",
+          title: "Release Squad",
+          body: "Shipped the fix",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    notificationTitleMutedConflict.reason,
+    "muted-conflict",
+    "#46 generic Notification titles should fail closed when muted previews overlap",
+  );
+  assertEqual(
+    notificationTitleMutedConflict.ambiguityReason,
+    "placeholder-title",
+    "#46 generic Notification titles should preserve placeholder-title ambiguity",
+  );
+
   const mutedGroupTitleMatch =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
@@ -1403,6 +1460,28 @@ const runNotificationPolicyTests = () => {
     facebookUserSocialSuppressed,
     true,
     "#46 should suppress generic Facebook User activity notifications",
+  );
+
+  const newNotificationSocialSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "New Notification",
+      body: "Sam replied to your comment",
+    });
+  assertEqual(
+    newNotificationSocialSuppressed,
+    true,
+    "#46 should suppress generic New Notification activity payloads",
+  );
+
+  const suggestedForYouSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "Notifications",
+      body: "Suggested for you",
+    });
+  assertEqual(
+    suggestedForYouSuppressed,
+    true,
+    "#46 should suppress generic Facebook suggestion notifications",
   );
 
   const directMessageNotSuppressed =
