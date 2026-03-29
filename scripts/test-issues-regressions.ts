@@ -14,6 +14,13 @@ const {
   resolveViewportMode,
   shouldApplyMessagesCrop,
 } = require(path.join(APP_ROOT, "src/preload/messages-viewport-policy"));
+const {
+  collectMarketplaceThreadHintSignals,
+  hasMarketplaceThreadHeaderSignal,
+  isMarketplaceThreadActionHint,
+  isMarketplaceThreadBackHint,
+  isMarketplaceThreadHeaderHint,
+} = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
 const loadIncomingCallHintPolicy = () =>
   require(
     path.join(APP_ROOT, "src/preload/incoming-call-overlay-hint-policy.ts"),
@@ -343,6 +350,50 @@ const runViewportPolicyTests = () => {
       `#45 sequence stale crop state at step ${index + 1}`,
     );
   });
+};
+
+const runMarketplaceThreadPolicyTests = () => {
+  assertEqual(
+    isMarketplaceThreadActionHint("View Listing"),
+    true,
+    "#49 marketplace listing actions should mark the native marketplace thread UI",
+  );
+  assertEqual(
+    isMarketplaceThreadActionHint(
+      "https://www.facebook.com/marketplace/item/1234567890",
+    ),
+    true,
+    "#49 marketplace item links should mark the native marketplace thread UI",
+  );
+  assertEqual(
+    JSON.stringify(
+      collectMarketplaceThreadHintSignals(
+        "Back https://www.facebook.com/marketplace/item/1234567890 Marketplace",
+      ),
+    ),
+    JSON.stringify(["item-link", "header", "back"]),
+    "#49 marketplace hint classification should stay structured and privacy-safe",
+  );
+  assertEqual(
+    isMarketplaceThreadHeaderHint("Marketplace"),
+    true,
+    "#49 marketplace thread headers should be recognized",
+  );
+  assertEqual(
+    isMarketplaceThreadBackHint("Back to Previous Page"),
+    true,
+    "#49 marketplace back controls should be recognized",
+  );
+  assertEqual(
+    hasMarketplaceThreadHeaderSignal(["Back", "Marketplace"]),
+    true,
+    "#49 Allen's Back + Marketplace header should disable the Messenger crop",
+  );
+  assertEqual(
+    hasMarketplaceThreadHeaderSignal(["Back", "Chat info"]),
+    false,
+    "#49 generic chat back controls should not disable the Messenger crop",
+  );
 };
 
 const runWindowOpenRoutingTests = () => {
@@ -1793,6 +1844,7 @@ const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
   }
 
   runViewportPolicyTests();
+  runMarketplaceThreadPolicyTests();
   runWindowOpenRoutingTests();
   runHeaderSuppressionPolicyTests();
   runIncomingCallOverlayLifecycleTests();

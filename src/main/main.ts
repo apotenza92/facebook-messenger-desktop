@@ -667,11 +667,11 @@ function maybeAutoExportIssue45DebugArtifactsOnQuit(): void {
 
 async function exportIssue45DebugReport(): Promise<void> {
   const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const defaultFileName = `messenger-issue45-debug-${timestamp}.json`;
+  const defaultFileName = `messenger-layout-debug-${timestamp}.json`;
   const defaultPath = path.join(app.getPath("desktop"), defaultFileName);
 
   const saveDialogOptions: Electron.SaveDialogOptions = {
-    title: "Export Issue #45 Debug Report",
+    title: "Export Layout Debug Report",
     defaultPath,
     filters: [{ name: "JSON", extensions: ["json"] }],
   };
@@ -703,7 +703,7 @@ async function exportIssue45DebugReport(): Promise<void> {
   const doneDialogOptions: Electron.MessageBoxOptions = {
     type: "info",
     title: "Debug Report Exported",
-    message: "Issue #45 debug report exported successfully.",
+    message: "Layout debug report exported successfully.",
     detail: saveResult.filePath,
     buttons: ["Show in Folder", "OK"],
     defaultId: 0,
@@ -6814,7 +6814,7 @@ function createApplicationMenu(): void {
 
   const exportIssue45DebugReportMenuItem: Electron.MenuItemConstructorOptions =
     {
-      label: "Export Issue #45 Debug Report…",
+      label: "Export Layout Debug Report…",
       click: () => {
         void exportIssue45DebugReport();
       },
@@ -7663,6 +7663,11 @@ function setupIpcHandlers(): void {
         basePayload.callSurfaceState &&
         typeof basePayload.callSurfaceState === "object"
           ? basePayload.callSurfaceState
+          : undefined,
+      marketplaceThreadState:
+        basePayload.marketplaceThreadState &&
+        typeof basePayload.marketplaceThreadState === "object"
+          ? basePayload.marketplaceThreadState
           : undefined,
     });
 

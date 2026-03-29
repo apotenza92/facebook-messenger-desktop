@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.0-beta.37] - 2026-03-30
+
+### Fixed
+
+- **Issue #49 follow-up: detect the in-thread Marketplace `Back + Marketplace` header variant and stop cropping it** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Expanded same-route Marketplace thread detection beyond the earlier right-pane action buttons so the app also recognizes the native top-left Marketplace header variant that keeps the URL on `/messages/t/...`.
+  - When that Marketplace thread header is present, disable the Messenger BrowserView crop so Facebook's own in-thread back button stays visible instead of sliding under the window edge.
+
+### Changed
+
+- **Layout debug capture for Marketplace/thread-shell issues**
+  - Added privacy-safe Marketplace thread debug signals to the existing layout debug stream so follow-up reports can confirm whether the app detected Marketplace action hints, the Marketplace header, and the `Back + Marketplace` combination.
+  - Renamed the user-facing export action to `Export Layout Debug Report…` so it can be used for Marketplace/layout regressions without referencing issue #45.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:window-open`
+- `npm run test:release`
+
 ## [1.3.0-beta.36] - 2026-03-30
 
 ### Fixed

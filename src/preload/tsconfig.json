@@ -11,6 +11,7 @@
     "./facebook-header-suppression-policy.ts",
     "./incoming-call-overlay-hint-policy.ts",
     "./media-action-policy.ts",
+    "./marketplace-thread-policy.ts",
     "./messages-viewport-policy.ts",
     "./notification-decision-policy.ts",
     "./url-policy.ts",
