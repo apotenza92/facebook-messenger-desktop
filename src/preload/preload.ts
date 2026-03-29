@@ -17,7 +17,11 @@ import {
   shouldKeepIncomingCallHintActive,
   shouldTreatIncomingCallUiAsVisible,
 } from "./incoming-call-overlay-hint-policy";
-import { decideWindowOpenAction, resolveWrappedNavigationTarget } from "./url-policy";
+import {
+  decideWindowOpenAction,
+  resolveWrappedNavigationTarget,
+  shouldAllowMarketplaceActionInApp,
+} from "./url-policy";
 import {
   dismissActionSelectors,
   mediaDownloadSelectors,
@@ -809,6 +813,16 @@ ipcRenderer.on(
       if (!href) {
         return;
       }
+      const anchorLabel = extractInteractiveLabel(event.target);
+
+      if (
+        shouldAllowMarketplaceActionInApp({
+          url: href,
+          label: anchorLabel,
+        })
+      ) {
+        return;
+      }
 
       if (
         event.type === "click" &&
@@ -1223,16 +1237,65 @@ ipcRenderer.on(
     return evaluateMediaOverlayVisible(signals);
   };
 
-  const resolveMode = (): MessagesViewportMode =>
-    resolveViewportMode({
-      urlPath: window.location.pathname,
-      mediaOverlayVisible: mediaOverlayVisible || detectMediaOverlayVisible(),
-    });
-
   const normalizeLabelText = (value: string | null | undefined): string =>
     String(value || "")
       .replace(/\s+/g, " ")
       .trim();
+
+  const detectMarketplaceThreadUiVisible = (): boolean => {
+    if (!/^\/messages\/(?:e2ee\/)?t\//i.test(window.location.pathname)) {
+      return false;
+    }
+
+    const rightPaneMinLeft = Math.max(160, Math.round(window.innerWidth * 0.25));
+    const scanMaxTop = Math.max(220, Math.round(window.innerHeight * 0.45));
+    const candidates = document.querySelectorAll(
+      "button, [role='button'], a[href], [aria-label], [title]",
+    );
+
+    for (const candidate of Array.from(candidates)) {
+      if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
+        continue;
+      }
+
+      const rect = candidate.getBoundingClientRect();
+      if (
+        rect.bottom < 0 ||
+        rect.top > scanMaxTop ||
+        rect.left < rightPaneMinLeft
+      ) {
+        continue;
+      }
+
+      const href =
+        candidate instanceof HTMLAnchorElement
+          ? candidate.href
+          : candidate.getAttribute("href") || "";
+      const hint = normalizeLabelText(
+        [
+          candidate.getAttribute("aria-label"),
+          candidate.getAttribute("title"),
+          href,
+          candidate.textContent,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+
+      if (MARKETPLACE_THREAD_UI_HINT_PATTERN.test(hint)) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const resolveMode = (): MessagesViewportMode =>
+    resolveViewportMode({
+      urlPath: window.location.pathname,
+      mediaOverlayVisible: mediaOverlayVisible || detectMediaOverlayVisible(),
+      marketplaceThreadVisible: detectMarketplaceThreadUiVisible(),
+    });
 
   const extractInteractiveLabel = (target: EventTarget | null): string => {
     if (!(target instanceof Element)) return "";
@@ -1283,6 +1346,8 @@ ipcRenderer.on(
     /\b(facebook|home|menu|notifications|account controls|your profile|search facebook|friends|watch|marketplace|messenger)\b/i;
   const PRESERVED_MESSENGER_CONTROL_PATTERN =
     /\b(answer|accept|decline|ignore|join|close|download|share|forward|next|previous|call|video call|audio call|mute|unmute|end call|hang up|details|info)\b/i;
+  const MARKETPLACE_THREAD_UI_HINT_PATTERN =
+    /\b(view similar items|view listing|mark as pending|mark as sold|mark as available|no longer available|send a quick response)\b/i;
   const TOP_CHROME_SCAN_MAX_TOP = 72;
   const HEADER_CONTAINER_TOP_TOLERANCE = 48;
   const HEADER_CONTAINER_MIN_HEIGHT = 24;
@@ -1672,6 +1737,7 @@ ipcRenderer.on(
         node.removeAttribute(HIDDEN_CHROME_ATTR);
         node.removeAttribute(SHELL_STRETCH_ATTR);
       });
+
   };
 
   const hasConnectedHeaderSuppressionTargets = (
@@ -2160,8 +2226,16 @@ ipcRenderer.on(
   });
 
   const buildViewportStatePayload = (): MessagesViewportStatePayload => {
+    const marketplaceThreadVisible = detectMarketplaceThreadUiVisible();
+    const effectiveMediaOverlayVisible =
+      mediaOverlayVisible || detectMediaOverlayVisible();
+    const routeKind = resolveViewportMode({
+      urlPath: window.location.pathname,
+      mediaOverlayVisible: effectiveMediaOverlayVisible,
+      marketplaceThreadVisible,
+    });
     const headerHeight =
-      resolveMode() === "chat"
+      routeKind === "chat"
         ? Math.max(
             DEFAULT_MESSAGES_HEADER_HEIGHT,
             Math.round(
@@ -2175,8 +2249,8 @@ ipcRenderer.on(
       url: window.location.href,
       urlPath: window.location.pathname,
       headerHeight,
-      mediaOverlayVisible:
-        mediaOverlayVisible || detectMediaOverlayVisible(),
+      mediaOverlayVisible: effectiveMediaOverlayVisible,
+      marketplaceThreadVisible,
     });
   };
 

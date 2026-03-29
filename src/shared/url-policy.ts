@@ -138,6 +138,56 @@ export function isMarketplaceUrl(input: string, depth = 0): boolean {
   return isMarketplaceUrl(nestedCandidate, depth + 1);
 }
 
+const MARKETPLACE_IN_APP_EXACT_PATHS = new Set([
+  "/marketplace/inbox",
+  "/marketplace/inbox/",
+  "/marketplace/you",
+  "/marketplace/you/",
+  "/marketplace/you/selling",
+  "/marketplace/you/selling/",
+]);
+
+export function isMarketplaceMessagingRoute(input: string): boolean {
+  const parsed = parseUrl(input);
+  if (!parsed || !isFacebookHost(parsed.hostname)) {
+    return false;
+  }
+
+  const pathname = parsed.pathname.toLowerCase();
+  return MARKETPLACE_IN_APP_EXACT_PATHS.has(pathname);
+}
+
+const MARKETPLACE_IN_APP_ACTION_PATTERNS = [
+  /^more options$/i,
+  /^mark as pending$/i,
+  /^mark as sold$/i,
+  /^mark as available$/i,
+  /^back$/i,
+  /^go back$/i,
+  /^back to previous page$/i,
+];
+
+export function shouldAllowMarketplaceActionInApp(input: {
+  url: string;
+  label?: string | null;
+}): boolean {
+  const resolvedInput = resolveAppNavigationTarget(input.url);
+  if (!isMarketplaceUrl(resolvedInput)) {
+    return false;
+  }
+
+  const label = String(input.label || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!label) {
+    return false;
+  }
+
+  return MARKETPLACE_IN_APP_ACTION_PATTERNS.some((pattern) =>
+    pattern.test(label),
+  );
+}
+
 export function isMessagesRoute(input: string): boolean {
   const parsed = parseUrl(input);
   if (!parsed || !isFacebookHost(parsed.hostname)) return false;
@@ -226,6 +276,10 @@ export function shouldOpenInApp(input: string): boolean {
     return false;
   }
 
+  if (isMarketplaceMessagingRoute(resolvedInput)) {
+    return true;
+  }
+
   if (isMarketplaceUrl(resolvedInput)) {
     return false;
   }
@@ -241,6 +295,10 @@ export function shouldOpenInApp(input: string): boolean {
 export function decideWindowOpenAction(input: string): WindowOpenAction {
   const resolvedInput = resolveAppNavigationTarget(input);
   const isMessengerUrl = isFacebookOrMessengerUrl(resolvedInput);
+
+  if (isMarketplaceMessagingRoute(resolvedInput)) {
+    return "reroute-main-view";
+  }
 
   if (isMarketplaceUrl(resolvedInput)) {
     return "open-external-browser";
@@ -275,6 +333,7 @@ export function shouldReloadToMessagesHome(input: string): boolean {
 
   return !(
     isMessagesSurfaceRoute(resolvedInput) ||
+    isMarketplaceMessagingRoute(resolvedInput) ||
     isAuthOrCheckpointRoute(resolvedInput) ||
     isFacebookHomePage(resolvedInput)
   );

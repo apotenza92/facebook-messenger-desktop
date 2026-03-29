@@ -2227,27 +2227,7 @@ async function injectLoginPageCSS(
   webContents: Electron.WebContents,
 ): Promise<void> {
   try {
-    const url = webContents.getURL();
-    const bannerKind = await getBannerKindForUrl(webContents, url);
-
     await clearInjectedBanner(webContents);
-
-    if (bannerKind === "login") {
-      const cssKey = await webContents.insertCSS(getLoginBannerCSS());
-      bannerCssKeyByWebContentsId.set(webContents.id, cssKey);
-      await webContents.executeJavaScript(LOGIN_BANNER_JS);
-      console.log("[LoginPage] Banner injected");
-    } else if (bannerKind === "verification") {
-      const cssKey = await webContents.insertCSS(getVerificationBannerCSS());
-      bannerCssKeyByWebContentsId.set(webContents.id, cssKey);
-      await webContents.executeJavaScript(VERIFICATION_BANNER_JS);
-      console.log("[VerificationPage] Banner injected");
-    } else if (bannerKind === "facebook") {
-      const cssKey = await webContents.insertCSS(getFacebookBannerCSS());
-      bannerCssKeyByWebContentsId.set(webContents.id, cssKey);
-      await webContents.executeJavaScript(FACEBOOK_BANNER_JS);
-      console.log("[FacebookPage] Banner injected");
-    }
   } catch (e) {
     console.warn("[LoginPage] Failed to inject styling:", e);
   }

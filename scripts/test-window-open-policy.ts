@@ -1,5 +1,7 @@
 import {
   decideWindowOpenAction,
+  isMarketplaceMessagingRoute,
+  shouldAllowMarketplaceActionInApp,
   shouldReloadToMessagesHome,
   type WindowOpenAction,
 } from "../src/main/url-policy";
@@ -50,7 +52,31 @@ function run(): void {
   // Message thread links should stay in-app
   expectAction("https://www.facebook.com/messages/t/123", "reroute-main-view");
 
-  // Marketplace links should always escape to the system browser, even when wrapped
+  // Marketplace messaging surfaces should stay in-app.
+  expectAction(
+    "https://www.facebook.com/marketplace/inbox/",
+    "reroute-main-view",
+  );
+  expectAction(
+    "https://www.facebook.com/marketplace/you/",
+    "reroute-main-view",
+  );
+  expectAction(
+    "https://www.facebook.com/marketplace/you/selling/",
+    "reroute-main-view",
+  );
+  assertEqual(
+    isMarketplaceMessagingRoute("https://www.facebook.com/marketplace/inbox/"),
+    true,
+    "Marketplace inbox route should be recognized as an in-app messaging surface",
+  );
+  assertEqual(
+    isMarketplaceMessagingRoute("https://www.facebook.com/marketplace/"),
+    false,
+    "Marketplace browse page should not be treated as an in-app messaging surface",
+  );
+
+  // Marketplace browse/listing links should still escape to the system browser, even when wrapped
   expectAction(
     "https://www.facebook.com/marketplace/item/1234567890",
     "open-external-browser",
@@ -58,6 +84,53 @@ function run(): void {
   expectAction(
     "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
     "open-external-browser",
+  );
+  assertEqual(
+    shouldAllowMarketplaceActionInApp({
+      url: "https://www.facebook.com/marketplace/item/1234567890",
+      label: "More Options",
+    }),
+    true,
+    "Marketplace More Options should be allowed to stay in-app",
+  );
+  assertEqual(
+    shouldAllowMarketplaceActionInApp({
+      url: "https://www.facebook.com/messages/t/1234567890?u=https%3A%2F%2Fwww.facebook.com%2Fmarketplace%2Fitem%2F1234567890",
+      label: "Mark as Pending",
+    }),
+    true,
+    "Wrapped marketplace Mark as Pending should be allowed to stay in-app",
+  );
+  assertEqual(
+    shouldAllowMarketplaceActionInApp({
+      url: "https://www.facebook.com/marketplace/item/1234567890",
+      label: "Back to Previous Page",
+    }),
+    true,
+    "Marketplace back action should be allowed to stay in-app",
+  );
+  assertEqual(
+    shouldAllowMarketplaceActionInApp({
+      url: "https://www.facebook.com/marketplace/item/1234567890",
+      label: "View Listing",
+    }),
+    false,
+    "Marketplace listing navigation should still escape to the external browser",
+  );
+  assertEqual(
+    shouldReloadToMessagesHome("https://www.facebook.com/marketplace/inbox/"),
+    false,
+    "Marketplace inbox should survive reloads inside the app",
+  );
+  assertEqual(
+    shouldReloadToMessagesHome("https://www.facebook.com/marketplace/you/"),
+    false,
+    "Marketplace buying surface should survive reloads inside the app",
+  );
+  assertEqual(
+    shouldReloadToMessagesHome("https://www.facebook.com/marketplace/item/1234567890"),
+    true,
+    "Marketplace listing pages should still be considered off-scope for reload-to-home",
   );
 
   // Wrapped/direct profile links should also escape to the system browser.

@@ -14,6 +14,7 @@ export type MessagesViewportStatePayload = {
 type ResolveViewportModeInput = {
   urlPath: string;
   mediaOverlayVisible?: boolean;
+  marketplaceThreadVisible?: boolean;
 };
 
 const MEDIA_ROUTE_PREFIXES = [...MESSAGES_MEDIA_VIEWER_PATH_PREFIXES];
@@ -81,6 +82,9 @@ export function resolveViewportMode(
     if (input.mediaOverlayVisible === true) {
       return "media";
     }
+    if (input.marketplaceThreadVisible === true) {
+      return "other";
+    }
     return "chat";
   }
 
@@ -98,17 +102,20 @@ export function resolveMessagesViewportState(input: {
   urlPath: string;
   headerHeight?: number | null;
   mediaOverlayVisible?: boolean;
+  marketplaceThreadVisible?: boolean;
 }): MessagesViewportStatePayload {
   return {
     url: input.url,
     routeKind: resolveViewportMode({
       urlPath: input.urlPath,
       mediaOverlayVisible: input.mediaOverlayVisible,
+      marketplaceThreadVisible: input.marketplaceThreadVisible,
     }),
     headerHeight: normalizeViewportMeasurement(input.headerHeight),
     shouldCrop: shouldApplyMessagesCrop({
       urlPath: input.urlPath,
       mediaOverlayVisible: input.mediaOverlayVisible,
+      marketplaceThreadVisible: input.marketplaceThreadVisible,
     }),
   };
 }

@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.0-beta.35] - 2026-03-29
+
+### Fixed
+
+- **Issue #49 follow-up: keep Marketplace messaging surfaces in-app without reintroducing old Messenger crop hacks** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep `Marketplace Inbox`, `Buying`, and `Selling` surfaces inside the app instead of forcing them out to the system browser.
+  - Continue opening generic Marketplace browse/listing navigation externally so item pages and broader Marketplace browsing do not take over the app shell.
+  - Disable the Messenger BrowserView crop on Marketplace thread surfaces so Facebook's native Marketplace header/actions render without the chat-specific chrome cleanup path interfering.
+- **Remove the injected Facebook/login warning banner**
+  - Stop inserting the custom "unofficial app" banner on login, verification, and other Facebook intermediate pages.
+
+### Changed
+
+- **Marketplace routing and viewport regression coverage**
+  - Added deterministic coverage for the new Marketplace in-app route split and for Marketplace threads opting out of the Messenger crop path.
+
+### Validation
+
+- `npm run build`
+- `npm run test:window-open`
+- `npm run test:issues:deterministic`
+- Real live Marketplace navigation checks for:
+  - `https://www.facebook.com/marketplace/inbox`
+  - `https://www.facebook.com/marketplace/you`
+  - `https://www.facebook.com/marketplace/you/selling`
+
 ## [1.3.0-beta.34] - 2026-03-29
 
 ### Fixed

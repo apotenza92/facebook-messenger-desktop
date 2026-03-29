@@ -205,15 +205,18 @@ const runViewportPolicyTests = () => {
     expectedCrop: boolean,
     extra: {
       mediaOverlayVisible?: boolean;
+      marketplaceThreadVisible?: boolean;
     } = {},
   ) => {
     const mode = resolveViewportMode({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
+      marketplaceThreadVisible: extra.marketplaceThreadVisible,
     });
     const crop = shouldApplyMessagesCrop({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
+      marketplaceThreadVisible: extra.marketplaceThreadVisible,
     });
     assertEqual(
       mode,
@@ -240,6 +243,9 @@ const runViewportPolicyTests = () => {
   });
   expectMode("/messages/e2ee/t/123", "media", false, {
     mediaOverlayVisible: true,
+  });
+  expectMode("/messages/t/123", "other", false, {
+    marketplaceThreadVisible: true,
   });
   expectMode("/messages/t/123", "chat", true);
 
@@ -290,6 +296,23 @@ const runViewportPolicyTests = () => {
     composerOverlayViewportState.shouldCrop,
     true,
     "#41 emoji/composer overlays should keep the BrowserView crop active",
+  );
+
+  const marketplaceViewportState = resolveMessagesViewportState({
+    url: "https://www.facebook.com/messages/t/123",
+    urlPath: "/messages/t/123",
+    headerHeight: 56,
+    marketplaceThreadVisible: true,
+  });
+  assertEqual(
+    marketplaceViewportState.routeKind,
+    "other",
+    "#49 marketplace threads should stay on the native Facebook layout",
+  );
+  assertEqual(
+    marketplaceViewportState.shouldCrop,
+    false,
+    "#49 marketplace threads should disable the BrowserView crop",
   );
 
   // Transition sequence reproducing "first chat works, subsequent chats break"
