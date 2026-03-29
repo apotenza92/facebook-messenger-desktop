@@ -4,6 +4,21 @@ const path = require("path");
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const TOP_BAR_CHROME_SELECTORS = [
+  '[role="banner"] [aria-label="Menu" i]',
+  '[role="banner"] [aria-label="Messenger" i]',
+  '[role="banner"] [aria-label*="Notifications" i]',
+  '[role="banner"] [aria-label*="Account controls and settings" i]',
+  '[role="banner"] [aria-label="Your profile" i]',
+  '[role="banner"] [aria-label="Facebook" i]',
+  '[role="banner"] [aria-label*="Search" i]',
+  '[role="banner"] input[placeholder*="Search" i]',
+  '[role="banner"] a[href="/"]',
+  '[role="banner"] a[href="https://www.facebook.com/"]',
+  '[role="banner"] a[href*="/notifications/"]',
+  '[role="banner"] a[href="/messages/"]',
+];
+
 function ts() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -25,6 +40,7 @@ function parseArgs(argv) {
       `emoji-composer-${ts()}`,
     ),
     cycles: 3,
+    maxOpenMs: 2000,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -35,13 +51,15 @@ function parseArgs(argv) {
       options.outputDir = path.resolve(String(argv[++i] || "").trim());
     } else if (arg === "--cycles") {
       options.cycles = Math.max(1, Number(argv[++i]) || options.cycles);
+    } else if (arg === "--max-open-ms") {
+      options.maxOpenMs = Math.max(100, Number(argv[++i]) || options.maxOpenMs);
     } else if (arg === "--app-root") {
       options.appRoot = path.resolve(String(argv[++i] || "").trim());
     } else if (arg === "--executable-path") {
       options.executablePath = path.resolve(String(argv[++i] || "").trim());
     } else if (arg === "--help" || arg === "-h") {
       console.log(
-        `Usage: node scripts/test-emoji-composer-gui.js [options]\n\nOptions:\n  --thread-url <url>       Target conversation URL to validate\n  --cycles <n>             Number of open/select/close cycles (default: 3)\n  --output-dir <dir>       Directory for summary.json and screenshots\n  --app-root <dir>         Alternate app root containing dist/main/main.js\n  --executable-path <path> Launch a packaged app binary instead of dist/main/main.js\n`,
+        `Usage: node scripts/test-emoji-composer-gui.js [options]\n\nOptions:\n  --thread-url <url>       Target conversation URL to validate\n  --cycles <n>             Number of open/select/close cycles (default: 3)\n  --max-open-ms <ms>       Maximum allowed picker-open latency (default: 2000)\n  --output-dir <dir>       Directory for summary.json and screenshots\n  --app-root <dir>         Alternate app root containing dist/main/main.js\n  --executable-path <path> Launch a packaged app binary instead of dist/main/main.js\n`,
       );
       process.exit(0);
     } else {
@@ -98,6 +116,33 @@ async function evaluateInElectronPage(app, script) {
     app,
     async (wc, payload) => wc.executeJavaScript(payload.script, true),
     { script },
+  );
+}
+
+async function sendInputClick(app, x, y) {
+  return withPrimaryWebContents(
+    app,
+    async (wc, point) => {
+      const px = Math.round(point.x);
+      const py = Math.round(point.y);
+      wc.sendInputEvent({ type: "mouseMove", x: px, y: py, button: "left" });
+      wc.sendInputEvent({
+        type: "mouseDown",
+        x: px,
+        y: py,
+        button: "left",
+        clickCount: 1,
+      });
+      wc.sendInputEvent({
+        type: "mouseUp",
+        x: px,
+        y: py,
+        button: "left",
+        clickCount: 1,
+      });
+      return true;
+    },
+    { x, y },
   );
 }
 
@@ -175,6 +220,23 @@ function buildComposerStateScript() {
       '[data-testid*="popover"]',
       '[data-testid*="emoji"]',
     ];
+    const topBarSelectors = ${JSON.stringify(TOP_BAR_CHROME_SELECTORS)};
+    const genericOptionPattern = /(close|search|recent|frequently|skin tone|sticker|gif|emoji picker|choose an emoji)/i;
+    const collectVisibleLabels = (elements) => {
+      const labels = [];
+      for (const el of elements) {
+        if (!isVisible(el)) continue;
+        const label = normalize(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '');
+        if (!label) continue;
+        labels.push(label);
+      }
+      return Array.from(new Set(labels));
+    };
+    const pickOverlay = () =>
+      overlayCandidates.find((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 120 && rect.height >= 120;
+      }) || overlayCandidates[0] || null;
 
     const emojiTriggers = Array.from(document.querySelectorAll(triggerSelectors.join(', ')))
       .filter((el) => isVisible(el))
@@ -191,11 +253,66 @@ function buildComposerStateScript() {
           .some((child) => /(emoji|sticker|gif)/i.test(normalize(child.getAttribute('aria-label') || child.textContent)));
       });
 
+    const overlay = pickOverlay();
+    const emojiOptions = overlay
+      ? Array.from(
+          overlay.querySelectorAll('button, [role="button"], [role="gridcell"], [tabindex], [data-testid]')
+        )
+          .filter((el) => isVisible(el))
+          .map((el) => {
+            const asset =
+              (el.matches && el.matches('img[alt]') ? el : null) ||
+              el.querySelector?.('img[alt]') ||
+              null;
+            const alt = normalize(asset && asset.getAttribute && asset.getAttribute('alt'));
+            const label = normalize(
+              (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) ||
+              alt ||
+              el.textContent
+            );
+            const rect = el.getBoundingClientRect();
+            return {
+              label,
+              alt,
+              width: rect.width,
+              height: rect.height,
+              hasEmojiAsset: Boolean(alt),
+            };
+          })
+          .filter((entry) => {
+            if (!entry.label) return false;
+            if (genericOptionPattern.test(entry.label)) return false;
+            if (entry.width > 96 || entry.height > 96) return false;
+            return entry.hasEmojiAsset || /\\p{Extended_Pictographic}/u.test(entry.label);
+          })
+      : [];
+    const topBarChromeVisibleLabels = collectVisibleLabels(
+      Array.from(document.querySelectorAll(topBarSelectors.join(', '))),
+    );
+    const topLeftChromeSquares = Array.from(
+      document.querySelectorAll('button, [role="button"], a[href]')
+    ).filter((el) => {
+      if (!isVisible(el)) return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.top > 84 || rect.left > 160) return false;
+      if (rect.width < 24 || rect.height < 24 || rect.width > 96 || rect.height > 96) return false;
+      if (Math.abs(rect.width - rect.height) > 12) return false;
+      const label = normalize(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent);
+      return !/(choose an emoji|search messenger|search emoji|messenger|all|unread|groups)/i.test(label);
+    });
+    const topLeftChromeLabels = topLeftChromeSquares.map((el) =>
+      normalize(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent) || '<top-left-square>'
+    );
+    const allTopBarChromeLabels = Array.from(
+      new Set([...topBarChromeVisibleLabels, ...topLeftChromeLabels]),
+    );
+
     const composerCandidates = Array.from(
       document.querySelectorAll(
         'div[contenteditable="true"][role="textbox"], div[contenteditable="true"][aria-label*="message" i], div[contenteditable="true"]',
       ),
     ).filter((el) => isVisible(el));
+    const composer = composerCandidates[0] || null;
 
     return {
       url: window.location.href,
@@ -205,11 +322,17 @@ function buildComposerStateScript() {
       emojiPickerVisible: overlayCandidates.length > 0,
       overlayCount: overlayCandidates.length,
       composerCount: composerCandidates.length,
+      emojiOptionCount: emojiOptions.length,
+      emojiOptionLabels: emojiOptions.slice(0, 12).map((entry) => entry.label),
+      topBarChromeVisible: allTopBarChromeLabels.length > 0,
+      topBarChromeVisibleLabels: allTopBarChromeLabels.slice(0, 20),
+      composerText: composer ? normalize(composer.textContent) : '',
+      composerHtml: composer ? normalize(composer.innerHTML).slice(0, 400) : '',
     };
   })();`;
 }
 
-function buildClickEmojiTriggerScript() {
+function buildFindEmojiTriggerPointScript() {
   return `(() => {
     const isVisible = (el) => {
       if (!el || !(el instanceof HTMLElement)) return false;
@@ -227,14 +350,19 @@ function buildClickEmojiTriggerScript() {
         .trim();
       if (!/emoji/i.test(label)) continue;
       el.scrollIntoView({ block: 'center', inline: 'nearest' });
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      return { clicked: true, label };
+      const rect = el.getBoundingClientRect();
+      return {
+        clicked: true,
+        label,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
     }
-    return { clicked: false, label: null };
+    return { clicked: false, label: null, x: null, y: null };
   })();`;
 }
 
-function buildInsertEmojiScript() {
+function buildFindEmojiOptionPointScript() {
   return `(() => {
     const isVisible = (el) => {
       if (!el || !(el instanceof HTMLElement)) return false;
@@ -245,24 +373,47 @@ function buildInsertEmojiScript() {
       return rect.width >= 4 && rect.height >= 4;
     };
     const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const genericOptionPattern = /(close|search|recent|frequently|skin tone|sticker|gif|emoji picker|choose an emoji)/i;
     const overlaySelectors = ['[role="dialog"]', '[role="menu"]', '[role="grid"]', '[role="listbox"]', '[aria-modal="true"]'];
-    const overlay = Array.from(document.querySelectorAll(overlaySelectors.join(', '))).find((el) => {
+    const overlays = Array.from(document.querySelectorAll(overlaySelectors.join(', '))).filter((el) => {
       if (!isVisible(el)) return false;
       const label = normalize(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent).slice(0, 240);
       return /(emoji|sticker|gif)/i.test(label);
     });
+    const overlay = overlays.find((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width >= 120 && rect.height >= 120;
+    }) || overlays[0];
     if (!overlay) return { inserted: false, label: null };
 
-    const candidates = Array.from(overlay.querySelectorAll('button, [role="button"], [aria-label]'));
+    const candidates = Array.from(
+      overlay.querySelectorAll('button, [role="button"], [role="gridcell"], [tabindex], [data-testid]')
+    );
     for (const el of candidates) {
       if (!isVisible(el)) continue;
-      const label = normalize(el.getAttribute('aria-label') || el.textContent);
-      if (!label || /(close|search|recent|frequently|skin tone|sticker|gif)/i.test(label)) continue;
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      return { inserted: true, label };
+      const asset =
+        (el.matches && el.matches('img[alt]') ? el : null) ||
+        el.querySelector?.('img[alt]') ||
+        null;
+      const alt = normalize(asset && asset.getAttribute && asset.getAttribute('alt'));
+      const label = normalize(
+        (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) ||
+        alt ||
+        el.textContent
+      );
+      const rect = el.getBoundingClientRect();
+      if (!label || genericOptionPattern.test(label)) continue;
+      if (rect.width > 96 || rect.height > 96) continue;
+      if (!(alt || /\\p{Extended_Pictographic}/u.test(label))) continue;
+      return {
+        inserted: true,
+        label,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
     }
 
-    return { inserted: false, label: null };
+    return { inserted: false, label: null, x: null, y: null };
   })();`;
 }
 
@@ -326,14 +477,20 @@ async function main() {
     }
 
     const cycleResults = [];
+    let openScreenshotPath = null;
     for (let cycle = 0; cycle < options.cycles; cycle += 1) {
+      const before = await evaluateInElectronPage(
+        app,
+        buildComposerStateScript(),
+      );
       const click = await evaluateInElectronPage(
         app,
-        buildClickEmojiTriggerScript(),
+        buildFindEmojiTriggerPointScript(),
       );
       if (!click.clicked) {
         throw new Error(`Cycle ${cycle + 1}: could not click emoji trigger`);
       }
+      await sendInputClick(app, click.x, click.y);
 
       const opened = await waitFor(
         async () => {
@@ -341,7 +498,9 @@ async function main() {
             app,
             buildComposerStateScript(),
           );
-          return state && state.emojiPickerVisible ? state : false;
+          return state && state.emojiPickerVisible && state.emojiOptionCount > 0
+            ? state
+            : false;
         },
         10000,
         300,
@@ -352,16 +511,34 @@ async function main() {
           `Cycle ${cycle + 1}: emoji picker did not open. Last state: ${JSON.stringify(opened.lastResult)}`,
         );
       }
+      if (opened.elapsedMs > options.maxOpenMs) {
+        throw new Error(
+          `Cycle ${cycle + 1}: emoji picker opened too slowly (${opened.elapsedMs}ms > ${options.maxOpenMs}ms). State: ${JSON.stringify(opened.lastResult)}`,
+        );
+      }
+      if (opened.lastResult?.topBarChromeVisible) {
+        throw new Error(
+          `Cycle ${cycle + 1}: Facebook top-bar chrome became visible while the emoji picker was open. State: ${JSON.stringify(opened.lastResult)}`,
+        );
+      }
+      if (cycle === 0) {
+        openScreenshotPath = path.join(
+          options.outputDir,
+          "emoji-composer-open.png",
+        );
+        await page.screenshot({ path: openScreenshotPath });
+      }
 
       const inserted = await evaluateInElectronPage(
         app,
-        buildInsertEmojiScript(),
+        buildFindEmojiOptionPointScript(),
       );
       if (!inserted.inserted) {
         throw new Error(
           `Cycle ${cycle + 1}: could not insert an emoji from the picker`,
         );
       }
+      await sendInputClick(app, inserted.x, inserted.y);
 
       await page.keyboard.press("Escape").catch(() => {});
       await wait(800);
@@ -375,11 +552,24 @@ async function main() {
           `Cycle ${cycle + 1}: composer was no longer ready after emoji interaction. State: ${JSON.stringify(after)}`,
         );
       }
+      if (
+        before &&
+        after &&
+        before.composerText === after.composerText &&
+        before.composerHtml === after.composerHtml
+      ) {
+        throw new Error(
+          `Cycle ${cycle + 1}: composer content did not change after emoji selection. Before: ${JSON.stringify(before)} After: ${JSON.stringify(after)}`,
+        );
+      }
 
       cycleResults.push({
         cycle: cycle + 1,
         triggerLabel: click.label,
         insertedLabel: inserted.label,
+        openElapsedMs: opened.elapsedMs,
+        openedState: opened.lastResult,
+        beforeState: before,
         finalState: after,
       });
     }
@@ -395,6 +585,7 @@ async function main() {
       threadUrl: targetThreadUrl || null,
       cycles: options.cycles,
       cycleResults,
+      openScreenshotPath,
       screenshotPath,
     };
     fs.writeFileSync(

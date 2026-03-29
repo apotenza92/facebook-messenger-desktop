@@ -2196,9 +2196,85 @@
     const hasVisibleIncomingCallUi = (): boolean =>
       Boolean(getVisibleIncomingCallUiState().source);
 
+    const normalizeOverlayHintText = (value: string | null | undefined): string =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+
+    const isComposerOverlayElement = (element: Element | null): boolean => {
+      if (!(element instanceof Element)) {
+        return false;
+      }
+
+      const overlayRoot =
+        element.matches?.(
+          [
+            "[role='dialog']",
+            "[role='menu']",
+            "[role='listbox']",
+            "[role='grid']",
+            "[aria-modal='true']",
+            "[data-testid*='popover']",
+            "[data-testid*='emoji']",
+          ].join(", "),
+        )
+          ? element
+          : element.closest(
+              [
+                "[role='dialog']",
+                "[role='menu']",
+                "[role='listbox']",
+                "[role='grid']",
+                "[aria-modal='true']",
+                "[data-testid*='popover']",
+                "[data-testid*='emoji']",
+              ].join(", "),
+            );
+      if (!(overlayRoot instanceof Element)) {
+        return false;
+      }
+
+      const label = normalizeOverlayHintText(
+        `${overlayRoot.getAttribute("aria-label") || ""} ${
+          overlayRoot.getAttribute("title") || ""
+        } ${overlayRoot.textContent || ""}`.slice(0, 400),
+      );
+      if (/\b(emoji|emojis|sticker|stickers|gif|gifs|search emoji)\b/i.test(label)) {
+        return true;
+      }
+
+      return Boolean(
+        overlayRoot.querySelector(
+          '[aria-label*="Search emoji" i], [placeholder*="Search emoji" i], [data-testid*="emoji"]',
+        ),
+      );
+    };
+
+    const exceedsCallPopupDescendantScanLimit = (
+      element: Element,
+      limit: number,
+    ): boolean => {
+      const walker = document.createTreeWalker(
+        element,
+        NodeFilter.SHOW_ELEMENT,
+      );
+      let seen = 0;
+      while (walker.nextNode()) {
+        seen += 1;
+        if (seen > limit) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     // Check if an element or its children contain call-related UI
     const isCallPopupElement = (element: Element): boolean => {
       if (isSidebarCallStatusElement(element)) {
+        return false;
+      }
+      if (isComposerOverlayElement(element)) {
         return false;
       }
 
@@ -2253,6 +2329,9 @@
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
         const element = node as Element;
+        if (isComposerOverlayElement(element)) {
+          continue;
+        }
 
         // Check if this element or its descendants indicate a call popup
         if (isCallPopupElement(element)) {
@@ -2277,8 +2356,19 @@
         }
 
         // Also check children for deeply nested call UI
+        if (
+          exceedsCallPopupDescendantScanLimit(
+            element,
+            MAX_CALL_POPUP_CHILD_COUNT,
+          )
+        ) {
+          continue;
+        }
         const descendants = element.querySelectorAll("*");
         for (const desc of Array.from(descendants)) {
+          if (isComposerOverlayElement(desc)) {
+            continue;
+          }
           if (isCallPopupElement(desc)) {
             const uiState = getVisibleIncomingCallUiState();
             if (!uiState.source) {
@@ -2343,6 +2433,7 @@
         } else if (mutation.type === "attributes") {
           const changedEl = mutation.target as Element;
           if (changedEl.nodeType !== Node.ELEMENT_NODE) continue;
+          if (isComposerOverlayElement(changedEl)) continue;
           const now = Date.now();
           if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) continue;
           // Throttle: class changes fire constantly in React — check at most twice/sec

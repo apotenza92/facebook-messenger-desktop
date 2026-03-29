@@ -305,6 +305,7 @@ ipcRenderer.on(
   const SHELL_TARGET_HEIGHT_VAR = "--md-fb-shell-target-height";
   const MEDIA_OVERLAY_TRANSITION_MS = 50;
   const VIEWPORT_STATE_SEND_DEBOUNCE_MS = 30;
+  const COMPOSER_INTERACTION_PAUSE_MS = 2500;
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
@@ -324,6 +325,8 @@ ipcRenderer.on(
   let incomingCallDetectedSinceHint = false;
   let mediaOverlayTransitionTimer: number | null = null;
   let viewportStateSendTimer: number | null = null;
+  let composerInteractionPauseUntil = 0;
+  let composerInteractionRecoveryTimer: number | null = null;
   let viewportRecoveryTimerIds: number[] = [];
   let lastSentViewportState: MessagesViewportStatePayload | null = null;
   let lastViewportMode: MessagesViewportMode | null = null;
@@ -1289,7 +1292,7 @@ ipcRenderer.on(
   const TOP_LEFT_CHROME_MAX_TOP = 84;
   const TOP_LEFT_CHROME_MAX_LEFT = 160;
   const TOP_LEFT_CHROME_MIN_SIZE = 24;
-  const TOP_LEFT_CHROME_MAX_SIZE = 64;
+  const TOP_LEFT_CHROME_MAX_SIZE = 96;
   const TOP_LEFT_CHROME_SQUARE_TOLERANCE = 12;
   const TOP_STRIP_MAX_TOP = 64;
   const TOP_STRIP_MAX_LEFT = 24;
@@ -2011,6 +2014,75 @@ ipcRenderer.on(
     };
   };
 
+  const isComposerInteractionPauseActive = (now = Date.now()): boolean =>
+    composerInteractionPauseUntil > now;
+
+  const scheduleComposerInteractionRecovery = (): void => {
+    if (composerInteractionRecoveryTimer !== null) {
+      clearTimeout(composerInteractionRecoveryTimer);
+      composerInteractionRecoveryTimer = null;
+    }
+
+    const remainingMs = composerInteractionPauseUntil - Date.now();
+    if (remainingMs <= 0) {
+      composerInteractionPauseUntil = 0;
+      scheduleMediaOverlayRecheck();
+      scheduleApply();
+      scheduleViewportStateSend(true);
+      return;
+    }
+
+    composerInteractionRecoveryTimer = window.setTimeout(() => {
+      composerInteractionRecoveryTimer = null;
+      if (!isComposerInteractionPauseActive()) {
+        composerInteractionPauseUntil = 0;
+        scheduleMediaOverlayRecheck();
+        scheduleApply();
+        scheduleViewportStateSend(true);
+      }
+    }, remainingMs + 10);
+  };
+
+  const armComposerInteractionPause = (
+    durationMs = COMPOSER_INTERACTION_PAUSE_MS,
+  ): void => {
+    composerInteractionPauseUntil = Math.max(
+      composerInteractionPauseUntil,
+      Date.now() + Math.max(100, Math.round(durationMs)),
+    );
+    scheduleComposerInteractionRecovery();
+  };
+
+  const isComposerOverlayInteractionTarget = (
+    target: EventTarget | null,
+  ): boolean => {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    const overlayRoot = target.closest(
+      [
+        "[role='dialog']",
+        "[role='menu']",
+        "[role='listbox']",
+        "[role='grid']",
+        "[aria-modal='true']",
+        "[data-testid*='popover']",
+        "[data-testid*='emoji']",
+      ].join(", "),
+    );
+    if (!(overlayRoot instanceof HTMLElement) || !isAriaVisible(overlayRoot)) {
+      return false;
+    }
+
+    const label = normalizeLabelText(
+      overlayRoot.getAttribute("aria-label") ||
+        overlayRoot.getAttribute("title") ||
+        overlayRoot.textContent,
+    ).slice(0, 240);
+    return /\b(emoji|emojis|sticker|stickers|gif|gifs)\b/i.test(label);
+  };
+
   const collectCallSurfaceState = (): {
     callWindowOpen: boolean;
     isMuted: boolean | null;
@@ -2048,41 +2120,46 @@ ipcRenderer.on(
     return { callWindowOpen, isMuted };
   };
 
-  document.addEventListener(
-    "click",
-    (event) => {
-      const label = extractInteractiveLabel(event.target);
-      if (!label) return;
+  const handleRendererInteractionEvent = (event: Event): void => {
+    const label = extractInteractiveLabel(event.target);
+    const emojiInteraction =
+      /\bemoji\b/i.test(label) || isComposerOverlayInteractionTarget(event.target);
+    if (emojiInteraction) {
+      armComposerInteractionPause();
+    }
+    if (!label) return;
 
-      let interactionKind: "emoji" | "call-mute-toggle" | null = null;
-      if (/\bemoji\b/i.test(label)) {
-        interactionKind = "emoji";
-      } else if (/\b(?:mute|unmute)\b/i.test(label)) {
-        interactionKind = "call-mute-toggle";
-      }
+    let interactionKind: "call-mute-toggle" | null = null;
+    if (/\b(?:mute|unmute)\b/i.test(label)) {
+      interactionKind = "call-mute-toggle";
+    }
 
-      if (!interactionKind) return;
+    if (!interactionKind) return;
 
-      window.setTimeout(() => {
-        const composerOverlayState = collectComposerOverlayState();
-        const callSurfaceState = collectCallSurfaceState();
-        sendMediaOverlayDebug("renderer-interaction", {
-          force: true,
-          interactionKind,
-          interactionLabel: label,
-          viewportState: buildViewportStatePayload(),
-          composerOverlayState,
-          callSurfaceState,
-        });
-        scheduleViewportStateSend(true);
-        scheduleApply();
-      }, 0);
-    },
-    { capture: true },
-  );
+    window.setTimeout(() => {
+      const composerOverlayState = collectComposerOverlayState();
+      const callSurfaceState = collectCallSurfaceState();
+      sendMediaOverlayDebug("renderer-interaction", {
+        force: true,
+        interactionKind,
+        interactionLabel: label,
+        viewportState: buildViewportStatePayload(),
+        composerOverlayState,
+        callSurfaceState,
+      });
+      scheduleViewportStateSend(true);
+      scheduleApply();
+    }, 0);
+  };
+
+  document.addEventListener("mousedown", handleRendererInteractionEvent, {
+    capture: true,
+  });
+  document.addEventListener("click", handleRendererInteractionEvent, {
+    capture: true,
+  });
 
   const buildViewportStatePayload = (): MessagesViewportStatePayload => {
-    const composerOverlayState = collectComposerOverlayState();
     const headerHeight =
       resolveMode() === "chat"
         ? Math.max(
@@ -2100,7 +2177,27 @@ ipcRenderer.on(
       headerHeight,
       mediaOverlayVisible:
         mediaOverlayVisible || detectMediaOverlayVisible(),
-      composerOverlayVisible: composerOverlayState.emojiPickerVisible,
+    });
+  };
+
+  const sendViewportStateNow = (force = false): void => {
+    const viewportState = buildViewportStatePayload();
+    const unchanged =
+      !force &&
+      lastSentViewportState !== null &&
+      JSON.stringify(lastSentViewportState) === JSON.stringify(viewportState);
+    if (unchanged) return;
+
+    lastSentViewportState = viewportState;
+    ipcRenderer.send("messages-viewport-state", viewportState);
+    sendMediaOverlayDebug("viewport-state-send", {
+      force,
+      sentVisible: mediaOverlayVisible,
+      incomingCallOverlayVisible:
+        incomingCallOverlayHintActive || detectIncomingCallOverlayVisible(),
+      incomingCallOverlayHintActive,
+      effectiveOverlayVisible: getViewportOverlayVisible(),
+      viewportState,
     });
   };
 
@@ -2111,24 +2208,7 @@ ipcRenderer.on(
 
     viewportStateSendTimer = window.setTimeout(() => {
       viewportStateSendTimer = null;
-      const viewportState = buildViewportStatePayload();
-      const unchanged =
-        !force &&
-        lastSentViewportState !== null &&
-        JSON.stringify(lastSentViewportState) === JSON.stringify(viewportState);
-      if (unchanged) return;
-
-      lastSentViewportState = viewportState;
-      ipcRenderer.send("messages-viewport-state", viewportState);
-      sendMediaOverlayDebug("viewport-state-send", {
-        force,
-        sentVisible: mediaOverlayVisible,
-        incomingCallOverlayVisible:
-          incomingCallOverlayHintActive || detectIncomingCallOverlayVisible(),
-        incomingCallOverlayHintActive,
-        effectiveOverlayVisible: getViewportOverlayVisible(),
-        viewportState,
-      });
+      sendViewportStateNow(force);
     }, VIEWPORT_STATE_SEND_DEBOUNCE_MS);
   };
 
@@ -2185,6 +2265,11 @@ ipcRenderer.on(
   const applyCompensation = (): void => {
     if (!document.head) return;
     ensureStyleTag();
+
+    if (isComposerInteractionPauseActive()) {
+      scheduleComposerInteractionRecovery();
+      return;
+    }
 
       const mode = resolveMode();
       if (mode !== lastViewportMode) {
@@ -2310,6 +2395,10 @@ ipcRenderer.on(
   const startObservers = (): void => {
     if (!document.body) return;
     const observer = new MutationObserver(() => {
+      if (isComposerInteractionPauseActive()) {
+        scheduleComposerInteractionRecovery();
+        return;
+      }
       scheduleMediaOverlayRecheck();
       scheduleApply();
       scheduleViewportStateSend();
@@ -2422,6 +2511,10 @@ ipcRenderer.on(
   document.addEventListener(
     "click",
     (_event) => {
+      if (isComposerInteractionPauseActive()) {
+        scheduleComposerInteractionRecovery();
+        return;
+      }
       scheduleMediaOverlayRecheck();
       scheduleApply();
       scheduleViewportStateSend(true);
@@ -2432,6 +2525,13 @@ ipcRenderer.on(
   document.addEventListener(
     "keydown",
     (event) => {
+      if (isComposerOverlayInteractionTarget(event.target)) {
+        armComposerInteractionPause();
+      }
+      if (isComposerInteractionPauseActive()) {
+        scheduleComposerInteractionRecovery();
+        return;
+      }
       if (event.key !== "Enter" && event.key !== " ") return;
       scheduleMediaOverlayRecheck();
       scheduleApply();

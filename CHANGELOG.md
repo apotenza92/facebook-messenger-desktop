@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.0-beta.34] - 2026-03-29
+
+### Fixed
+
+- **Issue #41 follow-up: keep emoji overlays fast without leaking Facebook chrome** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Removed the temporary emoji-triggered BrowserView uncrop so opening the emoji picker no longer brings the Facebook top chrome back into view.
+  - Fixed the main emoji-picker slowdown by teaching the global call-popup observer to ignore emoji/gif/sticker portal DOM and to stop deep-walking large unrelated subtrees.
+  - Kept real emoji insertion working while the normal chat crop stays active, so the picker opens and inserts emoji without exposing the top-left Facebook search strip.
+
+### Changed
+
+- **Emoji GUI regression coverage**
+  - Upgraded the live emoji harness to assert picker-open latency, hidden Facebook chrome during picker-open, and real emoji insertion into the composer.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:release`
+- `node scripts/test-emoji-composer-gui.js --cycles 5 --max-open-ms 2000`
+
 ## [1.3.0-beta.33] - 2026-03-29
 
 ### Fixed

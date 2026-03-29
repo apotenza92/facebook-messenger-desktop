@@ -205,18 +205,15 @@ const runViewportPolicyTests = () => {
     expectedCrop: boolean,
     extra: {
       mediaOverlayVisible?: boolean;
-      composerOverlayVisible?: boolean;
     } = {},
   ) => {
     const mode = resolveViewportMode({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
-      composerOverlayVisible: extra.composerOverlayVisible,
     });
     const crop = shouldApplyMessagesCrop({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
-      composerOverlayVisible: extra.composerOverlayVisible,
     });
     assertEqual(
       mode,
@@ -244,9 +241,7 @@ const runViewportPolicyTests = () => {
   expectMode("/messages/e2ee/t/123", "media", false, {
     mediaOverlayVisible: true,
   });
-  expectMode("/messages/t/123", "chat", false, {
-    composerOverlayVisible: true,
-  });
+  expectMode("/messages/t/123", "chat", true);
 
   const viewportState = resolveMessagesViewportState({
     url: "https://www.facebook.com/messages/e2ee/t/123",
@@ -285,7 +280,6 @@ const runViewportPolicyTests = () => {
     url: "https://www.facebook.com/messages/t/123",
     urlPath: "/messages/t/123",
     headerHeight: 56,
-    composerOverlayVisible: true,
   });
   assertEqual(
     composerOverlayViewportState.routeKind,
@@ -294,8 +288,8 @@ const runViewportPolicyTests = () => {
   );
   assertEqual(
     composerOverlayViewportState.shouldCrop,
-    false,
-    "#41 emoji/composer overlays should temporarily disable the BrowserView crop",
+    true,
+    "#41 emoji/composer overlays should keep the BrowserView crop active",
   );
 
   // Transition sequence reproducing "first chat works, subsequent chats break"

@@ -14,7 +14,6 @@ export type MessagesViewportStatePayload = {
 type ResolveViewportModeInput = {
   urlPath: string;
   mediaOverlayVisible?: boolean;
-  composerOverlayVisible?: boolean;
 };
 
 const MEDIA_ROUTE_PREFIXES = [...MESSAGES_MEDIA_VIEWER_PATH_PREFIXES];
@@ -91,10 +90,6 @@ export function resolveViewportMode(
 export function shouldApplyMessagesCrop(
   input: ResolveViewportModeInput,
 ): boolean {
-  if (input.composerOverlayVisible === true) {
-    return false;
-  }
-
   return resolveViewportMode(input) === "chat";
 }
 
@@ -103,20 +98,17 @@ export function resolveMessagesViewportState(input: {
   urlPath: string;
   headerHeight?: number | null;
   mediaOverlayVisible?: boolean;
-  composerOverlayVisible?: boolean;
 }): MessagesViewportStatePayload {
   return {
     url: input.url,
     routeKind: resolveViewportMode({
       urlPath: input.urlPath,
       mediaOverlayVisible: input.mediaOverlayVisible,
-      composerOverlayVisible: input.composerOverlayVisible,
     }),
     headerHeight: normalizeViewportMeasurement(input.headerHeight),
     shouldCrop: shouldApplyMessagesCrop({
       urlPath: input.urlPath,
       mediaOverlayVisible: input.mediaOverlayVisible,
-      composerOverlayVisible: input.composerOverlayVisible,
     }),
   };
 }
