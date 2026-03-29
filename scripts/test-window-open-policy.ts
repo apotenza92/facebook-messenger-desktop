@@ -48,6 +48,14 @@ function run(): void {
     "https://scontent-syd2-1.xx.fbcdn.net/v/t39.30808-6/example.jpg",
     "download-media",
   );
+  expectAction(
+    "https://cdn.fbsbx.com/v/t59.2708-21/example.gif?dl=1",
+    "download-media",
+  );
+  expectAction(
+    "blob:https://www.facebook.com/bef65d02-61e2-4fd3-bf92-2d5cc5a5976e",
+    "download-media",
+  );
 
   // Message thread links should stay in-app
   expectAction("https://www.facebook.com/messages/t/123", "reroute-main-view");

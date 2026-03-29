@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.3.0-beta.36] - 2026-03-30
+
+### Fixed
+
+- **Issue #45 follow-up: modern media viewer downloads now use the real Messenger click path** ([#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Keep modern media validation on the real in-thread click flow instead of loading `messenger_media` URLs directly, which was falling back to Facebook's older white-top-bar shell.
+  - Intercept visible media download clicks in preload and route Facebook media/blob URLs into Electron's native download pipeline so media downloads work across the current viewer shells without extra top-bar customization.
+  - Expand media download URL handling to cover Facebook `blob:` downloads and `fbsbx.com` media hosts.
+
+### Changed
+
+- **Media GUI harness cleanup**
+  - Removed the old issue-45 GUI harnesses that were built around the earlier crop/symmetry approach and direct media URL assumptions.
+  - Added a focused modern media GUI check that opens media from a real chat click and validates the current download path.
+  - Updated the close-return GUI check to open media from thread context by default, with direct URL loading kept only as an explicit fallback mode.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:window-open`
+- `npm run test:release`
+- `node scripts/test-media-click-route-gui.js --source chat --thread-url "https://www.facebook.com/messages/t/8462785550492790/" --click-mode os`
+- Real local manual verification in the app that modern media viewer downloads now work
+
 ## [1.3.0-beta.35] - 2026-03-29
 
 ### Fixed

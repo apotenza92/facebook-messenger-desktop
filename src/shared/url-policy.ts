@@ -222,7 +222,32 @@ export function isLikelyCallPopupUrl(input: string): boolean {
 export function isFacebookMediaUrl(input: string): boolean {
   try {
     const hostname = new URL(input).hostname;
-    return hostname.endsWith(".fbcdn.net");
+    return (
+      hostname.endsWith(".fbcdn.net") ||
+      hostname === "fbsbx.com" ||
+      hostname.endsWith(".fbsbx.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isFacebookBlobUrl(input: string): boolean {
+  try {
+    const parsed = new URL(input);
+    if (parsed.protocol !== "blob:") {
+      return false;
+    }
+
+    const origin = parsed.origin;
+    if (!origin || origin === "null") {
+      return false;
+    }
+
+    const originUrl = new URL(origin);
+    return (
+      isFacebookHost(originUrl.hostname) || isMessengerHost(originUrl.hostname)
+    );
   } catch {
     return false;
   }
@@ -316,6 +341,10 @@ export function decideWindowOpenAction(input: string): WindowOpenAction {
     (isMessagesRoute(resolvedInput) || isMessagesMediaViewerRoute(resolvedInput))
   ) {
     return "reroute-main-view";
+  }
+
+  if (isFacebookBlobUrl(resolvedInput)) {
+    return "download-media";
   }
 
   if (isFacebookMediaUrl(resolvedInput)) {

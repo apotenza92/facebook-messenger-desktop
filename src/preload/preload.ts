@@ -797,7 +797,67 @@ ipcRenderer.on(
     }
   };
 
+  const resolveMediaDownloadActionAtPoint = (
+    point: Pick<MouseEvent, "clientX" | "clientY">,
+  ): { href: string; label: string } | null => {
+    if (!isMediaRoute()) {
+      return null;
+    }
+
+    const selector = mediaDownloadSelectors.join(", ");
+    const candidates = Array.from(
+      document.querySelectorAll(selector),
+    ) as HTMLElement[];
+
+    for (const node of candidates) {
+      if (!isMediaOverlayElementVisible(node)) {
+        continue;
+      }
+
+      const rect = node.getBoundingClientRect();
+      if (rect.top < -160 || rect.top > 220) {
+        continue;
+      }
+
+      if (
+        point.clientX < rect.left ||
+        point.clientX > rect.right ||
+        point.clientY < rect.top ||
+        point.clientY > rect.bottom
+      ) {
+        continue;
+      }
+
+      const anchor =
+        node instanceof HTMLAnchorElement
+          ? node
+          : node.closest("a[href]") instanceof HTMLAnchorElement
+            ? (node.closest("a[href]") as HTMLAnchorElement)
+            : null;
+      const href = anchor?.href || "";
+      if (!href) {
+        continue;
+      }
+
+      const label = extractInteractiveLabel(node);
+      return { href, label };
+    }
+
+    return null;
+  };
+
   const handleDocumentNavigationEvent = (event: MouseEvent): void => {
+      const mediaDownloadAction = resolveMediaDownloadActionAtPoint(event);
+      if (mediaDownloadAction) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        if (event.type === "click") {
+          ipcRenderer.send("download-url", mediaDownloadAction.href);
+        }
+        return;
+      }
+
       const mediaToggleKind = isMediaRoute()
         ? getMediaHeaderToggleKind(event.target)
         : null;

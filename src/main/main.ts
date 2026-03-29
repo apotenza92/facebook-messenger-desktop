@@ -7454,6 +7454,33 @@ function setupIpcHandlers(): void {
     });
   });
 
+  ipcMain.on("download-url", (event, rawUrl: unknown) => {
+    const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+    if (!url) return;
+
+    if (decideWindowOpenAction(url) !== "download-media") {
+      shell.openExternal(url).catch((err) => {
+        console.error(
+          "[External Link] Failed to open non-download URL from download IPC:",
+          url,
+          err,
+        );
+      });
+      return;
+    }
+
+    const targetContents = event.sender.isDestroyed()
+      ? getMessengerWebContents()
+      : event.sender;
+    if (!targetContents) {
+      console.warn("[Download] No active webContents available for:", url);
+      return;
+    }
+
+    console.log("[Download] Initiating native download from preload IPC:", url);
+    targetContents.downloadURL(url);
+  });
+
   // Handle unread count updates
   ipcMain.on("update-unread-count", (event, count: number) => {
     console.log(`[IPC] Received update-unread-count: ${count}`);

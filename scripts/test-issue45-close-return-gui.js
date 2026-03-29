@@ -11,6 +11,11 @@ function parseArgs(argv) {
     mediaUrl: String(
       process.env.MESSENGER_ISSUE45_CLOSE_MEDIA_URL || "",
     ).trim(),
+    openMode: String(
+      process.env.MESSENGER_ISSUE45_CLOSE_OPEN_MODE || "thread-click",
+    )
+      .trim()
+      .toLowerCase(),
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -22,12 +27,21 @@ function parseArgs(argv) {
     } else if (arg === "--media-url") {
       options.mediaUrl = String(next || "").trim();
       i += 1;
+    } else if (arg === "--open-mode") {
+      options.openMode = String(next || "thread-click")
+        .trim()
+        .toLowerCase();
+      i += 1;
     } else if (arg === "--help") {
       console.log(
-        `Usage: node scripts/test-issue45-close-return-gui.js [options]\n\nOptions:\n  --thread-url <url>  Exact thread to validate first\n  --media-url <url>   Exact media URL to open before closing\n`,
+        `Usage: node scripts/test-issue45-close-return-gui.js [options]\n\nOptions:\n  --thread-url <url>   Exact thread to validate first\n  --media-url <url>    Exact media URL to match/open before closing\n  --open-mode <mode>   thread-click (default) or direct-url\n`,
       );
       process.exit(0);
     }
+  }
+
+  if (options.openMode !== "thread-click" && options.openMode !== "direct-url") {
+    throw new Error(`Unsupported --open-mode value: ${options.openMode}`);
   }
 
   return options;
@@ -150,6 +164,169 @@ async function navigate(app, url) {
   );
 }
 
+async function sendInputClick(app, x, y) {
+  return withPrimaryWebContents(
+    app,
+    async (wc, point) => {
+      wc.sendInputEvent({
+        type: "mouseDown",
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+        button: "left",
+        clickCount: 1,
+      });
+      wc.sendInputEvent({
+        type: "mouseUp",
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+        button: "left",
+        clickCount: 1,
+      });
+      return true;
+    },
+    { x, y },
+  );
+}
+
+function deriveThreadUrlFromMediaUrl(input) {
+  try {
+    const parsed = new URL(input);
+    const threadId =
+      parsed.searchParams.get("thread_id") ||
+      parsed.searchParams.get("threadId") ||
+      "";
+    if (!threadId) return null;
+    return `${parsed.origin}/messages/t/${threadId}/`;
+  } catch {
+    return null;
+  }
+}
+
+function toMediaIndexUrl(threadUrl) {
+  try {
+    const parsed = new URL(threadUrl);
+    parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/media/`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function findVisibleMediaTarget(app, hrefNeedle) {
+  return withPrimaryWebContents(
+    app,
+    async (wc, payload) => {
+      const script = `
+        (async () => {
+          const hrefNeedle = String(${JSON.stringify(payload.hrefNeedle || "")});
+          const isMediaHref = (raw) => {
+            if (!raw) return false;
+            const h = String(raw).toLowerCase();
+            if (h.includes('/reel/?s=tab') || h === '/reel/' || h === '/reel') return false;
+            return h.includes('/messenger_media') || h.includes('/messages/media_viewer') || h.includes('/messages/attachment_preview') || h.includes('/photo') || h.includes('/photos') || h.includes('/video') || h.includes('/watch') || h.includes('/story') || h.includes('/stories');
+          };
+          const isVisible = (node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            if (node.closest('[hidden]') || node.closest('[aria-hidden="true"]')) return false;
+            const style = window.getComputedStyle(node);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            const rect = node.getBoundingClientRect();
+            return rect.width >= 24 && rect.height >= 24 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight;
+          };
+          const scrollers = Array.from(document.querySelectorAll('div'))
+            .filter((el) => el.scrollHeight > el.clientHeight + 180)
+            .sort((a, b) => b.clientHeight - a.clientHeight);
+          const scroller = scrollers[0] || document.scrollingElement || document.documentElement;
+
+          const collect = () => {
+            const matches = [];
+            for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
+              if (!(anchor instanceof HTMLAnchorElement) || !isVisible(anchor)) continue;
+              const href = anchor.href || anchor.getAttribute('href') || '';
+              if (!isMediaHref(href)) continue;
+              if (hrefNeedle && !href.includes(hrefNeedle)) continue;
+              const rect = anchor.getBoundingClientRect();
+              matches.push({
+                href,
+                center: {
+                  x: Math.round(rect.left + rect.width / 2),
+                  y: Math.round(rect.top + rect.height / 2),
+                },
+                rect: {
+                  left: Math.round(rect.left),
+                  top: Math.round(rect.top),
+                  width: Math.round(rect.width),
+                  height: Math.round(rect.height),
+                },
+              });
+            }
+            matches.sort((a, b) => {
+              if (a.rect.top !== b.rect.top) return a.rect.top - b.rect.top;
+              return b.rect.width * b.rect.height - a.rect.width * a.rect.height;
+            });
+            return matches[0] || null;
+          };
+
+          let match = collect();
+          for (let pass = 0; pass < 10 && !match; pass += 1) {
+            scroller.scrollTop = Math.max(0, scroller.scrollTop - Math.max(260, Math.round((scroller.clientHeight || innerHeight) * 0.8)));
+            await new Promise((resolve) => setTimeout(resolve, 220));
+            match = collect();
+          }
+          return match;
+        })();
+      `;
+      return wc.executeJavaScript(script, true);
+    },
+    { hrefNeedle },
+  );
+}
+
+async function waitForMediaSurface(app, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const state = await inspectState(app);
+    if (
+      String(state.url || "").includes("/messenger_media") ||
+      state.closeCount > 0 ||
+      state.downloadCount > 0
+    ) {
+      return state;
+    }
+    await wait(200);
+  }
+  return inspectState(app);
+}
+
+async function openMediaFromThread(app, threadUrl, mediaUrl) {
+  const hrefNeedle = String(mediaUrl || "").trim();
+  const mediaIndexUrl = toMediaIndexUrl(threadUrl);
+
+  await navigate(app, threadUrl);
+  await wait(1200);
+
+  let target = await findVisibleMediaTarget(app, hrefNeedle);
+  if (!target && mediaIndexUrl) {
+    await navigate(app, mediaIndexUrl);
+    await wait(1400);
+    target = await findVisibleMediaTarget(app, hrefNeedle);
+  }
+
+  if (!target) {
+    return { opened: false, reason: "no_matching_media_target_visible" };
+  }
+
+  await sendInputClick(app, target.center.x, target.center.y);
+  await wait(1200);
+  return {
+    opened: true,
+    target,
+    state: await waitForMediaSurface(app),
+  };
+}
+
 async function openFirstMediaLink(app) {
   return withPrimaryWebContents(
     app,
@@ -266,24 +443,34 @@ async function run() {
 
     const threads = options.threadUrl
       ? [options.threadUrl]
+      : options.mediaUrl
+        ? [deriveThreadUrlFromMediaUrl(options.mediaUrl)].filter(Boolean)
       : await collectThreads(app);
     console.log("Threads discovered:", threads.length);
 
     let validated = 0;
     for (const thread of threads.slice(0, 20)) {
-      const mediaPage = options.mediaUrl || toMediaPage(thread);
-      if (!mediaPage) continue;
       const expectedThreadKey = normalizeThreadKey(thread);
+      let opened;
 
-      const nav = await navigate(app, mediaPage);
-      if (!nav.ok) continue;
-      await wait(900);
+      if (options.openMode === "direct-url") {
+        const mediaPage = options.mediaUrl || toMediaPage(thread);
+        if (!mediaPage) continue;
+        const nav = await navigate(app, mediaPage);
+        if (!nav.ok) continue;
+        await wait(900);
 
-      if (!options.mediaUrl) {
-        const opened = await openFirstMediaLink(app);
+        if (!options.mediaUrl) {
+          opened = await openFirstMediaLink(app);
+          if (!opened.opened) continue;
+        } else {
+          opened = { opened: true };
+        }
+        await wait(1400);
+      } else {
+        opened = await openMediaFromThread(app, thread, options.mediaUrl);
         if (!opened.opened) continue;
       }
-      await wait(1400);
 
       const openState = await inspectState(app);
       if (!openState.classes.activeCrop || openState.closeCount === 0) continue;

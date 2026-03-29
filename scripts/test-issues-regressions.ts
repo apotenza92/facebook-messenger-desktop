@@ -30,7 +30,10 @@ const loadFacebookHeaderSuppressionPolicy = () =>
   require(
     path.join(APP_ROOT, "src/preload/facebook-header-suppression-policy.ts"),
   );
-const { decideWindowOpenAction, isMessagesSurfaceRoute } = require(
+const {
+  decideWindowOpenAction,
+  isMessagesSurfaceRoute,
+} = require(
   path.join(APP_ROOT, "src/main/url-policy"),
 );
 
@@ -234,10 +237,10 @@ const runViewportPolicyTests = () => {
   expectMode("/messages/t/123", "chat", true);
   expectMode("/messages/e2ee/t/123", "chat", true);
   expectMode("/messages/media_viewer.123", "media", false);
+  expectMode("/messenger_media?attachment_id=123", "media", false);
   expectMode("/messenger_media/?attachment_id=123", "media", false);
   expectMode("/photo/123", "media", false);
   expectMode("/settings", "other", false);
-
   expectMode("/messages/t/123", "media", false, {
     mediaOverlayVisible: true,
   });
@@ -325,6 +328,7 @@ const runViewportPolicyTests = () => {
     { path: "/messages/media_viewer.123", mode: "media", crop: false },
     { path: "/messages/t/first", mode: "chat", crop: true },
     { path: "/messages/t/second", mode: "chat", crop: true },
+    { path: "/messenger_media?attachment_id=2", mode: "media", crop: false },
     { path: "/messenger_media/?attachment_id=2", mode: "media", crop: false },
     { path: "/messages/t/second", mode: "chat", crop: true },
     { path: "/photo/42", mode: "media", crop: false },
@@ -346,6 +350,13 @@ const runWindowOpenRoutingTests = () => {
     decideWindowOpenAction("https://www.facebook.com/messages/t/123"),
     "reroute-main-view",
     "#45 chat popups should still reroute into the main Messenger surface",
+  );
+  assertEqual(
+    decideWindowOpenAction(
+      "https://www.facebook.com/messenger_media?attachment_id=123",
+    ),
+    "reroute-main-view",
+    "#45 canonical messenger_media routes should stay in the main Messenger surface",
   );
   assertEqual(
     decideWindowOpenAction(
