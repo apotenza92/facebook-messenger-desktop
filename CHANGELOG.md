@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.0-beta.39] - 2026-03-30
+
+### Fixed
+
+- **Issue #49 follow-up: harden muted group notification suppression when Messenger mixes real names and nicknames** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Fail closed when a muted group preview points to the same sender activity as a native notification even if Messenger surfaces the sender with a nickname in one place and a real name in another.
+  - Expand muted-notification matching to use both rendered sidebar previews and hidden conversation metadata collected from Messenger's accessibility labels, tooltips, and avatar text.
+
+### Changed
+
+- **Notification debug capture for muted-notification follow-up**
+  - Persist the existing preload notification debug stream to `notification-debug.ndjson` in the app logs folder so cold-start and refresh-related notification reports can be captured without extra instrumentation.
+  - Format notification titles with both the visible Messenger name and known alternate names when that metadata is available, making alias-related notification reports easier to inspect.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:release`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.38] - 2026-03-30
 
 ### Fixed

@@ -17,6 +17,7 @@
     href: string;
     title: string;
     body: string;
+    searchText?: string;
     muted: boolean;
     unread: boolean;
   };
@@ -780,6 +781,43 @@
     matchedPhrase?: string;
   };
 
+  const collectConversationMetadataTexts = (conversationEl: Element): string[] => {
+    const texts: string[] = [];
+    const seen = new Set<string>();
+
+    const pushText = (value: string | null | undefined) => {
+      const text = String(value || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!text) return;
+
+      const normalized = text.toLowerCase();
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      texts.push(text);
+    };
+
+    pushText(conversationEl.getAttribute("aria-label"));
+    pushText(conversationEl.getAttribute("title"));
+    pushText(conversationEl.getAttribute("data-tooltip-content"));
+    pushText(conversationEl.getAttribute("data-tooltip"));
+
+    const metaNodes = conversationEl.querySelectorAll(
+      "[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]",
+    );
+    metaNodes.forEach((node) => {
+      pushText(node.getAttribute("aria-label"));
+      pushText(node.getAttribute("title"));
+      pushText(node.getAttribute("data-tooltip-content"));
+      pushText(node.getAttribute("data-tooltip"));
+      if (node instanceof HTMLImageElement) {
+        pushText(node.alt);
+      }
+    });
+
+    return texts;
+  };
+
   const analyzeMuteSignals = (conversationEl: Element): MuteAnalysis => {
     const paths = Array.from(conversationEl.querySelectorAll("svg path"));
     for (const path of paths) {
@@ -821,29 +859,12 @@
       }
     }
 
-    const labelSources: string[] = [];
-    const pushLabel = (value: string | null | undefined) => {
-      const text = value?.trim();
-      if (text) labelSources.push(text.toLowerCase());
-    };
-
-    pushLabel(conversationEl.textContent);
-    pushLabel(conversationEl.getAttribute("aria-label"));
-    pushLabel(conversationEl.getAttribute("title"));
-    pushLabel(conversationEl.getAttribute("data-tooltip-content"));
-
-    const metaNodes = conversationEl.querySelectorAll(
-      "[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]",
-    );
-    metaNodes.forEach((node) => {
-      pushLabel(node.getAttribute("aria-label"));
-      pushLabel(node.getAttribute("title"));
-      pushLabel(node.getAttribute("data-tooltip-content"));
-      pushLabel(node.getAttribute("data-tooltip"));
-      if (node instanceof HTMLImageElement) {
-        pushLabel(node.alt);
-      }
-    });
+    const labelSources = [
+      String(conversationEl.textContent || "").toLowerCase(),
+      ...collectConversationMetadataTexts(conversationEl).map((text) =>
+        text.toLowerCase(),
+      ),
+    ];
 
     const mutePhrases = [
       "muted",
@@ -946,6 +967,9 @@
     return { title, body, href, icon };
   };
 
+  const extractConversationSearchText = (conversationEl: Element): string =>
+    collectConversationMetadataTexts(conversationEl).join(" ");
+
   const collectSidebarConversationSnapshot = (sidebar: Element) => {
     const rows = Array.from(
       sidebar.querySelectorAll(selectors.conversationRow),
@@ -963,6 +987,7 @@
         href: normalizedHref,
         title: info.title,
         body: info.body,
+        searchText: extractConversationSearchText(row),
         muted: isConversationMuted(row),
         unread: isConversationUnread(row),
       });
@@ -1332,7 +1357,11 @@
 
         recordNotification(normalizedHref, bodyStr);
         sendNotification(
-          String(title),
+          formatNotificationConversationTitle({
+            title: matchedInfo?.title || String(title),
+            href: normalizedHref,
+            alternateTitle: String(title),
+          }),
           String(body),
           "NATIVE",
           options?.icon as string,
@@ -1682,7 +1711,10 @@
         });
 
         sendNotification(
-          matchedInfo.title,
+          formatNotificationConversationTitle({
+            title: matchedInfo.title,
+            href: normalizedMatchedHref,
+          }),
           matchedInfo.body,
           "MUTATION",
           matchedInfo.icon,
@@ -2854,6 +2886,77 @@
   };
 
   const nameCache = loadNameCache();
+
+  type NotificationDisplayPolicyApi = {
+    isGenericNotificationDisplayName?: (
+      value: string | null | undefined,
+    ) => boolean;
+    formatNotificationDisplayTitle?: (input: {
+      title: string;
+      alternateNames?: Array<string | null | undefined>;
+      maxAlternateNames?: number;
+    }) => string;
+  };
+
+  const getNotificationDisplayPolicy =
+    (): NotificationDisplayPolicyApi | null => {
+      const policy = (globalThis as typeof globalThis & {
+        __mdNotificationDisplayPolicy?: NotificationDisplayPolicyApi;
+      }).__mdNotificationDisplayPolicy;
+      if (!policy || typeof policy !== "object") {
+        return null;
+      }
+      return policy;
+    };
+
+  const getThreadIdFromHref = (href: string | null | undefined): string | null => {
+    const normalizedHref = String(href || "");
+    if (!normalizedHref) return null;
+
+    const match = normalizedHref.match(/\/(?:messages\/(?:e2ee\/)?t|t)\/(\d+)/i);
+    return match?.[1] || null;
+  };
+
+  const getCachedRealNamesForNotification = (
+    href: string | null | undefined,
+    displayTitle: string,
+  ): string[] => {
+    const threadId = getThreadIdFromHref(href);
+    if (!threadId) return [];
+
+    const cached = nameCache[threadId];
+    if (!cached?.realNames?.length) return [];
+
+    const normalizedTitle = displayTitle.toLowerCase();
+    return cached.realNames.filter((name) => name.toLowerCase() !== normalizedTitle);
+  };
+
+  const formatNotificationConversationTitle = (input: {
+    title: string;
+    href?: string;
+    alternateTitle?: string | null;
+  }): string => {
+    const displayTitle = String(input.title || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!displayTitle) return "";
+
+    const policy = getNotificationDisplayPolicy();
+    const alternateNames = [
+      input.alternateTitle,
+      ...getCachedRealNamesForNotification(input.href, displayTitle),
+    ];
+
+    if (typeof policy?.formatNotificationDisplayTitle === "function") {
+      return policy.formatNotificationDisplayTitle({
+        title: displayTitle,
+        alternateNames,
+        maxAlternateNames: 2,
+      });
+    }
+
+    return displayTitle;
+  };
 
   // Extract all real names from avatar alts in current conversation
   const extractRealNamesFromConversation = (): string[] => {

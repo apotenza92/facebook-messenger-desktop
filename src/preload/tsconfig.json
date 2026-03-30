@@ -13,6 +13,7 @@
     "./media-action-policy.ts",
     "./marketplace-thread-policy.ts",
     "./messages-viewport-policy.ts",
+    "./notification-display-policy.ts",
     "./notification-decision-policy.ts",
     "./url-policy.ts",
     "./notifications-inject.ts",

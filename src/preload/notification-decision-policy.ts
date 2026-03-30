@@ -7,6 +7,7 @@ type NotificationCandidate = {
   href: string;
   title: string;
   body: string;
+  searchText?: string;
   muted: boolean;
   unread: boolean;
 };
@@ -86,6 +87,18 @@ const PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS: RegExp[] = [
   /^messenger notification$/i,
 ];
 
+const SENDER_STYLE_BODY_CAPTURE_PATTERNS: RegExp[] = [
+  /^(.+?)\s+(sent (?:you )?a message)$/i,
+  /^(.+?)\s+(new message)$/i,
+  /^(.+?)\s+(sent (?:an? )?(?:photo|video|attachment|gif|sticker))$/i,
+];
+
+const SENDER_STYLE_BODY_ONLY_PATTERNS: RegExp[] = [
+  /^sent (?:you )?a message$/i,
+  /^new message$/i,
+  /^sent (?:an? )?(?:photo|video|attachment|gif|sticker)$/i,
+];
+
 function normalizeText(value: string): string {
   return (value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -94,6 +107,23 @@ function tokenize(value: string): string[] {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ");
   if (!normalized) return [];
   return normalized.split(" ").filter((token) => token.length >= 2);
+}
+
+function tokensLikelyReferenceSameName(a: string, b: string): boolean {
+  const aTokens = tokenize(a);
+  const bTokens = tokenize(b);
+  if (aTokens.length === 0 || bTokens.length === 0) return false;
+
+  return aTokens.some((aToken) =>
+    bTokens.some((bToken) => {
+      if (aToken === bToken) return true;
+      const shorter =
+        aToken.length <= bToken.length ? aToken : bToken;
+      const longer =
+        aToken.length <= bToken.length ? bToken : aToken;
+      return shorter.length >= 3 && longer.startsWith(shorter);
+    }),
+  );
 }
 
 function tokenOverlapRatio(a: string[], b: string[]): number {
@@ -114,6 +144,69 @@ function tokenOverlapRatio(a: string[], b: string[]): number {
 function clampScore(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
+}
+
+function extractSenderStyleActor(value: string): string | null {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+
+  for (const pattern of SENDER_STYLE_BODY_CAPTURE_PATTERNS) {
+    const match = normalized.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+}
+
+function normalizeSenderStyleBody(value: string): string | null {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+
+  for (const pattern of SENDER_STYLE_BODY_CAPTURE_PATTERNS) {
+    const match = normalized.match(pattern);
+    if (match?.[2]) {
+      return match[2].trim();
+    }
+  }
+
+  if (SENDER_STYLE_BODY_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return normalized;
+  }
+
+  return null;
+}
+
+function areLikelySamePersonName(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = normalizeText(String(left || ""));
+  const normalizedRight = normalizeText(String(right || ""));
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+
+  const shorter =
+    normalizedLeft.length <= normalizedRight.length
+      ? normalizedLeft
+      : normalizedRight;
+  const longer =
+    normalizedLeft.length <= normalizedRight.length
+      ? normalizedRight
+      : normalizedLeft;
+
+  if (shorter.length >= 3 && longer.includes(shorter)) {
+    return true;
+  }
+
+  return tokensLikelyReferenceSameName(normalizedLeft, normalizedRight);
+}
+
+function buildCandidateSearchCorpus(candidate: NotificationCandidate): string {
+  return normalizeText(
+    `${candidate.title || ""} ${candidate.body || ""} ${candidate.searchText || ""}`,
+  );
 }
 
 function isTerseSenderTitlePayload(payload: NotificationPayload): boolean {
@@ -166,11 +259,13 @@ function computeCandidateScore(
   const payloadBody = normalizeText(payload.body);
   const candidateTitle = normalizeText(candidate.title);
   const candidateBody = normalizeText(candidate.body);
+  const candidateSearchCorpus = buildCandidateSearchCorpus(candidate);
 
   const payloadTitleTokens = tokenize(payloadTitle);
   const payloadBodyTokens = tokenize(payloadBody);
   const candidateTitleTokens = tokenize(candidateTitle);
   const candidateBodyTokens = tokenize(candidateBody);
+  const candidateSearchTokens = tokenize(candidateSearchCorpus);
 
   let score = 0;
 
@@ -188,6 +283,8 @@ function computeCandidateScore(
   score += tokenOverlapRatio(payloadTitleTokens, candidateTitleTokens) * 0.22;
   score += tokenOverlapRatio(payloadBodyTokens, candidateBodyTokens) * 0.2;
   score += tokenOverlapRatio(payloadBodyTokens, candidateTitleTokens) * 0.12;
+  score += tokenOverlapRatio(payloadTitleTokens, candidateSearchTokens) * 0.18;
+  score += tokenOverlapRatio(payloadBodyTokens, candidateSearchTokens) * 0.08;
 
   if (
     payloadBody &&
@@ -201,6 +298,15 @@ function computeCandidateScore(
 
   if (candidateBody && payloadTitle && candidateBody.includes(payloadTitle)) {
     score += 0.14;
+  }
+
+  if (
+    payloadTitle &&
+    candidateSearchCorpus &&
+    payloadTitle !== candidateTitle &&
+    candidateSearchCorpus.includes(payloadTitle)
+  ) {
+    score += 0.16;
   }
 
   if (!candidate.unread) {
@@ -260,11 +366,21 @@ function resolveNativeNotificationTarget(
     Boolean(payloadTitle) && Boolean(topTitle) && payloadTitle === topTitle;
   const terseSenderPayload =
     topLooksLikeSenderTitle && isTerseSenderTitlePayload(payload);
+  const payloadSenderBody = normalizeSenderStyleBody(payloadBody);
 
   for (const alternative of scored.slice(1)) {
     if (!alternative.candidate.muted || top.candidate.muted) continue;
     const alternativeTitle = normalizeText(alternative.candidate.title);
     const alternativeBody = normalizeText(alternative.candidate.body);
+    const alternativeSearchCorpus = buildCandidateSearchCorpus(
+      alternative.candidate,
+    );
+    const alternativeSenderActor =
+      extractSenderStyleActor(alternativeBody) ??
+      extractSenderStyleActor(alternative.candidate.searchText || "");
+    const alternativeSenderBody =
+      normalizeSenderStyleBody(alternativeBody) ??
+      normalizeSenderStyleBody(alternative.candidate.searchText || "");
     if (!alternativeTitle || alternativeTitle === topTitle) continue;
 
     const explicitMutedGroupReference =
@@ -274,21 +390,35 @@ function resolveNativeNotificationTarget(
       terseSenderPayload &&
       alternative.score >= MUTED_CONFLICT_SCORE_FLOOR &&
       Boolean(payloadTitle) &&
-      alternativeBody.includes(payloadTitle);
+      alternativeSearchCorpus.includes(payloadTitle);
+    const terseMutedGroupAliasConflict =
+      terseSenderPayload &&
+      Boolean(payloadSenderBody) &&
+      payloadSenderBody === alternativeSenderBody &&
+      areLikelySamePersonName(payloadTitle, alternativeSenderActor);
     // If the muted group's sidebar preview contains the notification body verbatim,
     // the notification almost certainly originated from that muted group even when
     // the sender also has an unmuted 1:1 DM (which would otherwise win the score race).
     const mutedGroupPreviewContainsBody =
       payloadBody.length >= 6 &&
-      alternativeBody.length > 0 &&
-      alternativeBody.includes(payloadBody);
+      alternativeSearchCorpus.length > 0 &&
+      alternativeSearchCorpus.includes(payloadBody);
 
     if (
       explicitMutedGroupReference ||
       terseMutedGroupConflict ||
+      terseMutedGroupAliasConflict ||
       mutedGroupPreviewContainsBody
     ) {
-      return createMutedConflictResult(top.score);
+      return createMutedConflictResult(
+        top.score,
+        placeholderTitle
+          ? {
+              ambiguityReason: "placeholder-title",
+              placeholderTitle,
+            }
+          : {},
+      );
     }
   }
 
@@ -299,11 +429,11 @@ function resolveNativeNotificationTarget(
         entry.candidate.muted &&
         entry.score >= MUTED_CONFLICT_SCORE_FLOOR &&
         ((payloadBody.length >= 4 &&
-          normalizeText(entry.candidate.body).includes(payloadBody)) ||
+          buildCandidateSearchCorpus(entry.candidate).includes(payloadBody)) ||
           tokenOverlapRatio(
             tokenize(payloadBody),
             tokenize(
-              `${entry.candidate.title || ""} ${entry.candidate.body || ""}`,
+              buildCandidateSearchCorpus(entry.candidate),
             ),
           ) >= 0.5),
     );

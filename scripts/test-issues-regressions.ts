@@ -27,6 +27,8 @@ const loadIncomingCallHintPolicy = () =>
   );
 const loadNotificationDecisionPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-decision-policy.ts"));
+const loadNotificationDisplayPolicy = () =>
+  require(path.join(APP_ROOT, "src/preload/notification-display-policy.ts"));
 const loadIncomingCallOverlayPolicy = () =>
   require(path.join(APP_ROOT, "src/main/incoming-call-overlay-policy.ts"));
 const loadIncomingCallIpcPolicy = () =>
@@ -1291,6 +1293,104 @@ const runNotificationPolicyTests = () => {
     "#46 placeholder-title notifications should preserve the normalized placeholder title for diagnostics",
   );
 
+  const aliasMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Alexander",
+        body: "sent a message",
+      },
+      [
+        {
+          href: "/t/alexander",
+          title: "Alexander",
+          body: "sent a message",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/project-squad",
+          title: "Project Squad",
+          body: "Alex sent a message",
+          searchText: "Project Squad Alexander sent a message",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    aliasMutedConflict.reason,
+    "muted-conflict",
+    "#46 sender-title notifications should fail closed when muted-group metadata carries the sender real name",
+  );
+
+  const aliasMutedConflictWithoutMetadata =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Alexander",
+        body: "sent a message",
+      },
+      [
+        {
+          href: "/t/alexander",
+          title: "Alexander",
+          body: "sent a message",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/project-squad",
+          title: "Project Squad",
+          body: "Alex sent a message",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    aliasMutedConflictWithoutMetadata.reason,
+    "muted-conflict",
+    "#46 sender-title notifications should fail closed when muted-group previews only expose the sender nickname",
+  );
+
+  const aliasNonMutedAlternative =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Alexander",
+        body: "sent a message",
+      },
+      [
+        {
+          href: "/t/alexander",
+          title: "Alexander",
+          body: "sent a message",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/project-squad",
+          title: "Project Squad",
+          body: "Alex sent a message",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    aliasNonMutedAlternative.ambiguous,
+    false,
+    "#46 sender-title notifications should stay deliverable when the only alias overlap is in an unmuted conversation",
+  );
+  assertEqual(
+    aliasNonMutedAlternative.matchedHref,
+    "/t/alexander",
+    "#46 sender-title notifications should still target the direct conversation when alias overlap is unmuted",
+  );
+  assertEqual(
+    aliasNonMutedAlternative.muted,
+    false,
+    "#46 sender-title notifications should not be muted just because an unmuted conversation shares the sender nickname",
+  );
+
   const newMessageMutedConflict =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
@@ -1808,6 +1908,42 @@ const runNotificationPolicyTests = () => {
   );
 };
 
+const runNotificationDisplayPolicyTests = () => {
+  const notificationDisplayPolicy = loadNotificationDisplayPolicy();
+  assert(
+    typeof notificationDisplayPolicy.formatNotificationDisplayTitle ===
+      "function",
+    "notification display policy missing formatNotificationDisplayTitle",
+  );
+
+  assertEqual(
+    notificationDisplayPolicy.formatNotificationDisplayTitle({
+      title: "Bub",
+      alternateNames: ["Robert"],
+    }),
+    "Bub (Robert)",
+    "#46 notification titles should show nickname + real name for direct chats",
+  );
+
+  assertEqual(
+    notificationDisplayPolicy.formatNotificationDisplayTitle({
+      title: "Weekend Plans",
+      alternateNames: ["Alexander", "Taylor", "Casey"],
+    }),
+    "Weekend Plans (Alexander, Taylor +1)",
+    "#46 notification titles should summarize multiple real names for groups",
+  );
+
+  assertEqual(
+    notificationDisplayPolicy.formatNotificationDisplayTitle({
+      title: "Alex",
+      alternateNames: ["Facebook User", "Alex", "Alexander"],
+    }),
+    "Alex (Alexander)",
+    "#46 notification titles should filter generic and duplicate alternate names",
+  );
+};
+
 const runMutedConflictEvidenceCase = (jsonOutput?: string) => {
   const evidence = buildMutedConflictEvidence();
   const nativeLooksFixed =
@@ -1850,6 +1986,7 @@ const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
   runIncomingCallOverlayLifecycleTests();
   runIncomingCallHintPolicyTests();
   runIncomingCallIpcPolicyTests();
+  runNotificationDisplayPolicyTests();
   runNotificationPolicyTests();
   console.log("PASS deterministic regression tests");
 };

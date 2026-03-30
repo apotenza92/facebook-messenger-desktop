@@ -507,6 +507,16 @@ type IncomingCallDebugEvent = {
   [key: string]: unknown;
 };
 
+type NotificationDebugEvent = {
+  timestamp: number;
+  event: string;
+  source: "main" | "preload";
+  webContentsId?: number;
+  url?: string;
+  payload?: unknown;
+  [key: string]: unknown;
+};
+
 function shouldWriteIncomingCallDebugLog(): boolean {
   return (
     isDev ||
@@ -529,6 +539,60 @@ function pushIncomingCallDebugEvent(event: IncomingCallDebugEvent): void {
     fs.mkdirSync(logsDir, { recursive: true });
     fs.appendFileSync(
       getIncomingCallDebugLogPath(),
+      `${JSON.stringify(event)}\n`,
+    );
+  } catch {
+    // Ignore debug log write failures.
+  }
+}
+
+function shouldWriteNotificationDebugLog(): boolean {
+  return (
+    isDev ||
+    process.env.MESSENGER_NOTIFICATION_DEBUG === "1" ||
+    process.env.MESSENGER_NOTIFICATION_DEBUG === "true"
+  );
+}
+
+function getNotificationDebugLogPath(): string {
+  return path.join(app.getPath("logs"), "notification-debug.ndjson");
+}
+
+function shouldResetNotificationDebugLogOnStart(): boolean {
+  return (
+    process.env.MESSENGER_NOTIFICATION_DEBUG_RESET === "1" ||
+    process.env.MESSENGER_NOTIFICATION_DEBUG_RESET === "true"
+  );
+}
+
+function maybeResetNotificationDebugLogOnStart(): void {
+  if (!shouldResetNotificationDebugLogOnStart()) {
+    return;
+  }
+
+  try {
+    const debugLogPath = getNotificationDebugLogPath();
+    if (fs.existsSync(debugLogPath)) {
+      fs.unlinkSync(debugLogPath);
+    }
+  } catch (error) {
+    console.warn(
+      "[NotificationDebug] Failed to reset notification debug log",
+      error,
+    );
+  }
+}
+
+function pushNotificationDebugEvent(event: NotificationDebugEvent): void {
+  if (!shouldWriteNotificationDebugLog()) {
+    return;
+  }
+
+  try {
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(
+      getNotificationDebugLogPath(),
       `${JSON.stringify(event)}\n`,
     );
   } catch {
@@ -1087,6 +1151,7 @@ const userDataPath = path.join(app.getPath("appData"), APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
 maybeResetIssue45DebugLogOnStart();
+maybeResetNotificationDebugLogOnStart();
 
 app.on("child-process-gone", (_event, details) => {
   const event = {
@@ -2248,6 +2313,26 @@ async function injectNotificationScripts(
       console.log('[Notification Bridge] Bridge function and listener installed');
     })();
   `);
+
+  const notificationDisplayPolicyScriptPath = path.join(
+    __dirname,
+    "../preload/notification-display-policy.js",
+  );
+  if (fs.existsSync(notificationDisplayPolicyScriptPath)) {
+    const notificationDisplayPolicyScript = fs.readFileSync(
+      notificationDisplayPolicyScriptPath,
+      "utf8",
+    );
+    await webContents.executeJavaScript(notificationDisplayPolicyScript);
+    console.log(
+      "[Main Process] Notification display policy script injected successfully",
+    );
+  } else {
+    console.warn(
+      "[Main Process] Notification display policy script not found at:",
+      notificationDisplayPolicyScriptPath,
+    );
+  }
 
   const notificationDecisionPolicyScriptPath = path.join(
     __dirname,
@@ -7972,10 +8057,18 @@ function setupIpcHandlers(): void {
   });
 
   // Handle fallback debug logs from preload/page
-  ipcMain.on("log-fallback", (_event, data) => {
+  ipcMain.on("log-fallback", (event, data) => {
     try {
       const { event: name, payload } = data || {};
       const safeName = name || "fallback";
+      pushNotificationDebugEvent({
+        timestamp: Date.now(),
+        source: "preload",
+        event: safeName,
+        webContentsId: event.sender.id,
+        url: event.sender.getURL(),
+        payload,
+      });
       // Only log in dev mode to reduce noise, and wrap to handle EPIPE
       if (isDev) {
         try {
