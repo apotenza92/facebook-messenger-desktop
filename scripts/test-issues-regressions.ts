@@ -254,7 +254,7 @@ const runViewportPolicyTests = () => {
   expectMode("/messages/e2ee/t/123", "media", false, {
     mediaOverlayVisible: true,
   });
-  expectMode("/messages/t/123", "other", false, {
+  expectMode("/messages/t/123", "chat", false, {
     marketplaceThreadVisible: true,
   });
   expectMode("/messages/t/123", "chat", true);
@@ -316,13 +316,13 @@ const runViewportPolicyTests = () => {
   });
   assertEqual(
     marketplaceViewportState.routeKind,
-    "other",
-    "#49 marketplace threads should stay on the native Facebook layout",
+    "chat",
+    "#49 marketplace threads should keep the chat header-suppression path active",
   );
   assertEqual(
     marketplaceViewportState.shouldCrop,
     false,
-    "#49 marketplace threads should disable the BrowserView crop",
+    "#49 marketplace threads should disable the BrowserView crop without disabling header suppression",
   );
 
   // Transition sequence reproducing "first chat works, subsequent chats break"

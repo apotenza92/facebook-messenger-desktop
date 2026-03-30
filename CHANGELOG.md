@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0-beta.38] - 2026-03-30
+
+### Fixed
+
+- **Issue #49 follow-up: keep Marketplace thread back controls visible without letting the Facebook top bar leak back in** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep same-route Marketplace thread panels on the normal Messages header-suppression path so the Facebook top chrome stays hidden when Marketplace opens inside `/messages/t/...`.
+  - Continue disabling the BrowserView crop for those Marketplace thread panels so Facebook's native in-thread `Back + Marketplace` controls remain visible.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.37] - 2026-03-30
 
 ### Fixed

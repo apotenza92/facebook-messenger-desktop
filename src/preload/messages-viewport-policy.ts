@@ -82,9 +82,6 @@ export function resolveViewportMode(
     if (input.mediaOverlayVisible === true) {
       return "media";
     }
-    if (input.marketplaceThreadVisible === true) {
-      return "other";
-    }
     return "chat";
   }
 
@@ -94,6 +91,10 @@ export function resolveViewportMode(
 export function shouldApplyMessagesCrop(
   input: ResolveViewportModeInput,
 ): boolean {
+  if (input.marketplaceThreadVisible === true) {
+    return false;
+  }
+
   return resolveViewportMode(input) === "chat";
 }
 
