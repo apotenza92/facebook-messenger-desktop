@@ -8,6 +8,7 @@ export type MessagesViewportStatePayload = {
   url: string;
   routeKind: MessagesViewportMode;
   headerHeight: number | null;
+  cropHeight: number | null;
   shouldCrop: boolean;
 };
 
@@ -15,6 +16,7 @@ type ResolveViewportModeInput = {
   urlPath: string;
   mediaOverlayVisible?: boolean;
   marketplaceThreadVisible?: boolean;
+  marketplaceVisualCropHeight?: number | null;
 };
 
 const MEDIA_ROUTE_PREFIXES = [...MESSAGES_MEDIA_VIEWER_PATH_PREFIXES];
@@ -91,6 +93,16 @@ export function resolveViewportMode(
 export function shouldApplyMessagesCrop(
   input: ResolveViewportModeInput,
 ): boolean {
+  const marketplaceVisualCropHeight = normalizeViewportMeasurement(
+    input.marketplaceVisualCropHeight,
+  );
+  if (
+    marketplaceVisualCropHeight !== null &&
+    marketplaceVisualCropHeight > 0
+  ) {
+    return true;
+  }
+
   if (input.marketplaceThreadVisible === true) {
     return false;
   }
@@ -102,8 +114,10 @@ export function resolveMessagesViewportState(input: {
   url: string;
   urlPath: string;
   headerHeight?: number | null;
+  cropHeight?: number | null;
   mediaOverlayVisible?: boolean;
   marketplaceThreadVisible?: boolean;
+  marketplaceVisualCropHeight?: number | null;
 }): MessagesViewportStatePayload {
   return {
     url: input.url,
@@ -113,10 +127,15 @@ export function resolveMessagesViewportState(input: {
       marketplaceThreadVisible: input.marketplaceThreadVisible,
     }),
     headerHeight: normalizeViewportMeasurement(input.headerHeight),
+    cropHeight: normalizeViewportMeasurement(
+      input.cropHeight ?? input.marketplaceVisualCropHeight,
+    ),
     shouldCrop: shouldApplyMessagesCrop({
       urlPath: input.urlPath,
       mediaOverlayVisible: input.mediaOverlayVisible,
       marketplaceThreadVisible: input.marketplaceThreadVisible,
+      marketplaceVisualCropHeight:
+        input.cropHeight ?? input.marketplaceVisualCropHeight,
     }),
   };
 }

@@ -257,6 +257,7 @@ const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar
 const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
 const MIN_MESSAGES_TOP_CROP = 48;
+const MIN_MESSAGES_REDUCED_TOP_CROP = 24;
 const MAX_MESSAGES_TOP_CROP = 120;
 const INCOMING_CALL_OVERLAY_HINT_TTL_MS = 30_000;
 const INCOMING_CALL_OVERLAY_WATCHDOG_INTERVAL_MS = 5_000;
@@ -279,12 +280,18 @@ const incomingCallOverlayHintState: IncomingCallOverlayHintState = {
 };
 let incomingCallOverlayWatchdogTimer: NodeJS.Timeout | null = null;
 
-function normalizeMessagesTopCrop(value: unknown): number | null {
+function normalizeMessagesTopCrop(
+  value: unknown,
+  options: { allowReduced?: boolean } = {},
+): number | null {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return null;
+  const minCrop = options.allowReduced
+    ? MIN_MESSAGES_REDUCED_TOP_CROP
+    : MIN_MESSAGES_TOP_CROP;
 
   return Math.max(
-    MIN_MESSAGES_TOP_CROP,
+    minCrop,
     Math.min(MAX_MESSAGES_TOP_CROP, Math.round(parsed)),
   );
 }
@@ -3456,8 +3463,12 @@ function createWindow(source: string = "unknown"): void {
       (viewportState === undefined &&
         isMessagesSurfaceRoute(currentUrl) &&
         !isMessagesMediaViewerRoute(currentUrl));
+    const requestedReducedCrop = viewportState?.cropHeight;
     const crop = shouldCrop
-      ? normalizeMessagesTopCrop(viewportState?.headerHeight) ??
+      ? normalizeMessagesTopCrop(requestedReducedCrop, {
+          allowReduced: requestedReducedCrop != null,
+        }) ??
+        normalizeMessagesTopCrop(viewportState?.headerHeight) ??
         DEFAULT_MESSAGES_TOP_CROP
       : 0;
 
@@ -7620,6 +7631,11 @@ function setupIpcHandlers(): void {
           typeof rawPayload?.headerHeight === "number" &&
           Number.isFinite(rawPayload.headerHeight)
             ? Math.max(0, Math.round(rawPayload.headerHeight))
+            : null,
+        cropHeight:
+          typeof rawPayload?.cropHeight === "number" &&
+          Number.isFinite(rawPayload.cropHeight)
+            ? Math.max(0, Math.round(rawPayload.cropHeight))
             : null,
         shouldCrop: rawPayload?.shouldCrop === true,
       };

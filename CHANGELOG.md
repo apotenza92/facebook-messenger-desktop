@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.40] - 2026-03-31
+
+### Fixed
+
+- **Issue #49 follow-up: crop the Facebook top chrome on the native Marketplace thread header variant instead of hiding the wrong in-thread UI** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Detect the same-route Marketplace `Back + Marketplace` thread header and switch that surface to a reduced BrowserView crop so the native back control stays visible while the Facebook top chrome is visually trimmed away.
+  - Keep ordinary Messenger chats on the existing header-suppression path and hold the Marketplace crop briefly across Facebook header re-renders so the layout does not flicker between two different shell strategies.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:release`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.39] - 2026-03-30
 
 ### Fixed

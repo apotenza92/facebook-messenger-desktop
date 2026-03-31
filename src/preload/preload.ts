@@ -319,6 +319,7 @@ ipcRenderer.on(
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
+  const MARKETPLACE_VISUAL_CROP_STICKY_MS = 1_500;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -358,6 +359,9 @@ ipcRenderer.on(
     headerMarketplaceDetected: boolean;
     headerBackDetected: boolean;
     headerBackMarketplaceDetected: boolean;
+    headerContainerTop: number | null;
+    headerContainerBottom: number | null;
+    visualCropHeight: number | null;
     matchedSignals: string[];
   };
   type MediaHeaderOverlayKind =
@@ -390,6 +394,8 @@ ipcRenderer.on(
   let lastAppliedHeaderSuppressionSnapshot: HeaderSuppressionSnapshot | null =
     null;
   let lastHeaderSuppressionDetectedAt = 0;
+  let lastMarketplaceVisualCropHeight: number | null = null;
+  let lastMarketplaceVisualCropDetectedAt = 0;
   let lastInterceptedExternalNavigation:
     | {
         url: string;
@@ -1337,6 +1343,9 @@ ipcRenderer.on(
       headerMarketplaceDetected: false,
       headerBackDetected: false,
       headerBackMarketplaceDetected: false,
+      headerContainerTop: null,
+      headerContainerBottom: null,
+      visualCropHeight: null,
       matchedSignals: [],
     });
 
@@ -1370,6 +1379,10 @@ ipcRenderer.on(
   const MARKETPLACE_THREAD_HEADER_MIN_HEIGHT = 24;
   const MARKETPLACE_THREAD_HEADER_MAX_HEIGHT = 220;
   const MARKETPLACE_THREAD_HEADER_DESCENDANT_LIMIT = 24;
+  const MARKETPLACE_VISUAL_CROP_TOP_PADDING = 4;
+  const MARKETPLACE_VISUAL_CROP_MIN_HEIGHT = 24;
+  const MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT =
+    DEFAULT_MESSAGES_HEADER_HEIGHT - 20;
 
   const isLikelyMarketplaceThreadHeaderContainer = (
     candidate: HTMLElement,
@@ -1399,9 +1412,9 @@ ipcRenderer.on(
     return rect.right <= window.innerWidth * 0.8;
   };
 
-  const hasMarketplaceThreadHeaderSignalNearNode = (
+  const resolveMarketplaceThreadHeaderContainer = (
     node: HTMLElement,
-  ): boolean => {
+  ): HTMLElement | null => {
     let current: HTMLElement | null = node;
 
     while (current instanceof HTMLElement && current !== document.body) {
@@ -1427,14 +1440,61 @@ ipcRenderer.on(
           ...descendantHints,
         ])
       ) {
-        return true;
+        return current;
       }
 
       current = current.parentElement;
     }
 
-    return false;
+    return null;
   };
+
+  const normalizeMarketplaceVisualCropHeight = (value: number): number => {
+    if (!Number.isFinite(value)) {
+      return MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT;
+    }
+
+    return Math.max(
+      MARKETPLACE_VISUAL_CROP_MIN_HEIGHT,
+      Math.min(DEFAULT_MESSAGES_HEADER_HEIGHT, Math.round(value)),
+    );
+  };
+
+  const resolveMarketplaceVisualCropHeight = (
+    state: MarketplaceThreadDebugState,
+  ): number | null => {
+    if (
+      state.headerBackMarketplaceDetected &&
+      typeof state.headerContainerTop === "number"
+    ) {
+      return normalizeMarketplaceVisualCropHeight(
+        state.headerContainerTop - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
+      );
+    }
+
+    if (state.headerBackMarketplaceDetected) {
+      return normalizeMarketplaceVisualCropHeight(
+        MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+      );
+    }
+
+    if (
+      state.headerMarketplaceDetected &&
+      lastMarketplaceVisualCropHeight !== null &&
+      Date.now() - lastMarketplaceVisualCropDetectedAt <=
+        MARKETPLACE_VISUAL_CROP_STICKY_MS
+    ) {
+      return lastMarketplaceVisualCropHeight;
+    }
+
+    return null;
+  };
+
+  const shouldUseMarketplaceVisualCropHeuristic = (
+    state?: MarketplaceThreadDebugState | null,
+  ): boolean =>
+    typeof state?.visualCropHeight === "number" &&
+    state.visualCropHeight > 0;
 
   const collectMarketplaceThreadDebugState =
     (): MarketplaceThreadDebugState => {
@@ -1512,9 +1572,25 @@ ipcRenderer.on(
         if (isMarketplaceThreadBackHint(hint) && rect.left <= 120) {
           state.headerBackDetected = true;
           matchedSignals.add("header-back");
-          if (hasMarketplaceThreadHeaderSignalNearNode(candidate)) {
+          const headerContainer =
+            resolveMarketplaceThreadHeaderContainer(candidate);
+          if (headerContainer) {
             state.headerBackMarketplaceDetected = true;
             matchedSignals.add("header-back+marketplace");
+            const containerRect = headerContainer.getBoundingClientRect();
+            const containerTop = Math.max(0, Math.round(containerRect.top));
+            const containerBottom = Math.max(
+              containerTop,
+              Math.round(containerRect.bottom),
+            );
+            state.headerContainerTop =
+              state.headerContainerTop === null
+                ? containerTop
+                : Math.min(state.headerContainerTop, containerTop);
+            state.headerContainerBottom =
+              state.headerContainerBottom === null
+                ? containerBottom
+                : Math.max(state.headerContainerBottom, containerBottom);
           }
         }
       }
@@ -1524,6 +1600,11 @@ ipcRenderer.on(
         state.rightPaneItemLinkDetected ||
         state.headerMarketplaceDetected ||
         state.headerBackMarketplaceDetected;
+      state.visualCropHeight = resolveMarketplaceVisualCropHeight(state);
+      if (state.visualCropHeight !== null) {
+        lastMarketplaceVisualCropHeight = state.visualCropHeight;
+        lastMarketplaceVisualCropDetectedAt = Date.now();
+      }
       state.matchedSignals = Array.from(matchedSignals);
       return state;
     };
@@ -2180,8 +2261,12 @@ ipcRenderer.on(
     return snapshot;
   };
 
-  const applyFacebookHeaderSuppression = (): void => {
-    const routeKind = resolveMode();
+  const applyFacebookHeaderSuppression = (
+    marketplaceThreadState?: MarketplaceThreadDebugState,
+  ): void => {
+    const currentMarketplaceThreadState =
+      marketplaceThreadState ?? collectMarketplaceThreadDebugState();
+    const routeKind = resolveMode(currentMarketplaceThreadState);
     const previousSnapshot = getStickyHeaderSuppressionSnapshot(
       lastAppliedHeaderSuppressionSnapshot,
     );
@@ -2195,6 +2280,20 @@ ipcRenderer.on(
       lastHeaderSuppressionDetectedAt = 0;
       setInactiveHeaderSuppressionState({
         incomingCallOverlayHintActive,
+      });
+      maybeSendHeaderSuppressionDebug("header-suppression-state");
+      return;
+    }
+
+    if (shouldUseMarketplaceVisualCropHeuristic(currentMarketplaceThreadState)) {
+      lastAppliedHeaderSuppressionSnapshot = null;
+      lastHeaderSuppressionDetectedAt = 0;
+      document.documentElement.classList.remove(ACTIVE_CLASS);
+      setInactiveHeaderSuppressionState({
+        incomingCallOverlayHintActive,
+        marketplaceVisualCropActive: true,
+        marketplaceVisualCropHeight:
+          currentMarketplaceThreadState.visualCropHeight,
       });
       maybeSendHeaderSuppressionDebug("header-suppression-state");
       return;
@@ -2460,6 +2559,11 @@ ipcRenderer.on(
       marketplaceThreadState ?? collectMarketplaceThreadDebugState();
     const marketplaceThreadVisible =
       currentMarketplaceThreadState.marketplaceThreadVisible;
+    const marketplaceVisualCropHeight = shouldUseMarketplaceVisualCropHeuristic(
+      currentMarketplaceThreadState,
+    )
+      ? currentMarketplaceThreadState.visualCropHeight
+      : null;
     const effectiveMediaOverlayVisible =
       mediaOverlayVisible || detectMediaOverlayVisible();
     const routeKind = resolveViewportMode({
@@ -2482,8 +2586,10 @@ ipcRenderer.on(
       url: window.location.href,
       urlPath: window.location.pathname,
       headerHeight,
+      cropHeight: marketplaceVisualCropHeight,
       mediaOverlayVisible: effectiveMediaOverlayVisible,
       marketplaceThreadVisible,
+      marketplaceVisualCropHeight,
     });
   };
 
@@ -2644,7 +2750,7 @@ ipcRenderer.on(
       }
     }
 
-    applyFacebookHeaderSuppression();
+    applyFacebookHeaderSuppression(marketplaceThreadState);
     bindMediaHeaderExternalAnchors();
   };
 

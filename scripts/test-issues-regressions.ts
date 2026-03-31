@@ -218,17 +218,20 @@ const runViewportPolicyTests = () => {
     extra: {
       mediaOverlayVisible?: boolean;
       marketplaceThreadVisible?: boolean;
+      marketplaceVisualCropHeight?: number;
     } = {},
   ) => {
     const mode = resolveViewportMode({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
       marketplaceThreadVisible: extra.marketplaceThreadVisible,
+      marketplaceVisualCropHeight: extra.marketplaceVisualCropHeight,
     });
     const crop = shouldApplyMessagesCrop({
       urlPath: path,
       mediaOverlayVisible: extra.mediaOverlayVisible,
       marketplaceThreadVisible: extra.marketplaceThreadVisible,
+      marketplaceVisualCropHeight: extra.marketplaceVisualCropHeight,
     });
     assertEqual(
       mode,
@@ -258,6 +261,10 @@ const runViewportPolicyTests = () => {
   });
   expectMode("/messages/t/123", "chat", false, {
     marketplaceThreadVisible: true,
+  });
+  expectMode("/messages/t/123", "chat", true, {
+    marketplaceThreadVisible: true,
+    marketplaceVisualCropHeight: 36,
   });
   expectMode("/messages/t/123", "chat", true);
 
@@ -324,7 +331,31 @@ const runViewportPolicyTests = () => {
   assertEqual(
     marketplaceViewportState.shouldCrop,
     false,
-    "#49 marketplace threads should disable the BrowserView crop without disabling header suppression",
+    "#49 generic marketplace thread hints should keep the BrowserView crop disabled",
+  );
+
+  const marketplaceBackHeaderViewportState = resolveMessagesViewportState({
+    url: "https://www.facebook.com/messages/t/123",
+    urlPath: "/messages/t/123",
+    headerHeight: 56,
+    cropHeight: 36,
+    marketplaceThreadVisible: true,
+    marketplaceVisualCropHeight: 36,
+  });
+  assertEqual(
+    marketplaceBackHeaderViewportState.routeKind,
+    "chat",
+    "#49 marketplace back-header threads should stay on the chat route",
+  );
+  assertEqual(
+    marketplaceBackHeaderViewportState.shouldCrop,
+    true,
+    "#49 Allen's Back + Marketplace header should switch to the reduced BrowserView crop heuristic",
+  );
+  assertEqual(
+    marketplaceBackHeaderViewportState.cropHeight,
+    36,
+    "#49 reduced Marketplace crop height should be carried through the viewport payload",
   );
 
   // Transition sequence reproducing "first chat works, subsequent chats break"
