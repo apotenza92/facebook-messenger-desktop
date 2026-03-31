@@ -17,6 +17,7 @@ const {
 const {
   collectMarketplaceThreadHintSignals,
   hasMarketplaceThreadHeaderSignal,
+  isMarketplaceThreadUiActive,
   isMarketplaceThreadActionHint,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
@@ -426,6 +427,27 @@ const runMarketplaceThreadPolicyTests = () => {
     hasMarketplaceThreadHeaderSignal(["Back", "Chat info"]),
     false,
     "#49 generic chat back controls should not disable the Messenger crop",
+  );
+  assertEqual(
+    isMarketplaceThreadUiActive({
+      headerMarketplaceDetected: true,
+    }),
+    false,
+    "#49 a bare Marketplace label should not flip ordinary chats into the Marketplace layout path",
+  );
+  assertEqual(
+    isMarketplaceThreadUiActive({
+      rightPaneMarketplaceSignalDetected: true,
+    }),
+    true,
+    "#49 right-pane Marketplace actions should still activate the Marketplace layout path",
+  );
+  assertEqual(
+    isMarketplaceThreadUiActive({
+      headerBackMarketplaceDetected: true,
+    }),
+    true,
+    "#49 the native Back + Marketplace header should still activate the Marketplace layout path",
   );
 };
 

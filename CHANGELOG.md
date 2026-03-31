@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0-beta.41] - 2026-03-31
+
+### Fixed
+
+- **Issue #49 follow-up: stop generic Facebook top-bar flicker from tripping the Marketplace layout path** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Tightened Marketplace thread activation so a bare `Marketplace` label in Facebook's own top chrome no longer disables the normal chat crop path by itself.
+  - Scoped the temporary Marketplace crop carry-over to the same chat route, reducing cross-chat top-bar flicker while keeping short same-thread Marketplace re-renders stable.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+
 ## [1.3.0-beta.40] - 2026-03-31
 
 ### Fixed

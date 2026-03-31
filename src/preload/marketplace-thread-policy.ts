@@ -89,3 +89,16 @@ export function hasMarketplaceThreadHeaderSignal(
 
   return false;
 }
+
+export function isMarketplaceThreadUiActive(input: {
+  rightPaneMarketplaceSignalDetected?: boolean;
+  rightPaneItemLinkDetected?: boolean;
+  headerMarketplaceDetected?: boolean;
+  headerBackMarketplaceDetected?: boolean;
+}): boolean {
+  return (
+    input.rightPaneMarketplaceSignalDetected === true ||
+    input.rightPaneItemLinkDetected === true ||
+    input.headerBackMarketplaceDetected === true
+  );
+}

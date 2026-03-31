@@ -31,6 +31,7 @@ import {
 import {
   collectMarketplaceThreadHintSignals,
   hasMarketplaceThreadHeaderSignal,
+  isMarketplaceThreadUiActive,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
 } from "./marketplace-thread-policy";
@@ -396,6 +397,7 @@ ipcRenderer.on(
   let lastHeaderSuppressionDetectedAt = 0;
   let lastMarketplaceVisualCropHeight: number | null = null;
   let lastMarketplaceVisualCropDetectedAt = 0;
+  let lastMarketplaceVisualCropRouteKey: string | null = null;
   let lastInterceptedExternalNavigation:
     | {
         url: string;
@@ -1479,8 +1481,13 @@ ipcRenderer.on(
     }
 
     if (
-      state.headerMarketplaceDetected &&
+      (state.headerMarketplaceDetected ||
+        state.headerBackDetected ||
+        state.rightPaneMarketplaceSignalDetected ||
+        state.rightPaneItemLinkDetected) &&
       lastMarketplaceVisualCropHeight !== null &&
+      lastMarketplaceVisualCropRouteKey ===
+        `${window.location.pathname}${window.location.search}` &&
       Date.now() - lastMarketplaceVisualCropDetectedAt <=
         MARKETPLACE_VISUAL_CROP_STICKY_MS
     ) {
@@ -1595,15 +1602,18 @@ ipcRenderer.on(
         }
       }
 
-      state.marketplaceThreadVisible =
-        state.rightPaneMarketplaceSignalDetected ||
-        state.rightPaneItemLinkDetected ||
-        state.headerMarketplaceDetected ||
-        state.headerBackMarketplaceDetected;
+      state.marketplaceThreadVisible = isMarketplaceThreadUiActive({
+        rightPaneMarketplaceSignalDetected:
+          state.rightPaneMarketplaceSignalDetected,
+        rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
+        headerMarketplaceDetected: state.headerMarketplaceDetected,
+        headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+      });
       state.visualCropHeight = resolveMarketplaceVisualCropHeight(state);
       if (state.visualCropHeight !== null) {
         lastMarketplaceVisualCropHeight = state.visualCropHeight;
         lastMarketplaceVisualCropDetectedAt = Date.now();
+        lastMarketplaceVisualCropRouteKey = `${window.location.pathname}${window.location.search}`;
       }
       state.matchedSignals = Array.from(matchedSignals);
       return state;
