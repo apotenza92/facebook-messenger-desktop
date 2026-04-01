@@ -12,6 +12,14 @@ export type MarketplaceThreadHintSignal =
   | "header"
   | "back";
 
+type MarketplaceThreadSignalInput = {
+  rightPaneMarketplaceSignalDetected?: boolean;
+  rightPaneItemLinkDetected?: boolean;
+  headerMarketplaceDetected?: boolean;
+  headerBackDetected?: boolean;
+  headerBackMarketplaceDetected?: boolean;
+};
+
 function normalizeHint(value: string | null | undefined): string {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -96,6 +104,12 @@ export function isMarketplaceThreadUiActive(input: {
   headerMarketplaceDetected?: boolean;
   headerBackMarketplaceDetected?: boolean;
 }): boolean {
+  return shouldRetainMarketplaceVisualCrop(input);
+}
+
+export function shouldRetainMarketplaceVisualCrop(
+  input: MarketplaceThreadSignalInput,
+): boolean {
   return (
     input.rightPaneMarketplaceSignalDetected === true ||
     input.rightPaneItemLinkDetected === true ||

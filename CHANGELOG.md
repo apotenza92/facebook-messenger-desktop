@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.42] - 2026-04-01
+
+### Fixed
+
+- **Issue #49 follow-up: stop post-Marketplace chat flicker from tripping the same-route media overlay path** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Used the exported layout debug report to confirm the bad loop was no longer stale Marketplace state; the app was wrongly flipping an ordinary `/messages/t/...` chat into media mode when Facebook rendered a `Back` control, a `Share` control, and a large preview card together.
+  - Tightened same-route media overlay detection so those ordinary chat controls no longer disable header suppression or send regular chat clicks down the external-browser path.
+  - Kept the stronger Marketplace crop carry-over guard so generic top-chrome `Marketplace` or `Back` labels still cannot refresh the Marketplace layout heuristic on ordinary chats.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.41] - 2026-03-31
 
 ### Fixed

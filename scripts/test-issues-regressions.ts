@@ -21,7 +21,11 @@ const {
   isMarketplaceThreadActionHint,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
+  shouldRetainMarketplaceVisualCrop,
 } = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
+const {
+  evaluateMediaOverlayVisible,
+} = require(path.join(APP_ROOT, "src/preload/media-overlay-policy.ts"));
 const loadIncomingCallHintPolicy = () =>
   require(
     path.join(APP_ROOT, "src/preload/incoming-call-overlay-hint-policy.ts"),
@@ -449,6 +453,27 @@ const runMarketplaceThreadPolicyTests = () => {
     true,
     "#49 the native Back + Marketplace header should still activate the Marketplace layout path",
   );
+  assertEqual(
+    shouldRetainMarketplaceVisualCrop({
+      headerMarketplaceDetected: true,
+    }),
+    false,
+    "#49 a bare Marketplace top-chrome signal should not keep refreshing the reduced crop heuristic",
+  );
+  assertEqual(
+    shouldRetainMarketplaceVisualCrop({
+      headerBackDetected: true,
+    }),
+    false,
+    "#49 a generic back control should not keep the Marketplace crop alive on regular chats",
+  );
+  assertEqual(
+    shouldRetainMarketplaceVisualCrop({
+      rightPaneItemLinkDetected: true,
+    }),
+    true,
+    "#49 live Marketplace thread content should still allow the reduced crop carry-over to bridge same-route re-renders",
+  );
 };
 
 const runWindowOpenRoutingTests = () => {
@@ -475,6 +500,81 @@ const runWindowOpenRoutingTests = () => {
     decideWindowOpenAction("https://www.facebook.com/messages/media_viewer.123"),
     "reroute-main-view",
     "#45 media_viewer routes should stay in the main Messenger surface",
+  );
+};
+
+const runMediaOverlayPolicyTests = () => {
+  assertEqual(
+    evaluateMediaOverlayVisible({
+      path: "/messages/media_viewer.123",
+      modeFromPath: "media",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
+      downloadCount: 0,
+      hasShareAction: false,
+      shareCount: 0,
+      hasNavigationAction: false,
+      navigationCount: 0,
+      hasLargeMedia: false,
+    }),
+    true,
+    "#45 explicit media routes should always stay in media mode",
+  );
+  assertEqual(
+    evaluateMediaOverlayVisible({
+      path: "/messages/t/123",
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: true,
+      downloadCount: 1,
+      hasShareAction: true,
+      shareCount: 1,
+      hasNavigationAction: false,
+      navigationCount: 0,
+      hasLargeMedia: true,
+    }),
+    true,
+    "#45 same-route viewer with download controls should still switch to media mode",
+  );
+  assertEqual(
+    evaluateMediaOverlayVisible({
+      path: "/messages/t/123",
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
+      downloadCount: 0,
+      hasShareAction: true,
+      shareCount: 1,
+      hasNavigationAction: false,
+      navigationCount: 0,
+      hasLargeMedia: true,
+    }),
+    false,
+    "#49 a chat thread with Back + Share + large preview should not be misclassified as a media viewer",
+  );
+  assertEqual(
+    evaluateMediaOverlayVisible({
+      path: "/messages/t/123",
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
+      downloadCount: 0,
+      hasShareAction: false,
+      shareCount: 0,
+      hasNavigationAction: true,
+      navigationCount: 2,
+      hasLargeMedia: true,
+    }),
+    true,
+    "#45 same-route viewers with navigation controls should still switch to media mode",
   );
 };
 
@@ -2035,6 +2135,7 @@ const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
   runViewportPolicyTests();
   runMarketplaceThreadPolicyTests();
   runWindowOpenRoutingTests();
+  runMediaOverlayPolicyTests();
   runHeaderSuppressionPolicyTests();
   runIncomingCallOverlayLifecycleTests();
   runIncomingCallHintPolicyTests();

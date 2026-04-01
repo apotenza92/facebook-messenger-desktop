@@ -29,11 +29,16 @@ import {
   mediaShareSelectors,
 } from "./media-action-policy";
 import {
+  evaluateMediaOverlayVisible,
+  type MediaOverlaySignals,
+} from "./media-overlay-policy";
+import {
   collectMarketplaceThreadHintSignals,
   hasMarketplaceThreadHeaderSignal,
   isMarketplaceThreadUiActive,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
+  shouldRetainMarketplaceVisualCrop,
 } from "./marketplace-thread-policy";
 
 const incomingCallAnswerSelectors = [
@@ -1164,21 +1169,6 @@ ipcRenderer.on(
       path,
     );
 
-  type MediaOverlaySignals = {
-    path: string;
-    modeFromPath: MessagesViewportMode;
-    threadSubtabRoute: boolean;
-    hasDismissAction: boolean;
-    dismissCount: number;
-    hasDownloadAction: boolean;
-    downloadCount: number;
-    hasShareAction: boolean;
-    shareCount: number;
-    hasNavigationAction: boolean;
-    navigationCount: number;
-    hasLargeMedia: boolean;
-  };
-
   const collectMediaOverlaySignals = (): MediaOverlaySignals => {
     const path = window.location.pathname.toLowerCase();
     const modeFromPath = resolveViewportMode({
@@ -1214,29 +1204,6 @@ ipcRenderer.on(
       navigationCount,
       hasLargeMedia: hasLargeViewportMedia(),
     };
-  };
-
-  const evaluateMediaOverlayVisible = (
-    signals: MediaOverlaySignals,
-  ): boolean => {
-    if (signals.modeFromPath === "media") {
-      return true;
-    }
-
-    if (signals.threadSubtabRoute || !signals.hasDismissAction) {
-      return false;
-    }
-
-    return (
-      (signals.hasDismissAction && signals.hasNavigationAction) ||
-      (signals.hasDownloadAction && signals.hasLargeMedia) ||
-      (signals.hasDismissAction &&
-        signals.hasShareAction &&
-        signals.hasLargeMedia) ||
-      (signals.hasShareAction &&
-        signals.hasLargeMedia &&
-        signals.dismissCount >= 2)
-    );
   };
 
   const sendMediaOverlayDebug = (
@@ -1465,6 +1432,16 @@ ipcRenderer.on(
   const resolveMarketplaceVisualCropHeight = (
     state: MarketplaceThreadDebugState,
   ): number | null => {
+    const routeKey = `${window.location.pathname}${window.location.search}`;
+    const shouldRetainVisualCrop = shouldRetainMarketplaceVisualCrop({
+      rightPaneMarketplaceSignalDetected:
+        state.rightPaneMarketplaceSignalDetected,
+      rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
+      headerMarketplaceDetected: state.headerMarketplaceDetected,
+      headerBackDetected: state.headerBackDetected,
+      headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+    });
+
     if (
       state.headerBackMarketplaceDetected &&
       typeof state.headerContainerTop === "number"
@@ -1481,13 +1458,9 @@ ipcRenderer.on(
     }
 
     if (
-      (state.headerMarketplaceDetected ||
-        state.headerBackDetected ||
-        state.rightPaneMarketplaceSignalDetected ||
-        state.rightPaneItemLinkDetected) &&
+      shouldRetainVisualCrop &&
       lastMarketplaceVisualCropHeight !== null &&
-      lastMarketplaceVisualCropRouteKey ===
-        `${window.location.pathname}${window.location.search}` &&
+      lastMarketplaceVisualCropRouteKey === routeKey &&
       Date.now() - lastMarketplaceVisualCropDetectedAt <=
         MARKETPLACE_VISUAL_CROP_STICKY_MS
     ) {
@@ -1610,7 +1583,17 @@ ipcRenderer.on(
         headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
       });
       state.visualCropHeight = resolveMarketplaceVisualCropHeight(state);
-      if (state.visualCropHeight !== null) {
+      if (
+        state.visualCropHeight !== null &&
+        shouldRetainMarketplaceVisualCrop({
+          rightPaneMarketplaceSignalDetected:
+            state.rightPaneMarketplaceSignalDetected,
+          rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
+          headerMarketplaceDetected: state.headerMarketplaceDetected,
+          headerBackDetected: state.headerBackDetected,
+          headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+        })
+      ) {
         lastMarketplaceVisualCropHeight = state.visualCropHeight;
         lastMarketplaceVisualCropDetectedAt = Date.now();
         lastMarketplaceVisualCropRouteKey = `${window.location.pathname}${window.location.search}`;
