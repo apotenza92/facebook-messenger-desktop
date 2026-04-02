@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.0-beta.43] - 2026-04-02
+
+### Fixed
+
+- **Issue #49 follow-up: harden muted media/link notification suppression and generic Facebook notification filtering** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Fail closed when terse sender-style notifications like `sent a photo.` or `shared a link.` could belong to either an unmuted direct thread or a muted group.
+  - Tighten notification target scoring so person-title Facebook activity payloads do not match chat rows unless the body actually corroborates the unread conversation preview.
+  - Expand non-message Facebook activity suppression for request/join/participation notification variants.
+
+### Changed
+
+- **Beta debug-log capture and export overhaul**
+  - Beta builds now capture notification, incoming-call, and layout/media debug logs by default, while stable builds keep those logs off unless explicitly enabled.
+  - Replaced the old layout-only Help export path with `Help -> Export Debug Logs…`, bundling notification, incoming-call, layout/media, and renderer-failure logs together with a summary report.
+  - Added summarized raw `NotificationOptions` capture for intercepted web notifications so follow-up reports can reveal whether Facebook is providing structured metadata like `tag`, `data`, `actions`, `image`, or `timestamp`.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.42] - 2026-04-01
 
 ### Fixed

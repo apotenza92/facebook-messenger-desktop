@@ -320,6 +320,99 @@
     }
   };
 
+  const summarizeNotificationOptions = (
+    options?: NotificationOptions,
+  ): Record<string, unknown> => {
+    const raw = options && typeof options === "object" ? options : {};
+    const optionKeys = Object.keys(raw).sort();
+    const extendedRaw = raw as NotificationOptions & {
+      data?: unknown;
+      actions?: unknown;
+      renotify?: boolean;
+      timestamp?: number;
+      image?: string;
+    };
+    const dataValue = extendedRaw.data;
+    const actionValue = extendedRaw.actions;
+
+    const summarizeString = (value: unknown): string | undefined => {
+      if (typeof value !== "string") return undefined;
+      const normalized = value.replace(/\s+/g, " ").trim();
+      if (!normalized) return undefined;
+      return normalized.slice(0, 240);
+    };
+
+    const summary: Record<string, unknown> = {
+      optionKeys,
+      tag: summarizeString((raw as NotificationOptions).tag),
+      lang: summarizeString((raw as NotificationOptions).lang),
+      dir:
+        typeof (raw as NotificationOptions).dir === "string"
+          ? (raw as NotificationOptions).dir
+          : undefined,
+      silent:
+        typeof (raw as NotificationOptions).silent === "boolean"
+          ? (raw as NotificationOptions).silent
+          : undefined,
+      renotify:
+        typeof extendedRaw.renotify === "boolean"
+          ? extendedRaw.renotify
+          : undefined,
+      requireInteraction:
+        typeof (raw as NotificationOptions).requireInteraction === "boolean"
+          ? (raw as NotificationOptions).requireInteraction
+          : undefined,
+      timestamp:
+        typeof extendedRaw.timestamp === "number"
+          ? extendedRaw.timestamp
+          : undefined,
+      badge: summarizeString((raw as NotificationOptions).badge),
+      icon: summarizeString((raw as NotificationOptions).icon),
+      image: summarizeString(extendedRaw.image),
+      hasData: dataValue !== undefined,
+      dataType:
+        dataValue === null
+          ? "null"
+          : Array.isArray(dataValue)
+            ? "array"
+            : typeof dataValue,
+      dataKeys:
+        dataValue && typeof dataValue === "object" && !Array.isArray(dataValue)
+          ? Object.keys(dataValue as Record<string, unknown>).sort().slice(0, 30)
+          : undefined,
+      dataPreview:
+        typeof dataValue === "string"
+          ? summarizeString(dataValue)
+          : dataValue && typeof dataValue === "object"
+            ? JSON.stringify(dataValue, (_key, value) => {
+                if (typeof value === "string") {
+                  return value.length > 160 ? `${value.slice(0, 160)}…` : value;
+                }
+                return value;
+              }).slice(0, 400)
+            : dataValue,
+      actionsSummary: Array.isArray(actionValue)
+        ? actionValue.slice(0, 5).map((action) => {
+            if (!action || typeof action !== "object") return String(action);
+            return {
+              action:
+                typeof (action as { action?: unknown }).action === "string"
+                  ? (action as { action?: string }).action
+                  : undefined,
+              title:
+                typeof (action as { title?: unknown }).title === "string"
+                  ? (action as { title?: string }).title
+                  : undefined,
+            };
+          })
+        : undefined,
+    };
+
+    return Object.fromEntries(
+      Object.entries(summary).filter(([, value]) => value !== undefined),
+    );
+  };
+
   const INCOMING_CALL_RECOVERY_SETTLING_MS = 10_000;
   const INCOMING_CALL_CORROBORATION_WINDOW_MS = 8_000;
   let incomingCallRecoveryUntil = 0;
@@ -1112,6 +1205,10 @@
           title,
           body,
         });
+        log(
+          "Native notification raw options",
+          summarizeNotificationOptions(options),
+        );
 
         const policy = getNotificationDecisionPolicy();
         if (!policy) {

@@ -430,20 +430,52 @@ type MediaOverlayDebugEvent = {
 };
 
 const MAX_MEDIA_OVERLAY_DEBUG_EVENTS = 3000;
+const MAX_INCOMING_CALL_DEBUG_EVENTS = 3000;
+const MAX_NOTIFICATION_DEBUG_EVENTS = 4000;
 const mediaOverlayDebugEvents: MediaOverlayDebugEvent[] = [];
+const incomingCallDebugEvents: IncomingCallDebugEvent[] = [];
+const notificationDebugEvents: NotificationDebugEvent[] = [];
+
+function shouldCaptureDebugLogsByDefault(): boolean {
+  return isDev || isBetaVersion;
+}
 
 function getMediaOverlayDebugLogPath(): string {
   return path.join(app.getPath("logs"), "media-overlay-debug.ndjson");
 }
 
-function pushMediaOverlayDebugEvent(event: MediaOverlayDebugEvent): void {
-  mediaOverlayDebugEvents.push(event);
-  if (mediaOverlayDebugEvents.length > MAX_MEDIA_OVERLAY_DEBUG_EVENTS) {
-    mediaOverlayDebugEvents.splice(
-      0,
-      mediaOverlayDebugEvents.length - MAX_MEDIA_OVERLAY_DEBUG_EVENTS,
-    );
+function shouldWriteMediaOverlayDebugLog(): boolean {
+  return (
+    shouldCaptureDebugLogsByDefault() ||
+    process.env.MESSENGER_MEDIA_OVERLAY_DEBUG === "1" ||
+    process.env.MESSENGER_MEDIA_OVERLAY_DEBUG === "true" ||
+    process.env.MESSENGER_LAYOUT_DEBUG === "1" ||
+    process.env.MESSENGER_LAYOUT_DEBUG === "true" ||
+    process.env.MESSENGER_ISSUE45_TEST_EXPORT_DIR?.trim().length !== 0
+  );
+}
+
+function recordBoundedDebugEvent<T>(
+  events: T[],
+  event: T,
+  maxEvents: number,
+): void {
+  events.push(event);
+  if (events.length > maxEvents) {
+    events.splice(0, events.length - maxEvents);
   }
+}
+
+function pushMediaOverlayDebugEvent(event: MediaOverlayDebugEvent): void {
+  if (!shouldWriteMediaOverlayDebugLog()) {
+    return;
+  }
+
+  recordBoundedDebugEvent(
+    mediaOverlayDebugEvents,
+    event,
+    MAX_MEDIA_OVERLAY_DEBUG_EVENTS,
+  );
 
   try {
     const logsDir = app.getPath("logs");
@@ -526,7 +558,7 @@ type NotificationDebugEvent = {
 
 function shouldWriteIncomingCallDebugLog(): boolean {
   return (
-    isDev ||
+    shouldCaptureDebugLogsByDefault() ||
     process.env.MESSENGER_INCOMING_CALL_DEBUG === "1" ||
     process.env.MESSENGER_INCOMING_CALL_DEBUG === "true"
   );
@@ -536,10 +568,42 @@ function getIncomingCallDebugLogPath(): string {
   return path.join(app.getPath("logs"), "incoming-call-debug.ndjson");
 }
 
+function shouldResetIncomingCallDebugLogOnStart(): boolean {
+  return (
+    shouldWriteIncomingCallDebugLog() ||
+    process.env.MESSENGER_INCOMING_CALL_DEBUG_RESET === "1" ||
+    process.env.MESSENGER_INCOMING_CALL_DEBUG_RESET === "true"
+  );
+}
+
+function maybeResetIncomingCallDebugLogOnStart(): void {
+  if (!shouldResetIncomingCallDebugLogOnStart()) {
+    return;
+  }
+
+  try {
+    const debugLogPath = getIncomingCallDebugLogPath();
+    if (fs.existsSync(debugLogPath)) {
+      fs.unlinkSync(debugLogPath);
+    }
+  } catch (error) {
+    console.warn(
+      "[IncomingCallDebug] Failed to reset incoming-call debug log",
+      error,
+    );
+  }
+}
+
 function pushIncomingCallDebugEvent(event: IncomingCallDebugEvent): void {
   if (!shouldWriteIncomingCallDebugLog()) {
     return;
   }
+
+  recordBoundedDebugEvent(
+    incomingCallDebugEvents,
+    event,
+    MAX_INCOMING_CALL_DEBUG_EVENTS,
+  );
 
   try {
     const logsDir = app.getPath("logs");
@@ -555,7 +619,7 @@ function pushIncomingCallDebugEvent(event: IncomingCallDebugEvent): void {
 
 function shouldWriteNotificationDebugLog(): boolean {
   return (
-    isDev ||
+    shouldCaptureDebugLogsByDefault() ||
     process.env.MESSENGER_NOTIFICATION_DEBUG === "1" ||
     process.env.MESSENGER_NOTIFICATION_DEBUG === "true"
   );
@@ -567,6 +631,7 @@ function getNotificationDebugLogPath(): string {
 
 function shouldResetNotificationDebugLogOnStart(): boolean {
   return (
+    shouldWriteNotificationDebugLog() ||
     process.env.MESSENGER_NOTIFICATION_DEBUG_RESET === "1" ||
     process.env.MESSENGER_NOTIFICATION_DEBUG_RESET === "true"
   );
@@ -594,6 +659,12 @@ function pushNotificationDebugEvent(event: NotificationDebugEvent): void {
   if (!shouldWriteNotificationDebugLog()) {
     return;
   }
+
+  recordBoundedDebugEvent(
+    notificationDebugEvents,
+    event,
+    MAX_NOTIFICATION_DEBUG_EVENTS,
+  );
 
   try {
     const logsDir = app.getPath("logs");
@@ -624,15 +695,16 @@ function getIssue45TestExportConfig(): Issue45TestExportConfig | null {
   };
 }
 
-function shouldResetIssue45DebugLogOnStart(): boolean {
+function shouldResetMediaOverlayDebugLogOnStart(): boolean {
   return (
+    shouldWriteMediaOverlayDebugLog() ||
     process.env.MESSENGER_ISSUE45_TEST_RESET_DEBUG_LOG === "1" ||
     process.env.MESSENGER_ISSUE45_TEST_RESET_DEBUG_LOG === "true"
   );
 }
 
-function maybeResetIssue45DebugLogOnStart(): void {
-  if (!shouldResetIssue45DebugLogOnStart()) {
+function maybeResetMediaOverlayDebugLogOnStart(): void {
+  if (!shouldResetMediaOverlayDebugLogOnStart()) {
     return;
   }
 
@@ -643,10 +715,18 @@ function maybeResetIssue45DebugLogOnStart(): void {
     }
   } catch (error) {
     console.warn(
-      "[Issue45Debug] Failed to reset media overlay debug log",
+      "[LayoutDebug] Failed to reset media overlay debug log",
       error,
     );
   }
+}
+
+function shouldResetIssue45DebugLogOnStart(): boolean {
+  return shouldResetMediaOverlayDebugLogOnStart();
+}
+
+function maybeResetIssue45DebugLogOnStart(): void {
+  maybeResetMediaOverlayDebugLogOnStart();
 }
 
 function buildIssue45DebugReport(): Record<string, unknown> {
@@ -786,6 +866,195 @@ async function exportIssue45DebugReport(): Promise<void> {
 
   if (done.response === 0) {
     shell.showItemInFolder(saveResult.filePath);
+  }
+}
+
+type DebugLogFileSummary = {
+  fileName: string;
+  sourcePath: string;
+  exists: boolean;
+  tailLines: string[];
+};
+
+function buildDebugLogFileSummary(
+  fileName: string,
+  sourcePath: string,
+): DebugLogFileSummary {
+  return {
+    fileName,
+    sourcePath,
+    exists: fs.existsSync(sourcePath),
+    tailLines: readTailLinesFromFile(sourcePath, 2000),
+  };
+}
+
+function copyDebugLogFile(destinationPath: string, sourcePath: string): void {
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+
+  if (fs.existsSync(sourcePath)) {
+    fs.copyFileSync(sourcePath, destinationPath);
+    return;
+  }
+
+  fs.writeFileSync(destinationPath, "", "utf8");
+}
+
+function buildDebugLogsReport(): Record<string, unknown> {
+  return {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: APP_DISPLAY_NAME,
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      isBetaVersion,
+      isDev,
+      uptimeMs: Date.now() - appStartTime,
+    },
+    debugLogging: {
+      captureByDefault: shouldCaptureDebugLogsByDefault(),
+      layoutEnabled: shouldWriteMediaOverlayDebugLog(),
+      incomingCallEnabled: shouldWriteIncomingCallDebugLog(),
+      notificationEnabled: shouldWriteNotificationDebugLog(),
+    },
+    paths: {
+      userData: app.getPath("userData"),
+      logs: app.getPath("logs"),
+      mediaOverlayDebugLog: getMediaOverlayDebugLogPath(),
+      incomingCallDebugLog: getIncomingCallDebugLogPath(),
+      notificationDebugLog: getNotificationDebugLogPath(),
+      rendererFailureDebugLog: getRendererFailureDebugLogPath(),
+    },
+    currentState: {
+      incomingCallOverlayVisibleByWebContentsId: Array.from(
+        incomingCallOverlayVisibleByWebContentsId.entries(),
+      ),
+      incomingCallOverlayLastHintAtByWebContentsId: Array.from(
+        incomingCallOverlayLastHintAtByWebContentsId.entries(),
+      ),
+      currentMessengerUrl: getMessengerWebContents()?.getURL() || null,
+      mainWindowVisible:
+        typeof mainWindow?.isVisible === "function" ? mainWindow.isVisible() : null,
+      mainWindowFocused:
+        typeof mainWindow?.isFocused === "function" ? mainWindow.isFocused() : null,
+    },
+    inMemoryEvents: {
+      mediaOverlay: mediaOverlayDebugEvents,
+      incomingCall: incomingCallDebugEvents,
+      notification: notificationDebugEvents,
+    },
+    logFiles: {
+      mediaOverlay: buildDebugLogFileSummary(
+        "media-overlay-debug.ndjson",
+        getMediaOverlayDebugLogPath(),
+      ),
+      incomingCall: buildDebugLogFileSummary(
+        "incoming-call-debug.ndjson",
+        getIncomingCallDebugLogPath(),
+      ),
+      notification: buildDebugLogFileSummary(
+        "notification-debug.ndjson",
+        getNotificationDebugLogPath(),
+      ),
+      rendererFailure: buildDebugLogFileSummary(
+        "renderer-failure-debug.ndjson",
+        getRendererFailureDebugLogPath(),
+      ),
+    },
+  };
+}
+
+function exportDebugArtifactsToDirectory(dir: string): {
+  bundleDir: string;
+  summaryPath: string;
+  copiedPaths: string[];
+} {
+  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
+  const bundleDir = path.join(dir, `messenger-debug-logs-${timestamp}`);
+  fs.mkdirSync(bundleDir, { recursive: true });
+
+  const summaryPath = path.join(bundleDir, "debug-summary.json");
+  fs.writeFileSync(
+    summaryPath,
+    JSON.stringify(buildDebugLogsReport(), null, 2),
+    "utf8",
+  );
+
+  const copiedPaths = [
+    path.join(bundleDir, "media-overlay-debug.ndjson"),
+    path.join(bundleDir, "incoming-call-debug.ndjson"),
+    path.join(bundleDir, "notification-debug.ndjson"),
+    path.join(bundleDir, "renderer-failure-debug.ndjson"),
+  ];
+
+  copyDebugLogFile(copiedPaths[0], getMediaOverlayDebugLogPath());
+  copyDebugLogFile(copiedPaths[1], getIncomingCallDebugLogPath());
+  copyDebugLogFile(copiedPaths[2], getNotificationDebugLogPath());
+  copyDebugLogFile(copiedPaths[3], getRendererFailureDebugLogPath());
+
+  return {
+    bundleDir,
+    summaryPath,
+    copiedPaths,
+  };
+}
+
+async function exportDebugLogs(): Promise<void> {
+  const openDialogOptions: Electron.OpenDialogOptions = {
+    title: "Export Debug Logs",
+    buttonLabel: "Export Here",
+    defaultPath: app.getPath("desktop"),
+    properties: ["openDirectory", "createDirectory"],
+  };
+
+  const selection = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, openDialogOptions)
+    : await dialog.showOpenDialog(openDialogOptions);
+
+  if (selection.canceled || selection.filePaths.length === 0) {
+    return;
+  }
+
+  let exported:
+    | {
+        bundleDir: string;
+        summaryPath: string;
+        copiedPaths: string[];
+      }
+    | undefined;
+
+  try {
+    exported = exportDebugArtifactsToDirectory(selection.filePaths[0]);
+  } catch (error) {
+    const errorDialogOptions: Electron.MessageBoxOptions = {
+      type: "error",
+      title: "Export Failed",
+      message: "Could not export debug logs.",
+      detail: String((error as Error)?.message || error),
+    };
+    if (mainWindow) {
+      await dialog.showMessageBox(mainWindow, errorDialogOptions);
+    } else {
+      await dialog.showMessageBox(errorDialogOptions);
+    }
+    return;
+  }
+
+  const doneDialogOptions: Electron.MessageBoxOptions = {
+    type: "info",
+    title: "Debug Logs Exported",
+    message: "Debug logs exported successfully.",
+    detail: exported.bundleDir,
+    buttons: ["Show in Folder", "OK"],
+    defaultId: 0,
+    cancelId: 1,
+  };
+  const done = mainWindow
+    ? await dialog.showMessageBox(mainWindow, doneDialogOptions)
+    : await dialog.showMessageBox(doneDialogOptions);
+
+  if (done.response === 0) {
+    shell.showItemInFolder(exported.summaryPath);
   }
 }
 
@@ -1157,7 +1426,8 @@ if (process.platform === "win32") {
 const userDataPath = path.join(app.getPath("appData"), APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
-maybeResetIssue45DebugLogOnStart();
+maybeResetMediaOverlayDebugLogOnStart();
+maybeResetIncomingCallDebugLogOnStart();
 maybeResetNotificationDebugLogOnStart();
 
 app.on("child-process-gone", (_event, details) => {
@@ -6908,13 +7178,12 @@ function createApplicationMenu(): void {
     },
   };
 
-  const exportIssue45DebugReportMenuItem: Electron.MenuItemConstructorOptions =
-    {
-      label: "Export Layout Debug Report…",
-      click: () => {
-        void exportIssue45DebugReport();
-      },
-    };
+  const exportDebugLogsMenuItem: Electron.MenuItemConstructorOptions = {
+    label: "Export Debug Logs…",
+    click: () => {
+      void exportDebugLogs();
+    },
+  };
 
   const openLogsFolderMenuItem: Electron.MenuItemConstructorOptions = {
     label: "Open Logs Folder",
@@ -7246,8 +7515,13 @@ function createApplicationMenu(): void {
           },
           { type: "separator" },
           viewOnGitHubMenuItem,
+          ...(isDev || isBetaVersion
+            ? ([
+                { type: "separator" as const },
+                exportDebugLogsMenuItem,
+              ] as Electron.MenuItemConstructorOptions[])
+            : []),
           { type: "separator" },
-          exportIssue45DebugReportMenuItem,
           openLogsFolderMenuItem,
         ],
       },
@@ -7371,8 +7645,13 @@ function createApplicationMenu(): void {
         checkUpdatesMenuItem,
         updateFrequencySubmenu,
         notificationSettingsMenuItem,
+        ...(isDev || isBetaVersion
+          ? ([
+              { type: "separator" as const },
+              exportDebugLogsMenuItem,
+            ] as Electron.MenuItemConstructorOptions[])
+          : []),
         { type: "separator" },
-        exportIssue45DebugReportMenuItem,
         openLogsFolderMenuItem,
         // XWayland mode option for Linux users (for screen sharing compatibility)
         ...(xwaylandMenuItem

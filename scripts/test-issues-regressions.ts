@@ -1505,6 +1505,64 @@ const runNotificationPolicyTests = () => {
     "#46 sender-title notifications should fail closed when muted-group previews only expose the sender nickname",
   );
 
+  const photoMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Alex",
+        body: "sent a photo.",
+      },
+      [
+        {
+          href: "/t/alex",
+          title: "Alex",
+          body: "sent a photo.",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/project-squad",
+          title: "Project Squad",
+          body: "Alex sent a photo.",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    photoMutedConflict.reason,
+    "muted-conflict",
+    "#46 sender-title photo notifications should fail closed when a muted group overlaps",
+  );
+
+  const linkMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Alex",
+        body: "shared a link.",
+      },
+      [
+        {
+          href: "/t/alex",
+          title: "Alex",
+          body: "shared a link.",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/project-squad",
+          title: "Project Squad",
+          body: "Alex shared a link.",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    linkMutedConflict.reason,
+    "muted-conflict",
+    "#46 sender-title link notifications should fail closed when a muted group overlaps",
+  );
+
   const aliasNonMutedAlternative =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
@@ -1690,6 +1748,40 @@ const runNotificationPolicyTests = () => {
     "#46 direct conversation should not be muted",
   );
 
+  const personTitleSocialActivityMatch =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "Taylor",
+        body: "commented on your post",
+      },
+      [
+        {
+          href: "/t/taylor",
+          title: "Taylor",
+          body: "Are you free tonight?",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/weekend-group",
+          title: "Weekend Plans",
+          body: "Dinner on Friday",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    personTitleSocialActivityMatch.ambiguous,
+    true,
+    "#46 person-title Facebook activity should fail closed instead of matching a chat row",
+  );
+  assertEqual(
+    personTitleSocialActivityMatch.reason,
+    "low-confidence",
+    "#46 person-title Facebook activity should remain low-confidence",
+  );
+
   const observedDirectMatch =
     notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
       {
@@ -1814,6 +1906,17 @@ const runNotificationPolicyTests = () => {
     suggestedForYouSuppressed,
     true,
     "#46 should suppress generic Facebook suggestion notifications",
+  );
+
+  const participationRequestSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "New notification",
+      body: "3 people requested to participate for the first time in Nova Scotia Aurora...",
+    });
+  assertEqual(
+    participationRequestSuppressed,
+    true,
+    "#46 should suppress Facebook participation-request notifications",
   );
 
   const directMessageNotSuppressed =

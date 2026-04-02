@@ -69,10 +69,24 @@ type NotificationDecisionPolicyApi = {
 const MIN_CONFIDENCE = 0.55;
 const AMBIGUITY_DELTA = 0.14;
 const MUTED_CONFLICT_SCORE_FLOOR = 0.2;
+const OPTIONAL_TERMINAL_PUNCTUATION = "[.!…]?";
 const TERSE_SENDER_BODY_PATTERNS: RegExp[] = [
-  /^(?:[a-z0-9.'_-]+\s+)?sent (?:you )?a message$/i,
-  /^(?:[a-z0-9.'_-]+\s+)?new message$/i,
-  /^(?:[a-z0-9.'_-]+\s+)?sent (?:an? )?(?:photo|video|attachment|gif|sticker)$/i,
+  new RegExp(
+    `^(?:[a-z0-9.'_-]+\\s+)?sent (?:you )?a message${OPTIONAL_TERMINAL_PUNCTUATION}$`,
+    "i",
+  ),
+  new RegExp(
+    `^(?:[a-z0-9.'_-]+\\s+)?new message${OPTIONAL_TERMINAL_PUNCTUATION}$`,
+    "i",
+  ),
+  new RegExp(
+    `^(?:[a-z0-9.'_-]+\\s+)?sent (?:an? )?(?:photo|video|attachment|gif|sticker|link|file|voice message|audio message|reel)${OPTIONAL_TERMINAL_PUNCTUATION}$`,
+    "i",
+  ),
+  new RegExp(
+    `^(?:[a-z0-9.'_-]+\\s+)?shared (?:a|an) link${OPTIONAL_TERMINAL_PUNCTUATION}$`,
+    "i",
+  ),
 ];
 
 const PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS: RegExp[] = [
@@ -88,15 +102,35 @@ const PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS: RegExp[] = [
 ];
 
 const SENDER_STYLE_BODY_CAPTURE_PATTERNS: RegExp[] = [
-  /^(.+?)\s+(sent (?:you )?a message)$/i,
-  /^(.+?)\s+(new message)$/i,
-  /^(.+?)\s+(sent (?:an? )?(?:photo|video|attachment|gif|sticker))$/i,
+  new RegExp(
+    `^(.+?)\\s+(sent (?:you )?a message${OPTIONAL_TERMINAL_PUNCTUATION})$`,
+    "i",
+  ),
+  new RegExp(
+    `^(.+?)\\s+(new message${OPTIONAL_TERMINAL_PUNCTUATION})$`,
+    "i",
+  ),
+  new RegExp(
+    `^(.+?)\\s+(sent (?:an? )?(?:photo|video|attachment|gif|sticker|link|file|voice message|audio message|reel)${OPTIONAL_TERMINAL_PUNCTUATION})$`,
+    "i",
+  ),
+  new RegExp(
+    `^(.+?)\\s+(shared (?:a|an) link${OPTIONAL_TERMINAL_PUNCTUATION})$`,
+    "i",
+  ),
 ];
 
 const SENDER_STYLE_BODY_ONLY_PATTERNS: RegExp[] = [
-  /^sent (?:you )?a message$/i,
-  /^new message$/i,
-  /^sent (?:an? )?(?:photo|video|attachment|gif|sticker)$/i,
+  new RegExp(
+    `^sent (?:you )?a message${OPTIONAL_TERMINAL_PUNCTUATION}$`,
+    "i",
+  ),
+  new RegExp(`^new message${OPTIONAL_TERMINAL_PUNCTUATION}$`, "i"),
+  new RegExp(
+    `^sent (?:an? )?(?:photo|video|attachment|gif|sticker|link|file|voice message|audio message|reel)${OPTIONAL_TERMINAL_PUNCTUATION}$`,
+    "i",
+  ),
+  new RegExp(`^shared (?:a|an) link${OPTIONAL_TERMINAL_PUNCTUATION}$`, "i"),
 ];
 
 function normalizeText(value: string): string {
@@ -209,6 +243,42 @@ function buildCandidateSearchCorpus(candidate: NotificationCandidate): string {
   );
 }
 
+function bodyCorroboratesCandidate(
+  payloadBody: string,
+  candidateBody: string,
+  candidateSearchCorpus: string,
+): boolean {
+  const normalizedPayloadBody = normalizeText(payloadBody);
+  if (!normalizedPayloadBody) return false;
+
+  const normalizedCandidateBody = normalizeText(candidateBody);
+  const normalizedCandidateCorpus = normalizeText(candidateSearchCorpus);
+
+  if (
+    normalizedCandidateBody &&
+    (normalizedPayloadBody === normalizedCandidateBody ||
+      normalizedCandidateBody.includes(normalizedPayloadBody) ||
+      normalizedPayloadBody.includes(normalizedCandidateBody))
+  ) {
+    return true;
+  }
+
+  if (
+    normalizedCandidateCorpus &&
+    normalizedCandidateCorpus.includes(normalizedPayloadBody)
+  ) {
+    return true;
+  }
+
+  const payloadTokens = tokenize(normalizedPayloadBody);
+  if (payloadTokens.length === 0) return false;
+
+  return (
+    tokenOverlapRatio(payloadTokens, tokenize(normalizedCandidateBody)) >= 0.5 ||
+    tokenOverlapRatio(payloadTokens, tokenize(normalizedCandidateCorpus)) >= 0.5
+  );
+}
+
 function isTerseSenderTitlePayload(payload: NotificationPayload): boolean {
   const payloadBody = normalizeText(payload.body);
   if (!payloadBody) return true;
@@ -307,6 +377,23 @@ function computeCandidateScore(
     candidateSearchCorpus.includes(payloadTitle)
   ) {
     score += 0.16;
+  }
+
+  const payloadBodyLooksSenderStyle = Boolean(
+    normalizeSenderStyleBody(payloadBody),
+  );
+  const titleOnlyBodyMismatch =
+    Boolean(payloadTitle) &&
+    Boolean(payloadBody) &&
+    Boolean(candidateTitle) &&
+    payloadTitle === candidateTitle &&
+    !payloadBodyLooksSenderStyle &&
+    !bodyCorroboratesCandidate(payloadBody, candidateBody, candidateSearchCorpus);
+
+  if (titleOnlyBodyMismatch) {
+    // Prevent person-title Facebook/social notifications from winning purely on
+    // sender-name equality when the body does not corroborate the unread row.
+    score -= 0.42;
   }
 
   if (!candidate.unread) {
@@ -577,6 +664,9 @@ const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
   /updated (?:their|his|her) (?:profile|cover) photo/i,
   /updated (?:their|his|her) status/i,
   /added (?:a new )?story/i,
+  /requested to (?:participate|join)/i,
+  /requested membership/i,
+  /membership request/i,
   /new notification/i,
   /new notifications/i,
 ];
