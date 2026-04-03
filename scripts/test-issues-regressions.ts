@@ -22,6 +22,7 @@ const {
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
   shouldRetainMarketplaceVisualCrop,
+  shouldUseRecentMarketplaceVisualCropFallback,
 } = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
 const {
   evaluateMediaOverlayVisible,
@@ -473,6 +474,22 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     true,
     "#49 live Marketplace thread content should still allow the reduced crop carry-over to bridge same-route re-renders",
+  );
+  assertEqual(
+    shouldUseRecentMarketplaceVisualCropFallback({
+      headerMarketplaceDetected: true,
+      hasRecentConfirmedMarketplaceCrop: true,
+    }),
+    true,
+    "#49 same-route Marketplace re-renders should keep the reduced crop after a recent confirmed Marketplace header",
+  );
+  assertEqual(
+    shouldUseRecentMarketplaceVisualCropFallback({
+      headerMarketplaceDetected: true,
+      hasRecentConfirmedMarketplaceCrop: false,
+    }),
+    false,
+    "#49 a bare Marketplace label without recent confirmed Marketplace UI should not keep the reduced crop alive",
   );
 };
 

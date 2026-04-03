@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0-beta.44] - 2026-04-03
+
+### Fixed
+
+- **Issue #49 follow-up: keep Marketplace thread crop stable across same-route re-entry rerenders** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep the reduced Marketplace visual crop alive briefly on the same thread route after a confirmed `Back + Marketplace` detection, even if Facebook rerenders into a weaker Marketplace-only header state.
+  - Prevent those weak same-route rerenders from dropping back into the normal chat header-suppression path, which could hide the Marketplace back button again or let the top bar reappear.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.43] - 2026-04-02
 
 ### Fixed

@@ -39,6 +39,7 @@ import {
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
   shouldRetainMarketplaceVisualCrop,
+  shouldUseRecentMarketplaceVisualCropFallback,
 } from "./marketplace-thread-policy";
 
 const incomingCallAnswerSelectors = [
@@ -1441,6 +1442,11 @@ ipcRenderer.on(
       headerBackDetected: state.headerBackDetected,
       headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
     });
+    const hasRecentConfirmedMarketplaceCrop =
+      lastMarketplaceVisualCropHeight !== null &&
+      lastMarketplaceVisualCropRouteKey === routeKey &&
+      Date.now() - lastMarketplaceVisualCropDetectedAt <=
+        MARKETPLACE_VISUAL_CROP_STICKY_MS;
 
     if (
       state.headerBackMarketplaceDetected &&
@@ -1459,10 +1465,16 @@ ipcRenderer.on(
 
     if (
       shouldRetainVisualCrop &&
-      lastMarketplaceVisualCropHeight !== null &&
-      lastMarketplaceVisualCropRouteKey === routeKey &&
-      Date.now() - lastMarketplaceVisualCropDetectedAt <=
-        MARKETPLACE_VISUAL_CROP_STICKY_MS
+      hasRecentConfirmedMarketplaceCrop
+    ) {
+      return lastMarketplaceVisualCropHeight;
+    }
+
+    if (
+      shouldUseRecentMarketplaceVisualCropFallback({
+        headerMarketplaceDetected: state.headerMarketplaceDetected,
+        hasRecentConfirmedMarketplaceCrop,
+      })
     ) {
       return lastMarketplaceVisualCropHeight;
     }
