@@ -118,11 +118,7 @@ export function shouldRetainMarketplaceVisualCrop(
 }
 
 export function shouldUseRecentMarketplaceVisualCropFallback(input: {
-  headerMarketplaceDetected?: boolean;
   hasRecentConfirmedMarketplaceCrop?: boolean;
 }): boolean {
-  return (
-    input.headerMarketplaceDetected === true &&
-    input.hasRecentConfirmedMarketplaceCrop === true
-  );
+  return input.hasRecentConfirmedMarketplaceCrop === true;
 }

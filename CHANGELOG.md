@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.45] - 2026-04-03
+
+### Fixed
+
+- **Issue #49 follow-up: extend Marketplace crop carry-over across weaker same-route rerenders and add a main-process notification safety net** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep a confirmed Marketplace thread crop alive longer on the same thread route so brief Facebook rerenders that temporarily drop Marketplace header signals do not immediately hide the back button again or re-enable the wrong top-bar suppression path.
+  - Add a main-process fallback suppression check for obvious non-message Facebook activity payloads such as join-request / participation-request notifications, so those can still be blocked even if they reach Electron outside the usual preload classification path.
+  - Record main-process `show-notification` requests and suppressions in the notification debug log so any remaining leaks are easier to trace.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+
 ## [1.3.0-beta.44] - 2026-04-03
 
 ### Fixed

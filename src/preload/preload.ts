@@ -326,7 +326,7 @@ ipcRenderer.on(
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
-  const MARKETPLACE_VISUAL_CROP_STICKY_MS = 1_500;
+  const MARKETPLACE_VISUAL_CROP_STICKY_MS = 5_000;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -1472,7 +1472,6 @@ ipcRenderer.on(
 
     if (
       shouldUseRecentMarketplaceVisualCropFallback({
-        headerMarketplaceDetected: state.headerMarketplaceDetected,
         hasRecentConfirmedMarketplaceCrop,
       })
     ) {

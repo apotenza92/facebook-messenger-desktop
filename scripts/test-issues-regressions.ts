@@ -477,19 +477,17 @@ const runMarketplaceThreadPolicyTests = () => {
   );
   assertEqual(
     shouldUseRecentMarketplaceVisualCropFallback({
-      headerMarketplaceDetected: true,
       hasRecentConfirmedMarketplaceCrop: true,
     }),
     true,
-    "#49 same-route Marketplace re-renders should keep the reduced crop after a recent confirmed Marketplace header",
+    "#49 same-route Marketplace re-renders should keep the reduced crop briefly after a recent confirmed Marketplace header",
   );
   assertEqual(
     shouldUseRecentMarketplaceVisualCropFallback({
-      headerMarketplaceDetected: true,
       hasRecentConfirmedMarketplaceCrop: false,
     }),
     false,
-    "#49 a bare Marketplace label without recent confirmed Marketplace UI should not keep the reduced crop alive",
+    "#49 without a recent confirmed Marketplace crop there should be no sticky carry-over",
   );
 };
 

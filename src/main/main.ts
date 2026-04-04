@@ -556,6 +556,48 @@ type NotificationDebugEvent = {
   [key: string]: unknown;
 };
 
+const MAIN_PROCESS_NON_MESSAGE_NOTIFICATION_PATTERNS: RegExp[] = [
+  /requested to (?:participate|join)/i,
+  /requested membership/i,
+  /membership request/i,
+  /join this group/i,
+  /group you(?:'|’)re managing/i,
+  /for the first time in/i,
+  /commented on your/i,
+  /replied to your/i,
+  /reacted to your/i,
+  /liked your/i,
+  /suggested for you/i,
+];
+
+function shouldSuppressMainProcessNotification(
+  data: Partial<NotificationData> | null | undefined,
+): { suppress: boolean; reason?: string } {
+  const title = String(data?.title || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const body = String(data?.body || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const href = String(data?.href || "").trim();
+
+  const genericTitle = /^(?:facebook(?: user(?: \d+)?)?|meta|notification|new notification|notifications|new notifications)$/i.test(
+    title,
+  );
+  const strongBodyMatch = MAIN_PROCESS_NON_MESSAGE_NOTIFICATION_PATTERNS.find(
+    (pattern) => pattern.test(body),
+  );
+
+  if (strongBodyMatch && (!href || genericTitle)) {
+    return {
+      suppress: true,
+      reason: `main-process-non-message:${strongBodyMatch.source}`,
+    };
+  }
+
+  return { suppress: false };
+}
+
 function shouldWriteIncomingCallDebugLog(): boolean {
   return (
     shouldCaptureDebugLogsByDefault() ||
@@ -7801,6 +7843,36 @@ function setupIpcHandlers(): void {
   // Handle notification requests from renderer
   ipcMain.on("show-notification", (event, data) => {
     console.log("[Main Process] Received notification request:", data);
+
+    pushNotificationDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "show-notification-request",
+      webContentsId: event.sender.id,
+      url: event.sender.getURL(),
+      payload: data,
+    });
+
+    const suppression = shouldSuppressMainProcessNotification(
+      data as Partial<NotificationData>,
+    );
+    if (suppression.suppress) {
+      pushNotificationDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "show-notification-suppressed",
+        webContentsId: event.sender.id,
+        url: event.sender.getURL(),
+        reason: suppression.reason,
+        payload: data,
+      });
+      console.log("[Main Process] Suppressed non-message notification", {
+        reason: suppression.reason,
+        data,
+      });
+      return;
+    }
+
     if (notificationHandler) {
       notificationHandler.showNotification(data);
     } else {
