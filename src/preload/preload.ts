@@ -38,8 +38,8 @@ import {
   isMarketplaceThreadUiActive,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
+  resolveMarketplaceVisualCropRetentionDecision,
   shouldRetainMarketplaceVisualCrop,
-  shouldUseRecentMarketplaceVisualCropFallback,
 } from "./marketplace-thread-policy";
 
 const incomingCallAnswerSelectors = [
@@ -1432,9 +1432,9 @@ ipcRenderer.on(
 
   const resolveMarketplaceVisualCropHeight = (
     state: MarketplaceThreadDebugState,
-  ): number | null => {
+  ): { visualCropHeight: number | null; refreshCachedTimestamp: boolean } => {
     const routeKey = `${window.location.pathname}${window.location.search}`;
-    const shouldRetainVisualCrop = shouldRetainMarketplaceVisualCrop({
+    const hasStrongMarketplaceSignal = shouldRetainMarketplaceVisualCrop({
       rightPaneMarketplaceSignalDetected:
         state.rightPaneMarketplaceSignalDetected,
       rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
@@ -1447,38 +1447,44 @@ ipcRenderer.on(
       lastMarketplaceVisualCropRouteKey === routeKey &&
       Date.now() - lastMarketplaceVisualCropDetectedAt <=
         MARKETPLACE_VISUAL_CROP_STICKY_MS;
+    const retentionDecision = resolveMarketplaceVisualCropRetentionDecision({
+      hasRecentConfirmedMarketplaceCrop,
+      headerMarketplaceDetected: state.headerMarketplaceDetected,
+      hasStrongMarketplaceSignal,
+    });
 
     if (
       state.headerBackMarketplaceDetected &&
       typeof state.headerContainerTop === "number"
     ) {
-      return normalizeMarketplaceVisualCropHeight(
-        state.headerContainerTop - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
-      );
+      return {
+        visualCropHeight: normalizeMarketplaceVisualCropHeight(
+          state.headerContainerTop - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
+        ),
+        refreshCachedTimestamp: true,
+      };
     }
 
     if (state.headerBackMarketplaceDetected) {
-      return normalizeMarketplaceVisualCropHeight(
-        MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
-      );
+      return {
+        visualCropHeight: normalizeMarketplaceVisualCropHeight(
+          MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+        ),
+        refreshCachedTimestamp: true,
+      };
     }
 
-    if (
-      shouldRetainVisualCrop &&
-      hasRecentConfirmedMarketplaceCrop
-    ) {
-      return lastMarketplaceVisualCropHeight;
+    if (retentionDecision.useCachedCrop) {
+      return {
+        visualCropHeight: lastMarketplaceVisualCropHeight,
+        refreshCachedTimestamp: retentionDecision.refreshCachedTimestamp,
+      };
     }
 
-    if (
-      shouldUseRecentMarketplaceVisualCropFallback({
-        hasRecentConfirmedMarketplaceCrop,
-      })
-    ) {
-      return lastMarketplaceVisualCropHeight;
-    }
-
-    return null;
+    return {
+      visualCropHeight: null,
+      refreshCachedTimestamp: false,
+    };
   };
 
   const shouldUseMarketplaceVisualCropHeuristic = (
@@ -1593,17 +1599,11 @@ ipcRenderer.on(
         headerMarketplaceDetected: state.headerMarketplaceDetected,
         headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
       });
-      state.visualCropHeight = resolveMarketplaceVisualCropHeight(state);
+      const visualCropResolution = resolveMarketplaceVisualCropHeight(state);
+      state.visualCropHeight = visualCropResolution.visualCropHeight;
       if (
         state.visualCropHeight !== null &&
-        shouldRetainMarketplaceVisualCrop({
-          rightPaneMarketplaceSignalDetected:
-            state.rightPaneMarketplaceSignalDetected,
-          rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
-          headerMarketplaceDetected: state.headerMarketplaceDetected,
-          headerBackDetected: state.headerBackDetected,
-          headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
-        })
+        visualCropResolution.refreshCachedTimestamp
       ) {
         lastMarketplaceVisualCropHeight = state.visualCropHeight;
         lastMarketplaceVisualCropDetectedAt = Date.now();

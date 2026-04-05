@@ -21,6 +21,7 @@ const {
   isMarketplaceThreadActionHint,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
+  resolveMarketplaceVisualCropRetentionDecision,
   shouldRetainMarketplaceVisualCrop,
   shouldUseRecentMarketplaceVisualCropFallback,
 } = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
@@ -478,6 +479,7 @@ const runMarketplaceThreadPolicyTests = () => {
   assertEqual(
     shouldUseRecentMarketplaceVisualCropFallback({
       hasRecentConfirmedMarketplaceCrop: true,
+      headerMarketplaceDetected: true,
     }),
     true,
     "#49 same-route Marketplace re-renders should keep the reduced crop briefly after a recent confirmed Marketplace header",
@@ -488,6 +490,155 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     false,
     "#49 without a recent confirmed Marketplace crop there should be no sticky carry-over",
+  );
+
+  assertEqual(
+    JSON.stringify(
+      resolveMarketplaceVisualCropRetentionDecision({
+        hasRecentConfirmedMarketplaceCrop: true,
+        hasStrongMarketplaceSignal: true,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: true,
+      refreshCachedTimestamp: true,
+    }),
+    "#49 strong Marketplace rerenders should reuse and refresh the cached crop",
+  );
+  assertEqual(
+    JSON.stringify(
+      resolveMarketplaceVisualCropRetentionDecision({
+        hasRecentConfirmedMarketplaceCrop: true,
+        headerMarketplaceDetected: true,
+        hasStrongMarketplaceSignal: false,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: true,
+      refreshCachedTimestamp: true,
+    }),
+    "#49 weak Marketplace-only rerenders should reuse and refresh the cached crop",
+  );
+  assertEqual(
+    JSON.stringify(
+      resolveMarketplaceVisualCropRetentionDecision({
+        hasRecentConfirmedMarketplaceCrop: true,
+        headerMarketplaceDetected: false,
+        hasStrongMarketplaceSignal: false,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: true,
+      refreshCachedTimestamp: false,
+    }),
+    "#49 signal-free bridge states should reuse without renewing the Marketplace crop",
+  );
+  assertEqual(
+    JSON.stringify(
+      resolveMarketplaceVisualCropRetentionDecision({
+        hasRecentConfirmedMarketplaceCrop: false,
+        headerMarketplaceDetected: true,
+        hasStrongMarketplaceSignal: true,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: false,
+      refreshCachedTimestamp: false,
+    }),
+    "#49 without a recent confirmed crop there should be no reusable Marketplace carry-over",
+  );
+
+  const MARKETPLACE_VISUAL_CROP_STICKY_MS = 5_000;
+  const retainedMarketplaceRoutes = new Map<string, number>();
+  const recordConfirmedMarketplaceCrop = (routeKey: string, nowMs: number) => {
+    retainedMarketplaceRoutes.set(
+      routeKey,
+      nowMs + MARKETPLACE_VISUAL_CROP_STICKY_MS,
+    );
+  };
+  const evaluateMarketplaceRerender = (input: {
+    routeKey: string;
+    nowMs: number;
+    headerMarketplaceDetected?: boolean;
+    hasStrongMarketplaceSignal?: boolean;
+  }) => {
+    const expiresAt = retainedMarketplaceRoutes.get(input.routeKey) || 0;
+    const decision = resolveMarketplaceVisualCropRetentionDecision({
+      hasRecentConfirmedMarketplaceCrop: input.nowMs <= expiresAt,
+      headerMarketplaceDetected: input.headerMarketplaceDetected,
+      hasStrongMarketplaceSignal: input.hasStrongMarketplaceSignal,
+    });
+
+    if (decision.refreshCachedTimestamp) {
+      retainedMarketplaceRoutes.set(
+        input.routeKey,
+        input.nowMs + MARKETPLACE_VISUAL_CROP_STICKY_MS,
+      );
+    }
+
+    return decision;
+  };
+
+  recordConfirmedMarketplaceCrop("/messages/t/marketplace-thread", 0);
+  assertEqual(
+    JSON.stringify(
+      evaluateMarketplaceRerender({
+        routeKey: "/messages/t/marketplace-thread",
+        nowMs: 2_000,
+        headerMarketplaceDetected: true,
+        hasStrongMarketplaceSignal: false,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: true,
+      refreshCachedTimestamp: true,
+    }),
+    "#49 a weaker same-route Marketplace rerender should renew the cached crop after an earlier confirmed header",
+  );
+  assertEqual(
+    JSON.stringify(
+      evaluateMarketplaceRerender({
+        routeKey: "/messages/t/marketplace-thread",
+        nowMs: 6_500,
+        headerMarketplaceDetected: true,
+        hasStrongMarketplaceSignal: false,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: true,
+      refreshCachedTimestamp: true,
+    }),
+    "#49 a later weak rerender should still keep the Marketplace crop alive after the prior renewal",
+  );
+  assertEqual(
+    JSON.stringify(
+      evaluateMarketplaceRerender({
+        routeKey: "/messages/t/marketplace-thread",
+        nowMs: 10_000,
+        headerMarketplaceDetected: false,
+        hasStrongMarketplaceSignal: false,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: true,
+      refreshCachedTimestamp: false,
+    }),
+    "#49 a fully signal-free bridge should not keep renewing the Marketplace crop",
+  );
+  assertEqual(
+    JSON.stringify(
+      evaluateMarketplaceRerender({
+        routeKey: "/messages/t/other-chat",
+        nowMs: 10_000,
+        headerMarketplaceDetected: true,
+        hasStrongMarketplaceSignal: false,
+      }),
+    ),
+    JSON.stringify({
+      useCachedCrop: false,
+      refreshCachedTimestamp: false,
+    }),
+    "#49 switching to another chat route should not inherit a renewable Marketplace crop",
   );
 };
 

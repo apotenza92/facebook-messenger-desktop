@@ -20,6 +20,11 @@ type MarketplaceThreadSignalInput = {
   headerBackMarketplaceDetected?: boolean;
 };
 
+export type MarketplaceVisualCropRetentionDecision = {
+  useCachedCrop: boolean;
+  refreshCachedTimestamp: boolean;
+};
+
 function normalizeHint(value: string | null | undefined): string {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -117,8 +122,42 @@ export function shouldRetainMarketplaceVisualCrop(
   );
 }
 
+export function resolveMarketplaceVisualCropRetentionDecision(input: {
+  hasRecentConfirmedMarketplaceCrop?: boolean;
+  headerMarketplaceDetected?: boolean;
+  hasStrongMarketplaceSignal?: boolean;
+}): MarketplaceVisualCropRetentionDecision {
+  if (input.hasRecentConfirmedMarketplaceCrop !== true) {
+    return {
+      useCachedCrop: false,
+      refreshCachedTimestamp: false,
+    };
+  }
+
+  if (input.hasStrongMarketplaceSignal === true) {
+    return {
+      useCachedCrop: true,
+      refreshCachedTimestamp: true,
+    };
+  }
+
+  if (input.headerMarketplaceDetected === true) {
+    return {
+      useCachedCrop: true,
+      refreshCachedTimestamp: true,
+    };
+  }
+
+  return {
+    useCachedCrop: true,
+    refreshCachedTimestamp: false,
+  };
+}
+
 export function shouldUseRecentMarketplaceVisualCropFallback(input: {
   hasRecentConfirmedMarketplaceCrop?: boolean;
+  headerMarketplaceDetected?: boolean;
+  hasStrongMarketplaceSignal?: boolean;
 }): boolean {
-  return input.hasRecentConfirmedMarketplaceCrop === true;
+  return resolveMarketplaceVisualCropRetentionDecision(input).useCachedCrop;
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0-beta.46] - 2026-04-06
+
+### Fixed
+
+- **Issue #49 follow-up: renew Marketplace crop carry-over across repeated same-route re-entry rerenders** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Refresh the confirmed Marketplace crop window when Facebook rerenders the same thread into a weaker Marketplace-only header, so the native back button and reduced top crop stay stable beyond the second re-entry.
+  - Keep fully signal-free bridge states temporary only, so ordinary chats still cannot inherit a self-renewing Marketplace crop from a stray `Marketplace` label.
+  - Add deterministic sequence coverage for the reported third/fourth Marketplace re-entry repro on the same route, including route-scoped carry-over guards.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+
 ## [1.3.0-beta.45] - 2026-04-03
 
 ### Fixed
