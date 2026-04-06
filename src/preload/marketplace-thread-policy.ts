@@ -12,6 +12,36 @@ export type MarketplaceThreadHintSignal =
   | "header"
   | "back";
 
+export type MarketplaceThreadHeaderBand = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
+export type MarketplaceSessionSignalSource =
+  | "strong-header"
+  | "right-pane-action"
+  | "item-link"
+  | "weak-header"
+  | "bridge";
+
+export type MarketplaceVisualSessionTransition =
+  | "confirmed"
+  | "bridging"
+  | "cleared"
+  | "rejected"
+  | "inactive";
+
+export type MarketplaceVisualSessionState = {
+  routeKey: string;
+  visualCropHeight: number | null;
+  headerBand: MarketplaceThreadHeaderBand | null;
+  lastConfirmedAt: number;
+  lastMatchedAt: number;
+  signalSource: MarketplaceSessionSignalSource;
+};
+
 type MarketplaceThreadSignalInput = {
   rightPaneMarketplaceSignalDetected?: boolean;
   rightPaneItemLinkDetected?: boolean;
@@ -20,9 +50,14 @@ type MarketplaceThreadSignalInput = {
   headerBackMarketplaceDetected?: boolean;
 };
 
-export type MarketplaceVisualCropRetentionDecision = {
-  useCachedCrop: boolean;
-  refreshCachedTimestamp: boolean;
+export type MarketplaceVisualSessionDecision = {
+  sessionActive: boolean;
+  shouldApplyReducedCrop: boolean;
+  visualCropHeight: number | null;
+  transition: MarketplaceVisualSessionTransition;
+  signalSource: MarketplaceSessionSignalSource | null;
+  weakHeaderMatchesSessionHeaderBand: boolean;
+  nextSession: MarketplaceVisualSessionState | null;
 };
 
 function normalizeHint(value: string | null | undefined): string {
@@ -122,42 +157,191 @@ export function shouldRetainMarketplaceVisualCrop(
   );
 }
 
-export function resolveMarketplaceVisualCropRetentionDecision(input: {
-  hasRecentConfirmedMarketplaceCrop?: boolean;
-  headerMarketplaceDetected?: boolean;
-  hasStrongMarketplaceSignal?: boolean;
-}): MarketplaceVisualCropRetentionDecision {
-  if (input.hasRecentConfirmedMarketplaceCrop !== true) {
+function normalizeMarketplaceVisualCropHeight(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  return rounded > 0 ? rounded : null;
+}
+
+function normalizeMarketplaceThreadHeaderBand(
+  band: MarketplaceThreadHeaderBand | null | undefined,
+): MarketplaceThreadHeaderBand | null {
+  if (!band) {
+    return null;
+  }
+
+  const top = Math.round(Number(band.top));
+  const bottom = Math.round(Number(band.bottom));
+  const left = Math.round(Number(band.left));
+  const right = Math.round(Number(band.right));
+  if (
+    !Number.isFinite(top) ||
+    !Number.isFinite(bottom) ||
+    !Number.isFinite(left) ||
+    !Number.isFinite(right)
+  ) {
+    return null;
+  }
+
+  if (bottom < top || right < left) {
+    return null;
+  }
+
+  return {
+    top,
+    bottom,
+    left,
+    right,
+  };
+}
+
+export function doesMarketplaceThreadHeaderBandMatch(input: {
+  confirmedHeaderBand?: MarketplaceThreadHeaderBand | null;
+  candidateHeaderBand?: MarketplaceThreadHeaderBand | null;
+}): boolean {
+  const confirmedHeaderBand = normalizeMarketplaceThreadHeaderBand(
+    input.confirmedHeaderBand,
+  );
+  const candidateHeaderBand = normalizeMarketplaceThreadHeaderBand(
+    input.candidateHeaderBand,
+  );
+  if (!confirmedHeaderBand || !candidateHeaderBand) {
+    return false;
+  }
+
+  const topDiff = Math.abs(candidateHeaderBand.top - confirmedHeaderBand.top);
+  const bottomDiff = Math.abs(
+    candidateHeaderBand.bottom - confirmedHeaderBand.bottom,
+  );
+  const leftDiff = Math.abs(candidateHeaderBand.left - confirmedHeaderBand.left);
+  const rightDiff = Math.abs(
+    candidateHeaderBand.right - confirmedHeaderBand.right,
+  );
+  const verticalOverlap =
+    candidateHeaderBand.bottom >= confirmedHeaderBand.top - 20 &&
+    candidateHeaderBand.top <= confirmedHeaderBand.bottom + 20;
+  const horizontalOverlap =
+    candidateHeaderBand.right >= confirmedHeaderBand.left - 24 &&
+    candidateHeaderBand.left <= confirmedHeaderBand.right + 96;
+
+  return (
+    verticalOverlap &&
+    horizontalOverlap &&
+    topDiff <= 28 &&
+    bottomDiff <= 36 &&
+    leftDiff <= 32 &&
+    rightDiff <= 120
+  );
+}
+
+export function resolveMarketplaceVisualSessionDecision(input: {
+  currentRouteKey: string;
+  nowMs: number;
+  graceMs: number;
+  previousSession?: MarketplaceVisualSessionState | null;
+  strongSignalSource?:
+    | Extract<
+        MarketplaceSessionSignalSource,
+        "strong-header" | "right-pane-action" | "item-link"
+      >
+    | null;
+  strongVisualCropHeight?: number | null;
+  strongHeaderBand?: MarketplaceThreadHeaderBand | null;
+  weakHeaderBand?: MarketplaceThreadHeaderBand | null;
+}): MarketplaceVisualSessionDecision {
+  const hadPreviousSession = input.previousSession !== null && input.previousSession !== undefined;
+  const previousSession =
+    input.previousSession &&
+    input.previousSession.routeKey === input.currentRouteKey
+      ? input.previousSession
+      : null;
+  const weakHeaderMatchesSessionHeaderBand = doesMarketplaceThreadHeaderBandMatch(
+    {
+      confirmedHeaderBand: previousSession?.headerBand,
+      candidateHeaderBand: input.weakHeaderBand,
+    },
+  );
+
+  if (input.strongSignalSource) {
+    const visualCropHeight = normalizeMarketplaceVisualCropHeight(
+      input.strongVisualCropHeight ?? previousSession?.visualCropHeight,
+    );
+    const nextSession: MarketplaceVisualSessionState = {
+      routeKey: input.currentRouteKey,
+      visualCropHeight,
+      headerBand:
+        normalizeMarketplaceThreadHeaderBand(input.strongHeaderBand) ??
+        previousSession?.headerBand ??
+        null,
+      lastConfirmedAt: input.nowMs,
+      lastMatchedAt: input.nowMs,
+      signalSource: input.strongSignalSource,
+    };
+
     return {
-      useCachedCrop: false,
-      refreshCachedTimestamp: false,
+      sessionActive: true,
+      shouldApplyReducedCrop: visualCropHeight !== null,
+      visualCropHeight,
+      transition: "confirmed",
+      signalSource: input.strongSignalSource,
+      weakHeaderMatchesSessionHeaderBand,
+      nextSession,
     };
   }
 
-  if (input.hasStrongMarketplaceSignal === true) {
+  if (!previousSession) {
     return {
-      useCachedCrop: true,
-      refreshCachedTimestamp: true,
+      sessionActive: false,
+      shouldApplyReducedCrop: false,
+      visualCropHeight: null,
+      transition: hadPreviousSession ? "cleared" : input.weakHeaderBand ? "rejected" : "inactive",
+      signalSource: null,
+      weakHeaderMatchesSessionHeaderBand: false,
+      nextSession: null,
     };
   }
 
-  if (input.headerMarketplaceDetected === true) {
+  if (weakHeaderMatchesSessionHeaderBand) {
+    const nextSession: MarketplaceVisualSessionState = {
+      ...previousSession,
+      lastMatchedAt: input.nowMs,
+      signalSource: "weak-header",
+    };
+
     return {
-      useCachedCrop: true,
-      refreshCachedTimestamp: true,
+      sessionActive: true,
+      shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+      visualCropHeight: nextSession.visualCropHeight,
+      transition: "bridging",
+      signalSource: "weak-header",
+      weakHeaderMatchesSessionHeaderBand: true,
+      nextSession,
+    };
+  }
+
+  const missingForMs = Math.max(0, input.nowMs - previousSession.lastMatchedAt);
+  if (!input.weakHeaderBand && missingForMs <= input.graceMs) {
+    return {
+      sessionActive: true,
+      shouldApplyReducedCrop: previousSession.visualCropHeight !== null,
+      visualCropHeight: previousSession.visualCropHeight,
+      transition: "bridging",
+      signalSource: "bridge",
+      weakHeaderMatchesSessionHeaderBand: false,
+      nextSession: previousSession,
     };
   }
 
   return {
-    useCachedCrop: true,
-    refreshCachedTimestamp: false,
+    sessionActive: false,
+    shouldApplyReducedCrop: false,
+    visualCropHeight: null,
+    transition: input.weakHeaderBand ? "rejected" : "cleared",
+    signalSource: null,
+    weakHeaderMatchesSessionHeaderBand,
+    nextSession: null,
   };
-}
-
-export function shouldUseRecentMarketplaceVisualCropFallback(input: {
-  hasRecentConfirmedMarketplaceCrop?: boolean;
-  headerMarketplaceDetected?: boolean;
-  hasStrongMarketplaceSignal?: boolean;
-}): boolean {
-  return resolveMarketplaceVisualCropRetentionDecision(input).useCachedCrop;
 }

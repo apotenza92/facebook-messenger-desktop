@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.0-beta.47] - 2026-04-06
+
+### Fixed
+
+- **Issue #49 follow-up: replace Marketplace crop carry-over with a route-scoped Marketplace session** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Confirm Marketplace mode only from strong in-thread evidence, then keep it alive across weak same-route rerenders only when the `Marketplace` header still matches the previously confirmed header band.
+  - Reject stray top-left `Marketplace` labels on ordinary chats instead of letting them refresh Marketplace state, so post-Marketplace spacing drift and delayed re-entry failures are much less likely to recur.
+  - Add privacy-safe Marketplace debug provenance and deterministic session-sequence coverage for repeated re-entry, same-route DOM churn, mismatched weak headers, and immediate route-change clears.
+
+### Changed
+
+- **Issue-specific validation**
+  - Narrow `npm run test:issues` to the deterministic issue regression suite for this Marketplace work, while keeping the older window-open GUI script available separately as `npm run test:window-open:gui`.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:release`
+
 ## [1.3.0-beta.46] - 2026-04-06
 
 ### Fixed

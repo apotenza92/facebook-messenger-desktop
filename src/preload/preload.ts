@@ -34,12 +34,15 @@ import {
 } from "./media-overlay-policy";
 import {
   collectMarketplaceThreadHintSignals,
+  doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
   isMarketplaceThreadUiActive,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
-  resolveMarketplaceVisualCropRetentionDecision,
-  shouldRetainMarketplaceVisualCrop,
+  resolveMarketplaceVisualSessionDecision,
+  type MarketplaceSessionSignalSource,
+  type MarketplaceThreadHeaderBand,
+  type MarketplaceVisualSessionState,
 } from "./marketplace-thread-policy";
 
 const incomingCallAnswerSelectors = [
@@ -326,7 +329,7 @@ ipcRenderer.on(
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
-  const MARKETPLACE_VISUAL_CROP_STICKY_MS = 5_000;
+  const MARKETPLACE_SESSION_DOM_GRACE_MS = 1_500;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -368,7 +371,16 @@ ipcRenderer.on(
     headerBackMarketplaceDetected: boolean;
     headerContainerTop: number | null;
     headerContainerBottom: number | null;
+    headerContainerLeft: number | null;
+    headerContainerRight: number | null;
+    weakHeaderBand: MarketplaceThreadHeaderBand | null;
+    weakHeaderMatchesSessionHeaderBand: boolean;
     visualCropHeight: number | null;
+    marketplaceSessionActive: boolean;
+    marketplaceSessionRouteKey: string | null;
+    marketplaceSessionSignalSource: MarketplaceSessionSignalSource | null;
+    marketplaceSessionTransition: string;
+    marketplaceSessionHeaderBand: MarketplaceThreadHeaderBand | null;
     matchedSignals: string[];
   };
   type MediaHeaderOverlayKind =
@@ -401,9 +413,7 @@ ipcRenderer.on(
   let lastAppliedHeaderSuppressionSnapshot: HeaderSuppressionSnapshot | null =
     null;
   let lastHeaderSuppressionDetectedAt = 0;
-  let lastMarketplaceVisualCropHeight: number | null = null;
-  let lastMarketplaceVisualCropDetectedAt = 0;
-  let lastMarketplaceVisualCropRouteKey: string | null = null;
+  let marketplaceVisualSession: MarketplaceVisualSessionState | null = null;
   let lastInterceptedExternalNavigation:
     | {
         url: string;
@@ -1315,7 +1325,16 @@ ipcRenderer.on(
       headerBackMarketplaceDetected: false,
       headerContainerTop: null,
       headerContainerBottom: null,
+      headerContainerLeft: null,
+      headerContainerRight: null,
+      weakHeaderBand: null,
+      weakHeaderMatchesSessionHeaderBand: false,
       visualCropHeight: null,
+      marketplaceSessionActive: false,
+      marketplaceSessionRouteKey: null,
+      marketplaceSessionSignalSource: null,
+      marketplaceSessionTransition: "inactive",
+      marketplaceSessionHeaderBand: null,
       matchedSignals: [],
     });
 
@@ -1354,6 +1373,28 @@ ipcRenderer.on(
   const MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT =
     DEFAULT_MESSAGES_HEADER_HEIGHT - 20;
 
+  const getCurrentMarketplaceRouteKey = (): string =>
+    `${window.location.pathname}${window.location.search}`;
+
+  const toMarketplaceThreadHeaderBand = (
+    rect: DOMRect | null,
+  ): MarketplaceThreadHeaderBand | null => {
+    if (!rect) {
+      return null;
+    }
+
+    const top = Math.max(0, Math.round(rect.top));
+    const bottom = Math.max(top, Math.round(rect.bottom));
+    const left = Math.max(0, Math.round(rect.left));
+    const right = Math.max(left, Math.round(rect.right));
+    return {
+      top,
+      bottom,
+      left,
+      right,
+    };
+  };
+
   const isLikelyMarketplaceThreadHeaderContainer = (
     candidate: HTMLElement,
   ): boolean => {
@@ -1384,6 +1425,7 @@ ipcRenderer.on(
 
   const resolveMarketplaceThreadHeaderContainer = (
     node: HTMLElement,
+    mode: "strong" | "weak",
   ): HTMLElement | null => {
     let current: HTMLElement | null = node;
 
@@ -1405,10 +1447,14 @@ ipcRenderer.on(
         .map((descendant) => getInteractiveNodeHint(descendant));
 
       if (
-        hasMarketplaceThreadHeaderSignal([
-          getInteractiveNodeHint(current),
-          ...descendantHints,
-        ])
+        mode === "strong"
+          ? hasMarketplaceThreadHeaderSignal([
+              getInteractiveNodeHint(current),
+              ...descendantHints,
+            ])
+          : [getInteractiveNodeHint(current), ...descendantHints].some((hint) =>
+              isMarketplaceThreadHeaderHint(hint),
+            )
       ) {
         return current;
       }
@@ -1430,63 +1476,6 @@ ipcRenderer.on(
     );
   };
 
-  const resolveMarketplaceVisualCropHeight = (
-    state: MarketplaceThreadDebugState,
-  ): { visualCropHeight: number | null; refreshCachedTimestamp: boolean } => {
-    const routeKey = `${window.location.pathname}${window.location.search}`;
-    const hasStrongMarketplaceSignal = shouldRetainMarketplaceVisualCrop({
-      rightPaneMarketplaceSignalDetected:
-        state.rightPaneMarketplaceSignalDetected,
-      rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
-      headerMarketplaceDetected: state.headerMarketplaceDetected,
-      headerBackDetected: state.headerBackDetected,
-      headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
-    });
-    const hasRecentConfirmedMarketplaceCrop =
-      lastMarketplaceVisualCropHeight !== null &&
-      lastMarketplaceVisualCropRouteKey === routeKey &&
-      Date.now() - lastMarketplaceVisualCropDetectedAt <=
-        MARKETPLACE_VISUAL_CROP_STICKY_MS;
-    const retentionDecision = resolveMarketplaceVisualCropRetentionDecision({
-      hasRecentConfirmedMarketplaceCrop,
-      headerMarketplaceDetected: state.headerMarketplaceDetected,
-      hasStrongMarketplaceSignal,
-    });
-
-    if (
-      state.headerBackMarketplaceDetected &&
-      typeof state.headerContainerTop === "number"
-    ) {
-      return {
-        visualCropHeight: normalizeMarketplaceVisualCropHeight(
-          state.headerContainerTop - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
-        ),
-        refreshCachedTimestamp: true,
-      };
-    }
-
-    if (state.headerBackMarketplaceDetected) {
-      return {
-        visualCropHeight: normalizeMarketplaceVisualCropHeight(
-          MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
-        ),
-        refreshCachedTimestamp: true,
-      };
-    }
-
-    if (retentionDecision.useCachedCrop) {
-      return {
-        visualCropHeight: lastMarketplaceVisualCropHeight,
-        refreshCachedTimestamp: retentionDecision.refreshCachedTimestamp,
-      };
-    }
-
-    return {
-      visualCropHeight: null,
-      refreshCachedTimestamp: false,
-    };
-  };
-
   const shouldUseMarketplaceVisualCropHeuristic = (
     state?: MarketplaceThreadDebugState | null,
   ): boolean =>
@@ -1497,10 +1486,18 @@ ipcRenderer.on(
     (): MarketplaceThreadDebugState => {
       const state = createDefaultMarketplaceThreadDebugState();
       if (!/^\/messages\/(?:e2ee\/)?t\//i.test(window.location.pathname)) {
+        marketplaceVisualSession = null;
         return state;
       }
 
       state.routeEligible = true;
+      const now = Date.now();
+      const routeKey = getCurrentMarketplaceRouteKey();
+      const currentMarketplaceSession =
+        marketplaceVisualSession &&
+        marketplaceVisualSession.routeKey === routeKey
+          ? marketplaceVisualSession
+          : null;
       const matchedSignals = new Set<string>();
       const rightPaneMinLeft = Math.max(
         160,
@@ -1510,6 +1507,15 @@ ipcRenderer.on(
       const candidates = document.querySelectorAll(
         "button, [role='button'], a[href], [aria-label], [title]",
       );
+      let strongSignalSource:
+        | Extract<
+            MarketplaceSessionSignalSource,
+            "strong-header" | "right-pane-action" | "item-link"
+          >
+        | null = null;
+      let strongHeaderBand: MarketplaceThreadHeaderBand | null = null;
+      let strongVisualCropHeight: number | null = null;
+      let weakHeaderBand: MarketplaceThreadHeaderBand | null = null;
 
       for (const candidate of Array.from(candidates)) {
         if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
@@ -1531,10 +1537,14 @@ ipcRenderer.on(
         if (hintSignals.includes("action")) {
           state.rightPaneMarketplaceSignalDetected = true;
           matchedSignals.add("right-pane-action");
+          if (!strongSignalSource) {
+            strongSignalSource = "right-pane-action";
+          }
         }
         if (hintSignals.includes("item-link")) {
           state.rightPaneItemLinkDetected = true;
           matchedSignals.add("right-pane-item-link");
+          strongSignalSource = "item-link";
         }
       }
 
@@ -1561,53 +1571,114 @@ ipcRenderer.on(
           continue;
         }
 
-        if (isMarketplaceThreadHeaderHint(hint) && rect.left <= 180) {
-          state.headerMarketplaceDetected = true;
-          matchedSignals.add("header-marketplace");
-        }
-
         if (isMarketplaceThreadBackHint(hint) && rect.left <= 120) {
           state.headerBackDetected = true;
           matchedSignals.add("header-back");
           const headerContainer =
-            resolveMarketplaceThreadHeaderContainer(candidate);
+            resolveMarketplaceThreadHeaderContainer(candidate, "strong");
           if (headerContainer) {
             state.headerBackMarketplaceDetected = true;
             matchedSignals.add("header-back+marketplace");
             const containerRect = headerContainer.getBoundingClientRect();
-            const containerTop = Math.max(0, Math.round(containerRect.top));
-            const containerBottom = Math.max(
-              containerTop,
-              Math.round(containerRect.bottom),
-            );
-            state.headerContainerTop =
-              state.headerContainerTop === null
-                ? containerTop
-                : Math.min(state.headerContainerTop, containerTop);
-            state.headerContainerBottom =
-              state.headerContainerBottom === null
-                ? containerBottom
-                : Math.max(state.headerContainerBottom, containerBottom);
+            const headerBand = toMarketplaceThreadHeaderBand(containerRect);
+            if (headerBand) {
+              state.headerContainerTop = headerBand.top;
+              state.headerContainerBottom = headerBand.bottom;
+              state.headerContainerLeft = headerBand.left;
+              state.headerContainerRight = headerBand.right;
+              strongHeaderBand = headerBand;
+              strongVisualCropHeight = normalizeMarketplaceVisualCropHeight(
+                headerBand.top - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
+              );
+              strongSignalSource = "strong-header";
+            }
+          }
+        }
+
+        if (isMarketplaceThreadHeaderHint(hint) && rect.left <= 180) {
+          const headerContainer = resolveMarketplaceThreadHeaderContainer(
+            candidate,
+            "weak",
+          );
+          const candidateHeaderBand = toMarketplaceThreadHeaderBand(
+            (headerContainer ?? candidate).getBoundingClientRect(),
+          );
+          if (!candidateHeaderBand) {
+            continue;
+          }
+
+          const matchesCurrentSession = doesMarketplaceThreadHeaderBandMatch({
+            confirmedHeaderBand: currentMarketplaceSession?.headerBand,
+            candidateHeaderBand,
+          });
+          if (!weakHeaderBand || matchesCurrentSession) {
+            weakHeaderBand = candidateHeaderBand;
+          }
+
+          if (matchesCurrentSession) {
+            matchedSignals.add("header-marketplace");
+          } else {
+            matchedSignals.add("header-marketplace-candidate");
           }
         }
       }
 
-      state.marketplaceThreadVisible = isMarketplaceThreadUiActive({
-        rightPaneMarketplaceSignalDetected:
-          state.rightPaneMarketplaceSignalDetected,
-        rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
-        headerMarketplaceDetected: state.headerMarketplaceDetected,
-        headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
-      });
-      const visualCropResolution = resolveMarketplaceVisualCropHeight(state);
-      state.visualCropHeight = visualCropResolution.visualCropHeight;
       if (
-        state.visualCropHeight !== null &&
-        visualCropResolution.refreshCachedTimestamp
+        strongSignalSource !== "strong-header" &&
+        strongSignalSource &&
+        currentMarketplaceSession?.visualCropHeight !== null
       ) {
-        lastMarketplaceVisualCropHeight = state.visualCropHeight;
-        lastMarketplaceVisualCropDetectedAt = Date.now();
-        lastMarketplaceVisualCropRouteKey = `${window.location.pathname}${window.location.search}`;
+        strongVisualCropHeight =
+          currentMarketplaceSession?.visualCropHeight ?? null;
+      }
+
+      const sessionDecision = resolveMarketplaceVisualSessionDecision({
+        currentRouteKey: routeKey,
+        nowMs: now,
+        graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+        previousSession: marketplaceVisualSession,
+        strongSignalSource,
+        strongVisualCropHeight:
+          strongSignalSource === "strong-header"
+            ? strongVisualCropHeight ??
+              normalizeMarketplaceVisualCropHeight(
+                MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+              )
+            : strongVisualCropHeight,
+        strongHeaderBand,
+        weakHeaderBand,
+      });
+      marketplaceVisualSession = sessionDecision.nextSession;
+
+      state.headerMarketplaceDetected =
+        state.headerBackMarketplaceDetected ||
+        sessionDecision.weakHeaderMatchesSessionHeaderBand;
+      state.weakHeaderBand = weakHeaderBand;
+      state.weakHeaderMatchesSessionHeaderBand =
+        sessionDecision.weakHeaderMatchesSessionHeaderBand;
+      state.marketplaceSessionActive = sessionDecision.sessionActive;
+      state.marketplaceSessionRouteKey = sessionDecision.nextSession?.routeKey ?? null;
+      state.marketplaceSessionSignalSource = sessionDecision.signalSource;
+      state.marketplaceSessionTransition = sessionDecision.transition;
+      state.marketplaceSessionHeaderBand =
+        sessionDecision.nextSession?.headerBand ?? null;
+      state.marketplaceThreadVisible =
+        sessionDecision.sessionActive ||
+        isMarketplaceThreadUiActive({
+          rightPaneMarketplaceSignalDetected:
+            state.rightPaneMarketplaceSignalDetected,
+          rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
+          headerMarketplaceDetected: state.headerMarketplaceDetected,
+          headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+        });
+      state.visualCropHeight = sessionDecision.visualCropHeight;
+
+      if (weakHeaderBand) {
+        if (sessionDecision.weakHeaderMatchesSessionHeaderBand) {
+          matchedSignals.add("header-marketplace-match");
+        } else {
+          matchedSignals.add("header-marketplace-rejected");
+        }
       }
       state.matchedSignals = Array.from(matchedSignals);
       return state;
