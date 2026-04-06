@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0-beta.48] - 2026-04-06
+
+### Fixed
+
+- **Issue #49 follow-up: restore the normal chat top crop to the intended 56px baseline** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Correct the ordinary-chat BrowserView crop floor so regular threads stop sitting a few pixels too low after the Facebook top chrome is removed.
+  - Keep the Marketplace route-scoped session behaviour unchanged, so the Marketplace back-button and reduced-crop fixes continue to use their separate reduced crop path.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- Live BrowserView verification confirmed the ordinary chat crop moved from `48px` back to `56px`
+
 ## [1.3.0-beta.47] - 2026-04-06
 
 ### Fixed

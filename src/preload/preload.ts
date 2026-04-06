@@ -2648,12 +2648,9 @@ ipcRenderer.on(
     });
     const headerHeight =
       routeKind === "chat"
-        ? Math.max(
-            DEFAULT_MESSAGES_HEADER_HEIGHT,
-            Math.round(
-              lastAppliedHeaderSuppressionSnapshot?.collapseHeight ??
-                DEFAULT_MESSAGES_HEADER_HEIGHT,
-            ),
+        ? Math.round(
+            lastAppliedHeaderSuppressionSnapshot?.collapseHeight ??
+              DEFAULT_MESSAGES_HEADER_HEIGHT,
           )
         : null;
 
