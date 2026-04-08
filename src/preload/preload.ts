@@ -36,13 +36,13 @@ import {
   collectMarketplaceThreadHintSignals,
   doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
-  isMarketplaceThreadUiActive,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
   resolveMarketplaceVisualSessionDecision,
   type MarketplaceSessionLifecycleReason,
   type MarketplaceSessionSignalSource,
   type MarketplaceThreadHeaderBand,
+  type MarketplaceVisualSessionRejectionReason,
   type MarketplaceVisualSessionState,
 } from "./marketplace-thread-policy";
 
@@ -331,6 +331,8 @@ ipcRenderer.on(
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
+  const MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS = 10_000;
+  const MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES = 2;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -383,8 +385,25 @@ ipcRenderer.on(
     marketplaceSessionSignalSource: MarketplaceSessionSignalSource | null;
     marketplaceSessionLifecycleReason: MarketplaceSessionLifecycleReason | null;
     marketplaceSessionTransition: string;
+    marketplaceSessionRejectionReason: MarketplaceVisualSessionRejectionReason | null;
     marketplaceSessionHeaderBand: MarketplaceThreadHeaderBand | null;
+    weakBootstrapSettled: boolean;
+    weakBootstrapPendingSignalSource: Extract<
+      MarketplaceSessionSignalSource,
+      "right-pane-action" | "item-link"
+    > | null;
+    weakBootstrapStablePasses: number;
     matchedSignals: string[];
+  };
+  type MarketplaceWeakBootstrapState = {
+    routeKey: string;
+    signalSource: Extract<
+      MarketplaceSessionSignalSource,
+      "right-pane-action" | "item-link"
+    >;
+    stablePasses: number;
+    lastSeenAt: number;
+    visualCropHeight: number | null;
   };
   type MediaHeaderOverlayKind =
     | "menu"
@@ -417,6 +436,7 @@ ipcRenderer.on(
     null;
   let lastHeaderSuppressionDetectedAt = 0;
   let marketplaceVisualSession: MarketplaceVisualSessionState | null = null;
+  let marketplaceWeakBootstrapState: MarketplaceWeakBootstrapState | null = null;
   let lastInterceptedExternalNavigation:
     | {
         url: string;
@@ -1339,7 +1359,11 @@ ipcRenderer.on(
       marketplaceSessionSignalSource: null,
       marketplaceSessionLifecycleReason: null,
       marketplaceSessionTransition: "inactive",
+      marketplaceSessionRejectionReason: null,
       marketplaceSessionHeaderBand: null,
+      weakBootstrapSettled: false,
+      weakBootstrapPendingSignalSource: null,
+      weakBootstrapStablePasses: 0,
       matchedSignals: [],
     });
 
@@ -1382,6 +1406,10 @@ ipcRenderer.on(
 
   const getCurrentMarketplaceRouteKey = (): string =>
     `${window.location.pathname}${window.location.search}`;
+
+  const isMarketplaceWeakBootstrapSettled = (): boolean =>
+    document.readyState === "complete" &&
+    performance.now() >= MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS;
 
   const toMarketplaceThreadHeaderBand = (
     rect: DOMRect | null,
@@ -1505,18 +1533,29 @@ ipcRenderer.on(
           state.matchedSignals = ["session:thread-destroyed"];
         }
         marketplaceVisualSession = null;
+        marketplaceWeakBootstrapState = null;
         return state;
       }
 
       state.routeEligible = true;
       const now = Date.now();
       const routeKey = getCurrentMarketplaceRouteKey();
-      const currentMarketplaceSession =
+      if (
         marketplaceVisualSession &&
-        marketplaceVisualSession.routeKey === routeKey
-          ? marketplaceVisualSession
-          : null;
+        marketplaceVisualSession.routeKey !== routeKey
+      ) {
+        marketplaceVisualSession = null;
+      }
+      if (
+        marketplaceWeakBootstrapState &&
+        marketplaceWeakBootstrapState.routeKey !== routeKey
+      ) {
+        marketplaceWeakBootstrapState = null;
+      }
+      const currentMarketplaceSession = marketplaceVisualSession;
       const matchedSignals = new Set<string>();
+      const weakBootstrapSettled = isMarketplaceWeakBootstrapSettled();
+      state.weakBootstrapSettled = weakBootstrapSettled;
       const rightPaneMinLeft = Math.max(
         160,
         Math.round(window.innerWidth * 0.25),
@@ -1529,6 +1568,12 @@ ipcRenderer.on(
         | Extract<
             MarketplaceSessionSignalSource,
             "strong-header" | "right-pane-action" | "item-link"
+          >
+        | null = null;
+      let weakSignalSource:
+        | Extract<
+            MarketplaceSessionSignalSource,
+            "right-pane-action" | "item-link"
           >
         | null = null;
       let strongHeaderBand: MarketplaceThreadHeaderBand | null = null;
@@ -1566,14 +1611,14 @@ ipcRenderer.on(
         if (hintSignals.includes("action")) {
           state.rightPaneMarketplaceSignalDetected = true;
           matchedSignals.add("right-pane-action");
-          if (!strongSignalSource) {
-            strongSignalSource = "right-pane-action";
+          if (!weakSignalSource) {
+            weakSignalSource = "right-pane-action";
           }
         }
         if (hintSignals.includes("item-link")) {
           state.rightPaneItemLinkDetected = true;
           matchedSignals.add("right-pane-item-link");
-          strongSignalSource = "item-link";
+          weakSignalSource = "item-link";
         }
       }
 
@@ -1663,6 +1708,66 @@ ipcRenderer.on(
         matchedSignals.add("header-ordinary-chat");
       }
 
+      let pendingBootstrapSignalSource:
+        | Extract<
+            MarketplaceSessionSignalSource,
+            "right-pane-action" | "item-link"
+          >
+        | null = null;
+      let pendingBootstrapAllowed = false;
+      let pendingBootstrapRejectedReason:
+        | MarketplaceVisualSessionRejectionReason
+        | null = null;
+      let isWeakBootstrapConfirmation = false;
+
+      if (state.headerBackMarketplaceDetected) {
+        marketplaceWeakBootstrapState = null;
+      } else if (weakSignalSource && !currentMarketplaceSession) {
+        state.weakBootstrapPendingSignalSource = weakSignalSource;
+        if (!weakBootstrapSettled) {
+          pendingBootstrapSignalSource = weakSignalSource;
+          pendingBootstrapRejectedReason = "weak-bootstrap-startup-settling";
+          matchedSignals.add("weak-bootstrap-rejected:startup");
+          marketplaceWeakBootstrapState = null;
+        } else if (state.headerOrdinaryChatDetected) {
+          pendingBootstrapSignalSource = weakSignalSource;
+          pendingBootstrapRejectedReason = "weak-bootstrap-ordinary-chat";
+          matchedSignals.add("weak-bootstrap-rejected:ordinary-chat");
+          marketplaceWeakBootstrapState = null;
+        } else {
+          const stablePasses =
+            marketplaceWeakBootstrapState &&
+            marketplaceWeakBootstrapState.routeKey === routeKey &&
+            marketplaceWeakBootstrapState.signalSource === weakSignalSource
+              ? marketplaceWeakBootstrapState.stablePasses + 1
+              : 1;
+          const visualCropHeight = normalizeMarketplaceVisualCropHeight(
+            MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+          );
+          marketplaceWeakBootstrapState = {
+            routeKey,
+            signalSource: weakSignalSource,
+            stablePasses,
+            lastSeenAt: now,
+            visualCropHeight,
+          };
+          state.weakBootstrapStablePasses = stablePasses;
+          if (stablePasses >= MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES) {
+            strongSignalSource = weakSignalSource;
+            strongVisualCropHeight = visualCropHeight;
+            isWeakBootstrapConfirmation = true;
+            matchedSignals.add("weak-bootstrap-confirmed");
+            marketplaceWeakBootstrapState = null;
+          } else {
+            pendingBootstrapSignalSource = weakSignalSource;
+            pendingBootstrapAllowed = true;
+            matchedSignals.add("weak-bootstrap-pending");
+          }
+        }
+      } else {
+        marketplaceWeakBootstrapState = null;
+      }
+
       if (
         strongSignalSource !== "strong-header" &&
         strongSignalSource &&
@@ -1676,8 +1781,12 @@ ipcRenderer.on(
         currentRouteKey: routeKey,
         nowMs: now,
         graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
-        previousSession: marketplaceVisualSession,
+        previousSession: currentMarketplaceSession,
         strongSignalSource,
+        isWeakBootstrapConfirmation,
+        pendingBootstrapSignalSource,
+        pendingBootstrapAllowed,
+        pendingBootstrapRejectedReason,
         strongVisualCropHeight:
           strongSignalSource === "strong-header"
             ? strongVisualCropHeight ??
@@ -1706,17 +1815,10 @@ ipcRenderer.on(
       state.marketplaceSessionSignalSource = sessionDecision.signalSource;
       state.marketplaceSessionLifecycleReason = sessionDecision.lifecycleReason;
       state.marketplaceSessionTransition = sessionDecision.transition;
+      state.marketplaceSessionRejectionReason = sessionDecision.rejectionReason;
       state.marketplaceSessionHeaderBand =
         sessionDecision.nextSession?.headerBand ?? null;
-      state.marketplaceThreadVisible =
-        sessionDecision.sessionActive ||
-        isMarketplaceThreadUiActive({
-          rightPaneMarketplaceSignalDetected:
-            state.rightPaneMarketplaceSignalDetected,
-          rightPaneItemLinkDetected: state.rightPaneItemLinkDetected,
-          headerMarketplaceDetected: state.headerMarketplaceDetected,
-          headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
-        });
+      state.marketplaceThreadVisible = sessionDecision.sessionActive;
       state.visualCropHeight = sessionDecision.visualCropHeight;
 
       if (weakHeaderBand) {
@@ -1728,6 +1830,9 @@ ipcRenderer.on(
       }
       if (sessionDecision.lifecycleReason) {
         matchedSignals.add(`session:${sessionDecision.lifecycleReason}`);
+      }
+      if (sessionDecision.rejectionReason) {
+        matchedSignals.add(`session:rejected:${sessionDecision.rejectionReason}`);
       }
       state.matchedSignals = Array.from(matchedSignals);
       return state;

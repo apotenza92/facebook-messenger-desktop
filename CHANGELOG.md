@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0-beta.51] - 2026-04-08
+
+### Fixed
+
+- **Issue #49 follow-up: block weak Marketplace startup bootstraps, tighten group-management notification suppression, and stabilise incoming-call caller reuse** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Confirm Marketplace mode immediately only from the native `Back + Marketplace` thread header, and require settled repeated same-route weak evidence before a fresh route can enter the Marketplace reduced-crop path.
+  - Keep weak Marketplace signals scoped to previously confirmed routes so ordinary chats cannot inherit Marketplace session state from earlier thread renders.
+  - Expand shared Facebook activity suppression for join-request, participation-request, and membership-request notifications, including person-titled variants that reach the main process.
+  - Reuse the active caller identity for placeholder incoming-call echoes and suppress duplicate anonymous follow-up toasts within the same ringing session.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:release`
+
 ## [1.3.0-beta.50] - 2026-04-08
 
 ### Fixed

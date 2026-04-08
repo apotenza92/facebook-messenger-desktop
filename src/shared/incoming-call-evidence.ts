@@ -60,8 +60,126 @@ export const NON_INCOMING_CALL_PATTERNS: RegExp[] = [
   /\banswered elsewhere\b/i,
 ];
 
+const GENERIC_INCOMING_CALL_LABELS = new Set([
+  "profile",
+  "profile picture",
+  "picture",
+  "incoming call",
+  "video call",
+  "audio call",
+  "call",
+  "caller",
+  "unknown caller",
+  "messenger",
+  "facebook",
+  "someone",
+]);
+
 function normalizeText(value: string): string {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupeRepeatedIncomingCallWords(input: string): string {
+  const words = input.split(" ").filter(Boolean);
+  if (words.length < 2) return input;
+
+  const compact: string[] = [];
+  for (const word of words) {
+    if (
+      compact.length === 0 ||
+      compact[compact.length - 1].toLowerCase() !== word.toLowerCase()
+    ) {
+      compact.push(word);
+    }
+  }
+
+  if (compact.length % 2 === 0) {
+    const half = compact.length / 2;
+    const firstHalf = compact.slice(0, half).join(" ").toLowerCase();
+    const secondHalf = compact.slice(half).join(" ").toLowerCase();
+    if (firstHalf === secondHalf) {
+      return compact.slice(0, half).join(" ");
+    }
+  }
+
+  return compact.join(" ");
+}
+
+export function isGenericIncomingCallLabel(raw: unknown): boolean {
+  const normalized = String(raw || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return true;
+  if (GENERIC_INCOMING_CALL_LABELS.has(normalized)) return true;
+  if (/^profile picture(?: of)?$/.test(normalized)) return true;
+
+  const tokens = new Set(normalized.split(" ").filter(Boolean));
+  return (
+    (tokens.has("profile") && tokens.has("picture")) ||
+    (tokens.has("incoming") && tokens.has("call")) ||
+    (tokens.has("call") && tokens.has("picture")) ||
+    (tokens.has("call") && tokens.has("profile"))
+  );
+}
+
+export function normalizeIncomingCallCaller(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+
+  let cleaned = raw
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[|•·]+/g, " ")
+    .replace(
+      /\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(incoming|video|audio|call|from|end-to-end encrypted|decline|accept|join|ignore|cancel|on|messenger|facebook)\b/gi,
+      " ",
+    )
+    .replace(/^[:\-\s]+|[:\-\s]+$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) {
+    return null;
+  }
+
+  const repeatedChunk = cleaned.match(/^(.{2,60}?)\1+$/i);
+  if (repeatedChunk?.[1]) {
+    cleaned = repeatedChunk[1].trim();
+  }
+
+  const repeatedPhrase = cleaned.match(/^(.{2,60}?)\s+\1$/i);
+  if (repeatedPhrase?.[1]) {
+    cleaned = repeatedPhrase[1].trim();
+  }
+
+  const deduped = dedupeRepeatedIncomingCallWords(cleaned)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!deduped || isGenericIncomingCallLabel(deduped)) {
+    return null;
+  }
+
+  return deduped.split(" ").filter(Boolean).slice(0, 4).join(" ").slice(0, 80);
+}
+
+export function buildIncomingCallNotificationBody(params: {
+  caller?: unknown;
+  fallbackCaller?: unknown;
+  body?: unknown;
+}): string {
+  const caller =
+    normalizeIncomingCallCaller(params.caller) ??
+    normalizeIncomingCallCaller(params.fallbackCaller) ??
+    normalizeIncomingCallCaller(params.body);
+
+  return caller
+    ? `${caller} is calling you on Messenger`
+    : "Someone is calling you on Messenger";
 }
 
 export function classifyIncomingCallText(payload: {

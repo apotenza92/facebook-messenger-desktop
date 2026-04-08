@@ -534,13 +534,89 @@ const runMarketplaceThreadPolicyTests = () => {
   );
   assertEqual(
     confirmedSession.transition,
-    "confirmed",
+    "strong-confirmed",
     "#49 strong Marketplace confirmation should report a confirmed session transition",
   );
   assertEqual(
     confirmedSession.lifecycleReason,
     "confirmed-marketplace-thread",
     "#49 strong Marketplace confirmation should record the session entry reason",
+  );
+
+  const weakBootstrapRejected = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 10_100,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: null,
+    pendingBootstrapSignalSource: "right-pane-action",
+    pendingBootstrapAllowed: false,
+    pendingBootstrapRejectedReason: "weak-bootstrap-startup-settling",
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: weakBootstrapRejected.sessionActive,
+      transition: weakBootstrapRejected.transition,
+      signalSource: weakBootstrapRejected.signalSource,
+      rejectionReason: weakBootstrapRejected.rejectionReason,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "rejected",
+      signalSource: "right-pane-action",
+      rejectionReason: "weak-bootstrap-startup-settling",
+    }),
+    "#49 fresh-route weak Marketplace signals should be rejected during startup settling",
+  );
+
+  const weakBootstrapPending = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 10_200,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: null,
+    pendingBootstrapSignalSource: "item-link",
+    pendingBootstrapAllowed: true,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: weakBootstrapPending.sessionActive,
+      transition: weakBootstrapPending.transition,
+      signalSource: weakBootstrapPending.signalSource,
+      rejectionReason: weakBootstrapPending.rejectionReason,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "weak-bootstrap-pending",
+      signalSource: "item-link",
+      rejectionReason: null,
+    }),
+    "#49 fresh-route weak Marketplace signals should remain pending until the corroboration threshold is met",
+  );
+
+  const weakBootstrapConfirmed = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 10_300,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: null,
+    strongSignalSource: "right-pane-action",
+    strongVisualCropHeight: 36,
+    isWeakBootstrapConfirmation: true,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: weakBootstrapConfirmed.sessionActive,
+      transition: weakBootstrapConfirmed.transition,
+      signalSource: weakBootstrapConfirmed.signalSource,
+      lifecycleReason: weakBootstrapConfirmed.lifecycleReason,
+      visualCropHeight: weakBootstrapConfirmed.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "weak-bootstrap-confirmed",
+      signalSource: "right-pane-action",
+      lifecycleReason: "weak-bootstrap-confirmed",
+      visualCropHeight: 36,
+    }),
+    "#49 repeated settled weak Marketplace signals on the same fresh route should confirm a Marketplace session",
   );
 
   const weakBridge = resolveMarketplaceVisualSessionDecision({
@@ -564,7 +640,7 @@ const runMarketplaceThreadPolicyTests = () => {
     JSON.stringify({
       sessionActive: true,
       shouldApplyReducedCrop: true,
-      transition: "bridging",
+      transition: "bridged",
       signalSource: "weak-header",
       lifecycleReason: "same-thread-rerender",
       weakHeaderMatchesSessionHeaderBand: true,
@@ -614,7 +690,7 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     JSON.stringify({
       sessionActive: true,
-      transition: "bridging",
+      transition: "bridged",
       signalSource: "bridge",
       lifecycleReason: "same-thread-rerender",
       weakHeaderMatchesSessionHeaderBand: false,
@@ -682,7 +758,7 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     JSON.stringify({
       sessionActive: true,
-      transition: "bridging",
+      transition: "bridged",
       signalSource: "bridge",
       lifecycleReason: "same-thread-rerender",
       visualCropHeight: 56,
@@ -706,7 +782,7 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     JSON.stringify({
       sessionActive: true,
-      transition: "bridging",
+      transition: "bridged",
       signalSource: "bridge",
       lifecycleReason: "same-thread-rerender",
       visualCropHeight: 56,
@@ -730,7 +806,7 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     JSON.stringify({
       sessionActive: true,
-      transition: "bridging",
+      transition: "bridged",
       signalSource: "bridge",
       lifecycleReason: "same-thread-rerender",
       visualCropHeight: 56,
@@ -1617,6 +1693,35 @@ const runIncomingCallIpcPolicyTests = () => {
     true,
     "incoming-call IPC should allow no-key notification after cooldown",
   );
+
+  assertEqual(
+    incomingCallEvidence.normalizeIncomingCallCaller("Profile Picture"),
+    null,
+    "#49 incoming-call caller normalisation should drop placeholder caller labels",
+  );
+  assertEqual(
+    incomingCallEvidence.normalizeIncomingCallCaller(
+      "Michael Potenza Michael Potenza",
+    ),
+    "Michael Potenza",
+    "#49 incoming-call caller normalisation should collapse repeated caller names",
+  );
+  assertEqual(
+    incomingCallEvidence.buildIncomingCallNotificationBody({
+      caller: "Profile Picture",
+      fallbackCaller: "Michael Potenza",
+    }),
+    "Michael Potenza is calling you on Messenger",
+    "#49 incoming-call notification bodies should reuse the active session caller when a placeholder echo arrives",
+  );
+  assertEqual(
+    incomingCallEvidence.buildIncomingCallNotificationBody({
+      caller: "",
+      body: "Unknown caller",
+    }),
+    "Someone is calling you on Messenger",
+    "#49 incoming-call notification bodies should stay generic when no usable caller survives normalisation",
+  );
 };
 
 const runNotificationPolicyTests = () => {
@@ -2239,6 +2344,39 @@ const runNotificationPolicyTests = () => {
     sharedParticipationRequestSuppressed,
     true,
     "#49 the shared notification activity classifier should suppress group-management membership requests at the final notification boundary",
+  );
+
+  const personTitleJoinRequestSuppressed =
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification({
+      title: "Taylor",
+      body: "Taylor requested to join this group you're managing",
+    });
+  assertEqual(
+    personTitleJoinRequestSuppressed,
+    true,
+    "#49 the shared notification activity classifier should suppress person-titled group join requests",
+  );
+
+  const personTitleParticipationRequestSuppressed =
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification({
+      title: "Alex",
+      body: "3 people requested to participate for the first time in a group you're managing",
+    });
+  assertEqual(
+    personTitleParticipationRequestSuppressed,
+    true,
+    "#49 the shared notification activity classifier should suppress participation-request activity even when the title looks like a person",
+  );
+
+  const membershipRequestSuppressed =
+    notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+      title: "Taylor",
+      body: "Membership request pending in a group you're managing",
+    });
+  assertEqual(
+    membershipRequestSuppressed,
+    true,
+    "#49 the preload notification policy should suppress membership-request activity with person-like titles",
   );
 
   const directMessageNotSuppressed =

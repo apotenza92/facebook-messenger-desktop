@@ -49,6 +49,11 @@ type NotificationActivityPolicyApi = {
   classifyCallNotification: (
     payload: NotificationPayload,
   ) => NotificationCallClassification;
+  classifyGroupManagementNotification?: (payload: NotificationPayload) => {
+    isGroupManagement: boolean;
+    reason: string;
+    matchedPattern?: string;
+  };
   isLikelyGlobalFacebookNotification: (payload: NotificationPayload) => boolean;
 };
 
@@ -794,6 +799,15 @@ function isLikelyGlobalFacebookNotification(
 
   if (classifyCallNotification(payload).isIncomingCall) {
     return false;
+  }
+
+  if (
+    typeof notificationActivityPolicy.classifyGroupManagementNotification ===
+      "function" &&
+    notificationActivityPolicy.classifyGroupManagementNotification(payload)
+      .isGroupManagement
+  ) {
+    return true;
   }
 
   const titleIsFacebookShell =

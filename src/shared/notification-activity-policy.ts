@@ -10,6 +10,15 @@ export type NotificationCallClassification = {
   usedTitleOnly: boolean;
 };
 
+export type NotificationGroupManagementClassification = {
+  isGroupManagement: boolean;
+  reason:
+    | "group-management-pattern"
+    | "group-management-shell-title"
+    | "not-group-management";
+  matchedPattern?: string;
+};
+
 const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
   /commented on your/i,
   /replied to your/i,
@@ -40,6 +49,16 @@ const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
   /membership request/i,
   /new notification/i,
   /new notifications/i,
+];
+
+const GROUP_MANAGEMENT_BODY_PATTERNS: RegExp[] = [
+  /requested to join(?:[^.]{0,160})group/i,
+  /requested to participate(?:[^.]{0,160})group/i,
+  /requested membership/i,
+  /membership request/i,
+  /requested to participate for the first time/i,
+  /group you(?:'|’)re managing/i,
+  /group you are managing/i,
 ];
 
 const CALL_BODY_PATTERNS: RegExp[] = [
@@ -117,6 +136,59 @@ export function classifyCallNotification(
   return { isIncomingCall: false, reason: "not-call", usedTitleOnly: false };
 }
 
+export function classifyGroupManagementNotification(
+  payload: NotificationPayload,
+): NotificationGroupManagementClassification {
+  const title = normalizeText(payload.title);
+  const body = normalizeText(payload.body);
+  const combined = `${title} ${body}`.trim();
+
+  if (!combined) {
+    return {
+      isGroupManagement: false,
+      reason: "not-group-management",
+    };
+  }
+
+  const bodyPattern = GROUP_MANAGEMENT_BODY_PATTERNS.find((pattern) =>
+    pattern.test(body),
+  );
+  if (bodyPattern) {
+    return {
+      isGroupManagement: true,
+      reason: "group-management-pattern",
+      matchedPattern: bodyPattern.source,
+    };
+  }
+
+  const titleIsFacebookShell =
+    title === "facebook" ||
+    title.startsWith("facebook ") ||
+    /^facebook user(?:\b|$)/.test(title) ||
+    title === "meta" ||
+    title.startsWith("meta ") ||
+    title === "notification" ||
+    title === "notifications" ||
+    title === "new notification" ||
+    title === "new notifications";
+  if (
+    titleIsFacebookShell &&
+    /requested to (?:join|participate)|membership request|requested membership/i.test(
+      combined,
+    )
+  ) {
+    return {
+      isGroupManagement: true,
+      reason: "group-management-shell-title",
+    };
+  }
+
+  return {
+    isGroupManagement: false,
+    reason: "not-group-management",
+  };
+}
+
 export function isLikelyGlobalFacebookNotification(
   payload: NotificationPayload,
 ): boolean {
@@ -127,6 +199,10 @@ export function isLikelyGlobalFacebookNotification(
 
   if (classifyCallNotification(payload).isIncomingCall) {
     return false;
+  }
+
+  if (classifyGroupManagementNotification(payload).isGroupManagement) {
+    return true;
   }
 
   const titleIsFacebookShell =
@@ -152,6 +228,7 @@ export function isLikelyGlobalFacebookNotification(
 
 const notificationActivityPolicyApi = {
   classifyCallNotification,
+  classifyGroupManagementNotification,
   isLikelyGlobalFacebookNotification,
 };
 

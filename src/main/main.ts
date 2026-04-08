@@ -63,8 +63,13 @@ import {
   decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
 } from "./incoming-call-ipc-policy";
-import { type IncomingCallEvidence } from "../shared/incoming-call-evidence";
 import {
+  buildIncomingCallNotificationBody,
+  normalizeIncomingCallCaller,
+  type IncomingCallEvidence,
+} from "../shared/incoming-call-evidence";
+import {
+  classifyGroupManagementNotification,
   isLikelyGlobalFacebookNotification,
   type NotificationPayload,
 } from "../shared/notification-activity-policy";
@@ -247,6 +252,7 @@ let lastNoKeyIncomingCallNotificationAt = 0;
 let activeIncomingCallSessionKey: string | null = null;
 let activeIncomingCallNotificationTag: string | null = null;
 let activeIncomingCallNotificationBody: string | null = null;
+let activeIncomingCallCaller: string | null = null;
 let activeIncomingCallNotificationSeenAt = 0;
 let incomingCallNotificationReminderTimer: NodeJS.Timeout | null = null;
 const INCOMING_CALL_NOTIFICATION_REMINDER_MS = 12_000;
@@ -301,89 +307,6 @@ function normalizeMessagesTopCrop(
   );
 }
 
-function formatIncomingCallCaller(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-
-  const cleaned = raw
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[|•·]+/g, " ")
-    .replace(
-      /\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi,
-      " ",
-    )
-    .replace(
-      /\b(incoming|video|audio|call|from|on|messenger|facebook)\b/gi,
-      " ",
-    )
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!cleaned) return null;
-
-  const words = cleaned.split(" ").filter(Boolean);
-  const compact: string[] = [];
-  for (const word of words) {
-    if (
-      compact.length === 0 ||
-      compact[compact.length - 1].toLowerCase() !== word.toLowerCase()
-    ) {
-      compact.push(word);
-    }
-  }
-
-  const normalizedCandidate = compact
-    .join(" ")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const placeholderTokenSet = new Set(
-    normalizedCandidate.split(" ").filter(Boolean),
-  );
-
-  const genericLabels = new Set([
-    "profile",
-    "profile picture",
-    "picture",
-    "incoming call",
-    "video call",
-    "audio call",
-    "call",
-    "caller",
-    "unknown caller",
-    "messenger",
-    "facebook",
-    "someone",
-  ]);
-
-  if (
-    !normalizedCandidate ||
-    genericLabels.has(normalizedCandidate) ||
-    /^profile picture(?: of)?$/.test(normalizedCandidate) ||
-    (placeholderTokenSet.has("profile") &&
-      placeholderTokenSet.has("picture")) ||
-    (placeholderTokenSet.has("incoming") &&
-      placeholderTokenSet.has("call")) ||
-    (placeholderTokenSet.has("call") &&
-      placeholderTokenSet.has("picture")) ||
-    (placeholderTokenSet.has("call") &&
-      placeholderTokenSet.has("profile"))
-  ) {
-    return null;
-  }
-
-  if (compact.length % 2 === 0 && compact.length > 0) {
-    const half = compact.length / 2;
-    const firstHalf = compact.slice(0, half).join(" ").toLowerCase();
-    const secondHalf = compact.slice(half).join(" ").toLowerCase();
-    if (firstHalf === secondHalf) {
-      return compact.slice(0, half).join(" ").slice(0, 80);
-    }
-  }
-
-  return compact.join(" ").slice(0, 80) || null;
-}
-
 function stopIncomingCallNotificationReminder(closeActive: boolean): void {
   if (incomingCallNotificationReminderTimer !== null) {
     clearInterval(incomingCallNotificationReminderTimer);
@@ -397,6 +320,7 @@ function stopIncomingCallNotificationReminder(closeActive: boolean): void {
   activeIncomingCallSessionKey = null;
   activeIncomingCallNotificationTag = null;
   activeIncomingCallNotificationBody = null;
+  activeIncomingCallCaller = null;
   activeIncomingCallNotificationSeenAt = 0;
 }
 
@@ -436,7 +360,21 @@ function showNativeNotification(input: {
   reason?: string;
 }): void {
   const { handler, created } = ensureNotificationHandler();
-  handler.showNotification(input.data);
+  const shown = handler.showNotification(input.data);
+  if (!shown) {
+    pushNotificationDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "show-notification-suppressed",
+      webContentsId: input.webContentsId,
+      url: input.url,
+      displaySource: input.displaySource,
+      displayPath: created ? "main-fallback" : "main",
+      reason: input.reason ?? "display-boundary-policy",
+      payload: input.data,
+    });
+    return;
+  }
   pushNotificationDebugEvent({
     timestamp: Date.now(),
     source: "main",
@@ -454,11 +392,13 @@ function refreshIncomingCallNotificationReminder(
   sessionKey: string,
   tag: string,
   body: string,
+  caller: string | null,
   now: number,
 ): void {
   activeIncomingCallSessionKey = sessionKey;
   activeIncomingCallNotificationTag = tag;
   activeIncomingCallNotificationBody = body;
+  activeIncomingCallCaller = caller;
   activeIncomingCallNotificationSeenAt = now;
 
   if (incomingCallNotificationReminderTimer !== null) {
@@ -639,6 +579,15 @@ function shouldSuppressMainProcessNotification(
     .replace(/\s+/g, " ")
     .trim();
   const payload: NotificationPayload = { title, body };
+
+  const groupManagement =
+    classifyGroupManagementNotification(payload);
+  if (groupManagement.isGroupManagement) {
+    return {
+      suppress: true,
+      reason: "main-process-group-management-activity",
+    };
+  }
 
   if (isLikelyGlobalFacebookNotification(payload)) {
     return {
@@ -8376,18 +8325,24 @@ function setupIpcHandlers(): void {
         activeIncomingCallNotificationSeenAt,
       ),
     });
-    const caller = formatIncomingCallCaller(payload?.caller);
-    const notificationBody = caller
-      ? `${caller} is calling you on Messenger`
-      : "Someone is calling you on Messenger";
-    const notificationTag = decision.callKey
-      ? `incoming-call:${decision.callKey}`
-      : `incoming-call:${decision.now}`;
     const sessionKey =
       decision.callKey ??
       (typeof evidence.threadKey === "string" && evidence.threadKey.trim()
         ? `thread:${evidence.threadKey.trim()}`
         : `ephemeral:${event.sender.id}:${senderUrl}`);
+    const caller = normalizeIncomingCallCaller(payload?.caller);
+    const effectiveCaller =
+      caller ??
+      (activeIncomingCallSessionKey === sessionKey
+        ? activeIncomingCallCaller
+        : null);
+    const notificationBody = buildIncomingCallNotificationBody({
+      caller,
+      fallbackCaller: effectiveCaller,
+    });
+    const notificationTag = decision.callKey
+      ? `incoming-call:${decision.callKey}`
+      : `incoming-call:${decision.now}`;
     const sameActiveSession =
       activeIncomingCallSessionKey === sessionKey ||
       activeIncomingCallNotificationTag === notificationTag;
@@ -8395,12 +8350,42 @@ function setupIpcHandlers(): void {
       sameActiveSession &&
       activeIncomingCallNotificationBody !== notificationBody;
 
+    if (
+      sameActiveSession &&
+      caller === null &&
+      activeIncomingCallNotificationBody
+    ) {
+      refreshIncomingCallNotificationReminder(
+        sessionKey,
+        notificationTag,
+        activeIncomingCallNotificationBody,
+        activeIncomingCallCaller,
+        decision.now,
+      );
+      pushIncomingCallDebugEvent({
+        timestamp: now,
+        source: "main",
+        event: "incoming-call-notification-deduplicated",
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        callKey: decision.callKey,
+        reason: "active-session-placeholder-echo",
+        caller: activeIncomingCallCaller,
+        sessionKey,
+        updatedActiveSession: false,
+        confidence: evidence.confidence,
+        evidenceSource: evidence.source,
+      });
+      return;
+    }
+
     if (!decision.shouldNotify) {
       if (sameActiveSession) {
         refreshIncomingCallNotificationReminder(
           sessionKey,
           notificationTag,
           notificationBody,
+          effectiveCaller,
           decision.now,
         );
       }
@@ -8454,6 +8439,7 @@ function setupIpcHandlers(): void {
       sessionKey,
       notificationTag,
       notificationBody,
+      effectiveCaller,
       decision.now,
     );
 
