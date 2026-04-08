@@ -45,6 +45,13 @@ type NotificationCallClassification = {
   usedTitleOnly?: boolean;
 };
 
+type NotificationActivityPolicyApi = {
+  classifyCallNotification: (
+    payload: NotificationPayload,
+  ) => NotificationCallClassification;
+  isLikelyGlobalFacebookNotification: (payload: NotificationPayload) => boolean;
+};
+
 type NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget: (
     payload: NotificationPayload,
@@ -132,6 +139,41 @@ const SENDER_STYLE_BODY_ONLY_PATTERNS: RegExp[] = [
   ),
   new RegExp(`^shared (?:a|an) link${OPTIONAL_TERMINAL_PUNCTUATION}$`, "i"),
 ];
+
+function resolveSharedNotificationActivityPolicy(
+  fallback: NotificationActivityPolicyApi,
+): NotificationActivityPolicyApi {
+  const globalPolicy = (
+    globalThis as typeof globalThis & {
+      __mdNotificationActivityPolicy?: Partial<NotificationActivityPolicyApi>;
+    }
+  ).__mdNotificationActivityPolicy;
+
+  if (
+    globalPolicy &&
+    typeof globalPolicy.classifyCallNotification === "function" &&
+    typeof globalPolicy.isLikelyGlobalFacebookNotification === "function"
+  ) {
+    return globalPolicy as NotificationActivityPolicyApi;
+  }
+
+  try {
+    if (typeof require === "function") {
+      const requiredPolicy = require("../shared/notification-activity-policy.ts");
+      if (
+        requiredPolicy &&
+        typeof requiredPolicy.classifyCallNotification === "function" &&
+        typeof requiredPolicy.isLikelyGlobalFacebookNotification === "function"
+      ) {
+        return requiredPolicy as NotificationActivityPolicyApi;
+      }
+    }
+  } catch {
+    // Browser injection path has no CommonJS loader; fall back to local helpers.
+  }
+
+  return fallback;
+}
 
 function normalizeText(value: string): string {
   return (value || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -777,6 +819,11 @@ function isLikelyGlobalFacebookNotification(
   return titleIsFacebookShell && hasSocialSignal;
 }
 
+const notificationActivityPolicy = resolveSharedNotificationActivityPolicy({
+  classifyCallNotification,
+  isLikelyGlobalFacebookNotification,
+});
+
 const SELF_AUTHORED_BODY_PATTERNS: RegExp[] = [
   /^you(?::|\s|$)/i,
   /^you sent\b/i,
@@ -837,10 +884,12 @@ const policyApi: NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget,
   resolveObservedSidebarNotificationTarget,
   createNotificationDeduper,
-  isLikelyGlobalFacebookNotification,
+  isLikelyGlobalFacebookNotification: (payload) =>
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification(payload),
   isLikelySelfAuthoredMessagePreview,
   shouldSuppressSelfAuthoredNotification,
-  classifyCallNotification,
+  classifyCallNotification: (payload) =>
+    notificationActivityPolicy.classifyCallNotification(payload),
 };
 
 (globalThis as any).__mdNotificationDecisionPolicy = policyApi;

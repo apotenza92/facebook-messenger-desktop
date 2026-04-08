@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0-beta.49] - 2026-04-08
+
+### Fixed
+
+- **Issue #49 follow-up: replace time-limited Marketplace and notification fallbacks with persistent session rules** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep Marketplace thread state alive per thread route until there is positive evidence that the user has left that Marketplace thread or the view has explicitly become an ordinary chat, instead of letting the reduced-crop path expire after repeated rerenders or idle gaps.
+  - Treat repeated same-thread weak or missing Marketplace rerenders as neutral refreshes, so the native Marketplace back button does not disappear again on later re-entry attempts.
+  - Track incoming-call notifications by a stable call or thread session key, reject placeholder caller artefacts before display, and stop re-showing a second native alert when caller metadata improves mid-ring.
+  - Move non-message Facebook activity suppression onto the shared final notification display path and add explicit debug events for notifications that were actually displayed or suppressed.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:release`
+- Live GUI validation pending beta feedback
+
 ## [1.3.0-beta.48] - 2026-04-06
 
 ### Fixed

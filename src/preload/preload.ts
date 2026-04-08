@@ -40,6 +40,7 @@ import {
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
   resolveMarketplaceVisualSessionDecision,
+  type MarketplaceSessionLifecycleReason,
   type MarketplaceSessionSignalSource,
   type MarketplaceThreadHeaderBand,
   type MarketplaceVisualSessionState,
@@ -329,7 +330,7 @@ ipcRenderer.on(
   const MAX_ACTION_NODE_DIMENSION = 160;
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
-  const MARKETPLACE_SESSION_DOM_GRACE_MS = 1_500;
+  const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -369,6 +370,7 @@ ipcRenderer.on(
     headerMarketplaceDetected: boolean;
     headerBackDetected: boolean;
     headerBackMarketplaceDetected: boolean;
+    headerOrdinaryChatDetected: boolean;
     headerContainerTop: number | null;
     headerContainerBottom: number | null;
     headerContainerLeft: number | null;
@@ -379,6 +381,7 @@ ipcRenderer.on(
     marketplaceSessionActive: boolean;
     marketplaceSessionRouteKey: string | null;
     marketplaceSessionSignalSource: MarketplaceSessionSignalSource | null;
+    marketplaceSessionLifecycleReason: MarketplaceSessionLifecycleReason | null;
     marketplaceSessionTransition: string;
     marketplaceSessionHeaderBand: MarketplaceThreadHeaderBand | null;
     matchedSignals: string[];
@@ -1323,6 +1326,7 @@ ipcRenderer.on(
       headerMarketplaceDetected: false,
       headerBackDetected: false,
       headerBackMarketplaceDetected: false,
+      headerOrdinaryChatDetected: false,
       headerContainerTop: null,
       headerContainerBottom: null,
       headerContainerLeft: null,
@@ -1333,6 +1337,7 @@ ipcRenderer.on(
       marketplaceSessionActive: false,
       marketplaceSessionRouteKey: null,
       marketplaceSessionSignalSource: null,
+      marketplaceSessionLifecycleReason: null,
       marketplaceSessionTransition: "inactive",
       marketplaceSessionHeaderBand: null,
       matchedSignals: [],
@@ -1372,6 +1377,8 @@ ipcRenderer.on(
   const MARKETPLACE_VISUAL_CROP_MIN_HEIGHT = 24;
   const MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT =
     DEFAULT_MESSAGES_HEADER_HEIGHT - 20;
+  const MARKETPLACE_THREAD_ORDINARY_CHAT_CONTROL_PATTERN =
+    /\b(search in conversation|audio call|video call|start (?:an? )?(?:audio |video )?call|open conversation information|conversation information|chat info|details|info)\b/i;
 
   const getCurrentMarketplaceRouteKey = (): string =>
     `${window.location.pathname}${window.location.search}`;
@@ -1486,6 +1493,17 @@ ipcRenderer.on(
     (): MarketplaceThreadDebugState => {
       const state = createDefaultMarketplaceThreadDebugState();
       if (!/^\/messages\/(?:e2ee\/)?t\//i.test(window.location.pathname)) {
+        if (marketplaceVisualSession) {
+          state.marketplaceSessionRouteKey = marketplaceVisualSession.routeKey;
+          state.marketplaceSessionActive = false;
+          state.marketplaceSessionSignalSource =
+            marketplaceVisualSession.signalSource;
+          state.marketplaceSessionLifecycleReason = "thread-destroyed";
+          state.marketplaceSessionTransition = "cleared";
+          state.marketplaceSessionHeaderBand = marketplaceVisualSession.headerBand;
+          state.visualCropHeight = marketplaceVisualSession.visualCropHeight;
+          state.matchedSignals = ["session:thread-destroyed"];
+        }
         marketplaceVisualSession = null;
         return state;
       }
@@ -1516,6 +1534,7 @@ ipcRenderer.on(
       let strongHeaderBand: MarketplaceThreadHeaderBand | null = null;
       let strongVisualCropHeight: number | null = null;
       let weakHeaderBand: MarketplaceThreadHeaderBand | null = null;
+      let ordinaryThreadControlDetected = false;
 
       for (const candidate of Array.from(candidates)) {
         if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
@@ -1534,6 +1553,16 @@ ipcRenderer.on(
         const hintSignals = collectMarketplaceThreadHintSignals(
           getInteractiveNodeHint(candidate),
         );
+        const candidateHint = getInteractiveNodeHint(candidate);
+        if (
+          !hintSignals.includes("header") &&
+          rect.top <= MARKETPLACE_THREAD_HEADER_MAX_TOP &&
+          rect.right >= window.innerWidth * 0.52 &&
+          MARKETPLACE_THREAD_ORDINARY_CHAT_CONTROL_PATTERN.test(candidateHint)
+        ) {
+          ordinaryThreadControlDetected = true;
+          matchedSignals.add("header-ordinary-chat-control");
+        }
         if (hintSignals.includes("action")) {
           state.rightPaneMarketplaceSignalDetected = true;
           matchedSignals.add("right-pane-action");
@@ -1600,8 +1629,11 @@ ipcRenderer.on(
             candidate,
             "weak",
           );
+          if (!headerContainer) {
+            continue;
+          }
           const candidateHeaderBand = toMarketplaceThreadHeaderBand(
-            (headerContainer ?? candidate).getBoundingClientRect(),
+            headerContainer.getBoundingClientRect(),
           );
           if (!candidateHeaderBand) {
             continue;
@@ -1621,6 +1653,14 @@ ipcRenderer.on(
             matchedSignals.add("header-marketplace-candidate");
           }
         }
+      }
+
+      state.headerOrdinaryChatDetected =
+        ordinaryThreadControlDetected &&
+        !state.rightPaneMarketplaceSignalDetected &&
+        !state.rightPaneItemLinkDetected;
+      if (state.headerOrdinaryChatDetected) {
+        matchedSignals.add("header-ordinary-chat");
       }
 
       if (
@@ -1647,6 +1687,11 @@ ipcRenderer.on(
             : strongVisualCropHeight,
         strongHeaderBand,
         weakHeaderBand,
+        explicitOrdinaryChatDetected:
+          currentMarketplaceSession !== null &&
+          state.headerOrdinaryChatDetected &&
+          !state.headerBackMarketplaceDetected &&
+          !weakHeaderBand,
       });
       marketplaceVisualSession = sessionDecision.nextSession;
 
@@ -1659,6 +1704,7 @@ ipcRenderer.on(
       state.marketplaceSessionActive = sessionDecision.sessionActive;
       state.marketplaceSessionRouteKey = sessionDecision.nextSession?.routeKey ?? null;
       state.marketplaceSessionSignalSource = sessionDecision.signalSource;
+      state.marketplaceSessionLifecycleReason = sessionDecision.lifecycleReason;
       state.marketplaceSessionTransition = sessionDecision.transition;
       state.marketplaceSessionHeaderBand =
         sessionDecision.nextSession?.headerBand ?? null;
@@ -1679,6 +1725,9 @@ ipcRenderer.on(
         } else {
           matchedSignals.add("header-marketplace-rejected");
         }
+      }
+      if (sessionDecision.lifecycleReason) {
+        matchedSignals.add(`session:${sessionDecision.lifecycleReason}`);
       }
       state.matchedSignals = Array.from(matchedSignals);
       return state;

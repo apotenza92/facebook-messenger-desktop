@@ -26,6 +26,13 @@ export type MarketplaceSessionSignalSource =
   | "weak-header"
   | "bridge";
 
+export type MarketplaceSessionLifecycleReason =
+  | "confirmed-marketplace-thread"
+  | "same-thread-rerender"
+  | "route-changed"
+  | "explicit-ordinary-chat"
+  | "thread-destroyed";
+
 export type MarketplaceVisualSessionTransition =
   | "confirmed"
   | "bridging"
@@ -40,6 +47,8 @@ export type MarketplaceVisualSessionState = {
   lastConfirmedAt: number;
   lastMatchedAt: number;
   signalSource: MarketplaceSessionSignalSource;
+  lifecycleReason: MarketplaceSessionLifecycleReason;
+  lastLifecycleAt: number;
 };
 
 type MarketplaceThreadSignalInput = {
@@ -56,6 +65,7 @@ export type MarketplaceVisualSessionDecision = {
   visualCropHeight: number | null;
   transition: MarketplaceVisualSessionTransition;
   signalSource: MarketplaceSessionSignalSource | null;
+  lifecycleReason: MarketplaceSessionLifecycleReason | null;
   weakHeaderMatchesSessionHeaderBand: boolean;
   nextSession: MarketplaceVisualSessionState | null;
 };
@@ -251,13 +261,19 @@ export function resolveMarketplaceVisualSessionDecision(input: {
   strongVisualCropHeight?: number | null;
   strongHeaderBand?: MarketplaceThreadHeaderBand | null;
   weakHeaderBand?: MarketplaceThreadHeaderBand | null;
+  explicitOrdinaryChatDetected?: boolean;
 }): MarketplaceVisualSessionDecision {
-  const hadPreviousSession = input.previousSession !== null && input.previousSession !== undefined;
+  const hadPreviousSession =
+    input.previousSession !== null && input.previousSession !== undefined;
+  const routeChanged =
+    hadPreviousSession &&
+    input.previousSession?.routeKey !== input.currentRouteKey;
   const previousSession =
     input.previousSession &&
     input.previousSession.routeKey === input.currentRouteKey
       ? input.previousSession
       : null;
+
   const weakHeaderMatchesSessionHeaderBand = doesMarketplaceThreadHeaderBandMatch(
     {
       confirmedHeaderBand: previousSession?.headerBand,
@@ -279,6 +295,8 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       lastConfirmedAt: input.nowMs,
       lastMatchedAt: input.nowMs,
       signalSource: input.strongSignalSource,
+      lifecycleReason: "confirmed-marketplace-thread",
+      lastLifecycleAt: input.nowMs,
     };
 
     return {
@@ -287,8 +305,22 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       visualCropHeight,
       transition: "confirmed",
       signalSource: input.strongSignalSource,
+      lifecycleReason: "confirmed-marketplace-thread",
       weakHeaderMatchesSessionHeaderBand,
       nextSession,
+    };
+  }
+
+  if (routeChanged) {
+    return {
+      sessionActive: false,
+      shouldApplyReducedCrop: false,
+      visualCropHeight: null,
+      transition: "cleared",
+      signalSource: null,
+      lifecycleReason: "route-changed",
+      weakHeaderMatchesSessionHeaderBand: false,
+      nextSession: null,
     };
   }
 
@@ -297,9 +329,27 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       sessionActive: false,
       shouldApplyReducedCrop: false,
       visualCropHeight: null,
-      transition: hadPreviousSession ? "cleared" : input.weakHeaderBand ? "rejected" : "inactive",
+      transition: hadPreviousSession
+        ? "cleared"
+        : input.weakHeaderBand
+          ? "rejected"
+          : "inactive",
       signalSource: null,
+      lifecycleReason: null,
       weakHeaderMatchesSessionHeaderBand: false,
+      nextSession: null,
+    };
+  }
+
+  if (input.explicitOrdinaryChatDetected) {
+    return {
+      sessionActive: false,
+      shouldApplyReducedCrop: false,
+      visualCropHeight: null,
+      transition: "cleared",
+      signalSource: null,
+      lifecycleReason: "explicit-ordinary-chat",
+      weakHeaderMatchesSessionHeaderBand,
       nextSession: null,
     };
   }
@@ -309,6 +359,8 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       ...previousSession,
       lastMatchedAt: input.nowMs,
       signalSource: "weak-header",
+      lifecycleReason: "same-thread-rerender",
+      lastLifecycleAt: input.nowMs,
     };
 
     return {
@@ -317,31 +369,28 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       visualCropHeight: nextSession.visualCropHeight,
       transition: "bridging",
       signalSource: "weak-header",
+      lifecycleReason: "same-thread-rerender",
       weakHeaderMatchesSessionHeaderBand: true,
       nextSession,
     };
   }
 
-  const missingForMs = Math.max(0, input.nowMs - previousSession.lastMatchedAt);
-  if (!input.weakHeaderBand && missingForMs <= input.graceMs) {
-    return {
-      sessionActive: true,
-      shouldApplyReducedCrop: previousSession.visualCropHeight !== null,
-      visualCropHeight: previousSession.visualCropHeight,
-      transition: "bridging",
-      signalSource: "bridge",
-      weakHeaderMatchesSessionHeaderBand: false,
-      nextSession: previousSession,
-    };
-  }
+  const nextSession: MarketplaceVisualSessionState = {
+    ...previousSession,
+    lastMatchedAt: input.nowMs,
+    signalSource: "bridge",
+    lifecycleReason: "same-thread-rerender",
+    lastLifecycleAt: input.nowMs,
+  };
 
   return {
-    sessionActive: false,
-    shouldApplyReducedCrop: false,
-    visualCropHeight: null,
-    transition: input.weakHeaderBand ? "rejected" : "cleared",
-    signalSource: null,
+    sessionActive: true,
+    shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+    visualCropHeight: nextSession.visualCropHeight,
+    transition: "bridging",
+    signalSource: "bridge",
+    lifecycleReason: "same-thread-rerender",
     weakHeaderMatchesSessionHeaderBand,
-    nextSession: null,
+    nextSession,
   };
 }

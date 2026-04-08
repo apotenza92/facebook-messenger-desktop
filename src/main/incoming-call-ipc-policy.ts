@@ -70,10 +70,21 @@ export function applyIncomingCallWindowFocus(
 export function normalizeIncomingCallDedupeKey(
   payload?: IncomingCallIpcPayload,
 ): string | null {
-  if (typeof payload?.dedupeKey !== "string") return null;
-  const trimmed = payload.dedupeKey.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, 180);
+  if (typeof payload?.dedupeKey === "string") {
+    const trimmed = payload.dedupeKey.trim();
+    if (trimmed) {
+      return trimmed.slice(0, 180);
+    }
+  }
+
+  if (typeof payload?.evidence?.threadKey === "string") {
+    const threadKey = payload.evidence.threadKey.trim();
+    if (threadKey) {
+      return `thread:${threadKey}`.slice(0, 180);
+    }
+  }
+
+  return null;
 }
 
 export function decideIncomingCallSignalEscalation(

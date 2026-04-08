@@ -34,6 +34,8 @@ const loadIncomingCallHintPolicy = () =>
   );
 const loadNotificationDecisionPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-decision-policy.ts"));
+const loadNotificationActivityPolicy = () =>
+  require(path.join(APP_ROOT, "src/shared/notification-activity-policy.ts"));
 const loadNotificationDisplayPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-display-policy.ts"));
 const loadIncomingCallOverlayPolicy = () =>
@@ -511,7 +513,7 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 stray Marketplace labels outside the confirmed header band should be rejected",
   );
 
-  const MARKETPLACE_SESSION_DOM_GRACE_MS = 1_500;
+  const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
   const confirmedSession = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
     nowMs: 10_000,
@@ -535,6 +537,11 @@ const runMarketplaceThreadPolicyTests = () => {
     "confirmed",
     "#49 strong Marketplace confirmation should report a confirmed session transition",
   );
+  assertEqual(
+    confirmedSession.lifecycleReason,
+    "confirmed-marketplace-thread",
+    "#49 strong Marketplace confirmation should record the session entry reason",
+  );
 
   const weakBridge = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
@@ -549,6 +556,7 @@ const runMarketplaceThreadPolicyTests = () => {
       shouldApplyReducedCrop: weakBridge.shouldApplyReducedCrop,
       transition: weakBridge.transition,
       signalSource: weakBridge.signalSource,
+      lifecycleReason: weakBridge.lifecycleReason,
       weakHeaderMatchesSessionHeaderBand:
         weakBridge.weakHeaderMatchesSessionHeaderBand,
       visualCropHeight: weakBridge.visualCropHeight,
@@ -558,6 +566,7 @@ const runMarketplaceThreadPolicyTests = () => {
       shouldApplyReducedCrop: true,
       transition: "bridging",
       signalSource: "weak-header",
+      lifecycleReason: "same-thread-rerender",
       weakHeaderMatchesSessionHeaderBand: true,
       visualCropHeight: 56,
     }),
@@ -597,17 +606,21 @@ const runMarketplaceThreadPolicyTests = () => {
     JSON.stringify({
       sessionActive: rejectedWeakHeader.sessionActive,
       transition: rejectedWeakHeader.transition,
+      signalSource: rejectedWeakHeader.signalSource,
+      lifecycleReason: rejectedWeakHeader.lifecycleReason,
       weakHeaderMatchesSessionHeaderBand:
         rejectedWeakHeader.weakHeaderMatchesSessionHeaderBand,
       visualCropHeight: rejectedWeakHeader.visualCropHeight,
     }),
     JSON.stringify({
-      sessionActive: false,
-      transition: "rejected",
+      sessionActive: true,
+      transition: "bridging",
+      signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
       weakHeaderMatchesSessionHeaderBand: false,
-      visualCropHeight: null,
+      visualCropHeight: 56,
     }),
-    "#49 same-route weak Marketplace hints outside the confirmed header band should be rejected and clear the session",
+    "#49 same-route weak Marketplace hints outside the confirmed header band should be treated as neutral rerenders instead of clearing the session",
   );
 
   const routeChangeClear = resolveMarketplaceVisualSessionDecision({
@@ -620,11 +633,13 @@ const runMarketplaceThreadPolicyTests = () => {
     JSON.stringify({
       sessionActive: routeChangeClear.sessionActive,
       transition: routeChangeClear.transition,
+      lifecycleReason: routeChangeClear.lifecycleReason,
       visualCropHeight: routeChangeClear.visualCropHeight,
     }),
     JSON.stringify({
       sessionActive: false,
       transition: "cleared",
+      lifecycleReason: "route-changed",
       visualCropHeight: null,
     }),
     "#49 switching to an ordinary chat route should clear the Marketplace session immediately",
@@ -662,35 +677,88 @@ const runMarketplaceThreadPolicyTests = () => {
       sessionActive: briefNoSignalBridge.sessionActive,
       transition: briefNoSignalBridge.transition,
       signalSource: briefNoSignalBridge.signalSource,
+      lifecycleReason: briefNoSignalBridge.lifecycleReason,
       visualCropHeight: briefNoSignalBridge.visualCropHeight,
     }),
     JSON.stringify({
       sessionActive: true,
       transition: "bridging",
       signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
       visualCropHeight: 56,
     }),
     "#49 brief same-route no-signal churn should bridge without dropping the Marketplace session immediately",
   );
 
-  const expiredNoSignalBridge = resolveMarketplaceVisualSessionDecision({
+  const beta48ReplayBridge = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
-    nowMs: 13_000,
-    graceMs: 500,
-    previousSession: weakBridge.nextSession,
+    nowMs: 11_564,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: confirmedSession.nextSession,
   });
   assertEqual(
     JSON.stringify({
-      sessionActive: expiredNoSignalBridge.sessionActive,
-      transition: expiredNoSignalBridge.transition,
-      visualCropHeight: expiredNoSignalBridge.visualCropHeight,
+      sessionActive: beta48ReplayBridge.sessionActive,
+      transition: beta48ReplayBridge.transition,
+      signalSource: beta48ReplayBridge.signalSource,
+      lifecycleReason: beta48ReplayBridge.lifecycleReason,
+      visualCropHeight: beta48ReplayBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridging",
+      signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
+      visualCropHeight: 56,
+    }),
+    "#49 the April 6 same-route Marketplace replay should stay bridged beyond the old 1.5s cutoff when no valid weak header remains",
+  );
+
+  const persistentIdleReplay = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 38_700,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: confirmedSession.nextSession,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: persistentIdleReplay.sessionActive,
+      transition: persistentIdleReplay.transition,
+      signalSource: persistentIdleReplay.signalSource,
+      lifecycleReason: persistentIdleReplay.lifecycleReason,
+      visualCropHeight: persistentIdleReplay.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridging",
+      signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
+      visualCropHeight: 56,
+    }),
+    "#49 long same-route idle gaps should not silently expire a confirmed Marketplace session",
+  );
+
+  const explicitOrdinaryChatClear = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 39_000,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: weakBridge.nextSession,
+    explicitOrdinaryChatDetected: true,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: explicitOrdinaryChatClear.sessionActive,
+      transition: explicitOrdinaryChatClear.transition,
+      lifecycleReason: explicitOrdinaryChatClear.lifecycleReason,
+      visualCropHeight: explicitOrdinaryChatClear.visualCropHeight,
     }),
     JSON.stringify({
       sessionActive: false,
       transition: "cleared",
+      lifecycleReason: "explicit-ordinary-chat",
       visualCropHeight: null,
     }),
-    "#49 same-route no-signal churn should clear after the short Marketplace DOM grace window expires",
+    "#49 same-route Marketplace sessions should clear only when ordinary-chat evidence is explicit",
   );
 };
 
@@ -1398,6 +1466,25 @@ const runIncomingCallIpcPolicyTests = () => {
     "call-123",
     "incoming-call IPC should normalize dedupe key",
   );
+
+  const threadKeyFallback =
+    incomingCallIpcPolicy.decideIncomingCallNativeNotification({
+      payload: {
+        evidence: incomingCallEvidence.buildIncomingCallEvidence({
+          source: "dom-explicit",
+          confidence: "high",
+          threadKey: "thread-456",
+        }),
+      },
+      now: baseNow + 500,
+      notificationByKey: new Map<string, number>(),
+      lastNoKeyIncomingCallNotificationAt: 0,
+    });
+  assertEqual(
+    threadKeyFallback.callKey,
+    "thread:thread-456",
+    "#49 incoming-call IPC should fall back to thread identity when no call dedupe key is present",
+  );
   map.set(incomingCallIpcPolicy.INCOMING_CALL_NO_KEY_MAP_KEY, firstKeyed.now);
 
   const noKeyAfterRecentIncomingCall =
@@ -1534,6 +1621,7 @@ const runIncomingCallIpcPolicyTests = () => {
 
 const runNotificationPolicyTests = () => {
   const notificationDecisionPolicy = loadNotificationDecisionPolicy();
+  const notificationActivityPolicy = loadNotificationActivityPolicy();
   assert(
     typeof notificationDecisionPolicy.resolveNativeNotificationTarget ===
       "function",
@@ -1566,6 +1654,11 @@ const runNotificationPolicyTests = () => {
     typeof notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification ===
       "function",
     "notification decision policy missing shouldSuppressSelfAuthoredNotification",
+  );
+  assert(
+    typeof notificationActivityPolicy.isLikelyGlobalFacebookNotification ===
+      "function",
+    "notification activity policy missing isLikelyGlobalFacebookNotification",
   );
 
   const mutedIndividualMatch =
@@ -2135,6 +2228,17 @@ const runNotificationPolicyTests = () => {
     participationRequestSuppressed,
     true,
     "#46 should suppress Facebook participation-request notifications",
+  );
+
+  const sharedParticipationRequestSuppressed =
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification({
+      title: "Facebook User",
+      body: "2 people requested membership in a group you're managing",
+    });
+  assertEqual(
+    sharedParticipationRequestSuppressed,
+    true,
+    "#49 the shared notification activity classifier should suppress group-management membership requests at the final notification boundary",
   );
 
   const directMessageNotSuppressed =

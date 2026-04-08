@@ -64,6 +64,10 @@ import {
   type IncomingCallIpcPayload,
 } from "./incoming-call-ipc-policy";
 import { type IncomingCallEvidence } from "../shared/incoming-call-evidence";
+import {
+  isLikelyGlobalFacebookNotification,
+  type NotificationPayload,
+} from "../shared/notification-activity-policy";
 import { autoUpdater } from "electron-updater";
 
 // On Linux AppImage: fork and detach from terminal so the command returns immediately
@@ -240,6 +244,7 @@ let appReady = false; // Flag to indicate app is fully initialized (window creat
 let pendingShowWindow = false; // Queue second-instance events that arrive before app is ready
 const incomingCallNotificationByKey = new Map<string, number>();
 let lastNoKeyIncomingCallNotificationAt = 0;
+let activeIncomingCallSessionKey: string | null = null;
 let activeIncomingCallNotificationTag: string | null = null;
 let activeIncomingCallNotificationBody: string | null = null;
 let activeIncomingCallNotificationSeenAt = 0;
@@ -300,6 +305,7 @@ function formatIncomingCallCaller(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
 
   const cleaned = raw
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/[|•·]+/g, " ")
     .replace(
       /\b(?:is\s+calling\s+you|is\s+calling|calling\s+you|on\s+messenger)\b/gi,
@@ -331,6 +337,9 @@ function formatIncomingCallCaller(raw: unknown): string | null {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  const placeholderTokenSet = new Set(
+    normalizedCandidate.split(" ").filter(Boolean),
+  );
 
   const genericLabels = new Set([
     "profile",
@@ -350,7 +359,15 @@ function formatIncomingCallCaller(raw: unknown): string | null {
   if (
     !normalizedCandidate ||
     genericLabels.has(normalizedCandidate) ||
-    /^profile picture(?: of)?$/.test(normalizedCandidate)
+    /^profile picture(?: of)?$/.test(normalizedCandidate) ||
+    (placeholderTokenSet.has("profile") &&
+      placeholderTokenSet.has("picture")) ||
+    (placeholderTokenSet.has("incoming") &&
+      placeholderTokenSet.has("call")) ||
+    (placeholderTokenSet.has("call") &&
+      placeholderTokenSet.has("picture")) ||
+    (placeholderTokenSet.has("call") &&
+      placeholderTokenSet.has("profile"))
   ) {
     return null;
   }
@@ -377,16 +394,69 @@ function stopIncomingCallNotificationReminder(closeActive: boolean): void {
     notificationHandler.closeNotification(activeIncomingCallNotificationTag);
   }
 
+  activeIncomingCallSessionKey = null;
   activeIncomingCallNotificationTag = null;
   activeIncomingCallNotificationBody = null;
   activeIncomingCallNotificationSeenAt = 0;
 }
 
+function ensureNotificationHandler(): {
+  handler: NotificationHandler;
+  created: boolean;
+} {
+  if (notificationHandler) {
+    return {
+      handler: notificationHandler,
+      created: false,
+    };
+  }
+
+  console.warn(
+    "[Main Process] Notification handler not ready, creating on demand",
+  );
+  notificationHandler = new NotificationHandler(
+    () => mainWindow,
+    APP_DISPLAY_NAME,
+  );
+  return {
+    handler: notificationHandler,
+    created: true,
+  };
+}
+
+function showNativeNotification(input: {
+  data: NotificationData;
+  displaySource:
+    | "bridge"
+    | "incoming-call"
+    | "incoming-call-reminder"
+    | "test";
+  webContentsId?: number;
+  url?: string;
+  reason?: string;
+}): void {
+  const { handler, created } = ensureNotificationHandler();
+  handler.showNotification(input.data);
+  pushNotificationDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "show-notification-displayed",
+    webContentsId: input.webContentsId,
+    url: input.url,
+    displaySource: input.displaySource,
+    displayPath: created ? "main-fallback" : "main",
+    reason: input.reason,
+    payload: input.data,
+  });
+}
+
 function refreshIncomingCallNotificationReminder(
+  sessionKey: string,
   tag: string,
   body: string,
   now: number,
 ): void {
+  activeIncomingCallSessionKey = sessionKey;
   activeIncomingCallNotificationTag = tag;
   activeIncomingCallNotificationBody = body;
   activeIncomingCallNotificationSeenAt = now;
@@ -410,12 +480,15 @@ function refreshIncomingCallNotificationReminder(
       return;
     }
 
-    notificationHandler.showNotification({
-      title: "Incoming call",
-      body: activeIncomingCallNotificationBody,
-      tag: activeIncomingCallNotificationTag,
-      silent: false,
-      requireInteraction: true,
+    showNativeNotification({
+      data: {
+        title: "Incoming call",
+        body: activeIncomingCallNotificationBody,
+        tag: activeIncomingCallNotificationTag,
+        silent: false,
+        requireInteraction: true,
+      },
+      displaySource: "incoming-call-reminder",
     });
   }, INCOMING_CALL_NOTIFICATION_REMINDER_MS);
 }
@@ -556,20 +629,6 @@ type NotificationDebugEvent = {
   [key: string]: unknown;
 };
 
-const MAIN_PROCESS_NON_MESSAGE_NOTIFICATION_PATTERNS: RegExp[] = [
-  /requested to (?:participate|join)/i,
-  /requested membership/i,
-  /membership request/i,
-  /join this group/i,
-  /group you(?:'|’)re managing/i,
-  /for the first time in/i,
-  /commented on your/i,
-  /replied to your/i,
-  /reacted to your/i,
-  /liked your/i,
-  /suggested for you/i,
-];
-
 function shouldSuppressMainProcessNotification(
   data: Partial<NotificationData> | null | undefined,
 ): { suppress: boolean; reason?: string } {
@@ -579,19 +638,12 @@ function shouldSuppressMainProcessNotification(
   const body = String(data?.body || "")
     .replace(/\s+/g, " ")
     .trim();
-  const href = String(data?.href || "").trim();
+  const payload: NotificationPayload = { title, body };
 
-  const genericTitle = /^(?:facebook(?: user(?: \d+)?)?|meta|notification|new notification|notifications|new notifications)$/i.test(
-    title,
-  );
-  const strongBodyMatch = MAIN_PROCESS_NON_MESSAGE_NOTIFICATION_PATTERNS.find(
-    (pattern) => pattern.test(body),
-  );
-
-  if (strongBodyMatch && (!href || genericTitle)) {
+  if (isLikelyGlobalFacebookNotification(payload)) {
     return {
       suppress: true,
-      reason: `main-process-non-message:${strongBodyMatch.source}`,
+      reason: "main-process-shared-global-activity",
     };
   }
 
@@ -2632,6 +2684,26 @@ async function injectNotificationScripts(
       console.log('[Notification Bridge] Bridge function and listener installed');
     })();
   `);
+
+  const notificationActivityPolicyScriptPath = path.join(
+    __dirname,
+    "../shared/notification-activity-policy.js",
+  );
+  if (fs.existsSync(notificationActivityPolicyScriptPath)) {
+    const notificationActivityPolicyScript = fs.readFileSync(
+      notificationActivityPolicyScriptPath,
+      "utf8",
+    );
+    await webContents.executeJavaScript(notificationActivityPolicyScript);
+    console.log(
+      "[Main Process] Notification activity policy script injected successfully",
+    );
+  } else {
+    console.warn(
+      "[Main Process] Notification activity policy script not found at:",
+      notificationActivityPolicyScriptPath,
+    );
+  }
 
   const notificationDisplayPolicyScriptPath = path.join(
     __dirname,
@@ -7873,19 +7945,12 @@ function setupIpcHandlers(): void {
       return;
     }
 
-    if (notificationHandler) {
-      notificationHandler.showNotification(data);
-    } else {
-      console.warn(
-        "[Main Process] Notification handler not ready, queuing notification",
-      );
-      // Initialize handler if not ready
-      notificationHandler = new NotificationHandler(
-        () => mainWindow,
-        APP_DISPLAY_NAME,
-      );
-      notificationHandler.showNotification(data);
-    }
+    showNativeNotification({
+      data,
+      displaySource: "bridge",
+      webContentsId: event.sender.id,
+      url: event.sender.getURL(),
+    });
   });
 
   ipcMain.on("open-external-url", (_event, rawUrl: unknown) => {
@@ -8299,22 +8364,22 @@ function setupIpcHandlers(): void {
     const notificationTag = decision.callKey
       ? `incoming-call:${decision.callKey}`
       : `incoming-call:${decision.now}`;
+    const sessionKey =
+      decision.callKey ??
+      (typeof evidence.threadKey === "string" && evidence.threadKey.trim()
+        ? `thread:${evidence.threadKey.trim()}`
+        : `ephemeral:${event.sender.id}:${senderUrl}`);
+    const sameActiveSession =
+      activeIncomingCallSessionKey === sessionKey ||
+      activeIncomingCallNotificationTag === notificationTag;
+    const shouldUpdateActiveSessionBody =
+      sameActiveSession &&
+      activeIncomingCallNotificationBody !== notificationBody;
 
     if (!decision.shouldNotify) {
-      if (
-        notificationHandler &&
-        caller &&
-        activeIncomingCallNotificationTag === notificationTag &&
-        activeIncomingCallNotificationBody !== notificationBody
-      ) {
-        notificationHandler.showNotification({
-          title: "Incoming call",
-          body: notificationBody,
-          tag: notificationTag,
-          silent: false,
-          requireInteraction: true,
-        });
+      if (sameActiveSession) {
         refreshIncomingCallNotificationReminder(
+          sessionKey,
           notificationTag,
           notificationBody,
           decision.now,
@@ -8333,55 +8398,65 @@ function setupIpcHandlers(): void {
         url: senderUrl,
         callKey: decision.callKey,
         reason: decision.reason,
+        caller,
+        sessionKey,
+        updatedActiveSession: shouldUpdateActiveSessionBody,
         confidence: evidence.confidence,
         evidenceSource: evidence.source,
       });
       return;
     }
 
-    if (notificationHandler) {
-      incomingCallNotificationByKey.set(
-        decision.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
-        decision.now,
-      );
-      incomingCallNotificationByKey.set(
-        INCOMING_CALL_NO_KEY_MAP_KEY,
-        decision.now,
-      );
-      lastNoKeyIncomingCallNotificationAt = decision.now;
+    incomingCallNotificationByKey.set(
+      decision.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
+      decision.now,
+    );
+    incomingCallNotificationByKey.set(
+      INCOMING_CALL_NO_KEY_MAP_KEY,
+      decision.now,
+    );
+    lastNoKeyIncomingCallNotificationAt = decision.now;
 
-      notificationHandler.showNotification({
+    showNativeNotification({
+      data: {
         title: "Incoming call",
         body: notificationBody,
         tag: notificationTag,
         silent: false,
         requireInteraction: true,
-      });
+      },
+      displaySource: "incoming-call",
+      webContentsId: event.sender.id,
+      url: senderUrl,
+      reason: decision.callKey ?? "no-key",
+    });
 
-      refreshIncomingCallNotificationReminder(
-        notificationTag,
-        notificationBody,
-        decision.now,
-      );
+    refreshIncomingCallNotificationReminder(
+      sessionKey,
+      notificationTag,
+      notificationBody,
+      decision.now,
+    );
 
-      console.log("[IPC] Incoming call native notification shown", {
-        callKey: decision.callKey,
-        caller,
-        notificationTag,
-      });
-      pushIncomingCallDebugEvent({
-        timestamp: now,
-        source: "main",
-        event: "incoming-call-notification-shown",
-        webContentsId: event.sender.id,
-        url: senderUrl,
-        callKey: decision.callKey,
-        caller,
-        notificationTag,
-        confidence: evidence.confidence,
-        evidenceSource: evidence.source,
-      });
-    }
+    console.log("[IPC] Incoming call native notification shown", {
+      callKey: decision.callKey,
+      caller,
+      notificationTag,
+      sessionKey,
+    });
+    pushIncomingCallDebugEvent({
+      timestamp: now,
+      source: "main",
+      event: "incoming-call-notification-shown",
+      webContentsId: event.sender.id,
+      url: senderUrl,
+      callKey: decision.callKey,
+      caller,
+      notificationTag,
+      sessionKey,
+      confidence: evidence.confidence,
+      evidenceSource: evidence.source,
+    });
   });
 
   ipcMain.on("incoming-call-ended", (event, payload?: { reason?: string }) => {
@@ -8452,16 +8527,14 @@ function setupIpcHandlers(): void {
 
 // Test notification function
 function testNotification(): void {
-  if (!notificationHandler) {
-    console.warn("Notification handler not initialized yet");
-    return;
-  }
-
-  notificationHandler.showNotification({
-    title: "Test Notification",
-    body: "This is a test notification from Messenger Desktop! Click to focus the app.",
-    tag: "test-notification",
-    silent: false,
+  showNativeNotification({
+    data: {
+      title: "Test Notification",
+      body: "This is a test notification from Messenger Desktop! Click to focus the app.",
+      tag: "test-notification",
+      silent: false,
+    },
+    displaySource: "test",
   });
 
   // Also test badge count
