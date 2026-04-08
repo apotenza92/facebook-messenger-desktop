@@ -2672,6 +2672,46 @@ async function injectLoginPageCSS(
 async function injectNotificationScripts(
   webContents: Electron.WebContents,
 ): Promise<void> {
+  const executeInjectedScript = async (input: {
+    scriptPath: string;
+    successMessage: string;
+    missingMessage: string;
+    errorMessage: string;
+    sanitizeCommonJsExports?: boolean;
+  }): Promise<void> => {
+    const {
+      scriptPath,
+      successMessage,
+      missingMessage,
+      errorMessage,
+      sanitizeCommonJsExports = false,
+    } = input;
+
+    if (!fs.existsSync(scriptPath)) {
+      console.warn(missingMessage, scriptPath);
+      return;
+    }
+
+    try {
+      let script = fs.readFileSync(scriptPath, "utf8");
+
+      if (sanitizeCommonJsExports) {
+        script = script
+          .replace(
+            /^Object\.defineProperty\(exports,\s*"__esModule",\s*\{\s*value:\s*true\s*\}\);\s*$/m,
+            "",
+          )
+          .replace(/^exports\.[^=]+=\s*[^;]+;\s*$/gm, "");
+      }
+
+      const wrappedScript = `(() => {\n${script}\n})();`;
+      await webContents.executeJavaScript(wrappedScript);
+      console.log(successMessage);
+    } catch (error) {
+      console.error(errorMessage, scriptPath, error);
+    }
+  };
+
   await webContents.executeJavaScript(`
     (function() {
       window.__electronNotificationBridge = function(data) {
@@ -2689,78 +2729,57 @@ async function injectNotificationScripts(
     __dirname,
     "../shared/notification-activity-policy.js",
   );
-  if (fs.existsSync(notificationActivityPolicyScriptPath)) {
-    const notificationActivityPolicyScript = fs.readFileSync(
-      notificationActivityPolicyScriptPath,
-      "utf8",
-    );
-    await webContents.executeJavaScript(notificationActivityPolicyScript);
-    console.log(
+  await executeInjectedScript({
+    scriptPath: notificationActivityPolicyScriptPath,
+    successMessage:
       "[Main Process] Notification activity policy script injected successfully",
-    );
-  } else {
-    console.warn(
+    missingMessage:
       "[Main Process] Notification activity policy script not found at:",
-      notificationActivityPolicyScriptPath,
-    );
-  }
+    errorMessage:
+      "[Main Process] Failed to inject notification activity policy script:",
+    sanitizeCommonJsExports: true,
+  });
 
   const notificationDisplayPolicyScriptPath = path.join(
     __dirname,
     "../preload/notification-display-policy.js",
   );
-  if (fs.existsSync(notificationDisplayPolicyScriptPath)) {
-    const notificationDisplayPolicyScript = fs.readFileSync(
-      notificationDisplayPolicyScriptPath,
-      "utf8",
-    );
-    await webContents.executeJavaScript(notificationDisplayPolicyScript);
-    console.log(
+  await executeInjectedScript({
+    scriptPath: notificationDisplayPolicyScriptPath,
+    successMessage:
       "[Main Process] Notification display policy script injected successfully",
-    );
-  } else {
-    console.warn(
+    missingMessage:
       "[Main Process] Notification display policy script not found at:",
-      notificationDisplayPolicyScriptPath,
-    );
-  }
+    errorMessage:
+      "[Main Process] Failed to inject notification display policy script:",
+  });
 
   const notificationDecisionPolicyScriptPath = path.join(
     __dirname,
     "../preload/notification-decision-policy.js",
   );
-  if (fs.existsSync(notificationDecisionPolicyScriptPath)) {
-    const notificationDecisionPolicyScript = fs.readFileSync(
-      notificationDecisionPolicyScriptPath,
-      "utf8",
-    );
-    await webContents.executeJavaScript(notificationDecisionPolicyScript);
-    console.log(
+  await executeInjectedScript({
+    scriptPath: notificationDecisionPolicyScriptPath,
+    successMessage:
       "[Main Process] Notification decision policy script injected successfully",
-    );
-  } else {
-    console.warn(
+    missingMessage:
       "[Main Process] Notification decision policy script not found at:",
-      notificationDecisionPolicyScriptPath,
-    );
-  }
+    errorMessage:
+      "[Main Process] Failed to inject notification decision policy script:",
+  });
 
   const notificationScriptPath = path.join(
     __dirname,
     "../preload/notifications-inject.js",
   );
-  if (fs.existsSync(notificationScriptPath)) {
-    const notificationScript = fs.readFileSync(notificationScriptPath, "utf8");
-    await webContents.executeJavaScript(notificationScript);
-    console.log(
+  await executeInjectedScript({
+    scriptPath: notificationScriptPath,
+    successMessage:
       "[Main Process] Notification override script injected successfully",
-    );
-  } else {
-    console.warn(
-      "[Main Process] Notification script not found at:",
-      notificationScriptPath,
-    );
-  }
+    missingMessage: "[Main Process] Notification script not found at:",
+    errorMessage:
+      "[Main Process] Failed to inject notification override script:",
+  });
 }
 
 // Icon theme: 'light', 'dark', or 'system' (default)

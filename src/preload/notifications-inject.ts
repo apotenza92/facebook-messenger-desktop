@@ -2692,25 +2692,58 @@
   };
 
   // Get only valid chat rows (rows with actual conversation links)
+  type ValidChatRow = {
+    row: Element;
+    link: HTMLAnchorElement;
+    threadId: string;
+  };
+
+  const isConversationRowVisible = (row: Element): boolean => {
+    if (!(row instanceof HTMLElement)) {
+      return false;
+    }
+
+    if (row.closest('[aria-hidden="true"]') || row.closest("[hidden]")) {
+      return false;
+    }
+
+    const style = window.getComputedStyle(row);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.opacity === "0" ||
+      style.pointerEvents === "none"
+    ) {
+      return false;
+    }
+
+    const rect = row.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const getConversationLink = (row: Element): HTMLAnchorElement | null => {
+    const link = row.querySelector('a[href*="/t/"], a[href*="/e2ee/t/"]');
+    return link instanceof HTMLAnchorElement ? link : null;
+  };
+
   const getValidChatRows = (): {
     row: Element;
     link: HTMLAnchorElement;
     threadId: string;
   }[] => {
     const rows = getAllConversationRows();
-    const valid: { row: Element; link: HTMLAnchorElement; threadId: string }[] =
-      [];
+    const valid: ValidChatRow[] = [];
+    const seenThreadIds = new Set<string>();
+
     for (const row of rows) {
-      const link = row.querySelector(
-        'a[href*="/t/"]',
-      ) as HTMLAnchorElement | null;
-      if (link) {
-        const href = link.getAttribute("href") || "";
-        const match = href.match(/\/t\/(\d+)/);
-        if (match) {
-          valid.push({ row, link, threadId: match[1] });
-        }
-      }
+      if (!isConversationRowVisible(row)) continue;
+
+      const link = getConversationLink(row);
+      const threadId = getThreadIdFromHref(link?.getAttribute("href"));
+      if (!link || !threadId || seenThreadIds.has(threadId)) continue;
+
+      seenThreadIds.add(threadId);
+      valid.push({ row, link, threadId });
     }
     return valid;
   };
@@ -2729,20 +2762,65 @@
     }
   };
 
+  const isConversationRowActive = (row: Element): boolean => {
+    const activeSelector = [
+      '[aria-current="page"]',
+      '[aria-current="true"]',
+      '[aria-selected="true"]',
+    ].join(", ");
+
+    return row.matches(activeSelector) || row.querySelector(activeSelector) !== null;
+  };
+
   // Get currently active conversation index
   const getCurrentChatIndex = (): number => {
-    const currentPath = window.location.pathname;
-    const match = currentPath.match(/\/t\/(\d+)/);
-    if (!match) return -1;
-    const currentThreadId = match[1];
-
     const chats = getValidChatRows();
+    const currentThreadId = getThreadIdFromHref(window.location.href);
+
+    if (currentThreadId) {
+      for (let i = 0; i < chats.length; i++) {
+        if (chats[i].threadId === currentThreadId) {
+          return i;
+        }
+      }
+    }
+
     for (let i = 0; i < chats.length; i++) {
-      if (chats[i].threadId === currentThreadId) {
+      if (isConversationRowActive(chats[i].row)) {
         return i;
       }
     }
+
     return -1;
+  };
+
+  const getFallbackChatIndex = (
+    chats: ValidChatRow[],
+    direction: "next" | "prev",
+  ): number => {
+    if (chats.length === 0) {
+      return -1;
+    }
+
+    const currentThreadId = getThreadIdFromHref(window.location.href);
+    let fallbackIndex = -1;
+
+    if (direction === "next") {
+      fallbackIndex = chats.findIndex((chat) => chat.threadId !== currentThreadId);
+    } else {
+      for (let i = chats.length - 1; i >= 0; i--) {
+        if (chats[i].threadId !== currentThreadId) {
+          fallbackIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (fallbackIndex >= 0) {
+      return fallbackIndex;
+    }
+
+    return direction === "next" ? 0 : chats.length - 1;
   };
 
   // Navigate to previous chat (up in sidebar)
@@ -2754,7 +2832,12 @@
     }
 
     const currentIndex = getCurrentChatIndex();
-    const newIndex = currentIndex <= 0 ? chats.length - 1 : currentIndex - 1;
+    const newIndex =
+      currentIndex >= 0
+        ? currentIndex <= 0
+          ? chats.length - 1
+          : currentIndex - 1
+        : getFallbackChatIndex(chats, "prev");
     log(
       `Prev chat: current=${currentIndex}, new=${newIndex}, total=${chats.length}`,
     );
@@ -2770,7 +2853,12 @@
     }
 
     const currentIndex = getCurrentChatIndex();
-    const newIndex = currentIndex >= chats.length - 1 ? 0 : currentIndex + 1;
+    const newIndex =
+      currentIndex >= 0
+        ? currentIndex >= chats.length - 1
+          ? 0
+          : currentIndex + 1
+        : getFallbackChatIndex(chats, "next");
     log(
       `Next chat: current=${currentIndex}, new=${newIndex}, total=${chats.length}`,
     );
@@ -3475,11 +3563,47 @@
   // GLOBAL KEYBOARD LISTENER
   // ============================================================================
 
+  const hasPrimaryModifier = (e: KeyboardEvent): boolean =>
+    (e.metaKey || e.ctrlKey) && !e.altKey;
+
+  const matchesHelpShortcut = (e: KeyboardEvent): boolean =>
+    hasPrimaryModifier(e) &&
+    (e.code === "Slash" || e.key === "/" || e.key === "?");
+
+  const matchesQuickSwitcherShortcut = (e: KeyboardEvent): boolean =>
+    hasPrimaryModifier(e) &&
+    !e.shiftKey &&
+    (e.code === "KeyO" || e.key.toLowerCase() === "o");
+
+  const getChatJumpIndex = (e: KeyboardEvent): number | null => {
+    if (!hasPrimaryModifier(e) || e.shiftKey) {
+      return null;
+    }
+
+    if (/^Digit[1-9]$/.test(e.code)) {
+      return parseInt(e.code.slice("Digit".length), 10);
+    }
+
+    if (/^[1-9]$/.test(e.key)) {
+      return parseInt(e.key, 10);
+    }
+
+    return null;
+  };
+
+  const matchesPrevChatShortcut = (e: KeyboardEvent): boolean =>
+    hasPrimaryModifier(e) &&
+    e.shiftKey &&
+    (e.code === "BracketLeft" || e.key === "[" || e.key === "{");
+
+  const matchesNextChatShortcut = (e: KeyboardEvent): boolean =>
+    hasPrimaryModifier(e) &&
+    e.shiftKey &&
+    (e.code === "BracketRight" || e.key === "]" || e.key === "}");
+
   document.addEventListener(
     "keydown",
     (e: KeyboardEvent) => {
-      const isMod = e.metaKey || e.ctrlKey;
-
       // Close overlays on Escape
       if (e.key === "Escape") {
         if (shortcutsOverlay) {
@@ -3497,9 +3621,9 @@
       }
 
       // Don't handle shortcuts if typing in a form input (but allow contentEditable for chat nav)
-      const target = e.target as HTMLElement;
+      const target = e.target instanceof HTMLElement ? e.target : null;
       const isInFormInput =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+        target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
 
       // Allow palette keyboard nav
       if (commandPaletteEl && target === paletteInputEl) {
@@ -3507,7 +3631,7 @@
       }
 
       // Cmd/Ctrl + O → Quick switcher (works everywhere)
-      if (isMod && !e.shiftKey && e.key.toLowerCase() === "o") {
+      if (matchesQuickSwitcherShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
         showCommandPalette();
@@ -3515,7 +3639,7 @@
       }
 
       // Cmd/Ctrl + / → Shortcuts help (works everywhere)
-      if (isMod && e.key === "/") {
+      if (matchesHelpShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
         showShortcutsOverlay();
@@ -3526,19 +3650,16 @@
       if (isInFormInput) return;
 
       // Cmd/Ctrl + 1-9 → Jump to chat
-      if (isMod && !e.shiftKey && e.key >= "1" && e.key <= "9") {
+      const chatJumpIndex = getChatJumpIndex(e);
+      if (chatJumpIndex !== null) {
         e.preventDefault();
         e.stopPropagation();
-        navigateToChat(parseInt(e.key, 10));
+        navigateToChat(chatJumpIndex);
         return;
       }
 
       // Cmd/Ctrl + Shift + [ or { → Previous chat (use e.code for physical key)
-      if (
-        isMod &&
-        e.shiftKey &&
-        (e.code === "BracketLeft" || e.key === "[" || e.key === "{")
-      ) {
+      if (matchesPrevChatShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
         navigateToPrevChat();
@@ -3546,11 +3667,7 @@
       }
 
       // Cmd/Ctrl + Shift + ] or } → Next chat (use e.code for physical key)
-      if (
-        isMod &&
-        e.shiftKey &&
-        (e.code === "BracketRight" || e.key === "]" || e.key === "}")
-      ) {
+      if (matchesNextChatShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
         navigateToNextChat();

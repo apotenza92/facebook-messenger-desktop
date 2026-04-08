@@ -11,6 +11,9 @@ const { _electron: electron } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
+const isMacOS = process.platform === 'darwin';
+const primaryModifierKey = isMacOS ? 'meta' : 'control';
+
 // Test results tracking
 const results = {
   passed: [],
@@ -122,15 +125,53 @@ async function sendKeyCombo(electronApp, key, modifiers = {}) {
   }, { key, modifiers });
 }
 
+function getKeyEventSpec(input) {
+  if (typeof input === 'object' && input !== null) {
+    return input;
+  }
+
+  const key = input;
+  const code =
+    key === '/' ? 'Slash' :
+    key === '?' ? 'Slash' :
+    key === '[' ? 'BracketLeft' :
+    key === ']' ? 'BracketRight' :
+    key === 'Escape' ? 'Escape' :
+    key.length === 1 && key >= '1' && key <= '9' ? `Digit${key}` :
+    `Key${key.toUpperCase()}`;
+  const keyCode =
+    key === '/' || key === '?' ? 191 :
+    key === '[' ? 219 :
+    key === ']' ? 221 :
+    key === 'Escape' ? 27 :
+    key >= '1' && key <= '9' ? 48 + parseInt(key, 10) :
+    key.toUpperCase().charCodeAt(0);
+
+  return {
+    key,
+    code,
+    keyCode,
+    which: keyCode
+  };
+}
+
+function withPrimaryModifier(extra = {}) {
+  return {
+    [primaryModifierKey]: true,
+    ...extra
+  };
+}
+
 async function dispatchKeyEvent(electronApp, key, modifiers = {}) {
+  const spec = getKeyEventSpec(key);
   // Use JavaScript to dispatch keyboard event (more reliable for custom handlers)
   return await executeInContent(electronApp, `
     (function() {
       const event = new KeyboardEvent('keydown', {
-        key: '${key}',
-        code: '${key === '/' ? 'Slash' : key === '[' ? 'BracketLeft' : key === ']' ? 'BracketRight' : key === 'Escape' ? 'Escape' : key.length === 1 && key >= '1' && key <= '9' ? 'Digit' + key : 'Key' + key.toUpperCase()}',
-        keyCode: ${key === '/' ? 191 : key === '[' ? 219 : key === ']' ? 221 : key === 'Escape' ? 27 : key >= '1' && key <= '9' ? 48 + parseInt(key) : key.toUpperCase().charCodeAt(0)},
-        which: ${key === '/' ? 191 : key === '[' ? 219 : key === ']' ? 221 : key === 'Escape' ? 27 : key >= '1' && key <= '9' ? 48 + parseInt(key) : key.toUpperCase().charCodeAt(0)},
+        key: ${JSON.stringify(spec.key)},
+        code: ${JSON.stringify(spec.code)},
+        keyCode: ${spec.keyCode},
+        which: ${spec.which},
         ctrlKey: ${!!modifiers.control},
         metaKey: ${!!modifiers.meta},
         shiftKey: ${!!modifiers.shift},
@@ -140,6 +181,63 @@ async function dispatchKeyEvent(electronApp, key, modifiers = {}) {
       });
       document.dispatchEvent(event);
       return true;
+    })()
+  `);
+}
+
+function getThreadIdFromUrl(url) {
+  const match = String(url || '').match(/\/t\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+async function getSidebarThreadSnapshot(electronApp) {
+  return await executeInContent(electronApp, `
+    (function() {
+      const isVisible = (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+      };
+
+      const sidebar =
+        document.querySelector('[role="navigation"]:has([role="grid"])') ||
+        document.querySelector('[role="grid"][aria-label="Chats"]') ||
+        document.querySelector('[role="navigation"]');
+      if (!sidebar) {
+        return {
+          visibleThreadIds: [],
+          duplicateThreadIds: [],
+          currentThreadId: null
+        };
+      }
+
+      const rows = Array.from(sidebar.querySelectorAll('[role="row"], [role="listitem"]'));
+      const visibleThreadIds = rows
+        .filter((row) => isVisible(row))
+        .map((row) => {
+          const link = row.querySelector('a[href*="/t/"], a[href*="/e2ee/t/"]');
+          const href = link ? link.getAttribute('href') : '';
+          const match = String(href || '').match(/\/(?:messages\/(?:e2ee\/)?t|t)\/(\d+)/i);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean);
+
+      const duplicateThreadIds = Array.from(
+        visibleThreadIds.reduce((dupes, threadId, index, ids) => {
+          if (ids.indexOf(threadId) !== index) {
+            dupes.add(threadId);
+          }
+          return dupes;
+        }, new Set())
+      );
+
+      const currentMatch = window.location.href.match(/\/(?:messages\/(?:e2ee\/)?t|t)\/(\d+)/i);
+      return {
+        visibleThreadIds,
+        duplicateThreadIds,
+        currentThreadId: currentMatch ? currentMatch[1] : null
+      };
     })()
   `);
 }
@@ -208,8 +306,11 @@ async function runTests() {
   // ============================================================================
   console.log('\n📋 TEST 1: Keyboard Shortcuts Help (Cmd+/)');
   
-  // Dispatch the keyboard event using JavaScript (works with our event listener)
-  await dispatchKeyEvent(electronApp, '/', { meta: true });
+  await dispatchKeyEvent(
+    electronApp,
+    { key: '?', code: 'Slash', keyCode: 191, which: 191 },
+    withPrimaryModifier({ shift: true })
+  );
   await new Promise(r => setTimeout(r, 500));
   
   const shortcutsVisible = await executeInContent(electronApp, `
@@ -254,11 +355,11 @@ async function runTests() {
   }
 
   // ============================================================================
-  // TEST 2: Cmd/Ctrl + Shift + P → Command Palette
+  // TEST 2: Cmd/Ctrl + O → Quick Switcher
   // ============================================================================
-  console.log('\n📋 TEST 2: Command Palette (Cmd+Shift+P)');
+  console.log('\n📋 TEST 2: Quick Switcher (Cmd/Ctrl+O)');
   
-  await dispatchKeyEvent(electronApp, 'p', { meta: true, shift: true });
+  await dispatchKeyEvent(electronApp, 'o', withPrimaryModifier());
   await new Promise(r => setTimeout(r, 500));
   
   const paletteVisible = await executeInContent(electronApp, `
@@ -266,11 +367,11 @@ async function runTests() {
   `);
   
   await takeScreenshot(electronApp, 'shortcuts-04-command-palette.png');
-  logResult('Cmd+Shift+P opens command palette', paletteVisible);
+  logResult('Cmd/Ctrl+O opens quick switcher', paletteVisible);
   
   if (paletteVisible) {
-    // TEST 2b: Escape closes command palette
-    console.log('\n📋 TEST 2b: Escape closes command palette');
+    // TEST 2b: Escape closes quick switcher
+    console.log('\n📋 TEST 2b: Escape closes quick switcher');
     await dispatchKeyEvent(electronApp, 'Escape', {});
     await new Promise(r => setTimeout(r, 300));
     
@@ -279,11 +380,11 @@ async function runTests() {
     `);
     
     await takeScreenshot(electronApp, 'shortcuts-05-palette-closed.png');
-    logResult('Escape closes command palette', paletteHidden);
+    logResult('Escape closes quick switcher', paletteHidden);
     
     // TEST 2c: Typing filters contacts
-    console.log('\n📋 TEST 2c: Command palette filtering');
-    await dispatchKeyEvent(electronApp, 'p', { meta: true, shift: true });
+    console.log('\n📋 TEST 2c: Quick switcher filtering');
+    await dispatchKeyEvent(electronApp, 'o', withPrimaryModifier());
     await new Promise(r => setTimeout(r, 300));
     
     const initialContacts = await executeInContent(electronApp, `
@@ -317,36 +418,54 @@ async function runTests() {
   if (isLoggedIn) {
     console.log('\n📋 TEST 3: Chat Navigation (Cmd+1-9)');
     
-    // Get initial URL
-    const urlBefore = await getContentUrl(electronApp);
+    const sidebarBeforeJump = await getSidebarThreadSnapshot(electronApp);
+    const expectedFirstThreadId =
+      Array.isArray(sidebarBeforeJump?.visibleThreadIds) && sidebarBeforeJump.visibleThreadIds.length > 0
+        ? sidebarBeforeJump.visibleThreadIds[0]
+        : null;
     
     // Try Cmd+1 to jump to first chat
-    await dispatchKeyEvent(electronApp, '1', { meta: true });
+    await dispatchKeyEvent(electronApp, '1', withPrimaryModifier());
     await new Promise(r => setTimeout(r, 1000));
     
     const urlAfter1 = await getContentUrl(electronApp);
     await takeScreenshot(electronApp, 'shortcuts-06-after-cmd1.png');
     
-    // Check if URL changed to include /t/ (a chat thread)
-    const navigatedToChat = urlAfter1 && urlAfter1.includes('/t/');
+    const threadAfter1 = getThreadIdFromUrl(urlAfter1);
+    const navigatedToChat =
+      !!threadAfter1 &&
+      (!!expectedFirstThreadId ? threadAfter1 === expectedFirstThreadId : urlAfter1 && urlAfter1.includes('/t/'));
     logResult('Cmd+1 navigates to first chat', navigatedToChat);
     
     if (navigatedToChat) {
       // TEST 3b: Cmd+Shift+] for next chat
       console.log('\n📋 TEST 3b: Next Chat (Cmd+Shift+])');
-      await dispatchKeyEvent(electronApp, ']', { meta: true, shift: true });
+      const sidebarBeforeNext = await getSidebarThreadSnapshot(electronApp);
+      const threadBeforeNext = getThreadIdFromUrl(urlAfter1);
+
+      await dispatchKeyEvent(electronApp, ']', withPrimaryModifier({ shift: true }));
       await new Promise(r => setTimeout(r, 1000));
       
       const urlAfterNext = await getContentUrl(electronApp);
       await takeScreenshot(electronApp, 'shortcuts-07-after-next.png');
       
-      // URL should change (different thread ID)
-      const navigatedNext = urlAfterNext && urlAfterNext !== urlAfter1;
-      logResult('Cmd+Shift+] navigates to next chat', navigatedNext);
+      const threadAfterNext = getThreadIdFromUrl(urlAfterNext);
+      const navigatedNext =
+        !!threadBeforeNext &&
+        !!threadAfterNext &&
+        threadAfterNext !== threadBeforeNext;
+      const duplicateSummary = sidebarBeforeNext?.duplicateThreadIds?.length
+        ? ` (duplicate visible rows: ${sidebarBeforeNext.duplicateThreadIds.join(', ')})`
+        : '';
+      logResult(
+        'Cmd+Shift+] navigates to next visible thread',
+        navigatedNext,
+        navigatedNext ? '' : `before=${threadBeforeNext} after=${threadAfterNext}${duplicateSummary}`
+      );
       
       // TEST 3c: Cmd+Shift+[ for previous chat
       console.log('\n📋 TEST 3c: Previous Chat (Cmd+Shift+[)');
-      await dispatchKeyEvent(electronApp, '[', { meta: true, shift: true });
+      await dispatchKeyEvent(electronApp, '[', withPrimaryModifier({ shift: true }));
       await new Promise(r => setTimeout(r, 1000));
       
       const urlAfterPrev = await getContentUrl(electronApp);
@@ -366,7 +485,11 @@ async function runTests() {
   console.log('\n📋 TEST 4: Theme Detection');
   
   // Open shortcuts help
-  await dispatchKeyEvent(electronApp, '/', { meta: true });
+  await dispatchKeyEvent(
+    electronApp,
+    { key: '?', code: 'Slash', keyCode: 191, which: 191 },
+    withPrimaryModifier({ shift: true })
+  );
   await new Promise(r => setTimeout(r, 300));
   
   const overlayStyles = await executeInContent(electronApp, `

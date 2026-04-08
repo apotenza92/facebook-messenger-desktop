@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0-beta.50] - 2026-04-08
+
+### Fixed
+
+- **Keyboard shortcuts: restore the injected shortcut layer and harden navigation bindings**
+  - Isolate injected page scripts so a helper-policy script cannot abort the main Messenger page injection path and silently disable keyboard shortcuts.
+  - Match `Cmd/Ctrl+/`, `Cmd/Ctrl+O`, `Cmd/Ctrl+1-9`, and `Cmd/Ctrl+Shift+[ / ]` by `KeyboardEvent.code` with sensible `key` fallbacks, so symbol shortcuts keep working across keyboard layouts.
+  - De-duplicate visible sidebar thread rows and add active-row fallbacks so next/previous chat navigation moves to a different visible thread instead of getting stuck on duplicate rows.
+- **Shortcut smoke coverage: align automated tests with the live bindings**
+  - Update the regression script to validate `Cmd/Ctrl+O` as the canonical quick switcher shortcut, use layout-safe slash events for the help overlay, and assert that next-chat navigation leaves the current visible thread.
+
+### Validation
+
+- `npm run build`
+- `node scripts/test-keyboard-shortcuts.js`
+
 ## [1.3.0-beta.49] - 2026-04-08
 
 ### Fixed
