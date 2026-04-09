@@ -27,6 +27,7 @@
     ambiguous: boolean;
     muted: boolean;
     reason: string;
+    debug?: Record<string, unknown>;
   };
   type ObservedSidebarNotificationDecision = NotificationMatchResult & {
     observedHref?: string;
@@ -1703,6 +1704,16 @@
           normalizedObservedHref,
           conversationCandidates,
         );
+        log("Mutation notification decision", decision.debug || {
+          observedTitle: info.title,
+          observedBody: info.body,
+          observedHref: normalizedObservedHref,
+          matchedHref: decision.matchedHref,
+          matchedObservedHref: decision.matchedObservedHref,
+          confidence: decision.confidence,
+          muted: decision.muted,
+          finalReason: decision.reason,
+        });
 
         if (!decision.shouldNotify || !decision.matchedHref) {
           log("Mutation notification suppressed by policy", {

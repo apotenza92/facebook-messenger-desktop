@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.52] - 2026-04-09
+
+### Fixed
+
+- **Issue #49 follow-up: defer same-route Marketplace clears and expand muted-notification diagnostics** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep a confirmed Marketplace session alive through brief same-route ordinary-chat rerenders until the ordinary-only state has repeated long enough to be trusted, so the Marketplace back button and reduced crop do not drop out after a valid confirmation.
+  - Record when an ordinary-only clear is pending versus actually applied, including the last Marketplace match age and corroboration count, so future debug bundles can pinpoint why a Marketplace session stayed or cleared.
+  - Attach structured candidate-ranking provenance to mutation notification decisions and keep a larger recent notification log window in exported debug bundles, so intermittent muted-group leaks are easier to trace even when the export is taken a few seconds late.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.0-beta.51] - 2026-04-08
 
 ### Fixed

@@ -814,6 +814,58 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 long same-route idle gaps should not silently expire a confirmed Marketplace session",
   );
 
+  const pendingOrdinaryChatClear = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 38_900,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: confirmedSession.nextSession,
+    ordinaryClearPending: true,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: pendingOrdinaryChatClear.sessionActive,
+      transition: pendingOrdinaryChatClear.transition,
+      signalSource: pendingOrdinaryChatClear.signalSource,
+      lifecycleReason: pendingOrdinaryChatClear.lifecycleReason,
+      visualCropHeight: pendingOrdinaryChatClear.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "ordinary-clear-pending",
+      signalSource: "bridge",
+      lifecycleReason: "ordinary-clear-pending",
+      visualCropHeight: 56,
+    }),
+    "#49 same-route ordinary-only rerenders should stay active while the Marketplace clear is still pending",
+  );
+
+  const returningMarketplaceCancelsPendingClear =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread",
+      nowMs: 38_950,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: pendingOrdinaryChatClear.nextSession,
+      weakHeaderBand: matchingWeakHeaderBand,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: returningMarketplaceCancelsPendingClear.sessionActive,
+      transition: returningMarketplaceCancelsPendingClear.transition,
+      signalSource: returningMarketplaceCancelsPendingClear.signalSource,
+      lifecycleReason: returningMarketplaceCancelsPendingClear.lifecycleReason,
+      visualCropHeight:
+        returningMarketplaceCancelsPendingClear.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "weak-header",
+      lifecycleReason: "same-thread-rerender",
+      visualCropHeight: 56,
+    }),
+    "#49 any returning Marketplace evidence should cancel a pending ordinary clear on the same route",
+  );
+
   const explicitOrdinaryChatClear = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
     nowMs: 39_000,
@@ -2232,6 +2284,21 @@ const runNotificationPolicyTests = () => {
     true,
     "#46 observed direct conversation should match the changed sidebar row",
   );
+  assertEqual(
+    observedDirectMatch.debug?.matchedHref,
+    "/t/taylor",
+    "#49 observed direct conversation debug should record the matched href",
+  );
+  assertEqual(
+    observedDirectMatch.debug?.matchedObservedHref,
+    true,
+    "#49 observed direct conversation debug should record the observed-row match",
+  );
+  assert(
+    Array.isArray(observedDirectMatch.debug?.topCandidates) &&
+      observedDirectMatch.debug.topCandidates.length > 0,
+    "#49 observed direct conversation debug should include scored candidate summaries",
+  );
 
   const observedMutedConflict = mutedConflictEvidence.observedDecision;
   assertEqual(
@@ -2243,6 +2310,18 @@ const runNotificationPolicyTests = () => {
     observedMutedConflict.reason,
     "muted-conflict",
     "#46 observed muted-conflict sidebar updates should preserve muted-conflict reason",
+  );
+  assertEqual(
+    observedMutedConflict.debug?.finalReason,
+    "muted-conflict",
+    "#49 muted-conflict debug should preserve the final decision reason",
+  );
+  assert(
+    Array.isArray(observedMutedConflict.debug?.topCandidates) &&
+      observedMutedConflict.debug.topCandidates.some(
+        (candidate: { muted?: boolean }) => candidate.muted === true,
+      ),
+    "#49 muted-conflict debug should include muted candidate summaries",
   );
 
   const observedRowMismatch =
@@ -2278,6 +2357,29 @@ const runNotificationPolicyTests = () => {
     observedRowMismatch.reason,
     "observed-row-mismatch",
     "#46 observed sidebar mismatches should report observed-row-mismatch",
+  );
+  assertEqual(
+    observedRowMismatch.debug?.finalReason,
+    "observed-row-mismatch",
+    "#49 observed sidebar mismatch debug should preserve the mismatch reason",
+  );
+  assertEqual(
+    observedRowMismatch.debug?.matchedObservedHref,
+    false,
+    "#49 observed sidebar mismatch debug should record that the changed row did not match",
+  );
+
+  const mainSource = fs.readFileSync(
+    path.join(APP_ROOT, "src/main/main.ts"),
+    "utf8",
+  );
+  assert(
+    mainSource.includes("const MAX_NOTIFICATION_DEBUG_EVENTS = 12000;"),
+    "#49 notification debug retention should keep 12000 in-memory events",
+  );
+  assert(
+    mainSource.includes("const DEBUG_LOG_SUMMARY_TAIL_LINES = 8000;"),
+    "#49 debug summary export should keep the larger 8000-line tail",
   );
 
   const globalSocialSuppressed =

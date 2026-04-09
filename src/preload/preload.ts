@@ -333,6 +333,8 @@ ipcRenderer.on(
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
   const MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS = 10_000;
   const MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES = 2;
+  const MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS = 2_500;
+  const MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES = 3;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -393,6 +395,10 @@ ipcRenderer.on(
       "right-pane-action" | "item-link"
     > | null;
     weakBootstrapStablePasses: number;
+    ordinaryClearPending: boolean;
+    ordinaryClearStablePasses: number;
+    ordinaryClearEligible: boolean;
+    ordinaryClearLastMarketplaceMatchAgeMs: number | null;
     matchedSignals: string[];
   };
   type MarketplaceWeakBootstrapState = {
@@ -404,6 +410,11 @@ ipcRenderer.on(
     stablePasses: number;
     lastSeenAt: number;
     visualCropHeight: number | null;
+  };
+  type MarketplaceOrdinaryClearState = {
+    routeKey: string;
+    stablePasses: number;
+    lastSeenAt: number;
   };
   type MediaHeaderOverlayKind =
     | "menu"
@@ -437,6 +448,7 @@ ipcRenderer.on(
   let lastHeaderSuppressionDetectedAt = 0;
   let marketplaceVisualSession: MarketplaceVisualSessionState | null = null;
   let marketplaceWeakBootstrapState: MarketplaceWeakBootstrapState | null = null;
+  let marketplaceOrdinaryClearState: MarketplaceOrdinaryClearState | null = null;
   let lastInterceptedExternalNavigation:
     | {
         url: string;
@@ -1364,6 +1376,10 @@ ipcRenderer.on(
       weakBootstrapSettled: false,
       weakBootstrapPendingSignalSource: null,
       weakBootstrapStablePasses: 0,
+      ordinaryClearPending: false,
+      ordinaryClearStablePasses: 0,
+      ordinaryClearEligible: false,
+      ordinaryClearLastMarketplaceMatchAgeMs: null,
       matchedSignals: [],
     });
 
@@ -1534,6 +1550,7 @@ ipcRenderer.on(
         }
         marketplaceVisualSession = null;
         marketplaceWeakBootstrapState = null;
+        marketplaceOrdinaryClearState = null;
         return state;
       }
 
@@ -1552,10 +1569,22 @@ ipcRenderer.on(
       ) {
         marketplaceWeakBootstrapState = null;
       }
+      if (
+        marketplaceOrdinaryClearState &&
+        marketplaceOrdinaryClearState.routeKey !== routeKey
+      ) {
+        marketplaceOrdinaryClearState = null;
+      }
       const currentMarketplaceSession = marketplaceVisualSession;
       const matchedSignals = new Set<string>();
       const weakBootstrapSettled = isMarketplaceWeakBootstrapSettled();
       state.weakBootstrapSettled = weakBootstrapSettled;
+      if (currentMarketplaceSession) {
+        state.ordinaryClearLastMarketplaceMatchAgeMs = Math.max(
+          0,
+          now - currentMarketplaceSession.lastMatchedAt,
+        );
+      }
       const rightPaneMinLeft = Math.max(
         160,
         Math.round(window.innerWidth * 0.25),
@@ -1768,6 +1797,44 @@ ipcRenderer.on(
         marketplaceWeakBootstrapState = null;
       }
 
+      const ordinaryChatOnlyDetected =
+        currentMarketplaceSession !== null &&
+        state.headerOrdinaryChatDetected &&
+        !state.headerBackMarketplaceDetected &&
+        !weakHeaderBand &&
+        !weakSignalSource;
+      let ordinaryClearPending = false;
+      let explicitOrdinaryChatDetected = false;
+      if (ordinaryChatOnlyDetected && currentMarketplaceSession) {
+        const stablePasses =
+          marketplaceOrdinaryClearState &&
+          marketplaceOrdinaryClearState.routeKey === routeKey
+            ? marketplaceOrdinaryClearState.stablePasses + 1
+            : 1;
+        const eligible =
+          state.ordinaryClearLastMarketplaceMatchAgeMs !== null &&
+          state.ordinaryClearLastMarketplaceMatchAgeMs >=
+            MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS &&
+          stablePasses >= MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES;
+        marketplaceOrdinaryClearState = {
+          routeKey,
+          stablePasses,
+          lastSeenAt: now,
+        };
+        state.ordinaryClearStablePasses = stablePasses;
+        state.ordinaryClearEligible = eligible;
+        if (eligible) {
+          explicitOrdinaryChatDetected = true;
+          matchedSignals.add("ordinary-clear-eligible");
+        } else {
+          ordinaryClearPending = true;
+          state.ordinaryClearPending = true;
+          matchedSignals.add("ordinary-clear-pending");
+        }
+      } else {
+        marketplaceOrdinaryClearState = null;
+      }
+
       if (
         strongSignalSource !== "strong-header" &&
         strongSignalSource &&
@@ -1796,11 +1863,8 @@ ipcRenderer.on(
             : strongVisualCropHeight,
         strongHeaderBand,
         weakHeaderBand,
-        explicitOrdinaryChatDetected:
-          currentMarketplaceSession !== null &&
-          state.headerOrdinaryChatDetected &&
-          !state.headerBackMarketplaceDetected &&
-          !weakHeaderBand,
+        explicitOrdinaryChatDetected,
+        ordinaryClearPending,
       });
       marketplaceVisualSession = sessionDecision.nextSession;
 

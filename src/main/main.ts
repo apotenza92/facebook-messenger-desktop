@@ -26,6 +26,7 @@ import * as fs from "fs";
 import {
   NotificationHandler,
   type NotificationData,
+  resolveNotificationDisplayBoundary,
 } from "./notification-handler";
 import { BadgeManager } from "./badge-manager";
 import { BackgroundService } from "./background-service";
@@ -360,6 +361,29 @@ function showNativeNotification(input: {
   reason?: string;
 }): void {
   const { handler, created } = ensureNotificationHandler();
+  const displayBoundary = resolveNotificationDisplayBoundary(input.data);
+  pushNotificationDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "show-notification-classified",
+    webContentsId: input.webContentsId,
+    url: input.url,
+    displaySource: input.displaySource,
+    displayPath: created ? "main-fallback" : "main",
+    reason: input.reason,
+    payload: {
+      raw: {
+        title: input.data.title,
+        body: input.data.body,
+        href: input.data.href,
+        tag: input.data.tag,
+      },
+      mainProcessSuppressionReason: null,
+      displayBoundarySuppressionReason: displayBoundary.reason,
+      normalized: displayBoundary.normalizedData,
+      shown: !displayBoundary.suppress,
+    },
+  });
   const shown = handler.showNotification(input.data);
   if (!shown) {
     pushNotificationDebugEvent({
@@ -370,8 +394,8 @@ function showNativeNotification(input: {
       url: input.url,
       displaySource: input.displaySource,
       displayPath: created ? "main-fallback" : "main",
-      reason: input.reason ?? "display-boundary-policy",
-      payload: input.data,
+      reason: input.reason ?? displayBoundary.reason ?? "display-boundary-policy",
+      payload: displayBoundary.normalizedData,
     });
     return;
   }
@@ -384,7 +408,7 @@ function showNativeNotification(input: {
     displaySource: input.displaySource,
     displayPath: created ? "main-fallback" : "main",
     reason: input.reason,
-    payload: input.data,
+    payload: displayBoundary.normalizedData,
   });
 }
 
@@ -444,7 +468,8 @@ type MediaOverlayDebugEvent = {
 
 const MAX_MEDIA_OVERLAY_DEBUG_EVENTS = 3000;
 const MAX_INCOMING_CALL_DEBUG_EVENTS = 3000;
-const MAX_NOTIFICATION_DEBUG_EVENTS = 4000;
+const MAX_NOTIFICATION_DEBUG_EVENTS = 12000;
+const DEBUG_LOG_SUMMARY_TAIL_LINES = 8000;
 const mediaOverlayDebugEvents: MediaOverlayDebugEvent[] = [];
 const incomingCallDebugEvents: IncomingCallDebugEvent[] = [];
 const notificationDebugEvents: NotificationDebugEvent[] = [];
@@ -800,7 +825,10 @@ function buildIssue45DebugReport(): Record<string, unknown> {
       currentMessengerUrl: getMessengerWebContents()?.getURL() || null,
     },
     inMemoryEvents: mediaOverlayDebugEvents,
-    ndjsonTail: readTailLinesFromFile(debugLogPath, 2000),
+    ndjsonTail: readTailLinesFromFile(
+      debugLogPath,
+      DEBUG_LOG_SUMMARY_TAIL_LINES,
+    ),
   };
 }
 
@@ -927,7 +955,7 @@ function buildDebugLogFileSummary(
     fileName,
     sourcePath,
     exists: fs.existsSync(sourcePath),
-    tailLines: readTailLinesFromFile(sourcePath, 2000),
+    tailLines: readTailLinesFromFile(sourcePath, DEBUG_LOG_SUMMARY_TAIL_LINES),
   };
 }
 
@@ -7897,6 +7925,28 @@ function setupIpcHandlers(): void {
       data as Partial<NotificationData>,
     );
     if (suppression.suppress) {
+      pushNotificationDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "show-notification-classified",
+        webContentsId: event.sender.id,
+        url: event.sender.getURL(),
+        displaySource: "bridge",
+        displayPath: "main",
+        reason: suppression.reason,
+        payload: {
+          raw: {
+            title: data?.title,
+            body: data?.body,
+            href: data?.href,
+            tag: data?.tag,
+          },
+          mainProcessSuppressionReason: suppression.reason,
+          displayBoundarySuppressionReason: null,
+          normalized: data,
+          shown: false,
+        },
+      });
       pushNotificationDebugEvent({
         timestamp: Date.now(),
         source: "main",

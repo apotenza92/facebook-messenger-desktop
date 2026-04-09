@@ -30,6 +30,7 @@ export type MarketplaceSessionLifecycleReason =
   | "confirmed-marketplace-thread"
   | "weak-bootstrap-confirmed"
   | "same-thread-rerender"
+  | "ordinary-clear-pending"
   | "route-changed"
   | "explicit-ordinary-chat"
   | "thread-destroyed";
@@ -38,6 +39,7 @@ export type MarketplaceVisualSessionTransition =
   | "strong-confirmed"
   | "weak-bootstrap-pending"
   | "weak-bootstrap-confirmed"
+  | "ordinary-clear-pending"
   | "bridged"
   | "cleared"
   | "rejected"
@@ -279,6 +281,7 @@ export function resolveMarketplaceVisualSessionDecision(input: {
   strongHeaderBand?: MarketplaceThreadHeaderBand | null;
   weakHeaderBand?: MarketplaceThreadHeaderBand | null;
   explicitOrdinaryChatDetected?: boolean;
+  ordinaryClearPending?: boolean;
 }): MarketplaceVisualSessionDecision {
   const hadPreviousSession =
     input.previousSession !== null && input.previousSession !== undefined;
@@ -396,6 +399,27 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       rejectionReason: null,
       weakHeaderMatchesSessionHeaderBand,
       nextSession: null,
+    };
+  }
+
+  if (input.ordinaryClearPending) {
+    const nextSession: MarketplaceVisualSessionState = {
+      ...previousSession,
+      signalSource: "bridge",
+      lifecycleReason: "ordinary-clear-pending",
+      lastLifecycleAt: input.nowMs,
+    };
+
+    return {
+      sessionActive: true,
+      shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+      visualCropHeight: nextSession.visualCropHeight,
+      transition: "ordinary-clear-pending",
+      signalSource: "bridge",
+      lifecycleReason: "ordinary-clear-pending",
+      rejectionReason: null,
+      weakHeaderMatchesSessionHeaderBand,
+      nextSession,
     };
   }
 

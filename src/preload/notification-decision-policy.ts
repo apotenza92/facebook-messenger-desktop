@@ -26,12 +26,39 @@ type NotificationMatchResult = {
     | "observed-row-mismatch";
   ambiguityReason?: "placeholder-title";
   placeholderTitle?: string;
+  debug?: NotificationDecisionDebug;
 };
 
 type ObservedSidebarNotificationDecision = NotificationMatchResult & {
   observedHref?: string;
   matchedObservedHref: boolean;
   shouldNotify: boolean;
+};
+
+type NotificationCandidateDebugEntry = {
+  href: string;
+  title: string;
+  muted: boolean;
+  unread: boolean;
+  score: number;
+  reasons: string[];
+};
+
+type NotificationDecisionDebug = {
+  observedTitle: string;
+  observedBody: string;
+  observedHref?: string;
+  matchedHref?: string;
+  matchedObservedHref?: boolean;
+  confidence: number;
+  muted: boolean;
+  finalReason: NotificationMatchResult["reason"];
+  topCandidates: NotificationCandidateDebugEntry[];
+};
+
+type ScoredNotificationCandidate = {
+  candidate: NotificationCandidate;
+  score: number;
 };
 
 type NotificationDeduper = {
@@ -227,6 +254,85 @@ function clampScore(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+function describeNotificationCandidateReasons(
+  payload: NotificationPayload,
+  candidate: NotificationCandidate,
+): string[] {
+  const reasons: string[] = [];
+  const payloadTitle = normalizeText(payload.title);
+  const payloadBody = normalizeText(payload.body);
+  const candidateTitle = normalizeText(candidate.title);
+  const candidateBody = normalizeText(candidate.body);
+  const searchCorpus = buildCandidateSearchCorpus(candidate);
+
+  if (payloadTitle && candidateTitle && payloadTitle === candidateTitle) {
+    reasons.push("title-exact");
+  } else if (
+    tokenOverlapRatio(tokenize(payload.title), tokenize(candidate.title)) >= 0.5
+  ) {
+    reasons.push("title-overlap");
+  }
+
+  if (
+    payloadBody &&
+    bodyCorroboratesCandidate(payload.body, candidate.body, searchCorpus)
+  ) {
+    reasons.push("body-corroborated");
+  } else if (payloadBody && searchCorpus.includes(payloadBody)) {
+    reasons.push("search-corpus-body-match");
+  }
+
+  const senderActor =
+    extractSenderStyleActor(candidateBody) ??
+    extractSenderStyleActor(candidate.searchText || "");
+  if (payloadTitle && senderActor && areLikelySamePersonName(payloadTitle, senderActor)) {
+    reasons.push("sender-actor-match");
+  }
+
+  if (candidate.muted) {
+    reasons.push("muted");
+  }
+  if (candidate.unread) {
+    reasons.push("unread");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("score-only");
+  }
+
+  return reasons;
+}
+
+function buildNotificationDecisionDebug(input: {
+  payload: NotificationPayload;
+  scored: ScoredNotificationCandidate[];
+  matchedHref?: string;
+  observedHref?: string;
+  matchedObservedHref?: boolean;
+  confidence: number;
+  muted: boolean;
+  finalReason: NotificationMatchResult["reason"];
+}): NotificationDecisionDebug {
+  return {
+    observedTitle: String(input.payload.title || "").replace(/\s+/g, " ").trim(),
+    observedBody: String(input.payload.body || "").replace(/\s+/g, " ").trim(),
+    observedHref: input.observedHref,
+    matchedHref: input.matchedHref,
+    matchedObservedHref: input.matchedObservedHref,
+    confidence: input.confidence,
+    muted: input.muted,
+    finalReason: input.finalReason,
+    topCandidates: input.scored.slice(0, 3).map((entry) => ({
+      href: entry.candidate.href,
+      title: entry.candidate.title,
+      muted: entry.candidate.muted,
+      unread: entry.candidate.unread,
+      score: entry.score,
+      reasons: describeNotificationCandidateReasons(input.payload, entry.candidate),
+    })),
+  };
+}
+
 function extractSenderStyleActor(value: string): string | null {
   const normalized = normalizeText(value);
   if (!normalized) return null;
@@ -339,6 +445,7 @@ function createMutedConflictResult(
   options: {
     ambiguityReason?: "placeholder-title";
     placeholderTitle?: string;
+    debug?: NotificationDecisionDebug;
   } = {},
 ): NotificationMatchResult {
   return {
@@ -348,6 +455,7 @@ function createMutedConflictResult(
     reason: "muted-conflict",
     ambiguityReason: options.ambiguityReason,
     placeholderTitle: options.placeholderTitle,
+    debug: options.debug,
   };
 }
 
@@ -454,21 +562,30 @@ function resolveNativeNotificationTarget(
   payload: NotificationPayload,
   unreadRows: NotificationCandidate[],
 ): NotificationMatchResult {
+  const scored: ScoredNotificationCandidate[] = Array.isArray(unreadRows)
+    ? unreadRows
+        .map((candidate) => ({
+          candidate,
+          score: computeCandidateScore(payload, candidate),
+        }))
+        .sort((a, b) => b.score - a.score)
+    : [];
+
   if (!Array.isArray(unreadRows) || unreadRows.length === 0) {
     return {
       confidence: 0,
       ambiguous: true,
       muted: false,
       reason: "no-candidates",
+      debug: buildNotificationDecisionDebug({
+        payload,
+        scored,
+        confidence: 0,
+        muted: false,
+        finalReason: "no-candidates",
+      }),
     };
   }
-
-  const scored = unreadRows
-    .map((candidate) => ({
-      candidate,
-      score: computeCandidateScore(payload, candidate),
-    }))
-    .sort((a, b) => b.score - a.score);
 
   const top = scored[0];
   const second = scored[1];
@@ -476,10 +593,27 @@ function resolveNativeNotificationTarget(
   const hasMutedUnreadCandidate = unreadRows.some(
     (candidate) => candidate.muted,
   );
+  const createMutedConflict = (
+    confidence: number,
+    options: {
+      ambiguityReason?: "placeholder-title";
+      placeholderTitle?: string;
+    } = {},
+  ): NotificationMatchResult =>
+    createMutedConflictResult(confidence, {
+      ...options,
+      debug: buildNotificationDecisionDebug({
+        payload,
+        scored,
+        confidence,
+        muted: true,
+        finalReason: "muted-conflict",
+      }),
+    });
 
   if (!top || top.score < MIN_CONFIDENCE) {
     if (placeholderTitle && hasMutedUnreadCandidate) {
-      return createMutedConflictResult(top?.score ?? 0, {
+      return createMutedConflict(top?.score ?? 0, {
         ambiguityReason: "placeholder-title",
         placeholderTitle,
       });
@@ -490,6 +624,13 @@ function resolveNativeNotificationTarget(
       ambiguous: true,
       muted: false,
       reason: "low-confidence",
+      debug: buildNotificationDecisionDebug({
+        payload,
+        scored,
+        confidence: top?.score ?? 0,
+        muted: false,
+        finalReason: "low-confidence",
+      }),
     };
   }
 
@@ -544,7 +685,7 @@ function resolveNativeNotificationTarget(
       terseMutedGroupAliasConflict ||
       mutedGroupPreviewContainsBody
     ) {
-      return createMutedConflictResult(
+      return createMutedConflict(
         top.score,
         placeholderTitle
           ? {
@@ -573,7 +714,7 @@ function resolveNativeNotificationTarget(
     );
 
     if (mutedPreviewOverlap) {
-      return createMutedConflictResult(top.score, {
+      return createMutedConflict(top.score, {
         ambiguityReason: "placeholder-title",
         placeholderTitle,
       });
@@ -595,13 +736,20 @@ function resolveNativeNotificationTarget(
       second.score >= MIN_CONFIDENCE - 0.1
     ) {
       if (second.candidate.muted) {
-        return createMutedConflictResult(top.score);
+        return createMutedConflict(top.score);
       }
       return {
         confidence: top.score,
         ambiguous: true,
         muted: false,
         reason: "ambiguous-candidates",
+        debug: buildNotificationDecisionDebug({
+          payload,
+          scored,
+          confidence: top.score,
+          muted: false,
+          finalReason: "ambiguous-candidates",
+        }),
       };
     }
 
@@ -611,26 +759,40 @@ function resolveNativeNotificationTarget(
       second.score >= MIN_CONFIDENCE - 0.1
     ) {
       if (top.candidate.muted) {
-        return createMutedConflictResult(top.score);
+        return createMutedConflict(top.score);
       }
       return {
         confidence: top.score,
         ambiguous: true,
         muted: false,
         reason: "ambiguous-candidates",
+        debug: buildNotificationDecisionDebug({
+          payload,
+          scored,
+          confidence: top.score,
+          muted: false,
+          finalReason: "ambiguous-candidates",
+        }),
       };
     }
   }
 
   if (second && top.score - second.score < AMBIGUITY_DELTA) {
     if (top.candidate.muted || second.candidate.muted) {
-      return createMutedConflictResult(top.score);
+      return createMutedConflict(top.score);
     }
     return {
       confidence: top.score,
       ambiguous: true,
       muted: false,
       reason: "ambiguous-candidates",
+      debug: buildNotificationDecisionDebug({
+        payload,
+        scored,
+        confidence: top.score,
+        muted: false,
+        finalReason: "ambiguous-candidates",
+      }),
     };
   }
 
@@ -640,6 +802,14 @@ function resolveNativeNotificationTarget(
     ambiguous: false,
     muted: top.candidate.muted,
     reason: "matched",
+    debug: buildNotificationDecisionDebug({
+      payload,
+      scored,
+      matchedHref: top.candidate.href,
+      confidence: top.score,
+      muted: top.candidate.muted,
+      finalReason: "matched",
+    }),
   };
 }
 
@@ -662,6 +832,23 @@ function resolveObservedSidebarNotificationTarget(
       observedHref: normalizedObservedHref || undefined,
       matchedObservedHref,
       shouldNotify: false,
+      debug: {
+        ...(match.debug ||
+          buildNotificationDecisionDebug({
+            payload,
+            scored: [],
+            matchedHref: match.matchedHref,
+            confidence: match.confidence,
+            muted: match.muted,
+            finalReason: match.reason,
+          })),
+        observedHref: normalizedObservedHref || undefined,
+        matchedHref: match.matchedHref,
+        matchedObservedHref,
+        confidence: match.confidence,
+        muted: match.muted,
+        finalReason: match.reason,
+      },
     };
   }
 
@@ -675,6 +862,22 @@ function resolveObservedSidebarNotificationTarget(
       observedHref: normalizedObservedHref,
       matchedObservedHref: false,
       shouldNotify: false,
+      debug: {
+        ...(match.debug || buildNotificationDecisionDebug({
+          payload,
+          scored: [],
+          matchedHref: match.matchedHref,
+          confidence: match.confidence,
+          muted: false,
+          finalReason: "observed-row-mismatch",
+        })),
+        observedHref: normalizedObservedHref,
+        matchedHref: match.matchedHref,
+        matchedObservedHref: false,
+        confidence: match.confidence,
+        muted: false,
+        finalReason: "observed-row-mismatch",
+      },
     };
   }
 
@@ -683,6 +886,22 @@ function resolveObservedSidebarNotificationTarget(
     observedHref: normalizedObservedHref || undefined,
     matchedObservedHref,
     shouldNotify: true,
+    debug: {
+      ...(match.debug || buildNotificationDecisionDebug({
+        payload,
+        scored: [],
+        matchedHref: match.matchedHref,
+        confidence: match.confidence,
+        muted: match.muted,
+        finalReason: match.reason,
+      })),
+      observedHref: normalizedObservedHref || undefined,
+      matchedHref: match.matchedHref,
+      matchedObservedHref,
+      confidence: match.confidence,
+      muted: match.muted,
+      finalReason: match.reason,
+    },
   };
 }
 

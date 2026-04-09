@@ -23,9 +23,64 @@ export interface NotificationSoundDecision {
   reasons?: string[];
 }
 
+export interface NotificationDisplayBoundaryDecision {
+  suppress: boolean;
+  reason: string | null;
+  normalizedData: NotificationData;
+}
+
 export type NotificationSoundDecisionResolver = (
   data: NotificationData,
 ) => NotificationSoundDecision | null | undefined;
+
+export function resolveNotificationDisplayBoundary(
+  data: NotificationData,
+): NotificationDisplayBoundaryDecision {
+  const normalizedTitle = String(data.title || "").trim();
+  const activityPayload = {
+    title: normalizedTitle,
+    body: String(data.body || "").replace(/\s+/g, " ").trim(),
+  };
+  if (classifyGroupManagementNotification(activityPayload).isGroupManagement) {
+    return {
+      suppress: true,
+      reason: "display-boundary-group-management-activity",
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: activityPayload.body,
+      },
+    };
+  }
+
+  if (isLikelyGlobalFacebookNotification(activityPayload)) {
+    return {
+      suppress: true,
+      reason: "display-boundary-shared-global-activity",
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: activityPayload.body,
+      },
+    };
+  }
+
+  const normalizedBody =
+    /incoming\s+call/i.test(normalizedTitle) ||
+    /is\s+calling\s+you/i.test(String(data.body || ""))
+      ? buildIncomingCallNotificationBody({ body: String(data.body || "") })
+      : String(data.body || "");
+
+  return {
+    suppress: false,
+    reason: null,
+    normalizedData: {
+      ...data,
+      title: normalizedTitle,
+      body: normalizedBody,
+    },
+  };
+}
 
 export class NotificationHandler {
   private activeNotifications: Map<string, Notification> = new Map();
@@ -78,30 +133,16 @@ export class NotificationHandler {
 
     console.log('[NotificationHandler] Showing notification:', { title: data.title, body: data.body, href: data.href });
 
-    const normalizedTitle = String(data.title || '').trim();
-    const activityPayload = {
-      title: normalizedTitle,
-      body: String(data.body || '').replace(/\s+/g, ' ').trim(),
-    };
-    if (
-      classifyGroupManagementNotification(activityPayload).isGroupManagement ||
-      isLikelyGlobalFacebookNotification(activityPayload)
-    ) {
-      console.log('[NotificationHandler] Suppressed non-message notification at display boundary', activityPayload);
+    const displayBoundary = resolveNotificationDisplayBoundary(data);
+    if (displayBoundary.suppress) {
+      console.log('[NotificationHandler] Suppressed non-message notification at display boundary', {
+        reason: displayBoundary.reason,
+        payload: displayBoundary.normalizedData,
+      });
       return false;
     }
 
-    const normalizedBody =
-      /incoming\s+call/i.test(normalizedTitle) ||
-      /is\s+calling\s+you/i.test(String(data.body || ''))
-        ? buildIncomingCallNotificationBody({ body: String(data.body || '') })
-        : String(data.body || '');
-
-    const normalizedData: NotificationData = {
-      ...data,
-      title: normalizedTitle,
-      body: normalizedBody,
-    };
+    const normalizedData = displayBoundary.normalizedData;
 
     const requestedSilent = normalizedData.silent === true;
     const soundDecision = this.resolveSoundDecision
