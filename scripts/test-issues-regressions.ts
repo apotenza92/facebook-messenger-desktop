@@ -23,6 +23,7 @@ const {
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
   resolveMarketplaceVisualSessionDecision,
+  shouldConfirmWeakMarketplaceBootstrap,
   shouldRetainMarketplaceVisualCrop,
 } = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
 const {
@@ -590,6 +591,27 @@ const runMarketplaceThreadPolicyTests = () => {
       rejectionReason: null,
     }),
     "#49 fresh-route weak Marketplace signals should remain pending until the corroboration threshold is met",
+  );
+
+  assertEqual(
+    shouldConfirmWeakMarketplaceBootstrap({
+      stablePasses: 2,
+      firstSeenAgeMs: 22,
+      requiredPasses: 2,
+      minConfirmAgeMs: 800,
+    }),
+    false,
+    "#49 fresh-route weak Marketplace signals should not confirm during the immediate route handoff burst",
+  );
+  assertEqual(
+    shouldConfirmWeakMarketplaceBootstrap({
+      stablePasses: 2,
+      firstSeenAgeMs: 820,
+      requiredPasses: 2,
+      minConfirmAgeMs: 800,
+    }),
+    true,
+    "#49 settled weak Marketplace signals should confirm only after the route has stayed stable long enough",
   );
 
   const weakBootstrapConfirmed = resolveMarketplaceVisualSessionDecision({

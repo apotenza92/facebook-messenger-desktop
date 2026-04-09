@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0-beta.53] - 2026-04-09
+
+### Fixed
+
+- **Issue #49 follow-up: delay weak Marketplace route handoff confirmation until the route has actually settled** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep fresh-route weak Marketplace signals in a pending state until the same route has stayed stable for repeated scans long enough to rule out the immediate handoff churn that was still promoting the Marketplace reduced-crop session too early.
+  - Add weak-bootstrap age and confirmation-eligibility debug fields to Marketplace logging, so future bundles show whether a route was still settling or had genuinely matured enough to confirm.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.0-beta.52] - 2026-04-09
 
 ### Fixed

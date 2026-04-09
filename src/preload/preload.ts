@@ -39,6 +39,7 @@ import {
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
   resolveMarketplaceVisualSessionDecision,
+  shouldConfirmWeakMarketplaceBootstrap,
   type MarketplaceSessionLifecycleReason,
   type MarketplaceSessionSignalSource,
   type MarketplaceThreadHeaderBand,
@@ -333,6 +334,7 @@ ipcRenderer.on(
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
   const MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS = 10_000;
   const MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES = 2;
+  const MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS = 800;
   const MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS = 2_500;
   const MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES = 3;
 
@@ -395,6 +397,8 @@ ipcRenderer.on(
       "right-pane-action" | "item-link"
     > | null;
     weakBootstrapStablePasses: number;
+    weakBootstrapFirstSeenAgeMs: number | null;
+    weakBootstrapConfirmationEligible: boolean;
     ordinaryClearPending: boolean;
     ordinaryClearStablePasses: number;
     ordinaryClearEligible: boolean;
@@ -408,6 +412,7 @@ ipcRenderer.on(
       "right-pane-action" | "item-link"
     >;
     stablePasses: number;
+    firstSeenAt: number;
     lastSeenAt: number;
     visualCropHeight: number | null;
   };
@@ -1376,6 +1381,8 @@ ipcRenderer.on(
       weakBootstrapSettled: false,
       weakBootstrapPendingSignalSource: null,
       weakBootstrapStablePasses: 0,
+      weakBootstrapFirstSeenAgeMs: null,
+      weakBootstrapConfirmationEligible: false,
       ordinaryClearPending: false,
       ordinaryClearStablePasses: 0,
       ordinaryClearEligible: false,
@@ -1764,12 +1771,25 @@ ipcRenderer.on(
           matchedSignals.add("weak-bootstrap-rejected:ordinary-chat");
           marketplaceWeakBootstrapState = null;
         } else {
+          const firstSeenAt =
+            marketplaceWeakBootstrapState &&
+            marketplaceWeakBootstrapState.routeKey === routeKey &&
+            marketplaceWeakBootstrapState.signalSource === weakSignalSource
+              ? marketplaceWeakBootstrapState.firstSeenAt
+              : now;
           const stablePasses =
             marketplaceWeakBootstrapState &&
             marketplaceWeakBootstrapState.routeKey === routeKey &&
             marketplaceWeakBootstrapState.signalSource === weakSignalSource
               ? marketplaceWeakBootstrapState.stablePasses + 1
               : 1;
+          const firstSeenAgeMs = Math.max(0, now - firstSeenAt);
+          const confirmationEligible = shouldConfirmWeakMarketplaceBootstrap({
+            stablePasses,
+            firstSeenAgeMs,
+            requiredPasses: MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES,
+            minConfirmAgeMs: MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS,
+          });
           const visualCropHeight = normalizeMarketplaceVisualCropHeight(
             MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
           );
@@ -1777,11 +1797,14 @@ ipcRenderer.on(
             routeKey,
             signalSource: weakSignalSource,
             stablePasses,
+            firstSeenAt,
             lastSeenAt: now,
             visualCropHeight,
           };
           state.weakBootstrapStablePasses = stablePasses;
-          if (stablePasses >= MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES) {
+          state.weakBootstrapFirstSeenAgeMs = firstSeenAgeMs;
+          state.weakBootstrapConfirmationEligible = confirmationEligible;
+          if (confirmationEligible) {
             strongSignalSource = weakSignalSource;
             strongVisualCropHeight = visualCropHeight;
             isWeakBootstrapConfirmation = true;

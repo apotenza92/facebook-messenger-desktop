@@ -82,6 +82,20 @@ export type MarketplaceVisualSessionDecision = {
   nextSession: MarketplaceVisualSessionState | null;
 };
 
+export function shouldConfirmWeakMarketplaceBootstrap(input: {
+  stablePasses: number;
+  firstSeenAgeMs: number;
+  requiredPasses: number;
+  minConfirmAgeMs: number;
+}): boolean {
+  return (
+    Number.isFinite(input.stablePasses) &&
+    Number.isFinite(input.firstSeenAgeMs) &&
+    input.stablePasses >= input.requiredPasses &&
+    input.firstSeenAgeMs >= input.minConfirmAgeMs
+  );
+}
+
 function normalizeHint(value: string | null | undefined): string {
   return String(value || "")
     .replace(/\s+/g, " ")
