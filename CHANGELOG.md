@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0-beta.54] - 2026-04-10
+
+### Fixed
+
+- **Issue #49 follow-up: keep recently confirmed Marketplace threads alive through same-route header collapse** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Sustain a same-route Marketplace session when Facebook briefly rerenders the confirmed thread down to a back-button anchor without the visible `Marketplace` label, instead of treating that immediate rerender as ordinary-chat evidence.
+  - Record Marketplace confirmation provenance plus post-confirmation grace, back-anchor matching, and ordinary-clear block reasons in the debug logs so future bundles show exactly why a same-route session stayed bridged or started clearing.
+  - Extend the deterministic Marketplace regressions to cover the chat-detour re-entry flow, back-anchor continuity, weak-bootstrap provenance, and slightly shifted same-route header-band matching.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.0-beta.53] - 2026-04-09
 
 ### Fixed

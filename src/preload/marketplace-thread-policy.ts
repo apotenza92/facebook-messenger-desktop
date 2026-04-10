@@ -26,6 +26,10 @@ export type MarketplaceSessionSignalSource =
   | "weak-header"
   | "bridge";
 
+export type MarketplaceSessionConfirmationKind =
+  | "strong-header"
+  | "weak-bootstrap";
+
 export type MarketplaceSessionLifecycleReason =
   | "confirmed-marketplace-thread"
   | "weak-bootstrap-confirmed"
@@ -51,12 +55,26 @@ export type MarketplaceVisualSessionRejectionReason =
   | "weak-bootstrap-signal-changed"
   | "weak-bootstrap-route-changed";
 
+export type MarketplaceOrdinaryClearBlockedReason =
+  | "recent-confirmation"
+  | "back-anchor-match"
+  | "insufficient-passes"
+  | "marketplace-returned";
+
+export type MarketplaceCurrentEvidenceClass =
+  | "strong"
+  | "weak"
+  | "ordinary-only"
+  | "none";
+
 export type MarketplaceVisualSessionState = {
   routeKey: string;
   visualCropHeight: number | null;
   headerBand: MarketplaceThreadHeaderBand | null;
   lastConfirmedAt: number;
+  lastStrongConfirmedAt: number | null;
   lastMatchedAt: number;
+  confirmationKind: MarketplaceSessionConfirmationKind;
   signalSource: MarketplaceSessionSignalSource;
   lifecycleReason: MarketplaceSessionLifecycleReason;
   lastLifecycleAt: number;
@@ -94,6 +112,83 @@ export function shouldConfirmWeakMarketplaceBootstrap(input: {
     input.stablePasses >= input.requiredPasses &&
     input.firstSeenAgeMs >= input.minConfirmAgeMs
   );
+}
+
+export function resolveMarketplaceOrdinaryClearBlockedReason(input: {
+  previousSession?: MarketplaceVisualSessionState | null;
+  nowMs: number;
+  postConfirmGraceMs: number;
+  sameRouteMarketplaceBackAnchorDetected?: boolean;
+  headerOrdinaryChatDetected?: boolean;
+  headerBackMarketplaceDetected?: boolean;
+  weakHeaderMatchesSessionHeaderBand?: boolean;
+  weakSignalDetected?: boolean;
+}): MarketplaceOrdinaryClearBlockedReason | null {
+  const previousSession =
+    input.previousSession !== null && input.previousSession !== undefined
+      ? input.previousSession
+      : null;
+  if (!previousSession || !input.headerOrdinaryChatDetected) {
+    return null;
+  }
+
+  if (
+    input.headerBackMarketplaceDetected ||
+    input.weakHeaderMatchesSessionHeaderBand ||
+    input.weakSignalDetected
+  ) {
+    return null;
+  }
+
+  if (input.sameRouteMarketplaceBackAnchorDetected) {
+    return "back-anchor-match";
+  }
+
+  if (
+    previousSession.confirmationKind === "strong-header" &&
+    previousSession.lastStrongConfirmedAt !== null &&
+    input.nowMs - previousSession.lastStrongConfirmedAt <=
+      input.postConfirmGraceMs
+  ) {
+    return "recent-confirmation";
+  }
+
+  return null;
+}
+
+export function resolveMarketplaceCurrentEvidenceClass(input: {
+  headerBackMarketplaceDetected?: boolean;
+  strongSignalSource?:
+    | Extract<
+        MarketplaceSessionSignalSource,
+        "strong-header" | "right-pane-action" | "item-link"
+      >
+    | null;
+  weakHeaderBand?: MarketplaceThreadHeaderBand | null;
+  weakSignalDetected?: boolean;
+  sameRouteMarketplaceBackAnchorDetected?: boolean;
+  headerOrdinaryChatDetected?: boolean;
+}): MarketplaceCurrentEvidenceClass {
+  if (
+    input.headerBackMarketplaceDetected ||
+    input.strongSignalSource === "strong-header"
+  ) {
+    return "strong";
+  }
+
+  if (
+    input.weakSignalDetected ||
+    input.weakHeaderBand ||
+    input.sameRouteMarketplaceBackAnchorDetected
+  ) {
+    return "weak";
+  }
+
+  if (input.headerOrdinaryChatDetected) {
+    return "ordinary-only";
+  }
+
+  return "none";
 }
 
 function normalizeHint(value: string | null | undefined): string {
@@ -262,15 +357,49 @@ export function doesMarketplaceThreadHeaderBandMatch(input: {
   const horizontalOverlap =
     candidateHeaderBand.right >= confirmedHeaderBand.left - 24 &&
     candidateHeaderBand.left <= confirmedHeaderBand.right + 96;
+  const relaxedContainedShift =
+    verticalOverlap &&
+    candidateHeaderBand.left >= confirmedHeaderBand.left &&
+    candidateHeaderBand.right <= confirmedHeaderBand.right + 40 &&
+    topDiff <= 36 &&
+    bottomDiff <= 48 &&
+    leftDiff <= 140 &&
+    rightDiff <= 180;
 
   return (
-    verticalOverlap &&
-    horizontalOverlap &&
-    topDiff <= 28 &&
-    bottomDiff <= 36 &&
-    leftDiff <= 32 &&
-    rightDiff <= 120
+    relaxedContainedShift ||
+    (verticalOverlap &&
+      horizontalOverlap &&
+      topDiff <= 28 &&
+      bottomDiff <= 36 &&
+      leftDiff <= 32 &&
+      rightDiff <= 120)
   );
+}
+
+export function doesMarketplaceThreadBackAnchorMatch(input: {
+  confirmedHeaderBand?: MarketplaceThreadHeaderBand | null;
+  candidateBackBand?: MarketplaceThreadHeaderBand | null;
+}): boolean {
+  const confirmedHeaderBand = normalizeMarketplaceThreadHeaderBand(
+    input.confirmedHeaderBand,
+  );
+  const candidateBackBand = normalizeMarketplaceThreadHeaderBand(
+    input.candidateBackBand,
+  );
+  if (!confirmedHeaderBand || !candidateBackBand) {
+    return false;
+  }
+
+  const verticalOverlap =
+    candidateBackBand.bottom >= confirmedHeaderBand.top - 20 &&
+    candidateBackBand.top <= confirmedHeaderBand.bottom + 20;
+  const anchoredNearLeft =
+    candidateBackBand.left <= confirmedHeaderBand.left + 140 &&
+    candidateBackBand.right >= confirmedHeaderBand.left - 24 &&
+    candidateBackBand.right <= confirmedHeaderBand.left + 220;
+
+  return verticalOverlap && anchoredNearLeft;
 }
 
 export function resolveMarketplaceVisualSessionDecision(input: {
@@ -294,6 +423,8 @@ export function resolveMarketplaceVisualSessionDecision(input: {
   strongVisualCropHeight?: number | null;
   strongHeaderBand?: MarketplaceThreadHeaderBand | null;
   weakHeaderBand?: MarketplaceThreadHeaderBand | null;
+  sameRouteMarketplaceBackAnchorDetected?: boolean;
+  headerBackMatchesSessionHeaderBand?: boolean;
   explicitOrdinaryChatDetected?: boolean;
   ordinaryClearPending?: boolean;
 }): MarketplaceVisualSessionDecision {
@@ -327,7 +458,13 @@ export function resolveMarketplaceVisualSessionDecision(input: {
         previousSession?.headerBand ??
         null,
       lastConfirmedAt: input.nowMs,
+      lastStrongConfirmedAt: input.isWeakBootstrapConfirmation
+        ? previousSession?.lastStrongConfirmedAt ?? null
+        : input.nowMs,
       lastMatchedAt: input.nowMs,
+      confirmationKind: input.isWeakBootstrapConfirmation
+        ? "weak-bootstrap"
+        : "strong-header",
       signalSource: input.strongSignalSource,
       lifecycleReason: input.isWeakBootstrapConfirmation
         ? "weak-bootstrap-confirmed"
@@ -413,6 +550,28 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       rejectionReason: null,
       weakHeaderMatchesSessionHeaderBand,
       nextSession: null,
+    };
+  }
+
+  if (input.sameRouteMarketplaceBackAnchorDetected) {
+    const nextSession: MarketplaceVisualSessionState = {
+      ...previousSession,
+      lastMatchedAt: input.nowMs,
+      signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
+      lastLifecycleAt: input.nowMs,
+    };
+
+    return {
+      sessionActive: true,
+      shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+      visualCropHeight: nextSession.visualCropHeight,
+      transition: "bridged",
+      signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
+      rejectionReason: null,
+      weakHeaderMatchesSessionHeaderBand,
+      nextSession,
     };
   }
 

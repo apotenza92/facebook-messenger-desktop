@@ -15,6 +15,7 @@ const {
   shouldApplyMessagesCrop,
 } = require(path.join(APP_ROOT, "src/preload/messages-viewport-policy"));
 const {
+  doesMarketplaceThreadBackAnchorMatch,
   collectMarketplaceThreadHintSignals,
   doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
@@ -22,6 +23,8 @@ const {
   isMarketplaceThreadActionHint,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
+  resolveMarketplaceCurrentEvidenceClass,
+  resolveMarketplaceOrdinaryClearBlockedReason,
   resolveMarketplaceVisualSessionDecision,
   shouldConfirmWeakMarketplaceBootstrap,
   shouldRetainMarketplaceVisualCrop,
@@ -491,6 +494,12 @@ const runMarketplaceThreadPolicyTests = () => {
     left: 14,
     right: 248,
   };
+  const moderatelyShiftedWeakHeaderBand = {
+    top: 64,
+    bottom: 110,
+    left: 88,
+    right: 274,
+  };
   const mismatchedWeakHeaderBand = {
     top: 64,
     bottom: 108,
@@ -504,6 +513,14 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     true,
     "#49 weak Marketplace hints in the same header band should match the confirmed Marketplace session",
+  );
+  assertEqual(
+    doesMarketplaceThreadHeaderBandMatch({
+      confirmedHeaderBand,
+      candidateHeaderBand: moderatelyShiftedWeakHeaderBand,
+    }),
+    true,
+    "#49 moderately shifted weak Marketplace hints should still match the confirmed header region on the same route",
   );
   assertEqual(
     doesMarketplaceThreadHeaderBandMatch({
@@ -542,6 +559,17 @@ const runMarketplaceThreadPolicyTests = () => {
     confirmedSession.lifecycleReason,
     "confirmed-marketplace-thread",
     "#49 strong Marketplace confirmation should record the session entry reason",
+  );
+  assertEqual(
+    JSON.stringify({
+      confirmationKind: confirmedSession.nextSession?.confirmationKind,
+      lastStrongConfirmedAt: confirmedSession.nextSession?.lastStrongConfirmedAt,
+    }),
+    JSON.stringify({
+      confirmationKind: "strong-header",
+      lastStrongConfirmedAt: 10_000,
+    }),
+    "#49 strong Marketplace confirmation should preserve strong confirmation provenance",
   );
 
   const weakBootstrapRejected = resolveMarketplaceVisualSessionDecision({
@@ -640,6 +668,94 @@ const runMarketplaceThreadPolicyTests = () => {
     }),
     "#49 repeated settled weak Marketplace signals on the same fresh route should confirm a Marketplace session",
   );
+  assertEqual(
+    weakBootstrapConfirmed.nextSession?.confirmationKind,
+    "weak-bootstrap",
+    "#49 weak bootstrap confirmation should record weak confirmation provenance",
+  );
+
+  assertEqual(
+    doesMarketplaceThreadBackAnchorMatch({
+      confirmedHeaderBand,
+      candidateBackBand: {
+        top: 12,
+        bottom: 44,
+        left: 8,
+        right: 52,
+      },
+    }),
+    true,
+    "#49 a back control anchored near the confirmed Marketplace header should count as same-route Marketplace continuity",
+  );
+  assertEqual(
+    doesMarketplaceThreadBackAnchorMatch({
+      confirmedHeaderBand,
+      candidateBackBand: {
+        top: 12,
+        bottom: 44,
+        left: 280,
+        right: 332,
+      },
+    }),
+    false,
+    "#49 a back control far from the confirmed Marketplace header band should not count as Marketplace continuity",
+  );
+
+  assertEqual(
+    resolveMarketplaceOrdinaryClearBlockedReason({
+      previousSession: confirmedSession.nextSession,
+      nowMs: 10_600,
+      postConfirmGraceMs: 1_500,
+      headerOrdinaryChatDetected: true,
+    }),
+    "recent-confirmation",
+    "#49 a recently strong-confirmed Marketplace route should block ordinary clear even if Marketplace text briefly disappears",
+  );
+  assertEqual(
+    resolveMarketplaceOrdinaryClearBlockedReason({
+      previousSession: confirmedSession.nextSession,
+      nowMs: 10_600,
+      postConfirmGraceMs: 1_500,
+      headerOrdinaryChatDetected: true,
+      sameRouteMarketplaceBackAnchorDetected: true,
+    }),
+    "back-anchor-match",
+    "#49 a same-route back-anchor match should outrank generic ordinary-chat evidence after strong confirmation",
+  );
+  assertEqual(
+    resolveMarketplaceOrdinaryClearBlockedReason({
+      previousSession: weakBootstrapConfirmed.nextSession,
+      nowMs: 10_600,
+      postConfirmGraceMs: 1_500,
+      headerOrdinaryChatDetected: true,
+    }),
+    null,
+    "#49 weak-bootstrap-confirmed Marketplace sessions should not gain the stronger post-confirm clear block automatically",
+  );
+
+  assertEqual(
+    resolveMarketplaceCurrentEvidenceClass({
+      headerBackMarketplaceDetected: true,
+      headerOrdinaryChatDetected: true,
+    }),
+    "strong",
+    "#49 a live Back + Marketplace header should classify as strong evidence even if ordinary controls are also visible",
+  );
+  assertEqual(
+    resolveMarketplaceCurrentEvidenceClass({
+      sameRouteMarketplaceBackAnchorDetected: true,
+      headerOrdinaryChatDetected: true,
+    }),
+    "weak",
+    "#49 same-route back-anchor continuity should classify as weak Marketplace evidence",
+  );
+  assertEqual(
+    resolveMarketplaceCurrentEvidenceClass({
+      headerOrdinaryChatDetected: true,
+    }),
+    "ordinary-only",
+    "#49 ordinary controls without Marketplace evidence should classify as ordinary-only",
+  );
 
   const weakBridge = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
@@ -669,6 +785,32 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: 56,
     }),
     "#49 same-route weak Marketplace rerenders inside the confirmed header band should keep the Marketplace session alive",
+  );
+
+  const sameRouteBackAnchorBridge = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 11_050,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: confirmedSession.nextSession,
+    sameRouteMarketplaceBackAnchorDetected: true,
+    headerBackMatchesSessionHeaderBand: true,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: sameRouteBackAnchorBridge.sessionActive,
+      transition: sameRouteBackAnchorBridge.transition,
+      signalSource: sameRouteBackAnchorBridge.signalSource,
+      lifecycleReason: sameRouteBackAnchorBridge.lifecycleReason,
+      visualCropHeight: sameRouteBackAnchorBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "bridge",
+      lifecycleReason: "same-thread-rerender",
+      visualCropHeight: 56,
+    }),
+    "#49 a strong-confirmed Marketplace route should stay bridged when only the back anchor survives on the same route",
   );
 
   let repeatedWeakSession = weakBridge.nextSession;
@@ -741,6 +883,39 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: null,
     }),
     "#49 switching to an ordinary chat route should clear the Marketplace session immediately",
+  );
+
+  const detouredMarketplaceSession = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread-2",
+    nowMs: 17_300,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: null,
+    strongSignalSource: "strong-header",
+    strongVisualCropHeight: 56,
+    strongHeaderBand: confirmedHeaderBand,
+  });
+  const detouredImmediateOrdinaryLookingRerender =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-2",
+      nowMs: 17_360,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: detouredMarketplaceSession.nextSession,
+      sameRouteMarketplaceBackAnchorDetected: true,
+      headerBackMatchesSessionHeaderBand: true,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: detouredImmediateOrdinaryLookingRerender.sessionActive,
+      transition: detouredImmediateOrdinaryLookingRerender.transition,
+      visualCropHeight:
+        detouredImmediateOrdinaryLookingRerender.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      visualCropHeight: 56,
+    }),
+    "#49 a freshly re-entered Marketplace route should stay bridged after a chat detour when only the back anchor survives the immediate rerender",
   );
 
   const ordinaryChatMarketplaceLabel = resolveMarketplaceVisualSessionDecision({
@@ -859,6 +1034,28 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: 56,
     }),
     "#49 same-route ordinary-only rerenders should stay active while the Marketplace clear is still pending",
+  );
+
+  const freshBackOnlyRoute = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread",
+    nowMs: 39_100,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: null,
+    sameRouteMarketplaceBackAnchorDetected: true,
+    headerBackMatchesSessionHeaderBand: true,
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: freshBackOnlyRoute.sessionActive,
+      transition: freshBackOnlyRoute.transition,
+      visualCropHeight: freshBackOnlyRoute.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "inactive",
+      visualCropHeight: null,
+    }),
+    "#49 a fresh route with only a back control must not bootstrap Marketplace mode",
   );
 
   const returningMarketplaceCancelsPendingClear =

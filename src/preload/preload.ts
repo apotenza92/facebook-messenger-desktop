@@ -34,12 +34,18 @@ import {
 } from "./media-overlay-policy";
 import {
   collectMarketplaceThreadHintSignals,
+  doesMarketplaceThreadBackAnchorMatch,
   doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
+  resolveMarketplaceCurrentEvidenceClass,
+  resolveMarketplaceOrdinaryClearBlockedReason,
   resolveMarketplaceVisualSessionDecision,
   shouldConfirmWeakMarketplaceBootstrap,
+  type MarketplaceCurrentEvidenceClass,
+  type MarketplaceOrdinaryClearBlockedReason,
+  type MarketplaceSessionConfirmationKind,
   type MarketplaceSessionLifecycleReason,
   type MarketplaceSessionSignalSource,
   type MarketplaceThreadHeaderBand,
@@ -335,6 +341,7 @@ ipcRenderer.on(
   const MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS = 10_000;
   const MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES = 2;
   const MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS = 800;
+  const MARKETPLACE_POST_CONFIRM_GRACE_MS = 1_500;
   const MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS = 2_500;
   const MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES = 3;
 
@@ -383,14 +390,22 @@ ipcRenderer.on(
     headerContainerRight: number | null;
     weakHeaderBand: MarketplaceThreadHeaderBand | null;
     weakHeaderMatchesSessionHeaderBand: boolean;
+    headerBackMatchesSessionHeaderBand: boolean;
+    sameRouteMarketplaceBackAnchorDetected: boolean;
     visualCropHeight: number | null;
     marketplaceSessionActive: boolean;
     marketplaceSessionRouteKey: string | null;
+    marketplaceSessionConfirmationKind: MarketplaceSessionConfirmationKind | null;
     marketplaceSessionSignalSource: MarketplaceSessionSignalSource | null;
     marketplaceSessionLifecycleReason: MarketplaceSessionLifecycleReason | null;
     marketplaceSessionTransition: string;
     marketplaceSessionRejectionReason: MarketplaceVisualSessionRejectionReason | null;
     marketplaceSessionHeaderBand: MarketplaceThreadHeaderBand | null;
+    marketplaceLastConfirmedAgeMs: number | null;
+    marketplaceLastStrongConfirmedAgeMs: number | null;
+    marketplaceCurrentEvidenceClass: MarketplaceCurrentEvidenceClass;
+    marketplacePostConfirmGraceActive: boolean;
+    marketplaceOrdinaryClearBlockedReason: MarketplaceOrdinaryClearBlockedReason | null;
     weakBootstrapSettled: boolean;
     weakBootstrapPendingSignalSource: Extract<
       MarketplaceSessionSignalSource,
@@ -1370,14 +1385,22 @@ ipcRenderer.on(
       headerContainerRight: null,
       weakHeaderBand: null,
       weakHeaderMatchesSessionHeaderBand: false,
+      headerBackMatchesSessionHeaderBand: false,
+      sameRouteMarketplaceBackAnchorDetected: false,
       visualCropHeight: null,
       marketplaceSessionActive: false,
       marketplaceSessionRouteKey: null,
+      marketplaceSessionConfirmationKind: null,
       marketplaceSessionSignalSource: null,
       marketplaceSessionLifecycleReason: null,
       marketplaceSessionTransition: "inactive",
       marketplaceSessionRejectionReason: null,
       marketplaceSessionHeaderBand: null,
+      marketplaceLastConfirmedAgeMs: null,
+      marketplaceLastStrongConfirmedAgeMs: null,
+      marketplaceCurrentEvidenceClass: "none",
+      marketplacePostConfirmGraceActive: false,
+      marketplaceOrdinaryClearBlockedReason: null,
       weakBootstrapSettled: false,
       weakBootstrapPendingSignalSource: null,
       weakBootstrapStablePasses: 0,
@@ -1587,6 +1610,19 @@ ipcRenderer.on(
       const weakBootstrapSettled = isMarketplaceWeakBootstrapSettled();
       state.weakBootstrapSettled = weakBootstrapSettled;
       if (currentMarketplaceSession) {
+        state.marketplaceLastConfirmedAgeMs = Math.max(
+          0,
+          now - currentMarketplaceSession.lastConfirmedAt,
+        );
+        state.marketplaceLastStrongConfirmedAgeMs =
+          currentMarketplaceSession.lastStrongConfirmedAt !== null
+            ? Math.max(0, now - currentMarketplaceSession.lastStrongConfirmedAt)
+            : null;
+        state.marketplacePostConfirmGraceActive =
+          currentMarketplaceSession.confirmationKind === "strong-header" &&
+          state.marketplaceLastStrongConfirmedAgeMs !== null &&
+          state.marketplaceLastStrongConfirmedAgeMs <=
+            MARKETPLACE_POST_CONFIRM_GRACE_MS;
         state.ordinaryClearLastMarketplaceMatchAgeMs = Math.max(
           0,
           now - currentMarketplaceSession.lastMatchedAt,
@@ -1615,6 +1651,7 @@ ipcRenderer.on(
       let strongHeaderBand: MarketplaceThreadHeaderBand | null = null;
       let strongVisualCropHeight: number | null = null;
       let weakHeaderBand: MarketplaceThreadHeaderBand | null = null;
+      let backControlBand: MarketplaceThreadHeaderBand | null = null;
       let ordinaryThreadControlDetected = false;
 
       for (const candidate of Array.from(candidates)) {
@@ -1684,6 +1721,9 @@ ipcRenderer.on(
         if (isMarketplaceThreadBackHint(hint) && rect.left <= 120) {
           state.headerBackDetected = true;
           matchedSignals.add("header-back");
+          if (!backControlBand) {
+            backControlBand = toMarketplaceThreadHeaderBand(rect);
+          }
           const headerContainer =
             resolveMarketplaceThreadHeaderContainer(candidate, "strong");
           if (headerContainer) {
@@ -1743,6 +1783,28 @@ ipcRenderer.on(
       if (state.headerOrdinaryChatDetected) {
         matchedSignals.add("header-ordinary-chat");
       }
+      state.headerBackMatchesSessionHeaderBand =
+        doesMarketplaceThreadBackAnchorMatch({
+          confirmedHeaderBand: currentMarketplaceSession?.headerBand,
+          candidateBackBand: backControlBand,
+        });
+      state.sameRouteMarketplaceBackAnchorDetected =
+        currentMarketplaceSession?.confirmationKind === "strong-header" &&
+        state.marketplacePostConfirmGraceActive &&
+        state.headerBackMatchesSessionHeaderBand &&
+        !state.headerBackMarketplaceDetected;
+      if (state.headerBackMatchesSessionHeaderBand) {
+        matchedSignals.add("header-back-match");
+      }
+      if (state.sameRouteMarketplaceBackAnchorDetected) {
+        matchedSignals.add("header-back-anchor");
+      }
+
+      const weakHeaderMatchesCurrentSessionHeaderBand =
+        doesMarketplaceThreadHeaderBandMatch({
+          confirmedHeaderBand: currentMarketplaceSession?.headerBand,
+          candidateHeaderBand: weakHeaderBand,
+        });
 
       let pendingBootstrapSignalSource:
         | Extract<
@@ -1828,35 +1890,78 @@ ipcRenderer.on(
         !weakSignalSource;
       let ordinaryClearPending = false;
       let explicitOrdinaryChatDetected = false;
+      let ordinaryClearBlockedReason = resolveMarketplaceOrdinaryClearBlockedReason(
+        {
+          previousSession: currentMarketplaceSession,
+          nowMs: now,
+          postConfirmGraceMs: MARKETPLACE_POST_CONFIRM_GRACE_MS,
+          sameRouteMarketplaceBackAnchorDetected:
+            state.sameRouteMarketplaceBackAnchorDetected,
+          headerOrdinaryChatDetected: state.headerOrdinaryChatDetected,
+          headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+          weakHeaderMatchesSessionHeaderBand:
+            weakHeaderMatchesCurrentSessionHeaderBand,
+          weakSignalDetected: weakSignalSource !== null,
+        },
+      );
       if (ordinaryChatOnlyDetected && currentMarketplaceSession) {
-        const stablePasses =
-          marketplaceOrdinaryClearState &&
-          marketplaceOrdinaryClearState.routeKey === routeKey
-            ? marketplaceOrdinaryClearState.stablePasses + 1
-            : 1;
-        const eligible =
-          state.ordinaryClearLastMarketplaceMatchAgeMs !== null &&
-          state.ordinaryClearLastMarketplaceMatchAgeMs >=
-            MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS &&
-          stablePasses >= MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES;
-        marketplaceOrdinaryClearState = {
-          routeKey,
-          stablePasses,
-          lastSeenAt: now,
-        };
-        state.ordinaryClearStablePasses = stablePasses;
-        state.ordinaryClearEligible = eligible;
-        if (eligible) {
-          explicitOrdinaryChatDetected = true;
-          matchedSignals.add("ordinary-clear-eligible");
+        if (ordinaryClearBlockedReason) {
+          marketplaceOrdinaryClearState = null;
+          matchedSignals.add(`ordinary-clear-blocked:${ordinaryClearBlockedReason}`);
         } else {
-          ordinaryClearPending = true;
-          state.ordinaryClearPending = true;
-          matchedSignals.add("ordinary-clear-pending");
+          const stablePasses =
+            marketplaceOrdinaryClearState &&
+            marketplaceOrdinaryClearState.routeKey === routeKey
+              ? marketplaceOrdinaryClearState.stablePasses + 1
+              : 1;
+          const eligible =
+            state.ordinaryClearLastMarketplaceMatchAgeMs !== null &&
+            state.ordinaryClearLastMarketplaceMatchAgeMs >=
+              MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS &&
+            stablePasses >= MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES;
+          marketplaceOrdinaryClearState = {
+            routeKey,
+            stablePasses,
+            lastSeenAt: now,
+          };
+          state.ordinaryClearStablePasses = stablePasses;
+          state.ordinaryClearEligible = eligible;
+          if (eligible) {
+            explicitOrdinaryChatDetected = true;
+            matchedSignals.add("ordinary-clear-eligible");
+          } else {
+            ordinaryClearPending = true;
+            ordinaryClearBlockedReason = "insufficient-passes";
+            state.ordinaryClearPending = true;
+            matchedSignals.add("ordinary-clear-pending");
+          }
         }
       } else {
+        if (
+          marketplaceOrdinaryClearState &&
+          currentMarketplaceSession &&
+          (state.headerBackMarketplaceDetected ||
+            weakHeaderMatchesCurrentSessionHeaderBand ||
+            weakSignalSource !== null ||
+            state.sameRouteMarketplaceBackAnchorDetected)
+        ) {
+          ordinaryClearBlockedReason = "marketplace-returned";
+          matchedSignals.add("ordinary-clear-blocked:marketplace-returned");
+        }
         marketplaceOrdinaryClearState = null;
       }
+      state.marketplaceOrdinaryClearBlockedReason = ordinaryClearBlockedReason;
+      state.marketplaceCurrentEvidenceClass = resolveMarketplaceCurrentEvidenceClass(
+        {
+          headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+          strongSignalSource,
+          weakHeaderBand,
+          weakSignalDetected: weakSignalSource !== null,
+          sameRouteMarketplaceBackAnchorDetected:
+            state.sameRouteMarketplaceBackAnchorDetected,
+          headerOrdinaryChatDetected: state.headerOrdinaryChatDetected,
+        },
+      );
 
       if (
         strongSignalSource !== "strong-header" &&
@@ -1886,10 +1991,29 @@ ipcRenderer.on(
             : strongVisualCropHeight,
         strongHeaderBand,
         weakHeaderBand,
+        sameRouteMarketplaceBackAnchorDetected:
+          state.sameRouteMarketplaceBackAnchorDetected,
+        headerBackMatchesSessionHeaderBand:
+          state.headerBackMatchesSessionHeaderBand,
         explicitOrdinaryChatDetected,
         ordinaryClearPending,
       });
       marketplaceVisualSession = sessionDecision.nextSession;
+      if (sessionDecision.nextSession) {
+        state.marketplaceLastConfirmedAgeMs = Math.max(
+          0,
+          now - sessionDecision.nextSession.lastConfirmedAt,
+        );
+        state.marketplaceLastStrongConfirmedAgeMs =
+          sessionDecision.nextSession.lastStrongConfirmedAt !== null
+            ? Math.max(0, now - sessionDecision.nextSession.lastStrongConfirmedAt)
+            : null;
+        state.marketplacePostConfirmGraceActive =
+          sessionDecision.nextSession.confirmationKind === "strong-header" &&
+          state.marketplaceLastStrongConfirmedAgeMs !== null &&
+          state.marketplaceLastStrongConfirmedAgeMs <=
+            MARKETPLACE_POST_CONFIRM_GRACE_MS;
+      }
 
       state.headerMarketplaceDetected =
         state.headerBackMarketplaceDetected ||
@@ -1899,6 +2023,8 @@ ipcRenderer.on(
         sessionDecision.weakHeaderMatchesSessionHeaderBand;
       state.marketplaceSessionActive = sessionDecision.sessionActive;
       state.marketplaceSessionRouteKey = sessionDecision.nextSession?.routeKey ?? null;
+      state.marketplaceSessionConfirmationKind =
+        sessionDecision.nextSession?.confirmationKind ?? null;
       state.marketplaceSessionSignalSource = sessionDecision.signalSource;
       state.marketplaceSessionLifecycleReason = sessionDecision.lifecycleReason;
       state.marketplaceSessionTransition = sessionDecision.transition;
