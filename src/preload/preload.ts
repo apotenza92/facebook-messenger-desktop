@@ -35,6 +35,7 @@ import {
 import {
   collectMarketplaceThreadHintSignals,
   doesMarketplaceThreadBackAnchorMatch,
+  doesMarketplaceThreadFreshHeaderPairMatch,
   doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
   isMarketplaceThreadBackHint,
@@ -1476,6 +1477,24 @@ ipcRenderer.on(
     };
   };
 
+  const mergeMarketplaceThreadHeaderBands = (input: {
+    primary?: MarketplaceThreadHeaderBand | null;
+    secondary?: MarketplaceThreadHeaderBand | null;
+  }): MarketplaceThreadHeaderBand | null => {
+    const primary = input.primary;
+    const secondary = input.secondary;
+    if (!primary || !secondary) {
+      return primary ?? secondary ?? null;
+    }
+
+    return {
+      top: Math.min(primary.top, secondary.top),
+      bottom: Math.max(primary.bottom, secondary.bottom),
+      left: Math.min(primary.left, secondary.left),
+      right: Math.max(primary.right, secondary.right),
+    };
+  };
+
   const isLikelyMarketplaceThreadHeaderContainer = (
     candidate: HTMLElement,
   ): boolean => {
@@ -1774,6 +1793,41 @@ ipcRenderer.on(
             matchedSignals.add("header-marketplace-candidate");
           }
         }
+      }
+
+      const freshRouteMarketplaceHeaderPairMatched =
+        !currentMarketplaceSession &&
+        strongSignalSource === null &&
+        state.headerBackDetected &&
+        weakHeaderBand !== null &&
+        doesMarketplaceThreadFreshHeaderPairMatch({
+          candidateHeaderBand: weakHeaderBand,
+          candidateBackBand: backControlBand,
+        });
+      if (freshRouteMarketplaceHeaderPairMatched) {
+        matchedSignals.add("header-back+marketplace-fallback");
+        state.headerBackMarketplaceDetected = true;
+        strongSignalSource = "strong-header";
+        strongHeaderBand = mergeMarketplaceThreadHeaderBands({
+          primary: backControlBand,
+          secondary: weakHeaderBand,
+        });
+        if (strongHeaderBand) {
+          state.headerContainerTop = strongHeaderBand.top;
+          state.headerContainerBottom = strongHeaderBand.bottom;
+          state.headerContainerLeft = strongHeaderBand.left;
+          state.headerContainerRight = strongHeaderBand.right;
+          strongVisualCropHeight = normalizeMarketplaceVisualCropHeight(
+            strongHeaderBand.top - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
+          );
+        }
+      } else if (
+        !currentMarketplaceSession &&
+        strongSignalSource === null &&
+        state.headerBackDetected &&
+        weakHeaderBand !== null
+      ) {
+        matchedSignals.add("header-back+marketplace-fallback-rejected");
       }
 
       state.headerOrdinaryChatDetected =

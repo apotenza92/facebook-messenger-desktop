@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.3.0] - 2026-04-11
+
+### Changed
+
+- **Facebook Messages migration and desktop shell refresh** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41))
+  - Moved the app onto Facebook's current `facebook.com/messages` surface and rebuilt the top-chrome cleanup around a BrowserView crop plus native window chrome, which removes the old bottom gutter and reduces header flicker during normal chat use.
+  - Restored the native title bar approach on macOS and removed the injected Facebook/login warning banner.
+
+### Fixed
+
+- **Media, routing, and thread-surface reliability** ([#41](https://github.com/apotenza92/facebook-messenger-desktop/issues/41), [#45](https://github.com/apotenza92/facebook-messenger-desktop/issues/45))
+  - Restored non-E2EE and E2EE media viewer controls, close-return behaviour, and download handling on Facebook's newer viewer shells.
+  - Fixed wrapped link and profile routing so Messenger threads stay in-app while profile and broader Facebook navigation still go out to the system browser when appropriate.
+  - Hardened refresh and recovery behaviour so the app reliably returns to the intended Messages surface after media, profile, or reconnect churn.
+- **Incoming-call handling and notification filtering** ([#46](https://github.com/apotenza92/facebook-messenger-desktop/issues/46), [#47](https://github.com/apotenza92/facebook-messenger-desktop/issues/47), [#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Reworked incoming-call detection, overlay persistence, popup lifecycle, and notification dedupe so stale call-like states and duplicate reminders are much less likely after reflow, sleep/wake, or repeated ringing.
+  - Tightened muted-chat, self-authored, and non-message Facebook activity suppression, including group join/request variants that could previously leak through as native popups.
+  - Added bundled debug-log export for notification, incoming-call, layout/media, and renderer-failure traces to make follow-up reports far more actionable.
+- **Composer and keyboard ergonomics**
+  - Restored and hardened the injected shortcut layer, including quick switcher, help, next/previous chat, and number-based navigation bindings.
+  - Kept emoji, sticker, and GIF composer overlays responsive without letting Facebook chrome leak back into view during normal chat use.
+- **Marketplace messaging and thread layout hardening** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Kept Marketplace Inbox, Buying, and Selling messaging surfaces in-app while continuing to open broader Marketplace browsing externally.
+  - Rebuilt Marketplace thread handling around route-scoped session rules, same-route rerender bridging, stronger ordinary-chat clear guards, and richer privacy-safe debug provenance.
+  - Further hardened Marketplace header detection for fresh-route split `Back` plus `Marketplace` variants so the native back button and reduced top crop are more likely to stay stable on the reported thread flow.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.0-beta.54] - 2026-04-10
 
 ### Fixed

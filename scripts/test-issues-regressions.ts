@@ -16,6 +16,7 @@ const {
 } = require(path.join(APP_ROOT, "src/preload/messages-viewport-policy"));
 const {
   doesMarketplaceThreadBackAnchorMatch,
+  doesMarketplaceThreadFreshHeaderPairMatch,
   collectMarketplaceThreadHintSignals,
   doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
@@ -700,6 +701,73 @@ const runMarketplaceThreadPolicyTests = () => {
     false,
     "#49 a back control far from the confirmed Marketplace header band should not count as Marketplace continuity",
   );
+  assertEqual(
+    doesMarketplaceThreadFreshHeaderPairMatch({
+      candidateBackBand: {
+        top: 66,
+        bottom: 100,
+        left: 8,
+        right: 54,
+      },
+      candidateHeaderBand: {
+        top: 70,
+        bottom: 99,
+        left: 52,
+        right: 199,
+      },
+    }),
+    true,
+    "#49 a fresh-route split Back plus Marketplace header should bootstrap Marketplace mode when the controls share the same top-left band",
+  );
+  assertEqual(
+    doesMarketplaceThreadFreshHeaderPairMatch({
+      candidateBackBand: {
+        top: 66,
+        bottom: 100,
+        left: 8,
+        right: 54,
+      },
+      candidateHeaderBand: null,
+    }),
+    false,
+    "#49 a fresh route with only a back control must not bootstrap Marketplace mode",
+  );
+  assertEqual(
+    doesMarketplaceThreadFreshHeaderPairMatch({
+      candidateBackBand: {
+        top: 66,
+        bottom: 100,
+        left: 8,
+        right: 54,
+      },
+      candidateHeaderBand: mismatchedWeakHeaderBand,
+    }),
+    false,
+    "#49 a fresh-route Marketplace label far from the back control must not bootstrap Marketplace mode",
+  );
+  const april10ReplayHeaderBands = [
+    { top: 70, bottom: 99, left: 168, right: 315 },
+    { top: 70, bottom: 99, left: 136, right: 283 },
+    { top: 70, bottom: 99, left: 83, right: 230 },
+    { top: 70, bottom: 99, left: 35, right: 183 },
+    { top: 70, bottom: 99, left: 22, right: 169 },
+  ];
+  const april10ReplayMatches = april10ReplayHeaderBands.map((band) =>
+    doesMarketplaceThreadFreshHeaderPairMatch({
+      candidateBackBand: {
+        top: 66,
+        bottom: 100,
+        left: 8,
+        right: 54,
+      },
+      candidateHeaderBand: band,
+    }),
+  );
+  assertEqual(
+    JSON.stringify(april10ReplayMatches),
+    JSON.stringify([false, false, true, true, true]),
+    "#49 the April 10 split-header replay should start matching once the Marketplace label slides into the anchored back-button band",
+  );
 
   assertEqual(
     resolveMarketplaceOrdinaryClearBlockedReason({
@@ -785,6 +853,45 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: 56,
     }),
     "#49 same-route weak Marketplace rerenders inside the confirmed header band should keep the Marketplace session alive",
+  );
+
+  const freshRouteSplitHeaderBootstrap =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread",
+      nowMs: 10_350,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: null,
+      strongSignalSource: "strong-header",
+      strongVisualCropHeight: 58,
+      strongHeaderBand: {
+        top: 62,
+        bottom: 106,
+        left: 8,
+        right: 199,
+      },
+      weakHeaderBand: {
+        top: 70,
+        bottom: 99,
+        left: 52,
+        right: 199,
+      },
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: freshRouteSplitHeaderBootstrap.sessionActive,
+      transition: freshRouteSplitHeaderBootstrap.transition,
+      signalSource: freshRouteSplitHeaderBootstrap.signalSource,
+      lifecycleReason: freshRouteSplitHeaderBootstrap.lifecycleReason,
+      visualCropHeight: freshRouteSplitHeaderBootstrap.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "strong-confirmed",
+      signalSource: "strong-header",
+      lifecycleReason: "confirmed-marketplace-thread",
+      visualCropHeight: 58,
+    }),
+    "#49 a fresh-route split Back plus Marketplace header should reuse the normal strong confirmation session path once paired",
   );
 
   const sameRouteBackAnchorBridge = resolveMarketplaceVisualSessionDecision({

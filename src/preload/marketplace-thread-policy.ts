@@ -402,6 +402,33 @@ export function doesMarketplaceThreadBackAnchorMatch(input: {
   return verticalOverlap && anchoredNearLeft;
 }
 
+export function doesMarketplaceThreadFreshHeaderPairMatch(input: {
+  candidateHeaderBand?: MarketplaceThreadHeaderBand | null;
+  candidateBackBand?: MarketplaceThreadHeaderBand | null;
+}): boolean {
+  const candidateHeaderBand = normalizeMarketplaceThreadHeaderBand(
+    input.candidateHeaderBand,
+  );
+  const candidateBackBand = normalizeMarketplaceThreadHeaderBand(
+    input.candidateBackBand,
+  );
+  if (!candidateHeaderBand || !candidateBackBand) {
+    return false;
+  }
+
+  const verticalOverlap =
+    candidateBackBand.bottom >= candidateHeaderBand.top - 20 &&
+    candidateBackBand.top <= candidateHeaderBand.bottom + 20;
+  const anchoredNearHeaderLeft =
+    candidateBackBand.left <= candidateHeaderBand.left + 24 &&
+    candidateBackBand.right >= candidateHeaderBand.left - 48 &&
+    candidateBackBand.right <= candidateHeaderBand.left + 120;
+  const headerInTopLeftBand =
+    candidateHeaderBand.top <= 180 && candidateHeaderBand.left <= 220;
+
+  return verticalOverlap && anchoredNearHeaderLeft && headerInTopLeftBand;
+}
+
 export function resolveMarketplaceVisualSessionDecision(input: {
   currentRouteKey: string;
   nowMs: number;
