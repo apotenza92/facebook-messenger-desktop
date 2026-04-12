@@ -37,6 +37,7 @@ import {
   doesMarketplaceThreadBackAnchorMatch,
   doesMarketplaceThreadFreshHeaderPairMatch,
   doesMarketplaceThreadHeaderBandMatch,
+  doesMarketplaceThreadRouteChangeWeakHeaderMatch,
   hasMarketplaceThreadHeaderSignal,
   isMarketplaceThreadBackHint,
   isMarketplaceThreadHeaderHint,
@@ -1607,12 +1608,6 @@ ipcRenderer.on(
       const now = Date.now();
       const routeKey = getCurrentMarketplaceRouteKey();
       if (
-        marketplaceVisualSession &&
-        marketplaceVisualSession.routeKey !== routeKey
-      ) {
-        marketplaceVisualSession = null;
-      }
-      if (
         marketplaceWeakBootstrapState &&
         marketplaceWeakBootstrapState.routeKey !== routeKey
       ) {
@@ -1624,27 +1619,32 @@ ipcRenderer.on(
       ) {
         marketplaceOrdinaryClearState = null;
       }
-      const currentMarketplaceSession = marketplaceVisualSession;
+      const previousMarketplaceSession = marketplaceVisualSession;
+      const currentMarketplaceSession =
+        previousMarketplaceSession &&
+        previousMarketplaceSession.routeKey === routeKey
+          ? previousMarketplaceSession
+          : null;
       const matchedSignals = new Set<string>();
       const weakBootstrapSettled = isMarketplaceWeakBootstrapSettled();
       state.weakBootstrapSettled = weakBootstrapSettled;
-      if (currentMarketplaceSession) {
+      if (previousMarketplaceSession) {
         state.marketplaceLastConfirmedAgeMs = Math.max(
           0,
-          now - currentMarketplaceSession.lastConfirmedAt,
+          now - previousMarketplaceSession.lastConfirmedAt,
         );
         state.marketplaceLastStrongConfirmedAgeMs =
-          currentMarketplaceSession.lastStrongConfirmedAt !== null
-            ? Math.max(0, now - currentMarketplaceSession.lastStrongConfirmedAt)
+          previousMarketplaceSession.lastStrongConfirmedAt !== null
+            ? Math.max(0, now - previousMarketplaceSession.lastStrongConfirmedAt)
             : null;
         state.marketplacePostConfirmGraceActive =
-          currentMarketplaceSession.confirmationKind === "strong-header" &&
+          previousMarketplaceSession.confirmationKind === "strong-header" &&
           state.marketplaceLastStrongConfirmedAgeMs !== null &&
           state.marketplaceLastStrongConfirmedAgeMs <=
             MARKETPLACE_POST_CONFIRM_GRACE_MS;
         state.ordinaryClearLastMarketplaceMatchAgeMs = Math.max(
           0,
-          now - currentMarketplaceSession.lastMatchedAt,
+          now - previousMarketplaceSession.lastMatchedAt,
         );
       }
       const rightPaneMinLeft = Math.max(
@@ -1859,6 +1859,25 @@ ipcRenderer.on(
           confirmedHeaderBand: currentMarketplaceSession?.headerBand,
           candidateHeaderBand: weakHeaderBand,
         });
+      const routeChangeWeakHeaderMatchesPreviousSession =
+        previousMarketplaceSession !== null &&
+        previousMarketplaceSession !== undefined &&
+        previousMarketplaceSession.routeKey !== routeKey &&
+        weakHeaderBand !== null &&
+        doesMarketplaceThreadRouteChangeWeakHeaderMatch({
+          confirmedHeaderBand: previousMarketplaceSession.headerBand,
+          candidateHeaderBand: weakHeaderBand,
+        });
+      if (routeChangeWeakHeaderMatchesPreviousSession) {
+        matchedSignals.add("route-change-marketplace-weak-header");
+      } else if (
+        previousMarketplaceSession !== null &&
+        previousMarketplaceSession !== undefined &&
+        previousMarketplaceSession.routeKey !== routeKey &&
+        weakHeaderBand !== null
+      ) {
+        matchedSignals.add("route-change-marketplace-weak-header-rejected");
+      }
 
       let pendingBootstrapSignalSource:
         | Extract<
@@ -2020,17 +2039,17 @@ ipcRenderer.on(
       if (
         strongSignalSource !== "strong-header" &&
         strongSignalSource &&
-        currentMarketplaceSession?.visualCropHeight !== null
+        previousMarketplaceSession?.visualCropHeight !== null
       ) {
         strongVisualCropHeight =
-          currentMarketplaceSession?.visualCropHeight ?? null;
+          previousMarketplaceSession?.visualCropHeight ?? null;
       }
 
       const sessionDecision = resolveMarketplaceVisualSessionDecision({
         currentRouteKey: routeKey,
         nowMs: now,
         graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
-        previousSession: currentMarketplaceSession,
+        previousSession: previousMarketplaceSession,
         strongSignalSource,
         isWeakBootstrapConfirmation,
         pendingBootstrapSignalSource,

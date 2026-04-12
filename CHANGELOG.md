@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.1-beta.1] - 2026-04-12
+
+### Fixed
+
+- **Issue #49 follow-up: bridge Marketplace route handoffs when the next thread starts as a weak header-only render** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep the previous Marketplace visual session alive long enough for route-change policy to inspect the next thread instead of clearing it immediately when the URL changes.
+  - Bridge directly into the next route when it appears straight after a confirmed Marketplace thread and the new top-left `Marketplace` header band still matches the previous Marketplace header region, even if Facebook has not rendered the native back control yet.
+  - Add deterministic coverage for this route-handoff replay and new debug signal tags so future bundles show whether a weak next-route Marketplace header was accepted or rejected during the handoff.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run build`
+
 ## [1.3.0] - 2026-04-11
 
 ### Changed

@@ -429,6 +429,45 @@ export function doesMarketplaceThreadFreshHeaderPairMatch(input: {
   return verticalOverlap && anchoredNearHeaderLeft && headerInTopLeftBand;
 }
 
+export function doesMarketplaceThreadRouteChangeWeakHeaderMatch(input: {
+  confirmedHeaderBand?: MarketplaceThreadHeaderBand | null;
+  candidateHeaderBand?: MarketplaceThreadHeaderBand | null;
+}): boolean {
+  const confirmedHeaderBand = normalizeMarketplaceThreadHeaderBand(
+    input.confirmedHeaderBand,
+  );
+  const candidateHeaderBand = normalizeMarketplaceThreadHeaderBand(
+    input.candidateHeaderBand,
+  );
+  if (!confirmedHeaderBand || !candidateHeaderBand) {
+    return false;
+  }
+
+  const topDiff = Math.abs(candidateHeaderBand.top - confirmedHeaderBand.top);
+  const bottomDiff = Math.abs(
+    candidateHeaderBand.bottom - confirmedHeaderBand.bottom,
+  );
+  const verticalOverlap =
+    candidateHeaderBand.bottom >= confirmedHeaderBand.top - 20 &&
+    candidateHeaderBand.top <= confirmedHeaderBand.bottom + 20;
+  const anchoredWithinPreviousHeaderBand =
+    candidateHeaderBand.left <= confirmedHeaderBand.left + 96 &&
+    candidateHeaderBand.right >= confirmedHeaderBand.left + 40 &&
+    candidateHeaderBand.right <= confirmedHeaderBand.right + 48;
+  const candidateWidth = candidateHeaderBand.right - candidateHeaderBand.left;
+  const headerInTopLeftBand =
+    candidateHeaderBand.top <= 180 && candidateHeaderBand.left <= 220;
+
+  return (
+    verticalOverlap &&
+    anchoredWithinPreviousHeaderBand &&
+    candidateWidth >= 100 &&
+    topDiff <= 36 &&
+    bottomDiff <= 48 &&
+    headerInTopLeftBand
+  );
+}
+
 export function resolveMarketplaceVisualSessionDecision(input: {
   currentRouteKey: string;
   nowMs: number;
@@ -457,13 +496,12 @@ export function resolveMarketplaceVisualSessionDecision(input: {
 }): MarketplaceVisualSessionDecision {
   const hadPreviousSession =
     input.previousSession !== null && input.previousSession !== undefined;
+  const priorSession = input.previousSession ?? null;
   const routeChanged =
-    hadPreviousSession &&
-    input.previousSession?.routeKey !== input.currentRouteKey;
+    hadPreviousSession && priorSession?.routeKey !== input.currentRouteKey;
   const previousSession =
-    input.previousSession &&
-    input.previousSession.routeKey === input.currentRouteKey
-      ? input.previousSession
+    priorSession && priorSession.routeKey === input.currentRouteKey
+      ? priorSession
       : null;
 
   const weakHeaderMatchesSessionHeaderBand = doesMarketplaceThreadHeaderBandMatch(
@@ -472,10 +510,23 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       candidateHeaderBand: input.weakHeaderBand,
     },
   );
+  const routeChangeWeakHeaderMatchesPriorSession =
+    routeChanged &&
+    doesMarketplaceThreadRouteChangeWeakHeaderMatch({
+      confirmedHeaderBand: priorSession?.headerBand,
+      candidateHeaderBand: input.weakHeaderBand,
+    });
+  const routeChangeRecentMarketplaceMatch =
+    routeChanged &&
+    priorSession &&
+    Number.isFinite(priorSession.lastMatchedAt) &&
+    input.nowMs - priorSession.lastMatchedAt <= input.graceMs;
 
   if (input.strongSignalSource) {
     const visualCropHeight = normalizeMarketplaceVisualCropHeight(
-      input.strongVisualCropHeight ?? previousSession?.visualCropHeight,
+      input.strongVisualCropHeight ??
+        previousSession?.visualCropHeight ??
+        priorSession?.visualCropHeight,
     );
     const nextSession: MarketplaceVisualSessionState = {
       routeKey: input.currentRouteKey,
@@ -483,10 +534,13 @@ export function resolveMarketplaceVisualSessionDecision(input: {
       headerBand:
         normalizeMarketplaceThreadHeaderBand(input.strongHeaderBand) ??
         previousSession?.headerBand ??
+        priorSession?.headerBand ??
         null,
       lastConfirmedAt: input.nowMs,
       lastStrongConfirmedAt: input.isWeakBootstrapConfirmation
-        ? previousSession?.lastStrongConfirmedAt ?? null
+        ? previousSession?.lastStrongConfirmedAt ??
+          priorSession?.lastStrongConfirmedAt ??
+          null
         : input.nowMs,
       lastMatchedAt: input.nowMs,
       confirmationKind: input.isWeakBootstrapConfirmation
@@ -517,6 +571,36 @@ export function resolveMarketplaceVisualSessionDecision(input: {
   }
 
   if (routeChanged) {
+    if (routeChangeWeakHeaderMatchesPriorSession && routeChangeRecentMarketplaceMatch) {
+      const nextSession: MarketplaceVisualSessionState = {
+        routeKey: input.currentRouteKey,
+        visualCropHeight: priorSession?.visualCropHeight ?? null,
+        headerBand:
+          normalizeMarketplaceThreadHeaderBand(input.weakHeaderBand) ??
+          priorSession?.headerBand ??
+          null,
+        lastConfirmedAt: priorSession?.lastConfirmedAt ?? input.nowMs,
+        lastStrongConfirmedAt: priorSession?.lastStrongConfirmedAt ?? null,
+        lastMatchedAt: input.nowMs,
+        confirmationKind: priorSession?.confirmationKind ?? "strong-header",
+        signalSource: "weak-header",
+        lifecycleReason: "route-changed",
+        lastLifecycleAt: input.nowMs,
+      };
+
+      return {
+        sessionActive: true,
+        shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+        visualCropHeight: nextSession.visualCropHeight,
+        transition: "bridged",
+        signalSource: "weak-header",
+        lifecycleReason: "route-changed",
+        rejectionReason: null,
+        weakHeaderMatchesSessionHeaderBand: routeChangeWeakHeaderMatchesPriorSession,
+        nextSession,
+      };
+    }
+
     return {
       sessionActive: false,
       shouldApplyReducedCrop: false,

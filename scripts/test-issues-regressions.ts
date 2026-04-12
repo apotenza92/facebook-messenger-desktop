@@ -17,6 +17,7 @@ const {
 const {
   doesMarketplaceThreadBackAnchorMatch,
   doesMarketplaceThreadFreshHeaderPairMatch,
+  doesMarketplaceThreadRouteChangeWeakHeaderMatch,
   collectMarketplaceThreadHintSignals,
   doesMarketplaceThreadHeaderBandMatch,
   hasMarketplaceThreadHeaderSignal,
@@ -768,6 +769,37 @@ const runMarketplaceThreadPolicyTests = () => {
     JSON.stringify([false, false, true, true, true]),
     "#49 the April 10 split-header replay should start matching once the Marketplace label slides into the anchored back-button band",
   );
+  assertEqual(
+    doesMarketplaceThreadRouteChangeWeakHeaderMatch({
+      confirmedHeaderBand: {
+        top: 62,
+        bottom: 106,
+        left: 76,
+        right: 264,
+      },
+      candidateHeaderBand: {
+        top: 70,
+        bottom: 99,
+        left: 20,
+        right: 167,
+      },
+    }),
+    true,
+    "#49 a route change into another Marketplace thread should bridge when the new weak header band still sits inside the previous Marketplace header region",
+  );
+  assertEqual(
+    doesMarketplaceThreadRouteChangeWeakHeaderMatch({
+      confirmedHeaderBand: {
+        top: 62,
+        bottom: 106,
+        left: 76,
+        right: 264,
+      },
+      candidateHeaderBand: mismatchedWeakHeaderBand,
+    }),
+    false,
+    "#49 a route-change weak Marketplace label far from the previous header region must not bridge Marketplace mode",
+  );
 
   assertEqual(
     resolveMarketplaceOrdinaryClearBlockedReason({
@@ -990,6 +1022,84 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: null,
     }),
     "#49 switching to an ordinary chat route should clear the Marketplace session immediately",
+  );
+
+  const routeChangeWeakHeaderBridge = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread-3",
+    nowMs: 18_350,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: {
+      ...confirmedSession.nextSession,
+      routeKey: "/messages/t/marketplace-thread-2",
+      headerBand: {
+        top: 62,
+        bottom: 106,
+        left: 76,
+        right: 264,
+      },
+      lastMatchedAt: 18_000,
+    },
+    weakHeaderBand: {
+      top: 70,
+      bottom: 99,
+      left: 20,
+      right: 167,
+    },
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: routeChangeWeakHeaderBridge.sessionActive,
+      transition: routeChangeWeakHeaderBridge.transition,
+      signalSource: routeChangeWeakHeaderBridge.signalSource,
+      lifecycleReason: routeChangeWeakHeaderBridge.lifecycleReason,
+      visualCropHeight: routeChangeWeakHeaderBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "weak-header",
+      lifecycleReason: "route-changed",
+      visualCropHeight: 56,
+    }),
+    "#49 a fresh route that immediately follows a confirmed Marketplace thread should bridge across the route change when only the next weak Marketplace header is visible",
+  );
+
+  const staleRouteChangeWeakHeader = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-thread-4",
+    nowMs: 20_600,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    previousSession: {
+      ...confirmedSession.nextSession,
+      routeKey: "/messages/t/marketplace-thread-3",
+      headerBand: {
+        top: 62,
+        bottom: 106,
+        left: 76,
+        right: 264,
+      },
+      lastMatchedAt: 18_000,
+    },
+    weakHeaderBand: {
+      top: 70,
+      bottom: 99,
+      left: 20,
+      right: 167,
+    },
+  });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: staleRouteChangeWeakHeader.sessionActive,
+      transition: staleRouteChangeWeakHeader.transition,
+      lifecycleReason: staleRouteChangeWeakHeader.lifecycleReason,
+      visualCropHeight: staleRouteChangeWeakHeader.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 stale route-change weak Marketplace headers must not keep bridging indefinitely after the last confirmed Marketplace match",
   );
 
   const detouredMarketplaceSession = resolveMarketplaceVisualSessionDecision({
