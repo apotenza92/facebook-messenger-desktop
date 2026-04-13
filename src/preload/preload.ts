@@ -343,6 +343,7 @@ ipcRenderer.on(
   const MEDIA_OVERLAY_DEBUG_CHANNEL = "media-overlay-debug";
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
+  const MARKETPLACE_ROUTE_CHANGE_RESCUE_MS = 1_800;
   const MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS = 10_000;
   const MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES = 2;
   const MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS = 800;
@@ -424,6 +425,9 @@ ipcRenderer.on(
     routeChangeWeakHeaderMatchesPreviousSession: boolean;
     routeChangePendingBootstrapBridgeReason: MarketplaceRouteChangePendingBridgeReason | null;
     routeChangePendingBootstrapWouldBridge: boolean;
+    routeChangeRescuePending: boolean;
+    routeChangeRescueExpiresInMs: number | null;
+    routeChangeRescueStartedAgeMs: number | null;
     ordinaryClearPending: boolean;
     ordinaryClearStablePasses: number;
     ordinaryClearEligible: boolean;
@@ -1410,6 +1414,9 @@ ipcRenderer.on(
       routeChangeWeakHeaderMatchesPreviousSession: false,
       routeChangePendingBootstrapBridgeReason: null,
       routeChangePendingBootstrapWouldBridge: false,
+      routeChangeRescuePending: false,
+      routeChangeRescueExpiresInMs: null,
+      routeChangeRescueStartedAgeMs: null,
       ordinaryClearPending: false,
       ordinaryClearStablePasses: 0,
       ordinaryClearEligible: false,
@@ -2062,6 +2069,7 @@ ipcRenderer.on(
         currentRouteKey: routeKey,
         nowMs: now,
         graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+        routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
         previousSession: previousMarketplaceSession,
         strongSignalSource,
         isWeakBootstrapConfirmation,
@@ -2116,8 +2124,22 @@ ipcRenderer.on(
       state.marketplaceSessionLifecycleReason = sessionDecision.lifecycleReason;
       state.marketplaceSessionTransition = sessionDecision.transition;
       state.marketplaceSessionRejectionReason = sessionDecision.rejectionReason;
+      const marketplaceNextSession = sessionDecision.nextSession;
       state.marketplaceSessionHeaderBand =
-        sessionDecision.nextSession?.headerBand ?? null;
+        marketplaceNextSession?.headerBand ?? null;
+      const routeChangeRescuePendingUntil =
+        marketplaceNextSession?.routeChangeRescuePendingUntil ?? null;
+      const routeChangeRescueStartedAt =
+        marketplaceNextSession?.routeChangeRescueStartedAt ?? null;
+      state.routeChangeRescuePending = routeChangeRescuePendingUntil !== null;
+      state.routeChangeRescueExpiresInMs =
+        routeChangeRescuePendingUntil !== null
+          ? Math.max(0, routeChangeRescuePendingUntil - now)
+          : null;
+      state.routeChangeRescueStartedAgeMs =
+        routeChangeRescueStartedAt !== null
+          ? Math.max(0, now - routeChangeRescueStartedAt)
+          : null;
       state.marketplaceThreadVisible = sessionDecision.sessionActive;
       state.visualCropHeight = sessionDecision.visualCropHeight;
 
@@ -2127,6 +2149,31 @@ ipcRenderer.on(
         } else {
           matchedSignals.add("header-marketplace-rejected");
         }
+      }
+      if (sessionDecision.transition === "route-change-rescue-pending") {
+        matchedSignals.add("route-change-rescue-pending");
+        if (sessionDecision.weakHeaderMatchesSessionHeaderBand) {
+          matchedSignals.add("route-change-rescue-late-weak-header");
+        }
+      }
+      if (
+        currentMarketplaceSession?.routeChangeRescuePendingUntil !== null &&
+        sessionDecision.transition === "bridged" &&
+        sessionDecision.signalSource === "weak-header"
+      ) {
+        matchedSignals.add("route-change-rescue-late-weak-header");
+      }
+      if (
+        currentMarketplaceSession?.routeChangeRescuePendingUntil !== null &&
+        sessionDecision.transition === "cleared"
+      ) {
+        matchedSignals.add(
+          state.headerOrdinaryChatDetected
+            ? "route-change-rescue-rejected-ordinary"
+            : weakHeaderBand !== null
+              ? "route-change-rescue-rejected-mismatch"
+              : "route-change-rescue-expired",
+        );
       }
       if (sessionDecision.lifecycleReason) {
         matchedSignals.add(`session:${sessionDecision.lifecycleReason}`);

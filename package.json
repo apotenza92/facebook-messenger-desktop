@@ -1,6 +1,6 @@
 {
   "name": "facebook-messenger-desktop",
-  "version": "1.3.1-beta.2",
+  "version": "1.3.1-beta.3",
   "description": "An unofficial, self-contained desktop app for Facebook Messenger",
   "main": "dist/main/main.js",
   "scripts": {
@@ -24,6 +24,7 @@
     "dist:all": "npm run build && electron-builder --config electron-builder.config.js --mac --win --linux --publish=never",
     "test:notification": "node -r ./scripts/register-ts.js scripts/test-notification-click.ts",
     "test:issues:deterministic": "node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts",
+    "test:issue49:offline": "node -r ./scripts/register-ts.js scripts/test-issue49-offline-harness.ts",
     "test:issues": "npm run test:issues:deterministic",
     "test:window-open": "node -r ./scripts/register-ts.js scripts/test-window-open-policy.ts",
     "test:window-open:gui": "node scripts/test-window-open-gui.js",

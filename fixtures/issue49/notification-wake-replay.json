@@ -1,0 +1,57 @@
+{
+  "description": "Replay of the issue #49 wake/resume notification class: a pre-existing approval/admin row should be snapshotted at wake and suppressed if replayed later, while a real fresh direct message after wake should still notify.",
+  "cases": [
+    {
+      "name": "resume-replays-existing-group-approval-row",
+      "reason": "resume",
+      "existingUnreadRows": [
+        {
+          "href": "/t/group-admin-queue",
+          "title": "Account A",
+          "body": "Membership request pending in a group you're managing",
+          "muted": false,
+          "unread": true
+        }
+      ],
+      "replayPayload": {
+        "title": "Account A",
+        "body": "Membership request pending in a group you're managing"
+      },
+      "replayRow": {
+        "href": "/t/group-admin-queue",
+        "title": "Account A",
+        "body": "Membership request pending in a group you're managing",
+        "muted": false,
+        "unread": true
+      },
+      "expect": {
+        "snapshotFresh": true,
+        "replayLooksGlobalActivity": true,
+        "preExistingReplaySuppressed": true,
+        "shouldNotify": false
+      }
+    },
+    {
+      "name": "resume-allows-real-fresh-direct-message",
+      "reason": "resume",
+      "existingUnreadRows": [],
+      "replayPayload": {
+        "title": "Account B",
+        "body": "Are you free tonight?"
+      },
+      "replayRow": {
+        "href": "/t/direct-thread-B",
+        "title": "Account B",
+        "body": "Are you free tonight?",
+        "muted": false,
+        "unread": true
+      },
+      "expect": {
+        "snapshotFresh": true,
+        "replayLooksGlobalActivity": false,
+        "preExistingReplaySuppressed": false,
+        "shouldNotify": true
+      }
+    }
+  ]
+}

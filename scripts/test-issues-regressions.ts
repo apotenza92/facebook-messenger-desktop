@@ -127,6 +127,11 @@ const writeJsonOutput = (
   fs.writeFileSync(jsonOutput, JSON.stringify(value, null, 2), "utf8");
 };
 
+const loadFixtureJson = <T>(relativePath: string): T => {
+  const absolutePath = path.join(APP_ROOT, relativePath);
+  return JSON.parse(fs.readFileSync(absolutePath, "utf8")) as T;
+};
+
 const buildMutedConflictEvidence = () => {
   const notificationDecisionPolicy = loadNotificationDecisionPolicy();
   const payload = {
@@ -535,6 +540,7 @@ const runMarketplaceThreadPolicyTests = () => {
   );
 
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
+  const MARKETPLACE_ROUTE_CHANGE_RESCUE_MS = 1_800;
   const confirmedSession = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
     nowMs: 10_000,
@@ -1107,18 +1113,86 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 same-route weak Marketplace hints outside the confirmed header band should be treated as neutral rerenders instead of clearing the session",
   );
 
-  const routeChangeClear = resolveMarketplaceVisualSessionDecision({
+  const marketplaceReplayFixture = loadFixtureJson<{
+    graceMs: number;
+    routeChangeRescueMs: number;
+    steps: Array<{
+      name: string;
+      nowMs: number;
+      input: Record<string, unknown>;
+      expect: {
+        sessionActive: boolean;
+        transition: string;
+        signalSource: string | null;
+        lifecycleReason: string | null;
+        visualCropHeight: number | null;
+        rescuePending: boolean;
+      };
+    }>;
+  }>("fixtures/issue49/marketplace-beta2-route-change-replay.json");
+  let replayPreviousSession = repeatedWeakSession;
+  const replayResults = marketplaceReplayFixture.steps.map((step) => {
+    const decision = resolveMarketplaceVisualSessionDecision({
+      graceMs: marketplaceReplayFixture.graceMs,
+      routeChangeRescueMs: marketplaceReplayFixture.routeChangeRescueMs,
+      previousSession: replayPreviousSession,
+      ...(step.input as any),
+      nowMs: step.nowMs,
+    });
+    replayPreviousSession = decision.nextSession;
+    return {
+      name: step.name,
+      actual: {
+        sessionActive: decision.sessionActive,
+        transition: decision.transition,
+        signalSource: decision.signalSource,
+        lifecycleReason: decision.lifecycleReason,
+        visualCropHeight: decision.visualCropHeight,
+        rescuePending: decision.nextSession?.routeChangeRescuePendingUntil !== null,
+      },
+      expected: step.expect,
+    };
+  });
+  assertEqual(
+    JSON.stringify(replayResults.map((result) => result.actual)),
+    JSON.stringify(replayResults.map((result) => result.expected)),
+    "#49 the local Marketplace fixture replay should match Allen's latest beta.2 route-change timeline closely enough to validate the rescue-state behavior",
+  );
+
+  const routeChangeRescuePending = replayResults[1]?.actual;
+  assertEqual(
+    JSON.stringify(routeChangeRescuePending),
+    JSON.stringify(marketplaceReplayFixture.steps[1].expect),
+    "#49 the latest beta.2 route-change miss should hold a recently confirmed Marketplace session long enough to inspect delayed weak evidence on the next route",
+  );
+
+  const routeChangeLateWeakHeaderStillPending = replayResults[2]?.actual;
+  assertEqual(
+    JSON.stringify(routeChangeLateWeakHeaderStillPending),
+    JSON.stringify(marketplaceReplayFixture.steps[2].expect),
+    "#49 the first late weak Marketplace candidate from Allen's beta.2 bundle should keep the rescue hold alive even if it is not spatially strong enough yet",
+  );
+
+  const routeChangeLateWeakHeaderRescue = replayResults[3]?.actual;
+  assertEqual(
+    JSON.stringify(routeChangeLateWeakHeaderRescue),
+    JSON.stringify(marketplaceReplayFixture.steps[3].expect),
+    "#49 the later weak Marketplace header from Allen's beta.2 bundle should rescue the held route-change session once it slides back into the expected header region",
+  );
+
+  const routeChangeRescueExpired = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/ordinary-chat",
-    nowMs: 17_100,
+    nowMs: 18_950,
     graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
-    previousSession: repeatedWeakSession,
+    routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
+    previousSession: replayPreviousSession,
   });
   assertEqual(
     JSON.stringify({
-      sessionActive: routeChangeClear.sessionActive,
-      transition: routeChangeClear.transition,
-      lifecycleReason: routeChangeClear.lifecycleReason,
-      visualCropHeight: routeChangeClear.visualCropHeight,
+      sessionActive: routeChangeRescueExpired.sessionActive,
+      transition: routeChangeRescueExpired.transition,
+      lifecycleReason: routeChangeRescueExpired.lifecycleReason,
+      visualCropHeight: routeChangeRescueExpired.visualCropHeight,
     }),
     JSON.stringify({
       sessionActive: false,
@@ -1126,7 +1200,7 @@ const runMarketplaceThreadPolicyTests = () => {
       lifecycleReason: "route-changed",
       visualCropHeight: null,
     }),
-    "#49 switching to an ordinary chat route should clear the Marketplace session immediately",
+    "#49 route-change rescue should still fail closed once the late-evidence window expires",
   );
 
   const routeChangeWeakHeaderBridge = resolveMarketplaceVisualSessionDecision({
@@ -1174,6 +1248,7 @@ const runMarketplaceThreadPolicyTests = () => {
       currentRouteKey: "/messages/t/marketplace-thread-3",
       nowMs: 18_320,
       graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
       previousSession: {
         ...confirmedSession.nextSession,
         routeKey: "/messages/t/marketplace-thread-2",
@@ -1244,6 +1319,7 @@ const runMarketplaceThreadPolicyTests = () => {
       currentRouteKey: "/messages/t/ordinary-chat-with-marketplace-link",
       nowMs: 18_320,
       graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
       previousSession: {
         ...confirmedSession.nextSession,
         routeKey: "/messages/t/marketplace-thread-2",
@@ -1305,6 +1381,7 @@ const runMarketplaceThreadPolicyTests = () => {
       currentRouteKey: "/messages/t/ordinary-chat-2",
       nowMs: 18_320,
       graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
       previousSession: {
         ...confirmedSession.nextSession,
         routeKey: "/messages/t/marketplace-thread-2",
@@ -3132,6 +3209,153 @@ const runNotificationPolicyTests = () => {
     personTitleParticipationRequestSuppressed,
     true,
     "#49 the shared notification activity classifier should suppress participation-request activity even when the title looks like a person",
+  );
+
+  const resumeBoundaryCapturesFreshUnread =
+    typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
+      "function" &&
+    notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary("resume");
+  assertEqual(
+    resumeBoundaryCapturesFreshUnread,
+    true,
+    "#49 wake/resume boundaries should snapshot fresh unread rows so delayed stale replays cannot surface as new notifications",
+  );
+
+  const unlockBoundaryCapturesFreshUnread =
+    typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
+      "function" &&
+    notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary(
+      "unlock-screen",
+    );
+  assertEqual(
+    unlockBoundaryCapturesFreshUnread,
+    true,
+    "#49 unlock boundaries should snapshot fresh unread rows so sleep/wake approval leaks fail closed",
+  );
+
+  const navigationBoundaryCapturesFreshUnread =
+    typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
+      "function" &&
+    notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary(
+      "navigation",
+    );
+  assertEqual(
+    navigationBoundaryCapturesFreshUnread,
+    false,
+    "#49 ordinary navigation settling should not broaden into wake-style unread snapshotting",
+  );
+
+  const simulateNativeWakeBoundaryDecision = (input: {
+    reason: string;
+    existingUnreadRows: Array<{
+      href: string;
+      title: string;
+      body: string;
+      muted: boolean;
+      unread: boolean;
+      searchText?: string;
+    }>;
+    replayPayload: { title: string; body: string };
+    replayRow: {
+      href: string;
+      title: string;
+      body: string;
+      muted: boolean;
+      unread: boolean;
+      searchText?: string;
+    };
+  }) => {
+    const snapshotFresh =
+      typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
+        "function" &&
+      notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary(
+        input.reason,
+      );
+    const recordedBodies = new Map<string, string>();
+    if (snapshotFresh) {
+      for (const row of input.existingUnreadRows) {
+        recordedBodies.set(row.href, row.body);
+      }
+    }
+
+    const match = notificationDecisionPolicy.resolveNativeNotificationTarget(
+      input.replayPayload,
+      [input.replayRow],
+    );
+    const replayLooksGlobalActivity =
+      notificationDecisionPolicy.isLikelyGlobalFacebookNotification(
+        input.replayPayload,
+      ) ||
+      notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
+        title: input.replayRow.title,
+        body: input.replayRow.body,
+      });
+    const preExistingReplaySuppressed = Boolean(
+      match.matchedHref &&
+        recordedBodies.get(match.matchedHref) === input.replayRow.body,
+    );
+    const shouldNotify =
+      !match.ambiguous &&
+      !match.muted &&
+      Boolean(match.matchedHref) &&
+      !replayLooksGlobalActivity &&
+      !preExistingReplaySuppressed;
+
+    return {
+      match,
+      snapshotFresh,
+      replayLooksGlobalActivity,
+      preExistingReplaySuppressed,
+      shouldNotify,
+    };
+  };
+
+  const wakeReplayFixture = loadFixtureJson<{
+    cases: Array<{
+      name: string;
+      reason: string;
+      existingUnreadRows: Array<{
+        href: string;
+        title: string;
+        body: string;
+        muted: boolean;
+        unread: boolean;
+        searchText?: string;
+      }>;
+      replayPayload: { title: string; body: string };
+      replayRow: {
+        href: string;
+        title: string;
+        body: string;
+        muted: boolean;
+        unread: boolean;
+        searchText?: string;
+      };
+      expect: {
+        snapshotFresh: boolean;
+        replayLooksGlobalActivity: boolean;
+        preExistingReplaySuppressed: boolean;
+        shouldNotify: boolean;
+      };
+    }>;
+  }>("fixtures/issue49/notification-wake-replay.json");
+  const wakeReplayResults = wakeReplayFixture.cases.map((testCase) => ({
+    name: testCase.name,
+    actual: (() => {
+      const result = simulateNativeWakeBoundaryDecision(testCase);
+      return {
+        snapshotFresh: result.snapshotFresh,
+        replayLooksGlobalActivity: result.replayLooksGlobalActivity,
+        preExistingReplaySuppressed: result.preExistingReplaySuppressed,
+        shouldNotify: result.shouldNotify,
+      };
+    })(),
+    expected: testCase.expect,
+  }));
+  assertEqual(
+    JSON.stringify(wakeReplayResults.map((result) => result.actual)),
+    JSON.stringify(wakeReplayResults.map((result) => result.expected)),
+    "#49 the local wake/resume fixture replay should fail closed for stale approval/admin rows while still allowing real fresh direct messages",
   );
 
   const membershipRequestSuppressed =

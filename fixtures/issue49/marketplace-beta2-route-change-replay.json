@@ -1,0 +1,90 @@
+{
+  "description": "Replay of the latest beta.2 Marketplace route-change failure shape from issue #49: confirmed Marketplace session, immediate route-change hold, first late weak header still pending, second late weak header rescues.",
+  "graceMs": 2500,
+  "routeChangeRescueMs": 1800,
+  "steps": [
+    {
+      "name": "confirm-marketplace-session",
+      "nowMs": 10000,
+      "input": {
+        "currentRouteKey": "/messages/e2ee/t/marketplace-thread-A",
+        "strongSignalSource": "strong-header",
+        "strongVisualCropHeight": 56,
+        "strongHeaderBand": {
+          "top": 62,
+          "bottom": 106,
+          "left": 12,
+          "right": 199
+        }
+      },
+      "expect": {
+        "sessionActive": true,
+        "transition": "strong-confirmed",
+        "signalSource": "strong-header",
+        "lifecycleReason": "confirmed-marketplace-thread",
+        "visualCropHeight": 56,
+        "rescuePending": false
+      }
+    },
+    {
+      "name": "route-change-first-sample-looks-ordinary",
+      "nowMs": 10960,
+      "input": {
+        "currentRouteKey": "/messages/t/ordinary-chat-B",
+        "headerOrdinaryChatDetected": true
+      },
+      "expect": {
+        "sessionActive": true,
+        "transition": "route-change-rescue-pending",
+        "signalSource": "bridge",
+        "lifecycleReason": "route-change-rescue-pending",
+        "visualCropHeight": 56,
+        "rescuePending": true
+      }
+    },
+    {
+      "name": "first-late-weak-header-candidate-still-pending",
+      "nowMs": 12422,
+      "input": {
+        "currentRouteKey": "/messages/t/ordinary-chat-B",
+        "headerOrdinaryChatDetected": true,
+        "weakHeaderBand": {
+          "top": 70,
+          "bottom": 99,
+          "left": 168,
+          "right": 315
+        }
+      },
+      "expect": {
+        "sessionActive": true,
+        "transition": "route-change-rescue-pending",
+        "signalSource": "bridge",
+        "lifecycleReason": "route-change-rescue-pending",
+        "visualCropHeight": 56,
+        "rescuePending": true
+      }
+    },
+    {
+      "name": "second-late-weak-header-rescues-session",
+      "nowMs": 12454,
+      "input": {
+        "currentRouteKey": "/messages/t/ordinary-chat-B",
+        "headerOrdinaryChatDetected": true,
+        "weakHeaderBand": {
+          "top": 70,
+          "bottom": 99,
+          "left": 83,
+          "right": 230
+        }
+      },
+      "expect": {
+        "sessionActive": true,
+        "transition": "bridged",
+        "signalSource": "weak-header",
+        "lifecycleReason": "same-thread-rerender",
+        "visualCropHeight": 56,
+        "rescuePending": false
+      }
+    }
+  ]
+}

@@ -103,6 +103,7 @@ type NotificationDecisionPolicyApi = {
   classifyCallNotification: (
     payload: NotificationPayload,
   ) => NotificationCallClassification;
+  shouldSnapshotFreshUnreadOnBoundary: (reason: string) => boolean;
 };
 
 const MIN_CONFIDENCE = 0.55;
@@ -1095,6 +1096,15 @@ function shouldSuppressSelfAuthoredNotification(
   });
 }
 
+function shouldSnapshotFreshUnreadOnBoundary(reason: string): boolean {
+  const normalizedReason = normalizeText(reason);
+  return (
+    normalizedReason === "resume" ||
+    normalizedReason === "unlock-screen" ||
+    normalizedReason === "online-recovery"
+  );
+}
+
 function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
   const ttl = Math.max(100, Math.floor(ttlMs));
   const seenByConversation = new Map<string, number>();
@@ -1123,6 +1133,7 @@ const policyApi: NotificationDecisionPolicyApi = {
   shouldSuppressSelfAuthoredNotification,
   classifyCallNotification: (payload) =>
     notificationActivityPolicy.classifyCallNotification(payload),
+  shouldSnapshotFreshUnreadOnBoundary,
 };
 
 (globalThis as any).__mdNotificationDecisionPolicy = policyApi;

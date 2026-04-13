@@ -1,340 +1,344 @@
-# Issue #49 — next `1.3.1` beta plan
+# Issue #49 — exact plan for the next beta follow-up
 
-## Goal
-Ship the next `1.3.1-beta.*` with a focused fix for the two latest reporter follow-ups on issue #49:
+## Scope
+This plan is only about the **latest reporter follow-up** after `1.3.1-beta.2`:
+- comment: `https://github.com/apotenza92/facebook-messenger-desktop/issues/49#issuecomment-4235713350`
 
-1. Marketplace thread re-entry still loses the expected native back/header treatment after a normal-chat detour.
-2. Some desktop notification titles are showing a stray emoji in the alternate-name suffix.
+Bundles in scope:
+- Marketplace repro on `1.3.1-beta.2`
+  - `messenger-debug-logs-2026-04-13T10-32-36-160Z.zip`
+- Group approval notification leak on `1.3.1-beta.1`
+  - `messenger-debug-logs-2026-04-13T10-31-33-146Z.zip`
 
-## Evidence reviewed
+## Purpose
+Do the minimum **correct** work needed to stop shipping partial follow-ups.
 
-### Latest reporter comments
-- Marketplace repro + logs:
-  - `https://github.com/apotenza92/facebook-messenger-desktop/issues/49#issuecomment-4231554606`
-  - attached bundle: `messenger-debug-logs-2026-04-12T12-57-07-437Z.zip`
-- Notification title screenshot:
-  - `https://github.com/apotenza92/facebook-messenger-desktop/issues/49#issuecomment-4233001362`
-  - attached image asset: `1c0436b4-c653-4635-9624-fffc3e94fd65`
+This means:
+- no speculative fixes disconnected from the latest bundles
+- no new beta until each reported failure has:
+  - a concrete root-cause hypothesis
+  - deterministic regression coverage or equivalent proof
+  - targeted debug output if live validation is still incomplete
+- no issue reply that just asks for another retest without explaining the exact new fix path
 
-### Local review artifacts
-Downloaded for local inspection:
-- `/tmp/issue49-review/reporter-2026-04-12-logs.zip`
-- `/tmp/issue49-review/reporter-2026-04-12-notification.png`
+---
 
-## Current diagnosis
+## The two things we must fix now
 
-### A. Marketplace regression still open
+### 1) Marketplace still breaks on `1.3.1-beta.2`
 Reporter repro:
-1. Open normal chat A
-2. Enter Marketplace chat / panel
-3. Back out
-4. Switch to normal chat B
-5. Re-enter Marketplace chat / panel
-6. Back button/header treatment is missing or wrong
+1. open normal chat A
+2. enter Marketplace
+3. back out
+4. switch to different normal chat B
+5. enter Marketplace again
+6. Marketplace back/header treatment is missing
 
-### What the log suggests
-The failing re-entry reaches the Marketplace thread route, but the session is dropped too early.
+### 2) Group approval notifications leaked after sleep/wake
+Reporter note:
+- happened after the laptop slept overnight
+- bundle captured on `1.3.1-beta.1`
+- likely wake/resume related
 
-Observed sequence from the log bundle:
-- confirmed Marketplace session existed earlier on the same thread
-- route changes away to ordinary chats
-- on re-entry, the new Marketplace route briefly shows weak Marketplace evidence (`rightPaneMarketplaceSignalDetected: true`)
-- state enters `weak-bootstrap-pending`
-- that signal disappears before strong confirmation lands
-- only weak header candidates remain
-- those weak candidates are rejected
-- the route settles as ordinary chat instead of keeping Marketplace visual state alive
+---
 
-Representative failing transitions from `media-overlay-debug.ndjson`:
-- prior confirmed Marketplace route: `strong-confirmed`
-- re-entry: `weak-bootstrap-pending`
-- shortly after: `inactive` / `rejected`
-- matched signals include:
-  - `header-marketplace-candidate`
-  - `header-back+marketplace-fallback-rejected`
-  - `header-marketplace-rejected`
+## Non-negotiable definition of done
+We are **not done** until all of this is true.
 
-### Code hotspots
+### Marketplace done means
+- the exact reporter repro above works reliably
+- the latest `beta.2` failure shape is covered by a deterministic regression test
+- ordinary chats still fail closed
+- debug logs clearly show why a route was:
+  - immediately cleared
+  - held in rescue state
+  - rescued by late Marketplace evidence
+  - finally rejected as ordinary chat
+
+### Notification done means
+- approval/admin notifications that existed before sleep/wake do not appear as fresh desktop notifications after resume/unlock
+- a deterministic regression test covers the wake/resume failure class
+- real fresh direct messages after wake still notify
+- debug logs clearly show wake generation, stale-vs-fresh reasoning, and suppression reason
+
+### Release-quality done means
+- `npm run test:issues`
+- `npm run build`
+- dev smoke launch
+- updated `CHANGELOG.md`
+- issue reply prepared with exact wording about what changed
+- ideally live GUI validation; if not possible, the new deterministic tests and new diagnostics must be strong enough that the next bundle would be conclusive immediately
+
+---
+
+## What the latest bundles actually say
+
+## A. Marketplace bundle (`beta.2`)
+### Confirmed from the log
+- a Marketplace session existed shortly before the failing handoff
+- the route changed away and then back toward a Marketplace thread
+- at the new-route handoff, the prior Marketplace session was cleared immediately
+- at clear time, debug state showed:
+  - `routeChangeDetected: true`
+  - `routeChangeRecentMarketplaceMatch: true`
+  - `routeChangePendingBootstrapBridgeReason: "no-pending-bootstrap-signal"`
+  - transition: `cleared`
+- **after** the clear, weak Marketplace header candidates appeared and were rejected
+
+### Root-cause hypothesis
+The `beta.2` bridge still assumes that rescue evidence must exist **at route-change handoff time**.
+
+The remaining failure shape is:
+1. route changes
+2. first sample on the new route looks ordinary
+3. old Marketplace session is cleared
+4. weak Marketplace header appears slightly later on the same new route
+5. there is no hold state left to rescue from
+
+### What this means
+The next fix is **not** “more pending-bootstrap bridging.”
+It is:
+- a short **route-change rescue window**
+- plus matching logic for **late-arriving weak Marketplace evidence** on the new route
+
+---
+
+## B. Group approval notification bundle (`beta.1`)
+### Confirmed from the log
+- multiple `suspend`, `resume`, `lock-screen`, and `unlock-screen` transitions occurred
+- the reporter's sleep/wake suspicion is plausible
+- the exported log does not yet fully prove the end-to-end approval notification classification chain
+
+### Root-cause hypothesis
+Treat this as a wake/resume boundary bug until disproven.
+
+Most likely buckets:
+1. existing unread/admin rows are re-treated as fresh after wake
+2. approval/admin notifications are not filtered consistently after resume/unlock
+3. settling after wake is too short for Messenger's delayed DOM refresh
+4. stale candidate state survives power-state transitions
+
+### What this means
+The next fix is **not** more title formatting work.
+It is:
+- harder wake/resume stale-notification suppression
+- explicit approval/admin classification at the right boundary
+- debug output that proves why something was allowed or suppressed after wake
+
+---
+
+## Exact work to do
+
+## 1) Marketplace: implement a route-change rescue state
+Target files:
 - `src/preload/marketplace-thread-policy.ts`
-  - `resolveMarketplaceVisualSessionDecision()` currently clears aggressively on route change unless the new weak header matches the prior confirmed header band.
 - `src/preload/preload.ts`
-  - caller logic already surfaces `pendingBootstrapSignalSource`, route-change weak-header evidence, and debug tags.
 - `scripts/test-issues-regressions.ts`
-  - already contains nearby issue #49 coverage, including route-change weak-header bridging, but not the exact detour sequence from the latest report.
 
-### B. Notification title emoji leak
-The screenshot shows a title formatted like:
-- `Conversation Name (emoji)`
+### Required behavior
+When a recently confirmed Marketplace session route-changes and the new route is still within a short grace window:
+- do **not** final-clear immediately just because the first sample looks ordinary
+- keep a short-lived rescue state carrying the previous Marketplace context
+- allow the new route to recover the session if later evidence appears soon after, such as:
+  - weak Marketplace header band in the expected top-left region
+  - back-anchor + weak Marketplace label pairing that settles slightly later
+  - repeated weak-header progression consistent with Facebook finishing render after URL change
 
-That strongly suggests an emoji-only value is being treated as an alternate display name.
+### Guardrails
+Fail closed if:
+- prior Marketplace session is stale
+- rescue window expires
+- later weak evidence is spatially inconsistent with the previous Marketplace header region
+- route stabilizes as a normal chat with only ordinary-chat controls
 
-### Likely source
+### Concrete implementation steps
+1. add a policy-level state for **route-change rescue pending**
+2. preserve enough prior session geometry and timing to evaluate delayed weak evidence
+3. evaluate late weak evidence against prior confirmed Marketplace context
+4. expire rescue deterministically when:
+   - only ordinary-chat evidence remains for long enough, or
+   - rescue timeout is reached
+5. emit explicit debug tags/fields for:
+   - `route-change-rescue-pending`
+   - `route-change-rescue-late-weak-header`
+   - `route-change-rescue-expired`
+   - `route-change-rescue-rejected-ordinary`
+   - `route-change-rescue-rejected-mismatch`
+
+### Things to avoid
+- do not make Marketplace sticky forever
+- do not rescue based on a bare `Marketplace` label anywhere on screen
+- do not rescue ordinary chats that merely contain Marketplace links or residual top-chrome noise
+
+---
+
+## 2) Marketplace: turn the latest bundle into exact regression tests
+Target file:
+- `scripts/test-issues-regressions.ts`
+
+### Required tests
+1. **latest reporter shape**
+   - confirmed Marketplace session
+   - route changes away
+   - route changes back
+   - first new-route sample looks ordinary
+   - second/third sample produces weak Marketplace header in the right region
+   - expected: rescued, not cleared
+2. same flow but rescue evidence arrives too late
+   - expected: clear
+3. same flow but weak header is spatially inconsistent
+   - expected: clear
+4. ordinary chat with stray Marketplace-ish label after route change
+   - expected: clear
+5. ordinary chat with Marketplace link + back button but no real Marketplace thread context
+   - expected: clear
+
+### Test standard
+At least one Marketplace test should be shaped directly from the `beta.2` bundle timeline so we are not guessing.
+
+---
+
+## 3) Notifications: harden wake/resume stale-notification suppression
+Target files:
 - `src/preload/notifications-inject.ts`
-  - `extractRealNamesFromConversation()` scans `img[alt]` values from the conversation surface.
-  - it tries to skip emoji-only values with `/^[\p{Emoji}\s]+$/u`, which is likely too weak for compound emoji sequences using modifiers / variation selectors / ZWJ joins.
-  - cached names are later fed into notification title formatting.
-- `src/preload/notification-display-policy.ts`
-  - `formatNotificationDisplayTitle()` filters generic names, but does not defensively reject emoji-only alternates.
+- `src/preload/notification-decision-policy.ts`
+- `src/shared/notification-activity-policy.ts`
+- `scripts/test-issues-regressions.ts`
 
-## Working hypotheses
+### Required behavior
+On `resume` / `unlock-screen`:
+- existing unread/admin rows must not be treated as fresh notifications
+- approval/admin notifications must still be suppressed after wake even if Messenger rehydrates them late
+- fresh real direct messages after wake must still notify
 
-### Marketplace
-The route-change logic is still biased toward clearing as soon as the new route does not strongly match the prior header band. That works for stale or false-positive weak headers, but it is too strict for the reporter's detour flow where:
-- Marketplace evidence appears briefly on route entry,
-- then collapses into a weaker back/header presentation,
-- before the new route fully stabilizes.
+### Concrete implementation steps
+1. audit where wake/unlock resets current notification candidate state
+2. identify where existing-vs-fresh unread rows are snapshotted and compared
+3. add or tighten explicit approval/admin notification classification if currently too weak
+4. make wake/resume settling stricter for stale/admin rows
+5. ensure stale candidate state cannot leak across wake generations
+6. emit debug data for:
+   - wake generation id
+   - power-state transition received
+   - stale-unread snapshot count
+   - candidate classified as approval/admin
+   - suppressed because pre-existing after wake
+   - allowed because truly fresh after wake
 
-### Notification title
-We have only a single filter point for emoji-like alternates, and it is implemented at cache-ingest time with an incomplete regex. We need both:
-- a stronger cache-ingest filter, and
-- a final display-boundary filter.
+### Things to avoid
+- do not suppress all post-wake notifications blindly
+- do not rely on title/body heuristics alone if route/context can strengthen classification
+- do not leave the wake path under-instrumented again
 
-## Implementation plan
+---
 
-## 1) Marketplace route-change retention fix
-Update `src/preload/marketplace-thread-policy.ts` so that a recently confirmed Marketplace session is not cleared immediately when a route change lands in a weak re-entry state.
+## 4) Notifications: add deterministic wake/resume regressions
+Target file:
+- `scripts/test-issues-regressions.ts`
 
-### Proposed behavior
-On route change, keep the prior Marketplace session alive for a short grace path when all of the following are true:
-- previous session was recently matched / confirmed,
-- new route has at least weak Marketplace evidence,
-- and the evidence is consistent with fresh re-entry rather than stale residue.
+### Required tests
+1. existing unread approval/admin notification survives sleep/wake
+   - expected: suppressed
+2. delayed DOM refresh after unlock/resume replays an existing approval/admin row
+   - expected: suppressed
+3. real fresh direct message after wake
+   - expected: notify
+4. generic admin text that previously slipped through
+   - expected: suppressed
+5. wake boundary clears stale state so an old candidate cannot later display as fresh
+   - expected: suppressed
 
-### Likely shape of the change
-Add or refine a route-change bridge path for cases like:
-- `pendingBootstrapSignalSource` present on the new route, even if confirmation is not complete yet,
-- or a weak Marketplace header candidate appears immediately after route entry,
-- or a back-only Marketplace anchor survives the immediate rerender.
+### Test standard
+At least one notification test must explicitly model:
+- pre-sleep existing row
+- suspend/resume or lock/unlock transition
+- delayed post-wake replay
 
-### Constraints
-Do **not** make weak headers sticky forever. The bridge must still fail closed when:
-- the prior Marketplace session is stale,
-- the new route ages past the allowed grace window,
-- or the weak evidence clearly diverges from the prior Marketplace context.
+---
 
-### Debug additions
-Add explicit debug fields/tags for:
-- route-change clear deferred vs immediate clear
-- route-change bridge source (`pending-bootstrap`, `weak-header`, `back-anchor`, `bridge-only`)
-- why a pending route-change bridge was rejected
+## 5) Root-cause proof checkpoints before release
+These questions must be answered in code/comments/tests before shipping the next beta.
 
-## 2) Marketplace regression coverage
-Extend `scripts/test-issues-regressions.ts` with the latest detour pattern.
+### Marketplace proof checkpoints
+- what exact state was missing when the late weak header arrived?
+- what rescue window length is needed, and why is it safe?
+- what exact evidence is sufficient to rescue?
+- what exact evidence is insufficient and must still fail closed?
 
-### New deterministic cases to add
-- confirmed Marketplace session → ordinary chat A → ordinary chat B → Marketplace re-entry with temporary weak bootstrap → session should stay bridged long enough to confirm
-- route-change pending bootstrap should not immediately collapse to `cleared`
-- stale version of the same flow should still clear
-- weak re-entry on an actually ordinary chat should still fail closed
+### Notification proof checkpoints
+- where exactly is the stale approval/admin row crossing the fresh-notification boundary?
+- is the suppression fix happening at the earliest reliable place?
+- what post-wake scenario still allows real fresh direct messages through?
+- what debug fields would let the next bundle prove success or failure immediately?
 
-### Acceptance criteria
-- `npm run test:issues` passes
-- the new tests specifically guard the reporter repro sequence
+If we cannot answer these, the fix is not ready.
 
-## 3) Notification alternate-name sanitization
-Patch all three layers: cache load, cache ingest, and display formatting.
+---
 
-### Cache-load cleanup
-In `src/preload/notifications-inject.ts`:
-- scrub cached `realNames` on load so previously stored emoji-only or decorative alternates stop showing up immediately
-- normalize and rewrite cache entries when invalid names are removed
-- keep migration behavior safe for existing cache formats
+## 6) Validation checklist before another beta
+- [ ] reproduce the latest Marketplace timeline from the bundle in deterministic tests
+- [ ] implement Marketplace rescue-state fix
+- [ ] prove ordinary-chat false positives still fail closed
+- [ ] reproduce the wake/resume notification class in deterministic tests
+- [ ] implement wake/resume stale/admin suppression hardening
+- [ ] `npm run test:issues`
+- [ ] `npm run build`
+- [ ] dev smoke launch
+- [ ] update `CHANGELOG.md`
+- [ ] prepare issue reply with exact explanation of the two fixes
 
-### Ingest-side changes
-In `src/preload/notifications-inject.ts`:
-- strengthen the filter used by `extractRealNamesFromConversation()`
-- reject emoji-only / symbol-only / decorative alt strings
-- prefer a helper with a positive signal such as "contains letters or numbers" over trying to enumerate every emoji form
-- consider tightening which `img[alt]` nodes qualify as candidate real names, rather than scanning every alt in `[role="main"]`
+### Strongly preferred before release
+- [ ] signed-in GUI validation of the exact Marketplace detour sequence
+- [ ] local wake/resume validation for notifications if practical
 
-### Display-side changes
-In `src/preload/notification-display-policy.ts`:
-- add a final guard that drops alternate names that are emoji-only, symbol-only, or otherwise non-name-like
-- keep valid nickname/real-name suffix behavior intact
+---
 
-### Acceptance criteria
-- cached bad alternates stop showing up in notification titles, including pre-existing bad cache entries
-- a valid direct-chat title like `Nickname (Real Name)` still works
-- group summaries still work
-- emoji-only alternates are always dropped
-- decorative or symbol-only alternates are dropped
+## 7) Communication plan for the next reply
+Only reply once the next targeted fix is underway or shipped.
 
-## 4) Notification regression coverage
-Add tests in `scripts/test-issues-regressions.ts` for:
-- alternate name = emoji-only → filtered out
-- alternate names = valid + emoji → keep only valid
-- title display with old cached emoji alternate → output should omit emoji suffix
-- generic alternates + emoji alternates → all filtered when appropriate
+### The reply must do four things
+1. acknowledge that Marketplace still reproduced on `beta.2`
+2. explain that the miss is a **late weak-header after route-change** case
+3. explain that the approval leak likely involves a **wake/resume stale-notification boundary**
+4. ask for only two narrow validation checks on the next beta
 
-## 5) Beta verification checklist
-Before cutting the next beta:
-- [x] `npm run test:issues`
-- [x] add deterministic coverage for the preload-side weak Marketplace bootstrap wiring
-- [x] add deterministic coverage for notification cache-cleanup filtering
-- [x] update `CHANGELOG.md` for the next beta draft entry
-- [x] `npm run build`
-- [x] `npm start` launch smoke in dev mode
-- [ ] targeted Marketplace repro walkthrough using the reporter sequence with a live signed-in session
-- [ ] confirm a weak Marketplace re-entry does not lose the back/header treatment in a live GUI run
-- [ ] confirm ordinary chats with stray Marketplace-looking labels still fail closed in a live GUI run
-- [ ] confirm no notification title appends emoji-only alternates in a live GUI run
-- [ ] inspect fresh debug bundle fields if Marketplace still regresses
+### What not to say
+- do not imply `beta.2` should already have covered the latest Marketplace shape if it did not
+- do not ask for a generic retest with no explanation
+- do not overstate certainty on the notification root cause beyond what the bundle proves
 
-## Explicit acceptance criteria for the beta
+---
 
-### Marketplace
-- reporter repro should stay in Marketplace mode after re-entry:
-  - normal chat A → Marketplace → back → normal chat B → Marketplace again
-- no false-positive bridge should keep ordinary chats in Marketplace mode
-- debug output should distinguish between:
-  - immediate clear
-  - deferred clear
-  - bridged re-entry
-  - rejected weak re-entry
+## 8) Pi subagent execution plan
+Use subagents to avoid mixing the two bug classes.
 
-### Notification title formatting
-- old bad cache entries should stop affecting titles after the updated build runs
-- valid alternate-name suffixes should still render for normal direct/group chats
-- emoji-only alternates should never appear in final displayed titles
+### Phase 1 — parallel scouts
+- `scout`: map the exact `beta.2` Marketplace failure timeline onto code entry points
+- `scout`: map wake/resume notification flow and identify stale/admin crossing point
 
-## Pi subagent execution plan
-Use pi subagents to keep the next beta iteration fast and isolated.
+### Phase 2 — planner
+- `planner`: produce minimal patch order and explicit regression risks
 
-### Why use subagents here
-Per the pi subagent docs/examples, subagents give:
-- isolated context per task
-- parallel recon/review when the work splits cleanly
-- chain workflows where one agent hands compressed context to the next
-- reviewer passes before shipping the beta
+### Phase 3 — workers
+- `worker`: Marketplace rescue-state implementation + tests
+- `worker`: wake/resume notification suppression + tests
 
-### Recommended agent roles
-Available built-in agents are enough here:
-- `scout` — fast recon and evidence extraction
-- `planner` — implementation planning and risk review
-- `worker` — code changes + tests
-- `reviewer` — diff review and regression review
+### Phase 4 — review
+- `reviewer`: specifically check for
+  - Marketplace over-stickiness / false positives
+  - notification over-suppression after wake
+  - missing debug evidence
 
-### Suggested workflow
+### Phase 5 — polish
+- final `worker` pass for review feedback, test reruns, changelog, and issue reply draft
 
-#### Phase 1 — parallel recon
-Run two scouts in parallel:
-1. Marketplace session-policy scout
-   - inspect `marketplace-thread-policy.ts`, `preload.ts`, existing issue #49 tests, and failing debug fields
-2. Notification-title scout
-   - inspect `notifications-inject.ts`, `notification-display-policy.ts`, and relevant tests
+---
 
-Expected output:
-- one compressed context summary per track
-- exact file/function change points
-- list of tests to add
-
-#### Phase 2 — planning chain
-Feed the scout outputs into `planner` to produce a single combined implementation plan for the next beta.
-
-Expected output:
-- minimal patch order
-- risk notes
-- validation sequence
-
-#### Phase 3 — implementation split
-Use separate `worker` runs for:
-1. Marketplace policy + tests
-2. Notification title sanitization + tests
-
-If both changes are developed in parallel, prefer isolated worktrees to avoid file conflicts.
-
-#### Phase 4 — review
-Run `reviewer` on the combined diff with focus on:
-- false-positive Marketplace bridging
-- accidental broadening of notification-name filtering
-- missing regression coverage
-- privacy-safe diagnostics and changelog wording
-
-#### Phase 5 — final worker polish
-Use one final `worker` pass to apply reviewer feedback, run tests, and prepare the beta summary.
-
-## Example subagent patterns to use
-
-### Parallel scouts
-- use subagent parallel mode for the two recon tracks
-- ideal when Marketplace and notification title work are still independent
-
-### Plan chain
-- use subagent chain mode:
-  - `scout` → `planner`
-- useful when turning raw code evidence into a concise patch plan
-
-### Implement + review chain
-- use subagent chain mode:
-  - `worker` → `reviewer` → `worker`
-- useful right before the beta cut
-
-## Concrete subagent run outline
-
-### 1. Recon
-- Parallel:
-  - `scout`: trace issue #49 Marketplace route-change/session logic and propose minimal fix points
-  - `scout`: trace notification title alternate-name flow and propose minimal sanitization fix points
-
-### 2. Consolidated plan
-- Chain:
-  - `planner`: combine the two scout outputs into a patch plan with tests and beta validation
-
-### 3. Implementation
-- Parallel or sequential, depending on overlap:
-  - `worker`: implement Marketplace route-change grace bridge + tests
-  - `worker`: implement notification alternate-name sanitization + tests
-
-### 4. Review and polish
-- Chain:
-  - `reviewer`: review both diffs for regressions
-  - `worker`: apply review feedback and rerun `npm run test:issues`
-
-## Suggested deliverables for the next beta
-- code fix for Marketplace route-change re-entry
-- code fix for notification emoji-title suffix leak
-- cache cleanup for previously stored invalid alternate names
-- new deterministic regressions for both
-- short beta notes telling the reporter exactly what to verify
-
-## Draft reporter/beta verification note
-When the next `1.3.1-beta.*` is available, ask for two focused checks:
-
-1. Marketplace re-entry flow
-   - start in a normal chat
-   - enter a Marketplace chat
-   - back out
-   - switch to a different normal chat
-   - enter Marketplace again
-   - confirm the Marketplace back/header treatment stays correct
-
-2. Notification title suffixes
-   - watch for any desktop notification that still shows an emoji or decorative symbol in parentheses after the conversation name
-
-If either issue still happens, request a fresh debug bundle immediately after repro.
-
-## Beta ask-back after release
-Request focused validation on:
-1. normal chat → Marketplace → back → different normal chat → Marketplace again
-2. any desktop notification that previously showed an emoji in the title suffix
-
-If either still fails, ask for a fresh debug bundle immediately after repro so the new debug fields can confirm whether the route-change bridge, cache cleanup, or title sanitization still missed a case.
-
-## Checklist status update — 2026-04-13
-Completed locally:
-- implemented Marketplace route-change pending-bootstrap bridge support
-- implemented notification alternate-name filtering plus persisted cache cleanup
-- expanded future debug-bundle coverage for Marketplace route-change bridge decisions and notification title/cache sanitization events
-- added deterministic tests for the caller-side weak-bootstrap flow
-- added deterministic tests for notification cache cleanup
-- ran `npm run test:issues`
-- ran `npm run build`
-- ran `npm start` launch smoke in dev mode
-- drafted `CHANGELOG.md` entry for `1.3.1-beta.2`
-
-Still best handled as live human validation before or immediately after the beta cut:
-- walk the exact Marketplace detour flow in a signed-in GUI session
-- verify no notification title still shows an emoji/decorative suffix in real use
-
-## Optional tracking follow-up
-Optionally mirror the key action items into `evidence/regression-todo.md` so this beta work stays visible alongside the broader regression queue.
+## 9) Final deliverables for the next beta
+The next beta should contain exactly this:
+- Marketplace route-change rescue state for late weak header arrival
+- deterministic Marketplace regressions derived from the latest `beta.2` failure shape
+- stronger wake/resume stale/admin notification suppression
+- deterministic wake/resume approval-notification regressions
+- richer diagnostics that make the next bundle conclusive if anything still slips through
+- concise issue reply with two exact validation asks

@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.1-beta.3] - 2026-04-13
+
+### Fixed
+
+- **Issue #49 follow-up: rescue delayed Marketplace re-entry headers after route change and harden wake/resume approval-notification suppression** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep a recently confirmed Marketplace thread in a short route-change rescue state when the next route first looks ordinary, so delayed weak Marketplace headers can still recover the native back/header treatment instead of clearing too early.
+  - Tighten the Marketplace regression coverage around the latest `1.3.1-beta.2` reporter timeline, including fixture-driven replays and an offline DOM harness that simulates the delayed weak-header sequence without needing a signed-in Facebook session.
+  - Snapshot fresh unread rows across wake/resume-style settling boundaries and suppress replayed approval/admin activity more aggressively so stale group-management rows are less likely to leak through as fresh desktop notifications after sleep or reconnect recovery.
+  - Add fixture-driven notification wake/replay coverage and an offline DOM harness for stale approval/admin replay versus real fresh direct messages after wake.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:issue49:offline`
+- `npm run build`
+- `npm start` (launch smoke in dev mode)
+
 ## [1.3.1-beta.2] - 2026-04-13
 
 ### Fixed

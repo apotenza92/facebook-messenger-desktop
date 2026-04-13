@@ -69,6 +69,7 @@
       title: string;
       body: string;
     }) => NotificationCallClassification;
+    shouldSnapshotFreshUnreadOnBoundary?: (reason: string) => boolean;
   };
 
   type IncomingCallSignalPayload = {
@@ -1149,7 +1150,10 @@
         startSettlingPeriod({
           reason: state,
           durationMs: RESUME_SETTLING_MS,
-          includeFresh: false,
+          includeFresh:
+            getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
+              state,
+            ) ?? true,
         });
       } else {
         isSettling = true;
@@ -1174,7 +1178,10 @@
       startSettlingPeriod({
         reason: "online-recovery",
         durationMs: RESUME_SETTLING_MS,
-        includeFresh: false,
+        includeFresh:
+          getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
+            "online-recovery",
+          ) ?? true,
       });
       sawOfflineSinceLastOnline = false;
     }
@@ -1395,6 +1402,24 @@
         }
 
         const matchedInfo = extractConversationInfo(matchedRow);
+        const matchedInfoLooksGlobalActivity = Boolean(
+          matchedInfo &&
+            policy.isLikelyGlobalFacebookNotification({
+              title: matchedInfo.title,
+              body: matchedInfo.body,
+            }),
+        );
+        if (matchedInfoLooksGlobalActivity) {
+          log(
+            "Native notification suppressed - matched sidebar row is non-message Facebook activity",
+            {
+              title: matchedInfo?.title,
+              body: matchedInfo?.body,
+              href: normalizedHref,
+            },
+          );
+          return;
+        }
         const selfAuthoredNotification =
           typeof policy.shouldSuppressSelfAuthoredNotification === "function"
             ? policy.shouldSuppressSelfAuthoredNotification([
@@ -1741,6 +1766,24 @@
         }
 
         const matchedInfo = extractConversationInfo(matchedRow) || info;
+
+        if (
+          policy.isLikelyGlobalFacebookNotification({
+            title: info.title,
+            body: info.body,
+          }) ||
+          policy.isLikelyGlobalFacebookNotification({
+            title: matchedInfo.title,
+            body: matchedInfo.body,
+          })
+        ) {
+          log("Mutation notification suppressed - non-message Facebook activity", {
+            title: matchedInfo.title,
+            body: matchedInfo.body,
+            href: normalizedMatchedHref,
+          });
+          continue;
+        }
 
         const selfAuthoredNotification =
           typeof policy.shouldSuppressSelfAuthoredNotification === "function"
