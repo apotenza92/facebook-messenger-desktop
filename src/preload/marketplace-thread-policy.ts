@@ -100,6 +100,48 @@ export type MarketplaceVisualSessionDecision = {
   nextSession: MarketplaceVisualSessionState | null;
 };
 
+export type MarketplaceWeakBootstrapState = {
+  routeKey: string;
+  signalSource: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  >;
+  stablePasses: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  visualCropHeight: number | null;
+};
+
+export type MarketplaceWeakBootstrapDecision = {
+  nextState: MarketplaceWeakBootstrapState | null;
+  pendingBootstrapSignalSource: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  pendingBootstrapAllowed: boolean;
+  pendingBootstrapRejectedReason: MarketplaceVisualSessionRejectionReason | null;
+  confirmedSignalSource: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  stablePasses: number;
+  firstSeenAgeMs: number | null;
+  confirmationEligible: boolean;
+  transition:
+    | "inactive"
+    | "reset"
+    | "rejected"
+    | "pending"
+    | "confirmed";
+};
+
+export type MarketplaceRouteChangePendingBridgeReason =
+  | "allowed-right-pane-action-back-detected"
+  | "no-pending-bootstrap-signal"
+  | "pending-bootstrap-not-allowed"
+  | "missing-back-control"
+  | "unsupported-signal-source";
+
 export function shouldConfirmWeakMarketplaceBootstrap(input: {
   stablePasses: number;
   firstSeenAgeMs: number;
@@ -112,6 +154,132 @@ export function shouldConfirmWeakMarketplaceBootstrap(input: {
     input.stablePasses >= input.requiredPasses &&
     input.firstSeenAgeMs >= input.minConfirmAgeMs
   );
+}
+
+export function resolveWeakMarketplaceBootstrapDecision(input: {
+  routeKey: string;
+  nowMs: number;
+  weakSignalSource?: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  weakBootstrapSettled: boolean;
+  headerOrdinaryChatDetected?: boolean;
+  headerBackMarketplaceDetected?: boolean;
+  currentMarketplaceSessionActive?: boolean;
+  previousState?: MarketplaceWeakBootstrapState | null;
+  requiredPasses: number;
+  minConfirmAgeMs: number;
+  visualCropHeight: number | null;
+}): MarketplaceWeakBootstrapDecision {
+  if (input.headerBackMarketplaceDetected || input.currentMarketplaceSessionActive) {
+    return {
+      nextState: null,
+      pendingBootstrapSignalSource: null,
+      pendingBootstrapAllowed: false,
+      pendingBootstrapRejectedReason: null,
+      confirmedSignalSource: null,
+      stablePasses: 0,
+      firstSeenAgeMs: null,
+      confirmationEligible: false,
+      transition: "reset",
+    };
+  }
+
+  if (!input.weakSignalSource) {
+    return {
+      nextState: null,
+      pendingBootstrapSignalSource: null,
+      pendingBootstrapAllowed: false,
+      pendingBootstrapRejectedReason: null,
+      confirmedSignalSource: null,
+      stablePasses: 0,
+      firstSeenAgeMs: null,
+      confirmationEligible: false,
+      transition: input.previousState ? "reset" : "inactive",
+    };
+  }
+
+  if (!input.weakBootstrapSettled) {
+    return {
+      nextState: null,
+      pendingBootstrapSignalSource: input.weakSignalSource,
+      pendingBootstrapAllowed: false,
+      pendingBootstrapRejectedReason: "weak-bootstrap-startup-settling",
+      confirmedSignalSource: null,
+      stablePasses: 0,
+      firstSeenAgeMs: null,
+      confirmationEligible: false,
+      transition: "rejected",
+    };
+  }
+
+  if (input.headerOrdinaryChatDetected) {
+    return {
+      nextState: null,
+      pendingBootstrapSignalSource: input.weakSignalSource,
+      pendingBootstrapAllowed: false,
+      pendingBootstrapRejectedReason: "weak-bootstrap-ordinary-chat",
+      confirmedSignalSource: null,
+      stablePasses: 0,
+      firstSeenAgeMs: null,
+      confirmationEligible: false,
+      transition: "rejected",
+    };
+  }
+
+  const firstSeenAt =
+    input.previousState &&
+    input.previousState.routeKey === input.routeKey &&
+    input.previousState.signalSource === input.weakSignalSource
+      ? input.previousState.firstSeenAt
+      : input.nowMs;
+  const stablePasses =
+    input.previousState &&
+    input.previousState.routeKey === input.routeKey &&
+    input.previousState.signalSource === input.weakSignalSource
+      ? input.previousState.stablePasses + 1
+      : 1;
+  const firstSeenAgeMs = Math.max(0, input.nowMs - firstSeenAt);
+  const confirmationEligible = shouldConfirmWeakMarketplaceBootstrap({
+    stablePasses,
+    firstSeenAgeMs,
+    requiredPasses: input.requiredPasses,
+    minConfirmAgeMs: input.minConfirmAgeMs,
+  });
+
+  if (confirmationEligible) {
+    return {
+      nextState: null,
+      pendingBootstrapSignalSource: null,
+      pendingBootstrapAllowed: false,
+      pendingBootstrapRejectedReason: null,
+      confirmedSignalSource: input.weakSignalSource,
+      stablePasses,
+      firstSeenAgeMs,
+      confirmationEligible: true,
+      transition: "confirmed",
+    };
+  }
+
+  return {
+    nextState: {
+      routeKey: input.routeKey,
+      signalSource: input.weakSignalSource,
+      stablePasses,
+      firstSeenAt,
+      lastSeenAt: input.nowMs,
+      visualCropHeight: input.visualCropHeight,
+    },
+    pendingBootstrapSignalSource: input.weakSignalSource,
+    pendingBootstrapAllowed: true,
+    pendingBootstrapRejectedReason: null,
+    confirmedSignalSource: null,
+    stablePasses,
+    firstSeenAgeMs,
+    confirmationEligible: false,
+    transition: "pending",
+  };
 }
 
 export function resolveMarketplaceOrdinaryClearBlockedReason(input: {
@@ -468,6 +636,43 @@ export function doesMarketplaceThreadRouteChangeWeakHeaderMatch(input: {
   );
 }
 
+export function resolvePendingBootstrapRouteChangeBridgeReason(input: {
+  pendingBootstrapSignalSource?: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  pendingBootstrapAllowed?: boolean;
+  headerBackDetected?: boolean;
+}): MarketplaceRouteChangePendingBridgeReason {
+  if (!input.pendingBootstrapSignalSource) {
+    return "no-pending-bootstrap-signal";
+  }
+  if (input.pendingBootstrapAllowed !== true) {
+    return "pending-bootstrap-not-allowed";
+  }
+  if (input.headerBackDetected !== true) {
+    return "missing-back-control";
+  }
+  if (input.pendingBootstrapSignalSource !== "right-pane-action") {
+    return "unsupported-signal-source";
+  }
+  return "allowed-right-pane-action-back-detected";
+}
+
+function shouldBridgePendingBootstrapOnRouteChange(input: {
+  pendingBootstrapSignalSource?: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  pendingBootstrapAllowed?: boolean;
+  headerBackDetected?: boolean;
+}): boolean {
+  return (
+    resolvePendingBootstrapRouteChangeBridgeReason(input) ===
+    "allowed-right-pane-action-back-detected"
+  );
+}
+
 export function resolveMarketplaceVisualSessionDecision(input: {
   currentRouteKey: string;
   nowMs: number;
@@ -489,6 +694,7 @@ export function resolveMarketplaceVisualSessionDecision(input: {
   strongVisualCropHeight?: number | null;
   strongHeaderBand?: MarketplaceThreadHeaderBand | null;
   weakHeaderBand?: MarketplaceThreadHeaderBand | null;
+  headerBackDetected?: boolean;
   sameRouteMarketplaceBackAnchorDetected?: boolean;
   headerBackMatchesSessionHeaderBand?: boolean;
   explicitOrdinaryChatDetected?: boolean;
@@ -597,6 +803,42 @@ export function resolveMarketplaceVisualSessionDecision(input: {
         lifecycleReason: "route-changed",
         rejectionReason: null,
         weakHeaderMatchesSessionHeaderBand: routeChangeWeakHeaderMatchesPriorSession,
+        nextSession,
+      };
+    }
+
+    if (
+      routeChangeRecentMarketplaceMatch &&
+      shouldBridgePendingBootstrapOnRouteChange({
+        pendingBootstrapSignalSource: input.pendingBootstrapSignalSource,
+        pendingBootstrapAllowed: input.pendingBootstrapAllowed,
+        headerBackDetected: input.headerBackDetected,
+      })
+    ) {
+      const routeChangePendingBootstrapSignalSource =
+        input.pendingBootstrapSignalSource!;
+      const nextSession: MarketplaceVisualSessionState = {
+        routeKey: input.currentRouteKey,
+        visualCropHeight: priorSession?.visualCropHeight ?? null,
+        headerBand: priorSession?.headerBand ?? null,
+        lastConfirmedAt: priorSession?.lastConfirmedAt ?? input.nowMs,
+        lastStrongConfirmedAt: priorSession?.lastStrongConfirmedAt ?? null,
+        lastMatchedAt: input.nowMs,
+        confirmationKind: priorSession?.confirmationKind ?? "strong-header",
+        signalSource: routeChangePendingBootstrapSignalSource,
+        lifecycleReason: "route-changed",
+        lastLifecycleAt: input.nowMs,
+      };
+
+      return {
+        sessionActive: true,
+        shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+        visualCropHeight: nextSession.visualCropHeight,
+        transition: "bridged",
+        signalSource: routeChangePendingBootstrapSignalSource,
+        lifecycleReason: "route-changed",
+        rejectionReason: null,
+        weakHeaderMatchesSessionHeaderBand: false,
         nextSession,
       };
     }

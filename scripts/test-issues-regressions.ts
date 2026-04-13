@@ -28,6 +28,7 @@ const {
   resolveMarketplaceCurrentEvidenceClass,
   resolveMarketplaceOrdinaryClearBlockedReason,
   resolveMarketplaceVisualSessionDecision,
+  resolveWeakMarketplaceBootstrapDecision,
   shouldConfirmWeakMarketplaceBootstrap,
   shouldRetainMarketplaceVisualCrop,
 } = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
@@ -623,6 +624,110 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 fresh-route weak Marketplace signals should remain pending until the corroboration threshold is met",
   );
 
+  const weakBootstrapCallerRejected = resolveWeakMarketplaceBootstrapDecision({
+    routeKey: "/messages/t/marketplace-thread",
+    nowMs: 10_120,
+    weakSignalSource: "right-pane-action",
+    weakBootstrapSettled: false,
+    headerOrdinaryChatDetected: false,
+    headerBackMarketplaceDetected: false,
+    currentMarketplaceSessionActive: false,
+    previousState: null,
+    requiredPasses: 2,
+    minConfirmAgeMs: 800,
+    visualCropHeight: 36,
+  });
+  assertEqual(
+    JSON.stringify({
+      transition: weakBootstrapCallerRejected.transition,
+      pendingBootstrapSignalSource:
+        weakBootstrapCallerRejected.pendingBootstrapSignalSource,
+      pendingBootstrapAllowed: weakBootstrapCallerRejected.pendingBootstrapAllowed,
+      pendingBootstrapRejectedReason:
+        weakBootstrapCallerRejected.pendingBootstrapRejectedReason,
+      nextState: weakBootstrapCallerRejected.nextState,
+    }),
+    JSON.stringify({
+      transition: "rejected",
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: false,
+      pendingBootstrapRejectedReason: "weak-bootstrap-startup-settling",
+      nextState: null,
+    }),
+    "#49 preload weak-bootstrap wiring should reject fresh-route weak Marketplace signals during startup settling before they enter tracking state",
+  );
+
+  const weakBootstrapCallerFirstPending =
+    resolveWeakMarketplaceBootstrapDecision({
+      routeKey: "/messages/t/marketplace-thread",
+      nowMs: 10_200,
+      weakSignalSource: "right-pane-action",
+      weakBootstrapSettled: true,
+      headerOrdinaryChatDetected: false,
+      headerBackMarketplaceDetected: false,
+      currentMarketplaceSessionActive: false,
+      previousState: null,
+      requiredPasses: 2,
+      minConfirmAgeMs: 800,
+      visualCropHeight: 36,
+    });
+  assertEqual(
+    JSON.stringify({
+      transition: weakBootstrapCallerFirstPending.transition,
+      pendingBootstrapSignalSource:
+        weakBootstrapCallerFirstPending.pendingBootstrapSignalSource,
+      pendingBootstrapAllowed:
+        weakBootstrapCallerFirstPending.pendingBootstrapAllowed,
+      stablePasses: weakBootstrapCallerFirstPending.stablePasses,
+      firstSeenAgeMs: weakBootstrapCallerFirstPending.firstSeenAgeMs,
+      confirmationEligible: weakBootstrapCallerFirstPending.confirmationEligible,
+      trackedSignal: weakBootstrapCallerFirstPending.nextState?.signalSource,
+    }),
+    JSON.stringify({
+      transition: "pending",
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      stablePasses: 1,
+      firstSeenAgeMs: 0,
+      confirmationEligible: false,
+      trackedSignal: "right-pane-action",
+    }),
+    "#49 preload weak-bootstrap wiring should retain the first settled weak Marketplace signal as pending tracked state",
+  );
+
+  const weakBootstrapCallerConfirmed = resolveWeakMarketplaceBootstrapDecision({
+    routeKey: "/messages/t/marketplace-thread",
+    nowMs: 11_050,
+    weakSignalSource: "right-pane-action",
+    weakBootstrapSettled: true,
+    headerOrdinaryChatDetected: false,
+    headerBackMarketplaceDetected: false,
+    currentMarketplaceSessionActive: false,
+    previousState: weakBootstrapCallerFirstPending.nextState,
+    requiredPasses: 2,
+    minConfirmAgeMs: 800,
+    visualCropHeight: 36,
+  });
+  assertEqual(
+    JSON.stringify({
+      transition: weakBootstrapCallerConfirmed.transition,
+      confirmedSignalSource: weakBootstrapCallerConfirmed.confirmedSignalSource,
+      stablePasses: weakBootstrapCallerConfirmed.stablePasses,
+      firstSeenAgeMs: weakBootstrapCallerConfirmed.firstSeenAgeMs,
+      confirmationEligible: weakBootstrapCallerConfirmed.confirmationEligible,
+      nextState: weakBootstrapCallerConfirmed.nextState,
+    }),
+    JSON.stringify({
+      transition: "confirmed",
+      confirmedSignalSource: "right-pane-action",
+      stablePasses: 2,
+      firstSeenAgeMs: 850,
+      confirmationEligible: true,
+      nextState: null,
+    }),
+    "#49 preload weak-bootstrap wiring should promote repeated settled weak Marketplace evidence once the confirmation age threshold is met",
+  );
+
   assertEqual(
     shouldConfirmWeakMarketplaceBootstrap({
       stablePasses: 2,
@@ -1064,6 +1169,38 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 a fresh route that immediately follows a confirmed Marketplace thread should bridge across the route change when only the next weak Marketplace header is visible",
   );
 
+  const routeChangePendingBootstrapBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-3",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-2",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: true,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: routeChangePendingBootstrapBridge.sessionActive,
+      transition: routeChangePendingBootstrapBridge.transition,
+      signalSource: routeChangePendingBootstrapBridge.signalSource,
+      lifecycleReason: routeChangePendingBootstrapBridge.lifecycleReason,
+      visualCropHeight: routeChangePendingBootstrapBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "right-pane-action",
+      lifecycleReason: "route-changed",
+      visualCropHeight: 56,
+    }),
+    "#49 a fresh route that immediately follows a confirmed Marketplace thread should bridge across the route change when the new route only exposes a pending Marketplace bootstrap signal at first",
+  );
+
   const staleRouteChangeWeakHeader = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread-4",
     nowMs: 20_600,
@@ -1100,6 +1237,97 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: null,
     }),
     "#49 stale route-change weak Marketplace headers must not keep bridging indefinitely after the last confirmed Marketplace match",
+  );
+
+  const routeChangeItemLinkPendingBootstrapRejected =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/ordinary-chat-with-marketplace-link",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-2",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "item-link",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: true,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: routeChangeItemLinkPendingBootstrapRejected.sessionActive,
+      transition: routeChangeItemLinkPendingBootstrapRejected.transition,
+      lifecycleReason: routeChangeItemLinkPendingBootstrapRejected.lifecycleReason,
+      visualCropHeight:
+        routeChangeItemLinkPendingBootstrapRejected.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 ordinary chats that only expose a generic back button plus a shared Marketplace item link must not inherit Marketplace mode across route changes",
+  );
+
+  const staleRouteChangePendingBootstrap =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-4",
+      nowMs: 20_600,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-3",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: true,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: staleRouteChangePendingBootstrap.sessionActive,
+      transition: staleRouteChangePendingBootstrap.transition,
+      lifecycleReason: staleRouteChangePendingBootstrap.lifecycleReason,
+      visualCropHeight: staleRouteChangePendingBootstrap.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 stale route-change pending Marketplace bootstrap signals must not keep bridging indefinitely after the last confirmed Marketplace match",
+  );
+
+  const ordinaryRoutePendingBootstrap =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/ordinary-chat-2",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-2",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: ordinaryRoutePendingBootstrap.sessionActive,
+      transition: ordinaryRoutePendingBootstrap.transition,
+      lifecycleReason: ordinaryRoutePendingBootstrap.lifecycleReason,
+      visualCropHeight: ordinaryRoutePendingBootstrap.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 ordinary chats with only a transient pending Marketplace bootstrap signal and no back-control corroboration should still fail closed on route change",
   );
 
   const detouredMarketplaceSession = resolveMarketplaceVisualSessionDecision({
@@ -3195,6 +3423,78 @@ const runNotificationDisplayPolicyTests = () => {
     }),
     "Alex (Alexander)",
     "#46 notification titles should filter generic and duplicate alternate names",
+  );
+
+  assertEqual(
+    notificationDisplayPolicy.formatNotificationDisplayTitle({
+      title: "Alex",
+      alternateNames: ["🤦🏻‍♀️"],
+    }),
+    "Alex",
+    "#49 notification titles should drop emoji-only alternate names",
+  );
+
+  assertEqual(
+    notificationDisplayPolicy.formatNotificationDisplayTitle({
+      title: "Alex",
+      alternateNames: ["✨", "Taylor", "🤦🏻‍♀️"],
+    }),
+    "Alex (Taylor)",
+    "#49 notification titles should keep valid alternate names while dropping decorative symbol and emoji-only alternates",
+  );
+
+  assertEqual(
+    notificationDisplayPolicy.formatNotificationDisplayTitle({
+      title: "Alex",
+      alternateNames: ["Profile picture", "Taylor"],
+    }),
+    "Alex (Taylor)",
+    "#49 notification titles should drop placeholder avatar labels from alternate names",
+  );
+
+  assertEqual(
+    JSON.stringify(
+      notificationDisplayPolicy.sanitizeNotificationNameCache(
+        {
+          threadA: {
+            realNames: ["🤦🏻‍♀️", "Taylor", "✨", "Profile picture"],
+            updatedAt: 123,
+          },
+          threadB: {
+            realName: "🤦🏻‍♀️",
+            updatedAt: 456,
+          },
+        },
+        999,
+      ),
+    ),
+    JSON.stringify({
+      threadA: {
+        realNames: ["Taylor"],
+        updatedAt: 123,
+      },
+    }),
+    "#49 notification name-cache cleanup should prune emoji-only, decorative, and placeholder avatar alternates from persisted entries while preserving valid names",
+  );
+
+  assertEqual(
+    JSON.stringify(
+      notificationDisplayPolicy.sanitizeNotificationNameCache(
+        {
+          threadA: {
+            realName: "Robert",
+          },
+        },
+        999,
+      ),
+    ),
+    JSON.stringify({
+      threadA: {
+        realNames: ["Robert"],
+        updatedAt: 999,
+      },
+    }),
+    "#49 notification name-cache cleanup should migrate legacy single-name entries and supply fallback timestamps",
   );
 };
 

@@ -3053,40 +3053,48 @@
   const NAME_CACHE_KEY = "messenger-desktop-name-cache";
   type NameCache = Record<string, { realNames: string[]; updatedAt: number }>;
 
-  const loadNameCache = (): NameCache => {
-    try {
-      const data = localStorage.getItem(NAME_CACHE_KEY);
-      if (!data) return {};
-      const parsed = JSON.parse(data);
-      // Migrate old format (realName: string) to new format (realNames: string[])
-      for (const key of Object.keys(parsed)) {
-        if (typeof parsed[key].realName === "string") {
-          parsed[key] = {
-            realNames: [parsed[key].realName],
-            updatedAt: parsed[key].updatedAt,
-          };
-        }
-      }
-      return parsed;
-    } catch {
-      return {};
-    }
-  };
-
-  const saveNameCache = (cache: NameCache): void => {
-    try {
-      localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache));
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const nameCache = loadNameCache();
-
   type NotificationDisplayPolicyApi = {
+    hasWordLikeDisplaySignal?: (
+      value: string | null | undefined,
+    ) => boolean;
+    inspectNotificationDisplayName?: (
+      value: string | null | undefined,
+    ) => {
+      normalizedLength: number;
+      hasWordLikeSignal: boolean;
+      generic: boolean;
+      plausible: boolean;
+    };
+    inspectNotificationDisplayTitle?: (input: {
+      title: string;
+      alternateNames?: Array<string | null | undefined>;
+      maxAlternateNames?: number;
+    }) => {
+      alternateCount: number;
+      keptAlternateCount: number;
+      rejectedAlternateCount: number;
+      alternates: Array<{
+        normalizedLength: number;
+        hasWordLikeSignal: boolean;
+        generic: boolean;
+        plausible: boolean;
+        sameAsTitle: boolean;
+        kept: boolean;
+      }>;
+    };
     isGenericNotificationDisplayName?: (
       value: string | null | undefined,
     ) => boolean;
+    isPlausibleNotificationDisplayName?: (
+      value: string | null | undefined,
+    ) => boolean;
+    sanitizeNotificationAlternateNames?: (
+      values: Array<string | null | undefined>,
+    ) => string[];
+    sanitizeNotificationNameCache?: (
+      cache: unknown,
+      nowMs?: number,
+    ) => NameCache;
     formatNotificationDisplayTitle?: (input: {
       title: string;
       alternateNames?: Array<string | null | undefined>;
@@ -3104,6 +3112,176 @@
       }
       return policy;
     };
+
+  const normalizePotentialRealName = (
+    value: string | null | undefined,
+  ): string =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const hasWordLikeRealNameSignal = (
+    value: string | null | undefined,
+  ): boolean => {
+    const normalized = normalizePotentialRealName(value);
+    if (!normalized) return false;
+
+    const policy = getNotificationDisplayPolicy();
+    if (typeof policy?.hasWordLikeDisplaySignal === "function") {
+      return policy.hasWordLikeDisplaySignal(normalized);
+    }
+
+    try {
+      return /[\p{L}\p{N}]/u.test(normalized);
+    } catch {
+      return /[a-z0-9]/i.test(normalized);
+    }
+  };
+
+  const isLikelyHumanRealNameCandidate = (
+    value: string | null | undefined,
+  ): boolean => {
+    const normalized = normalizePotentialRealName(value);
+    if (!normalized) return false;
+    if (normalized.length < 2 || normalized.length > 80) return false;
+    if (!hasWordLikeRealNameSignal(normalized)) return false;
+
+    const policy = getNotificationDisplayPolicy();
+    if (typeof policy?.isPlausibleNotificationDisplayName === "function") {
+      return policy.isPlausibleNotificationDisplayName(normalized);
+    }
+    if (
+      typeof policy?.isGenericNotificationDisplayName === "function" &&
+      policy.isGenericNotificationDisplayName(normalized)
+    ) {
+      return false;
+    }
+
+    return !/^(?:facebook(?: user(?: \d+)?)?|messenger(?: notification)?|notifications?|new notifications?|\d+\s+new messages?|new messages?|incoming (?:audio|video )?call|(?:audio|video )?call|someone|unknown caller|profile(?: picture)?|picture)$/i.test(
+      normalized,
+    );
+  };
+
+  const sanitizeRealNames = (
+    values: Array<string | null | undefined>,
+  ): string[] => {
+    const policy = getNotificationDisplayPolicy();
+    if (typeof policy?.sanitizeNotificationAlternateNames === "function") {
+      return policy.sanitizeNotificationAlternateNames(values);
+    }
+
+    const seen = new Set<string>();
+    const results: string[] = [];
+
+    for (const value of values) {
+      const normalized = normalizePotentialRealName(value);
+      if (!isLikelyHumanRealNameCandidate(normalized)) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push(normalized);
+    }
+
+    return results;
+  };
+
+  const loadNameCache = (): NameCache => {
+    try {
+      const data = localStorage.getItem(NAME_CACHE_KEY);
+      if (!data) return {};
+      const parsed = JSON.parse(data);
+      if (!parsed || typeof parsed !== "object") {
+        return {};
+      }
+
+      const policy = getNotificationDisplayPolicy();
+      const cleaned =
+        typeof policy?.sanitizeNotificationNameCache === "function"
+          ? policy.sanitizeNotificationNameCache(parsed, Date.now())
+          : (() => {
+              const fallback: NameCache = {};
+              for (const key of Object.keys(parsed)) {
+                const entry = parsed[key];
+                if (!entry || typeof entry !== "object") {
+                  continue;
+                }
+                const migratedRealNames = Array.isArray(entry.realNames)
+                  ? entry.realNames
+                  : typeof entry.realName === "string"
+                    ? [entry.realName]
+                    : [];
+                const realNames = sanitizeRealNames(migratedRealNames);
+                if (realNames.length === 0) {
+                  continue;
+                }
+                fallback[key] = {
+                  realNames,
+                  updatedAt:
+                    typeof entry.updatedAt === "number" &&
+                    Number.isFinite(entry.updatedAt)
+                      ? entry.updatedAt
+                      : Date.now(),
+                };
+              }
+              return fallback;
+            })();
+
+      if (JSON.stringify(cleaned) !== JSON.stringify(parsed)) {
+        let removedAlternateCount = 0;
+        let removedThreadCount = 0;
+        let migratedLegacyEntryCount = 0;
+        for (const key of Object.keys(parsed)) {
+          const entry = parsed[key];
+          if (!entry || typeof entry !== "object") continue;
+          const migratedRealNames = Array.isArray(entry.realNames)
+            ? entry.realNames
+            : typeof entry.realName === "string"
+              ? [entry.realName]
+              : [];
+          if (
+            typeof entry.realName === "string" &&
+            !Array.isArray(entry.realNames)
+          ) {
+            migratedLegacyEntryCount += 1;
+          }
+          const cleanedRealNames = cleaned[key]?.realNames || [];
+          if (cleanedRealNames.length < migratedRealNames.length) {
+            removedAlternateCount +=
+              migratedRealNames.length - cleanedRealNames.length;
+          }
+          if (migratedRealNames.length > 0 && cleanedRealNames.length === 0) {
+            removedThreadCount += 1;
+          }
+        }
+        log("Name cache sanitized on load", {
+          threadCountBefore: Object.keys(parsed).length,
+          threadCountAfter: Object.keys(cleaned).length,
+          removedAlternateCount,
+          removedThreadCount,
+          migratedLegacyEntryCount,
+        });
+        try {
+          localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cleaned));
+        } catch {
+          /* ignore cache write-back failures */
+        }
+      }
+
+      return cleaned;
+    } catch {
+      return {};
+    }
+  };
+
+  const saveNameCache = (cache: NameCache): void => {
+    try {
+      localStorage.setItem(NAME_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const nameCache = loadNameCache();
 
   const getThreadIdFromHref = (href: string | null | undefined): string | null => {
     const normalizedHref = String(href || "");
@@ -3123,8 +3301,10 @@
     const cached = nameCache[threadId];
     if (!cached?.realNames?.length) return [];
 
-    const normalizedTitle = displayTitle.toLowerCase();
-    return cached.realNames.filter((name) => name.toLowerCase() !== normalizedTitle);
+    const normalizedTitle = normalizePotentialRealName(displayTitle).toLowerCase();
+    return sanitizeRealNames(cached.realNames).filter(
+      (name) => name.toLowerCase() !== normalizedTitle,
+    );
   };
 
   const formatNotificationConversationTitle = (input: {
@@ -3132,26 +3312,49 @@
     href?: string;
     alternateTitle?: string | null;
   }): string => {
-    const displayTitle = String(input.title || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const displayTitle = normalizePotentialRealName(input.title);
     if (!displayTitle) return "";
 
     const policy = getNotificationDisplayPolicy();
-    const alternateNames = [
-      input.alternateTitle,
-      ...getCachedRealNamesForNotification(input.href, displayTitle),
-    ];
+    const cachedRealNames = getCachedRealNamesForNotification(
+      input.href,
+      displayTitle,
+    );
+    const alternateNames = [input.alternateTitle, ...cachedRealNames];
 
-    if (typeof policy?.formatNotificationDisplayTitle === "function") {
-      return policy.formatNotificationDisplayTitle({
-        title: displayTitle,
-        alternateNames,
-        maxAlternateNames: 2,
+    const formattedTitle =
+      typeof policy?.formatNotificationDisplayTitle === "function"
+        ? policy.formatNotificationDisplayTitle({
+            title: displayTitle,
+            alternateNames,
+            maxAlternateNames: 2,
+          })
+        : displayTitle;
+
+    if (alternateNames.some((name) => normalizePotentialRealName(name).length > 0)) {
+      const inspection =
+        typeof policy?.inspectNotificationDisplayTitle === "function"
+          ? policy.inspectNotificationDisplayTitle({
+              title: displayTitle,
+              alternateNames,
+              maxAlternateNames: 2,
+            })
+          : null;
+      log("Notification title formatting", {
+        threadId: getThreadIdFromHref(input.href),
+        usedAlternateTitle:
+          normalizePotentialRealName(input.alternateTitle).length > 0,
+        cachedRealNameCount: cachedRealNames.length,
+        alternateCount: inspection?.alternateCount ?? alternateNames.length,
+        keptAlternateCount: inspection?.keptAlternateCount ?? null,
+        rejectedAlternateCount: inspection?.rejectedAlternateCount ?? null,
+        alternates: inspection?.alternates ?? null,
+        formattedTitleChanged: formattedTitle !== displayTitle,
+        finalTitleLength: formattedTitle.length,
       });
     }
 
-    return displayTitle;
+    return formattedTitle;
   };
 
   // Extract all real names from avatar alts in current conversation
@@ -3160,25 +3363,20 @@
     if (!mainArea) return [];
 
     const imgs = Array.from(mainArea.querySelectorAll("img[alt]"));
-    const names: string[] = [];
-    const seen: Record<string, boolean> = {};
+    const rawNames: string[] = [];
 
     for (let i = 0; i < imgs.length; i++) {
-      const alt = imgs[i].getAttribute("alt") || "";
-      if (alt.length < 3 || alt.length > 50) continue;
+      const alt = normalizePotentialRealName(imgs[i].getAttribute("alt") || "");
+      if (!alt) continue;
       if (alt.startsWith("Seen by")) continue;
       if (alt.startsWith("Open ")) continue; // "Open photo" etc
       if (alt.startsWith("Original ")) continue; // "Original image"
       if (["GIF", "Sticker", "Photo", "Video"].includes(alt)) continue;
-      // Skip emoji-only alts
-      if (/^[\p{Emoji}\s]+$/u.test(alt)) continue;
-
-      if (!seen[alt]) {
-        seen[alt] = true;
-        names.push(alt);
-      }
+      if (!isLikelyHumanRealNameCandidate(alt)) continue;
+      rawNames.push(alt);
     }
-    return names;
+
+    return sanitizeRealNames(rawNames);
   };
 
   // Update cache when viewing a conversation

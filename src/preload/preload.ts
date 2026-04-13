@@ -44,15 +44,18 @@ import {
   resolveMarketplaceCurrentEvidenceClass,
   resolveMarketplaceOrdinaryClearBlockedReason,
   resolveMarketplaceVisualSessionDecision,
-  shouldConfirmWeakMarketplaceBootstrap,
+  resolvePendingBootstrapRouteChangeBridgeReason,
+  resolveWeakMarketplaceBootstrapDecision,
   type MarketplaceCurrentEvidenceClass,
   type MarketplaceOrdinaryClearBlockedReason,
+  type MarketplaceRouteChangePendingBridgeReason,
   type MarketplaceSessionConfirmationKind,
   type MarketplaceSessionLifecycleReason,
   type MarketplaceSessionSignalSource,
   type MarketplaceThreadHeaderBand,
   type MarketplaceVisualSessionRejectionReason,
   type MarketplaceVisualSessionState,
+  type MarketplaceWeakBootstrapState,
 } from "./marketplace-thread-policy";
 
 const incomingCallAnswerSelectors = [
@@ -416,22 +419,16 @@ ipcRenderer.on(
     weakBootstrapStablePasses: number;
     weakBootstrapFirstSeenAgeMs: number | null;
     weakBootstrapConfirmationEligible: boolean;
+    routeChangeDetected: boolean;
+    routeChangeRecentMarketplaceMatch: boolean;
+    routeChangeWeakHeaderMatchesPreviousSession: boolean;
+    routeChangePendingBootstrapBridgeReason: MarketplaceRouteChangePendingBridgeReason | null;
+    routeChangePendingBootstrapWouldBridge: boolean;
     ordinaryClearPending: boolean;
     ordinaryClearStablePasses: number;
     ordinaryClearEligible: boolean;
     ordinaryClearLastMarketplaceMatchAgeMs: number | null;
     matchedSignals: string[];
-  };
-  type MarketplaceWeakBootstrapState = {
-    routeKey: string;
-    signalSource: Extract<
-      MarketplaceSessionSignalSource,
-      "right-pane-action" | "item-link"
-    >;
-    stablePasses: number;
-    firstSeenAt: number;
-    lastSeenAt: number;
-    visualCropHeight: number | null;
   };
   type MarketplaceOrdinaryClearState = {
     routeKey: string;
@@ -1408,6 +1405,11 @@ ipcRenderer.on(
       weakBootstrapStablePasses: 0,
       weakBootstrapFirstSeenAgeMs: null,
       weakBootstrapConfirmationEligible: false,
+      routeChangeDetected: false,
+      routeChangeRecentMarketplaceMatch: false,
+      routeChangeWeakHeaderMatchesPreviousSession: false,
+      routeChangePendingBootstrapBridgeReason: null,
+      routeChangePendingBootstrapWouldBridge: false,
       ordinaryClearPending: false,
       ordinaryClearStablePasses: 0,
       ordinaryClearEligible: false,
@@ -1859,23 +1861,23 @@ ipcRenderer.on(
           confirmedHeaderBand: currentMarketplaceSession?.headerBand,
           candidateHeaderBand: weakHeaderBand,
         });
-      const routeChangeWeakHeaderMatchesPreviousSession =
+      const routeChangeDetected =
         previousMarketplaceSession !== null &&
         previousMarketplaceSession !== undefined &&
-        previousMarketplaceSession.routeKey !== routeKey &&
+        previousMarketplaceSession.routeKey !== routeKey;
+      const routeChangeWeakHeaderMatchesPreviousSession =
+        routeChangeDetected &&
         weakHeaderBand !== null &&
         doesMarketplaceThreadRouteChangeWeakHeaderMatch({
           confirmedHeaderBand: previousMarketplaceSession.headerBand,
           candidateHeaderBand: weakHeaderBand,
         });
+      state.routeChangeDetected = routeChangeDetected;
+      state.routeChangeWeakHeaderMatchesPreviousSession =
+        routeChangeWeakHeaderMatchesPreviousSession;
       if (routeChangeWeakHeaderMatchesPreviousSession) {
         matchedSignals.add("route-change-marketplace-weak-header");
-      } else if (
-        previousMarketplaceSession !== null &&
-        previousMarketplaceSession !== undefined &&
-        previousMarketplaceSession.routeKey !== routeKey &&
-        weakHeaderBand !== null
-      ) {
+      } else if (routeChangeDetected && weakHeaderBand !== null) {
         matchedSignals.add("route-change-marketplace-weak-header-rejected");
       }
 
@@ -1891,68 +1893,79 @@ ipcRenderer.on(
         | null = null;
       let isWeakBootstrapConfirmation = false;
 
-      if (state.headerBackMarketplaceDetected) {
-        marketplaceWeakBootstrapState = null;
-      } else if (weakSignalSource && !currentMarketplaceSession) {
-        state.weakBootstrapPendingSignalSource = weakSignalSource;
-        if (!weakBootstrapSettled) {
-          pendingBootstrapSignalSource = weakSignalSource;
-          pendingBootstrapRejectedReason = "weak-bootstrap-startup-settling";
-          matchedSignals.add("weak-bootstrap-rejected:startup");
-          marketplaceWeakBootstrapState = null;
-        } else if (state.headerOrdinaryChatDetected) {
-          pendingBootstrapSignalSource = weakSignalSource;
-          pendingBootstrapRejectedReason = "weak-bootstrap-ordinary-chat";
-          matchedSignals.add("weak-bootstrap-rejected:ordinary-chat");
-          marketplaceWeakBootstrapState = null;
-        } else {
-          const firstSeenAt =
-            marketplaceWeakBootstrapState &&
-            marketplaceWeakBootstrapState.routeKey === routeKey &&
-            marketplaceWeakBootstrapState.signalSource === weakSignalSource
-              ? marketplaceWeakBootstrapState.firstSeenAt
-              : now;
-          const stablePasses =
-            marketplaceWeakBootstrapState &&
-            marketplaceWeakBootstrapState.routeKey === routeKey &&
-            marketplaceWeakBootstrapState.signalSource === weakSignalSource
-              ? marketplaceWeakBootstrapState.stablePasses + 1
-              : 1;
-          const firstSeenAgeMs = Math.max(0, now - firstSeenAt);
-          const confirmationEligible = shouldConfirmWeakMarketplaceBootstrap({
-            stablePasses,
-            firstSeenAgeMs,
-            requiredPasses: MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES,
-            minConfirmAgeMs: MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS,
-          });
-          const visualCropHeight = normalizeMarketplaceVisualCropHeight(
-            MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
-          );
-          marketplaceWeakBootstrapState = {
-            routeKey,
-            signalSource: weakSignalSource,
-            stablePasses,
-            firstSeenAt,
-            lastSeenAt: now,
-            visualCropHeight,
-          };
-          state.weakBootstrapStablePasses = stablePasses;
-          state.weakBootstrapFirstSeenAgeMs = firstSeenAgeMs;
-          state.weakBootstrapConfirmationEligible = confirmationEligible;
-          if (confirmationEligible) {
-            strongSignalSource = weakSignalSource;
-            strongVisualCropHeight = visualCropHeight;
-            isWeakBootstrapConfirmation = true;
-            matchedSignals.add("weak-bootstrap-confirmed");
-            marketplaceWeakBootstrapState = null;
-          } else {
-            pendingBootstrapSignalSource = weakSignalSource;
-            pendingBootstrapAllowed = true;
-            matchedSignals.add("weak-bootstrap-pending");
-          }
-        }
-      } else {
-        marketplaceWeakBootstrapState = null;
+      const weakBootstrapVisualCropHeight = normalizeMarketplaceVisualCropHeight(
+        MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+      );
+      const weakBootstrapDecision = resolveWeakMarketplaceBootstrapDecision({
+        routeKey,
+        nowMs: now,
+        weakSignalSource,
+        weakBootstrapSettled,
+        headerOrdinaryChatDetected: state.headerOrdinaryChatDetected,
+        headerBackMarketplaceDetected: state.headerBackMarketplaceDetected,
+        currentMarketplaceSessionActive: currentMarketplaceSession !== null,
+        previousState: marketplaceWeakBootstrapState,
+        requiredPasses: MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES,
+        minConfirmAgeMs: MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS,
+        visualCropHeight: weakBootstrapVisualCropHeight,
+      });
+      marketplaceWeakBootstrapState = weakBootstrapDecision.nextState;
+      pendingBootstrapSignalSource =
+        weakBootstrapDecision.pendingBootstrapSignalSource;
+      pendingBootstrapAllowed = weakBootstrapDecision.pendingBootstrapAllowed;
+      pendingBootstrapRejectedReason =
+        weakBootstrapDecision.pendingBootstrapRejectedReason;
+      state.weakBootstrapPendingSignalSource = pendingBootstrapSignalSource;
+      state.weakBootstrapStablePasses = weakBootstrapDecision.stablePasses;
+      state.weakBootstrapFirstSeenAgeMs =
+        weakBootstrapDecision.firstSeenAgeMs;
+      state.weakBootstrapConfirmationEligible =
+        weakBootstrapDecision.confirmationEligible;
+      const routeChangeRecentMarketplaceMatch =
+        routeChangeDetected &&
+        previousMarketplaceSession !== null &&
+        previousMarketplaceSession !== undefined &&
+        Number.isFinite(previousMarketplaceSession.lastMatchedAt) &&
+        now - previousMarketplaceSession.lastMatchedAt <=
+          MARKETPLACE_SESSION_DOM_GRACE_MS;
+      state.routeChangeRecentMarketplaceMatch =
+        routeChangeRecentMarketplaceMatch;
+      const routeChangePendingBootstrapBridgeReason = routeChangeDetected
+        ? resolvePendingBootstrapRouteChangeBridgeReason({
+            pendingBootstrapSignalSource,
+            pendingBootstrapAllowed,
+            headerBackDetected: state.headerBackDetected,
+          })
+        : null;
+      state.routeChangePendingBootstrapBridgeReason =
+        routeChangePendingBootstrapBridgeReason;
+      state.routeChangePendingBootstrapWouldBridge =
+        routeChangeRecentMarketplaceMatch &&
+        routeChangePendingBootstrapBridgeReason ===
+          "allowed-right-pane-action-back-detected";
+      if (routeChangeDetected && pendingBootstrapSignalSource) {
+        matchedSignals.add(
+          state.routeChangePendingBootstrapWouldBridge
+            ? "route-change-pending-bootstrap-bridge"
+            : `route-change-pending-bootstrap-blocked:${routeChangePendingBootstrapBridgeReason}`,
+        );
+      }
+      if (routeChangeDetected && !routeChangeRecentMarketplaceMatch) {
+        matchedSignals.add("route-change-pending-bootstrap-blocked:stale");
+      }
+      if (weakBootstrapDecision.transition === "rejected") {
+        matchedSignals.add(
+          pendingBootstrapRejectedReason === "weak-bootstrap-ordinary-chat"
+            ? "weak-bootstrap-rejected:ordinary-chat"
+            : "weak-bootstrap-rejected:startup",
+        );
+      } else if (weakBootstrapDecision.transition === "pending") {
+        matchedSignals.add("weak-bootstrap-pending");
+      } else if (weakBootstrapDecision.transition === "confirmed") {
+        strongSignalSource = weakBootstrapDecision.confirmedSignalSource;
+        strongVisualCropHeight = weakBootstrapVisualCropHeight;
+        isWeakBootstrapConfirmation = true;
+        matchedSignals.add("weak-bootstrap-confirmed");
       }
 
       const ordinaryChatOnlyDetected =
@@ -2064,6 +2077,7 @@ ipcRenderer.on(
             : strongVisualCropHeight,
         strongHeaderBand,
         weakHeaderBand,
+        headerBackDetected: state.headerBackDetected,
         sameRouteMarketplaceBackAnchorDetected:
           state.sameRouteMarketplaceBackAnchorDetected,
         headerBackMatchesSessionHeaderBand:

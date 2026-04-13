@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.2] - 2026-04-13
+
+### Fixed
+
+- **Issue #49 follow-up: keep Marketplace re-entry alive through weak route-change bootstrap and stop emoji-only notification title suffixes** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Keep a recently confirmed Marketplace thread bridged across a route change when the next thread first reappears only as a pending weak Marketplace bootstrap, instead of clearing the Marketplace session before the new route has time to settle.
+  - Extend the deterministic Marketplace coverage to include pending route-change bootstrap bridging, stale pending-bootstrap expiry, and the weak-bootstrap caller-side transition rules used by preload.
+  - Filter emoji-only and decorative alternate names out of notification title formatting, scrub previously cached invalid alternate names on load, and keep valid nickname/real-name suffixes intact.
+  - Add deterministic coverage for notification alternate-name filtering plus legacy cache cleanup so the stray emoji suffix replay is guarded going forward.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run build`
+- `npm start` (launch smoke in dev mode)
+
 ## [1.3.1-beta.1] - 2026-04-12
 
 ### Fixed
