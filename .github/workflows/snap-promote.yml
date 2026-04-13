@@ -1,5 +1,8 @@
 name: Snap Promotion Check
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 # Runs daily to check if there are new edge builds that should be promoted
 # This handles cases where Launchpad builds complete after the release workflow
 
@@ -15,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0 # Need full history for tag lookup
 
