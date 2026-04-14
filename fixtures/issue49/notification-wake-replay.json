@@ -52,6 +52,36 @@
         "preExistingReplaySuppressed": false,
         "shouldNotify": true
       }
+    },
+    {
+      "name": "online-recovery-replays-existing-group-approval-row",
+      "reason": "online-recovery",
+      "existingUnreadRows": [
+        {
+          "href": "/t/group-admin-queue-online",
+          "title": "Account C",
+          "body": "Membership request pending in a group you're managing",
+          "muted": false,
+          "unread": true
+        }
+      ],
+      "replayPayload": {
+        "title": "Account C",
+        "body": "Membership request pending in a group you're managing"
+      },
+      "replayRow": {
+        "href": "/t/group-admin-queue-online",
+        "title": "Account C",
+        "body": "Membership request pending in a group you're managing",
+        "muted": false,
+        "unread": true
+      },
+      "expect": {
+        "snapshotFresh": true,
+        "replayLooksGlobalActivity": true,
+        "preExistingReplaySuppressed": true,
+        "shouldNotify": false
+      }
     }
   ]
 }

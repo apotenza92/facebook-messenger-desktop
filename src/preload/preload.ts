@@ -45,10 +45,12 @@ import {
   resolveMarketplaceOrdinaryClearBlockedReason,
   resolveMarketplaceVisualSessionDecision,
   resolvePendingBootstrapRouteChangeBridgeReason,
+  resolveWeakBootstrapRouteChangeBridgeReason,
   resolveWeakMarketplaceBootstrapDecision,
   type MarketplaceCurrentEvidenceClass,
   type MarketplaceOrdinaryClearBlockedReason,
   type MarketplaceRouteChangePendingBridgeReason,
+  type MarketplaceWeakBootstrapRouteChangeBridgeReason,
   type MarketplaceSessionConfirmationKind,
   type MarketplaceSessionLifecycleReason,
   type MarketplaceSessionSignalSource,
@@ -425,6 +427,8 @@ ipcRenderer.on(
     routeChangeWeakHeaderMatchesPreviousSession: boolean;
     routeChangePendingBootstrapBridgeReason: MarketplaceRouteChangePendingBridgeReason | null;
     routeChangePendingBootstrapWouldBridge: boolean;
+    routeChangeWeakBootstrapBridgeReason: MarketplaceWeakBootstrapRouteChangeBridgeReason | null;
+    routeChangeWeakBootstrapWouldBridge: boolean;
     routeChangeRescuePending: boolean;
     routeChangeRescueExpiresInMs: number | null;
     routeChangeRescueStartedAgeMs: number | null;
@@ -1414,6 +1418,8 @@ ipcRenderer.on(
       routeChangeWeakHeaderMatchesPreviousSession: false,
       routeChangePendingBootstrapBridgeReason: null,
       routeChangePendingBootstrapWouldBridge: false,
+      routeChangeWeakBootstrapBridgeReason: null,
+      routeChangeWeakBootstrapWouldBridge: false,
       routeChangeRescuePending: false,
       routeChangeRescueExpiresInMs: null,
       routeChangeRescueStartedAgeMs: null,
@@ -1950,12 +1956,32 @@ ipcRenderer.on(
         routeChangeRecentMarketplaceMatch &&
         routeChangePendingBootstrapBridgeReason ===
           "allowed-right-pane-action-back-detected";
+      const routeChangeWeakBootstrapBridgeReason = routeChangeDetected
+        ? resolveWeakBootstrapRouteChangeBridgeReason({
+            previousSession: previousMarketplaceSession,
+            pendingBootstrapSignalSource,
+            pendingBootstrapAllowed,
+          })
+        : null;
+      state.routeChangeWeakBootstrapBridgeReason =
+        routeChangeWeakBootstrapBridgeReason;
+      state.routeChangeWeakBootstrapWouldBridge =
+        routeChangeRecentMarketplaceMatch &&
+        routeChangeWeakBootstrapBridgeReason ===
+          "allowed-recent-weak-bootstrap-right-pane-action";
       if (routeChangeDetected && pendingBootstrapSignalSource) {
         matchedSignals.add(
           state.routeChangePendingBootstrapWouldBridge
             ? "route-change-pending-bootstrap-bridge"
             : `route-change-pending-bootstrap-blocked:${routeChangePendingBootstrapBridgeReason}`,
         );
+        if (previousMarketplaceSession?.confirmationKind === "weak-bootstrap") {
+          matchedSignals.add(
+            state.routeChangeWeakBootstrapWouldBridge
+              ? "route-change-weak-bootstrap-bridge"
+              : `route-change-weak-bootstrap-blocked:${routeChangeWeakBootstrapBridgeReason}`,
+          );
+        }
       }
       if (routeChangeDetected && !routeChangeRecentMarketplaceMatch) {
         matchedSignals.add("route-change-pending-bootstrap-blocked:stale");
@@ -2162,6 +2188,14 @@ ipcRenderer.on(
         sessionDecision.signalSource === "weak-header"
       ) {
         matchedSignals.add("route-change-rescue-late-weak-header");
+      }
+      if (
+        routeChangeDetected &&
+        previousMarketplaceSession?.confirmationKind === "weak-bootstrap" &&
+        sessionDecision.transition === "bridged" &&
+        sessionDecision.signalSource === "right-pane-action"
+      ) {
+        matchedSignals.add("route-change-rescue-from-weak-bootstrap");
       }
       if (
         currentMarketplaceSession?.routeChangeRescuePendingUntil !== null &&

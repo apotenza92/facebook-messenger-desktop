@@ -146,6 +146,13 @@ export type MarketplaceRouteChangePendingBridgeReason =
   | "missing-back-control"
   | "unsupported-signal-source";
 
+export type MarketplaceWeakBootstrapRouteChangeBridgeReason =
+  | "allowed-recent-weak-bootstrap-right-pane-action"
+  | "not-weak-bootstrap-session"
+  | "no-pending-bootstrap-signal"
+  | "pending-bootstrap-not-allowed"
+  | "unsupported-signal-source";
+
 export function shouldConfirmWeakMarketplaceBootstrap(input: {
   stablePasses: number;
   firstSeenAgeMs: number;
@@ -677,6 +684,43 @@ function shouldBridgePendingBootstrapOnRouteChange(input: {
   );
 }
 
+export function resolveWeakBootstrapRouteChangeBridgeReason(input: {
+  previousSession?: MarketplaceVisualSessionState | null;
+  pendingBootstrapSignalSource?: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  pendingBootstrapAllowed?: boolean;
+}): MarketplaceWeakBootstrapRouteChangeBridgeReason {
+  if (input.previousSession?.confirmationKind !== "weak-bootstrap") {
+    return "not-weak-bootstrap-session";
+  }
+  if (!input.pendingBootstrapSignalSource) {
+    return "no-pending-bootstrap-signal";
+  }
+  if (input.pendingBootstrapAllowed !== true) {
+    return "pending-bootstrap-not-allowed";
+  }
+  if (input.pendingBootstrapSignalSource !== "right-pane-action") {
+    return "unsupported-signal-source";
+  }
+  return "allowed-recent-weak-bootstrap-right-pane-action";
+}
+
+function shouldBridgeWeakBootstrapOnRouteChange(input: {
+  previousSession?: MarketplaceVisualSessionState | null;
+  pendingBootstrapSignalSource?: Extract<
+    MarketplaceSessionSignalSource,
+    "right-pane-action" | "item-link"
+  > | null;
+  pendingBootstrapAllowed?: boolean;
+}): boolean {
+  return (
+    resolveWeakBootstrapRouteChangeBridgeReason(input) ===
+    "allowed-recent-weak-bootstrap-right-pane-action"
+  );
+}
+
 export function resolveMarketplaceVisualSessionDecision(input: {
   currentRouteKey: string;
   nowMs: number;
@@ -847,6 +891,44 @@ export function resolveMarketplaceVisualSessionDecision(input: {
         visualCropHeight: nextSession.visualCropHeight,
         transition: "bridged",
         signalSource: routeChangePendingBootstrapSignalSource,
+        lifecycleReason: "route-changed",
+        rejectionReason: null,
+        weakHeaderMatchesSessionHeaderBand: false,
+        nextSession,
+      };
+    }
+
+    if (
+      routeChangeRecentMarketplaceMatch &&
+      shouldBridgeWeakBootstrapOnRouteChange({
+        previousSession: priorSession,
+        pendingBootstrapSignalSource: input.pendingBootstrapSignalSource,
+        pendingBootstrapAllowed: input.pendingBootstrapAllowed,
+      })
+    ) {
+      const weakBootstrapRouteChangeSignalSource =
+        input.pendingBootstrapSignalSource!;
+      const nextSession: MarketplaceVisualSessionState = {
+        routeKey: input.currentRouteKey,
+        visualCropHeight: priorSession?.visualCropHeight ?? null,
+        headerBand: priorSession?.headerBand ?? null,
+        lastConfirmedAt: priorSession?.lastConfirmedAt ?? input.nowMs,
+        lastStrongConfirmedAt: priorSession?.lastStrongConfirmedAt ?? null,
+        lastMatchedAt: input.nowMs,
+        confirmationKind: priorSession?.confirmationKind ?? "weak-bootstrap",
+        signalSource: weakBootstrapRouteChangeSignalSource,
+        lifecycleReason: "route-changed",
+        lastLifecycleAt: input.nowMs,
+        routeChangeRescueStartedAt: null,
+        routeChangeRescuePendingUntil: null,
+      };
+
+      return {
+        sessionActive: true,
+        shouldApplyReducedCrop: nextSession.visualCropHeight !== null,
+        visualCropHeight: nextSession.visualCropHeight,
+        transition: "bridged",
+        signalSource: weakBootstrapRouteChangeSignalSource,
         lifecycleReason: "route-changed",
         rejectionReason: null,
         weakHeaderMatchesSessionHeaderBand: false,

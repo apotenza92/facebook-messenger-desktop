@@ -617,7 +617,22 @@
   // 2. The app restarts (Map is in-memory only)
   // No time-based expiry needed - memory usage is negligible (~400 bytes per conversation)
   // Fixes issue #13: users getting repeated notifications for weeks-old unread messages.
-  const notifiedConversations = new Map<string, { body: string }>();
+  type NotificationRecord = {
+    body: string;
+    source: "notification" | "snapshot";
+    boundaryReason?: string;
+    wakeGeneration?: number;
+    recordedAt: number;
+  };
+  type BoundarySnapshotRecord = {
+    body: string;
+    reason: string;
+    wakeGeneration: number;
+    recordedAt: number;
+  };
+
+  const notifiedConversations = new Map<string, NotificationRecord>();
+  const boundarySnapshotRecords = new Map<string, BoundarySnapshotRecord>();
   const conversationNotificationDeduper =
     getNotificationDecisionPolicy()?.createNotificationDeduper(4000) ?? null;
 
@@ -685,6 +700,7 @@
           href: key,
         });
         notifiedConversations.delete(key);
+        boundarySnapshotRecords.delete(key);
       }
     }
   };
@@ -696,6 +712,18 @@
     if (!existing) return false;
     // Already notified for this exact message content
     return existing.body === body;
+  };
+
+  const getBoundarySnapshotReplaySuppression = (
+    href: string,
+    body: string,
+  ): BoundarySnapshotRecord | null => {
+    const key = normalizeConversationKey(href);
+    const existing = boundarySnapshotRecords.get(key);
+    if (!existing || existing.body !== body) {
+      return null;
+    }
+    return existing;
   };
 
   const isMessagesNotificationRoute = (): boolean => {
@@ -717,9 +745,31 @@
     return isMessagesNotificationRoute();
   };
 
-  const recordNotification = (href: string, body: string) => {
+  const recordNotification = (
+    href: string,
+    body: string,
+    metadata: Partial<NotificationRecord> = {},
+  ) => {
     const key = normalizeConversationKey(href);
-    notifiedConversations.set(key, { body });
+    notifiedConversations.set(key, {
+      body,
+      source: metadata.source === "snapshot" ? "snapshot" : "notification",
+      boundaryReason:
+        typeof metadata.boundaryReason === "string"
+          ? metadata.boundaryReason
+          : undefined,
+      wakeGeneration:
+        typeof metadata.wakeGeneration === "number"
+          ? metadata.wakeGeneration
+          : undefined,
+      recordedAt:
+        typeof metadata.recordedAt === "number"
+          ? metadata.recordedAt
+          : Date.now(),
+    });
+    if (metadata.source !== "snapshot") {
+      boundarySnapshotRecords.delete(key);
+    }
   };
 
   // ============================================================================
@@ -1466,7 +1516,19 @@
         }
 
         if (hasAlreadyNotified(normalizedHref, bodyStr)) {
-          log("Native notification deduplicated", { href: normalizedHref });
+          const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
+            normalizedHref,
+            bodyStr,
+          );
+          if (wakeReplaySuppression) {
+            log("Native notification suppressed - pre-existing after wake boundary", {
+              href: normalizedHref,
+              boundaryReason: wakeReplaySuppression.reason,
+              wakeGeneration: wakeReplaySuppression.wakeGeneration,
+            });
+          } else {
+            log("Native notification deduplicated", { href: normalizedHref });
+          }
           return;
         }
 
@@ -1553,6 +1615,7 @@
   const RESUME_SETTLING_MS = 8000;
   let settlingToken = 0;
   let settlingTimeoutId: number | null = null;
+  let wakeGeneration = 0;
 
   const startSettlingPeriod = (options: {
     reason: string;
@@ -1578,6 +1641,21 @@
     }
 
     isSettling = true;
+
+    const wakeBoundarySnapshot =
+      includeFresh === true &&
+      (getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
+        reason,
+      ) ?? false);
+    if (wakeBoundarySnapshot) {
+      wakeGeneration += 1;
+      boundarySnapshotRecords.clear();
+      log("Wake-boundary settling started", {
+        reason,
+        wakeGeneration,
+        durationMs,
+      });
+    }
 
     if (sidebar) {
       currentSidebarElement = sidebar;
@@ -1615,6 +1693,14 @@
     const { includeFresh = true, reason } = options;
     const rows = sidebar.querySelectorAll(selectors.conversationRow);
     let recordedCount = 0;
+    const boundarySnapshotWakeGeneration =
+      includeFresh === true &&
+      reason &&
+      (getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
+        reason,
+      ) ?? false)
+        ? wakeGeneration
+        : null;
 
     rows.forEach((row) => {
       if (isConversationUnread(row)) {
@@ -1623,8 +1709,21 @@
         }
         const info = extractConversationInfo(row);
         if (info) {
+          const normalizedHref = normalizeConversationKey(info.href);
           // Mark as already notified so we don't send notifications for these
-          recordNotification(info.href, info.body);
+          recordNotification(info.href, info.body, {
+            source: "snapshot",
+            boundaryReason: reason,
+            wakeGeneration: boundarySnapshotWakeGeneration ?? undefined,
+          });
+          if (boundarySnapshotWakeGeneration !== null && reason) {
+            boundarySnapshotRecords.set(normalizedHref, {
+              body: info.body,
+              reason,
+              wakeGeneration: boundarySnapshotWakeGeneration,
+              recordedAt: Date.now(),
+            });
+          }
           recordedCount++;
         }
       }
@@ -1634,6 +1733,12 @@
     const reasonLabel = reason ? ` after ${reason}` : "";
     log(
       `Recorded ${recordedCount} existing unread conversations${freshnessLabel}${reasonLabel}`,
+      boundarySnapshotWakeGeneration !== null
+        ? {
+            wakeGeneration: boundarySnapshotWakeGeneration,
+            boundaryReason: reason,
+          }
+        : undefined,
     );
   };
 
@@ -1838,6 +1943,18 @@
 
         // Check if we've already notified for this exact message
         if (hasAlreadyNotified(normalizedMatchedHref, matchedInfo.body)) {
+          const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
+            normalizedMatchedHref,
+            matchedInfo.body,
+          );
+          if (wakeReplaySuppression) {
+            log("Mutation notification suppressed - pre-existing after wake boundary", {
+              title: matchedInfo.title,
+              href: normalizedMatchedHref,
+              boundaryReason: wakeReplaySuppression.reason,
+              wakeGeneration: wakeReplaySuppression.wakeGeneration,
+            });
+          }
           continue;
         }
 

@@ -362,6 +362,46 @@ const simulateWakeDecision = (input: {
     "offline marketplace harness failed to rescue on the later weak Marketplace header",
   );
 
+  const weakBootstrapConfirmed = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-weak-thread-A",
+    nowMs: 13000,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
+    strongSignalSource: "right-pane-action",
+    strongVisualCropHeight: 36,
+    isWeakBootstrapConfirmation: true,
+  });
+  const weakBootstrapRouteBridge = resolveMarketplaceVisualSessionDecision({
+    currentRouteKey: "/messages/t/marketplace-weak-thread-B",
+    nowMs: 13320,
+    graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+    routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
+    previousSession: weakBootstrapConfirmed.nextSession,
+    pendingBootstrapSignalSource: "right-pane-action",
+    pendingBootstrapAllowed: true,
+    headerBackDetected: false,
+  });
+  assertEqual(
+    {
+      sessionActive: weakBootstrapRouteBridge.sessionActive,
+      transition: weakBootstrapRouteBridge.transition,
+      signalSource: weakBootstrapRouteBridge.signalSource,
+      lifecycleReason: weakBootstrapRouteBridge.lifecycleReason,
+      confirmationKind:
+        weakBootstrapRouteBridge.nextSession?.confirmationKind ?? null,
+      visualCropHeight: weakBootstrapRouteBridge.visualCropHeight,
+    },
+    {
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "right-pane-action",
+      lifecycleReason: "route-changed",
+      confirmationKind: "weak-bootstrap",
+      visualCropHeight: 36,
+    },
+    "offline marketplace harness failed to bridge recent weak-bootstrap continuity across a route change",
+  );
+
   await page.setContent(
     notificationHtml([
       {
@@ -391,6 +431,26 @@ const simulateWakeDecision = (input: {
       shouldNotify: false,
     },
     "offline notification harness failed to suppress a stale wake-time approval replay",
+  );
+
+  const onlineRecoveryReplaySuppressed = simulateWakeDecision({
+    reason: "online-recovery",
+    existingUnreadRows,
+    replayPayload: {
+      title: "Account A",
+      body: "Membership request pending in a group you're managing",
+    },
+    replayRow: existingUnreadRows[0],
+  });
+  assertEqual(
+    onlineRecoveryReplaySuppressed,
+    {
+      snapshotFresh: true,
+      replayLooksGlobalActivity: true,
+      preExistingReplaySuppressed: true,
+      shouldNotify: false,
+    },
+    "offline notification harness failed to suppress a stale admin replay after online recovery",
   );
 
   await page.setContent(

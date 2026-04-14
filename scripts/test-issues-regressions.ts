@@ -1376,6 +1376,102 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 stale route-change pending Marketplace bootstrap signals must not keep bridging indefinitely after the last confirmed Marketplace match",
   );
 
+  const weakBootstrapRouteChangeBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-weak-B",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...weakBootstrapConfirmed.nextSession,
+        routeKey: "/messages/t/marketplace-thread-weak-A",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: weakBootstrapRouteChangeBridge.sessionActive,
+      transition: weakBootstrapRouteChangeBridge.transition,
+      signalSource: weakBootstrapRouteChangeBridge.signalSource,
+      lifecycleReason: weakBootstrapRouteChangeBridge.lifecycleReason,
+      visualCropHeight: weakBootstrapRouteChangeBridge.visualCropHeight,
+      confirmationKind:
+        weakBootstrapRouteChangeBridge.nextSession?.confirmationKind ?? null,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "right-pane-action",
+      lifecycleReason: "route-changed",
+      visualCropHeight: 36,
+      confirmationKind: "weak-bootstrap",
+    }),
+    "#49 recent weak-bootstrap Marketplace continuity should bridge across route changes when the next route again exposes a right-pane Marketplace action even without an early back control",
+  );
+
+  const weakBootstrapRouteChangeItemLinkRejected =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/ordinary-chat-with-marketplace-link-2",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...weakBootstrapConfirmed.nextSession,
+        routeKey: "/messages/t/marketplace-thread-weak-A",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "item-link",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: weakBootstrapRouteChangeItemLinkRejected.sessionActive,
+      transition: weakBootstrapRouteChangeItemLinkRejected.transition,
+      lifecycleReason: weakBootstrapRouteChangeItemLinkRejected.lifecycleReason,
+      visualCropHeight:
+        weakBootstrapRouteChangeItemLinkRejected.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 weak-bootstrap continuity must still fail closed for ordinary chats that only expose a Marketplace item-link hint on the next route",
+  );
+
+  const staleWeakBootstrapRouteChangeBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-weak-B",
+      nowMs: 20_800,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      previousSession: {
+        ...weakBootstrapConfirmed.nextSession,
+        routeKey: "/messages/t/marketplace-thread-weak-A",
+        lastMatchedAt: 18_000,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: staleWeakBootstrapRouteChangeBridge.sessionActive,
+      transition: staleWeakBootstrapRouteChangeBridge.transition,
+      lifecycleReason: staleWeakBootstrapRouteChangeBridge.lifecycleReason,
+      visualCropHeight: staleWeakBootstrapRouteChangeBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 weak-bootstrap Marketplace continuity must still expire once the recent-match window is stale",
+  );
+
   const ordinaryRoutePendingBootstrap =
     resolveMarketplaceVisualSessionDecision({
       currentRouteKey: "/messages/t/ordinary-chat-2",
@@ -3243,6 +3339,18 @@ const runNotificationPolicyTests = () => {
     navigationBoundaryCapturesFreshUnread,
     false,
     "#49 ordinary navigation settling should not broaden into wake-style unread snapshotting",
+  );
+
+  const onlineRecoveryBoundaryCapturesFreshUnread =
+    typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
+      "function" &&
+    notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary(
+      "online-recovery",
+    );
+  assertEqual(
+    onlineRecoveryBoundaryCapturesFreshUnread,
+    true,
+    "#49 online recovery should snapshot fresh unread rows so stale admin replays after reconnect fail closed like wake/resume",
   );
 
   const simulateNativeWakeBoundaryDecision = (input: {

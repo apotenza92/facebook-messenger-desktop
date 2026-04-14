@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.4] - 2026-04-14
+
+### Fixed
+
+- **Issue #49 follow-up: keep weak Marketplace continuity alive later in a session and tighten wake-boundary replay diagnostics** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Bridge recent `weak-bootstrap` Marketplace sessions across route changes when the next route again exposes a corroborating right-pane Marketplace action, so the native Marketplace back/header treatment is less likely to drop out after sleep, reconnect churn, or longer-running sessions that no longer re-render the full strong header in time.
+  - Keep the weak-continuity bridge fail-closed for stale sessions and generic Marketplace item-link noise, and add explicit debug provenance for when weak-bootstrap route-change bridging was allowed, blocked, or used.
+  - Record wake-generation snapshot state for existing unread rows and log when native or mutation-driven notifications are suppressed as pre-existing wake/online-recovery replays, making future approval/admin bundles much more conclusive if anything still slips through.
+  - Extend the deterministic and offline Issue #49 coverage for weak-bootstrap route-change continuity plus `online-recovery` stale admin replay suppression.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:issue49:offline`
+- `npm run build`
+
 ## [1.3.1-beta.3] - 2026-04-13
 
 ### Fixed
