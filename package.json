@@ -35,6 +35,8 @@
     "test:issue45:e2ee:same-route:current:gui": "node scripts/find-e2ee-media-target-gui.js --thread-url https://www.facebook.com/messages/e2ee/t/24899967469613549/ --prefer-label-contains photo,image,attachment --exclude-label-contains gif,reel,video,story --exclude-route-types reel,story,video --expect fixed",
     "test:release:confirm": "node -r ./scripts/register-ts.js scripts/test-release-confirmation.ts",
     "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts && npm run test:release:confirm",
+    "autopilot:issue49": "node -r ./scripts/register-ts.js scripts/issue49-autopilot.ts --loop --dry-run",
+    "autopilot:issue49:once": "node -r ./scripts/register-ts.js scripts/issue49-autopilot.ts --once --dry-run",
     "ralphy": "PATH=\"$PWD/scripts:$PATH\" ~/code/ralphy/ralphy.sh --codex --prd PRD.md",
     "ralphy:dry": "PATH=\"$PWD/scripts:$PATH\" ~/code/ralphy/ralphy.sh --codex --prd PRD.md --dry-run"
   },

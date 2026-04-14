@@ -42,3 +42,6 @@ docs/flatpak/repo/
 
 # Claude settings (may contain sensitive info)
 .claude/
+
+# Local autopilot runtime state
+.tmp/issue49-autopilot/
