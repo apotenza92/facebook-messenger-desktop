@@ -45,6 +45,7 @@ The autopilot is bounded by default:
 All runtime state is local-only under:
 
 - `.tmp/issue49-autopilot/state.json`
+- `.tmp/issue49-autopilot/status.md`
 - `.tmp/issue49-autopilot/autopilot.log`
 - `.tmp/issue49-autopilot/pi-sessions/`
 - `.tmp/issue49-autopilot/runs/comment-<id>/`

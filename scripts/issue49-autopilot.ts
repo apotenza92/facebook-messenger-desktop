@@ -8,6 +8,7 @@ const CLONE_DIR = path.join(AUTOPILOT_ROOT, "repo");
 const RUNS_DIR = path.join(AUTOPILOT_ROOT, "runs");
 const SESSION_DIR = path.join(AUTOPILOT_ROOT, "pi-sessions");
 const STATE_PATH = path.join(AUTOPILOT_ROOT, "state.json");
+const STATUS_MD_PATH = path.join(AUTOPILOT_ROOT, "status.md");
 const LOG_PATH = path.join(AUTOPILOT_ROOT, "autopilot.log");
 
 type AutopilotStatus =
@@ -66,6 +67,8 @@ type GitHubIssueComment = {
   updated_at: string;
   user?: { login?: string; type?: string };
 };
+
+let statusOptions: CliOptions | null = null;
 
 type CliOptions = {
   loop: boolean;
@@ -159,9 +162,69 @@ function loadState(issueNumber: number): AutopilotState {
   return JSON.parse(fs.readFileSync(STATE_PATH, "utf8")) as AutopilotState;
 }
 
+function renderStatusMarkdown(state: AutopilotState): string {
+  const options = statusOptions;
+  const handled = Object.values(state.handledComments).sort(
+    (left, right) => left.commentId - right.commentId,
+  );
+  const recentHandled = handled.slice(-10).reverse();
+
+  const lines = [
+    "# Issue #49 autopilot status",
+    "",
+    `Updated: ${new Date().toISOString()}`,
+    `Mode: ${options?.publicActions ? "public-actions" : "dry-run"}`,
+    `Polling: every ${options?.pollSeconds ?? "?"} seconds`,
+    `Max cycles: ${options?.maxCycles ?? "?"}`,
+    `Cycle count: ${state.cycleCount}`,
+    `Bootstrap complete: ${state.bootstrapComplete === true ? "yes" : "no"}`,
+    `Last seen watched comment ID: ${state.lastSeenWatchedCommentId ?? "none"}`,
+    `Last checked: ${state.lastCheckedAt ?? "never"}`,
+    `Stopped reason: ${state.stoppedReason ?? "running"}`,
+    `Watch users: ${options?.watchUsers?.length ? options.watchUsers.join(", ") : "any non-owner commenter"}`,
+    "",
+    "## Runtime files",
+    "",
+    `- State JSON: ${STATE_PATH}`,
+    `- Log: ${LOG_PATH}`,
+    `- Sessions: ${SESSION_DIR}`,
+    `- Runs: ${RUNS_DIR}`,
+    "",
+    "## Recent handled comments",
+    "",
+  ];
+
+  if (recentHandled.length === 0) {
+    lines.push("- none yet", "");
+  } else {
+    lines.push(
+      "| Comment ID | Author | Status | Release | Updated |",
+      "| --- | --- | --- | --- | --- |",
+    );
+    for (const entry of recentHandled) {
+      lines.push(
+        `| ${entry.commentId} | ${entry.author} | ${entry.status} | ${entry.releaseVersion ?? "-"} | ${entry.updatedAt} |`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push(
+    "## Notes",
+    "",
+    "- This file is rewritten automatically by the issue #49 autopilot.",
+    "- The watcher is bounded; it stops after the configured max cycles or if the issue closes.",
+    "- Public actions means the autopilot may push to `main`, create beta releases, and post issue replies.",
+    "",
+  );
+
+  return lines.join("\n");
+}
+
 function saveState(state: AutopilotState): void {
   ensureDir(AUTOPILOT_ROOT);
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), "utf8");
+  fs.writeFileSync(STATUS_MD_PATH, renderStatusMarkdown(state), "utf8");
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -759,6 +822,7 @@ function processComment(
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  statusOptions = options;
   const { owner, repo, remoteUrl } = parseRemoteOwnerRepo();
   const ownerLogin = owner;
   const state = loadState(options.issueNumber);
