@@ -26,6 +26,8 @@ type AutopilotResult = {
   notes?: string[];
 };
 
+const QUICK_FOLLOW_UP_BATCH_WINDOW_MS = 30 * 60 * 1000;
+
 type TrackedCommentState = {
   commentId: number;
   author: string;
@@ -417,7 +419,7 @@ function buildIssueContext(issue: GitHubIssue, comments: GitHubIssueComment[]): 
 
 function buildPrompt(params: {
   issueNumber: number;
-  commentId: number;
+  commentIds: number[];
   runDir: string;
   resultPath: string;
   replyPath: string;
@@ -428,12 +430,12 @@ function buildPrompt(params: {
     "",
     "Work in the current git clone only. Never push, never release, and never post a GitHub comment yourself.",
     "",
-    `Target reporter comment ID: ${params.commentId}`,
+    `Target reporter comment IDs: ${params.commentIds.join(", ")}`,
     `Current package version before your changes: ${params.currentVersion}`,
     `Run artifacts directory: ${params.runDir}`,
     "",
     "Goals:",
-    "1. Decide whether this new reporter comment requires a code/test/change response.",
+    "1. Decide whether this new reporter comment slice requires a code/test/change response.",
     "2. If a fix is warranted and confidence is high enough, implement the minimum safe patch, add/extend deterministic regression coverage, run the validation commands, and prepare the next beta release in the repo (CHANGELOG.md, package.json, package-lock.json).",
     "3. If confidence is insufficient or the evidence is ambiguous, stop and mark needs-human.",
     "4. Keep public-facing text neutral; do not use real names unless already strictly necessary from URLs or issue references. Use reporter/account aliases in any drafted reply.",
@@ -464,6 +466,7 @@ function buildPrompt(params: {
     "- needs-human: use if the evidence is ambiguous, the bug is not actionable yet, or you cannot reach a release-quality patch with strong confidence. Do not bump version in this case.",
     "- no-action: use if the new comment does not require code changes or a public follow-up. Do not bump version in this case.",
     "",
+    "If multiple quick-succession reporter comments are included in this slice, evaluate them together against the current repo state and the latest beta prepared in the repo. If the newest report is already addressed by the just-prepared beta or by code already on main, prefer `no-action` over another redundant release.",
     "If you touch files, keep the patch minimal and add regression coverage. If you conclude no release should happen, leave the app version unchanged.",
   ].join("\n");
 }
@@ -477,18 +480,54 @@ function isPrereleaseVersion(value: string | null | undefined): boolean {
   return Boolean(value && /^[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9.]+$/.test(value));
 }
 
-function renderCommentMarkdown(comment: GitHubIssueComment): string {
-  return [
-    `# Comment ${comment.id}`,
-    "",
-    `Author: ${comment.user?.login || "unknown"}`,
-    `Created: ${comment.created_at}`,
-    `Updated: ${comment.updated_at}`,
-    `URL: ${comment.html_url}`,
-    "",
-    comment.body || "(empty)",
-    "",
-  ].join("\n");
+function renderCommentsMarkdown(comments: GitHubIssueComment[]): string {
+  const sections = ["# Target reporter comment slice", ""];
+  for (const comment of comments) {
+    sections.push(
+      `## Comment ${comment.id}`,
+      "",
+      `Author: ${comment.user?.login || "unknown"}`,
+      `Created: ${comment.created_at}`,
+      `Updated: ${comment.updated_at}`,
+      `URL: ${comment.html_url}`,
+      "",
+      comment.body || "(empty)",
+      "",
+    );
+  }
+  return sections.join("\n");
+}
+
+function buildCommentBatch(comments: GitHubIssueComment[]): GitHubIssueComment[] {
+  if (comments.length <= 1) {
+    return comments;
+  }
+  const batch: GitHubIssueComment[] = [comments[0]];
+  for (let index = 1; index < comments.length; index += 1) {
+    const previous = batch[batch.length - 1];
+    const current = comments[index];
+    const sameAuthor =
+      String(previous.user?.login || "") === String(current.user?.login || "");
+    const previousAt = Date.parse(previous.created_at);
+    const currentAt = Date.parse(current.created_at);
+    const withinWindow =
+      Number.isFinite(previousAt) &&
+      Number.isFinite(currentAt) &&
+      currentAt - previousAt <= QUICK_FOLLOW_UP_BATCH_WINDOW_MS;
+    if (!sameAuthor || !withinWindow) {
+      break;
+    }
+    batch.push(current);
+  }
+  return batch;
+}
+
+function getRunIdForComments(comments: GitHubIssueComment[]): string {
+  const firstComment = comments[0];
+  const lastComment = comments[comments.length - 1];
+  return comments.length === 1
+    ? `comment-${firstComment.id}`
+    : `comment-${firstComment.id}-to-${lastComment.id}`;
 }
 
 function normalizeReplyBody(replyBody: string, releaseUrl: string | null): string {
@@ -594,7 +633,7 @@ function markHandled(
 
 function runPiForComment(params: {
   options: CliOptions;
-  commentId: number;
+  commentIds: number[];
   runDir: string;
   issueContextPath: string;
   commentPath: string;
@@ -617,7 +656,7 @@ function runPiForComment(params: {
   args.push(
     buildPrompt({
       issueNumber: params.options.issueNumber,
-      commentId: params.commentId,
+      commentIds: params.commentIds,
       runDir: params.runDir,
       resultPath: params.resultPath,
       replyPath: params.replyPath,
@@ -692,14 +731,15 @@ function postIssueComment(issueNumber: number, replyBody: string): string {
   return result.stdout.trim();
 }
 
-function processComment(
+function processCommentBatch(
   issue: GitHubIssue,
   comments: GitHubIssueComment[],
-  comment: GitHubIssueComment,
+  targetComments: GitHubIssueComment[],
   state: AutopilotState,
   options: CliOptions,
 ): void {
-  const runDir = path.join(RUNS_DIR, `comment-${comment.id}`);
+  const runId = getRunIdForComments(targetComments);
+  const runDir = path.join(RUNS_DIR, runId);
   const attachmentsDir = path.join(runDir, "attachments");
   const resultPath = path.join(runDir, "result.json");
   const replyPath = path.join(runDir, "reply.md");
@@ -708,28 +748,36 @@ function processComment(
   ensureDir(runDir);
   ensureDir(attachmentsDir);
   writeFile(issueContextPath, buildIssueContext(issue, comments));
-  writeFile(commentPath, renderCommentMarkdown(comment));
+  writeFile(commentPath, renderCommentsMarkdown(targetComments));
 
   const attachmentPaths: string[] = [];
-  for (const url of collectAttachmentUrls(comment.body || "")) {
-    try {
-      const pathname = new URL(url).pathname;
-      const basename = sanitizeFileComponent(path.basename(pathname) || `attachment-${attachmentPaths.length + 1}`);
-      const targetPath = path.join(attachmentsDir, basename || `attachment-${attachmentPaths.length + 1}`);
-      downloadFile(url, targetPath);
-      attachmentPaths.push(targetPath);
-    } catch (error) {
-      log("Attachment download failed", {
-        url,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  for (const comment of targetComments) {
+    for (const url of collectAttachmentUrls(comment.body || "")) {
+      try {
+        const pathname = new URL(url).pathname;
+        const basename = sanitizeFileComponent(
+          path.basename(pathname) || `attachment-${attachmentPaths.length + 1}`,
+        );
+        const targetPath = path.join(
+          attachmentsDir,
+          basename || `attachment-${attachmentPaths.length + 1}`,
+        );
+        downloadFile(url, targetPath);
+        attachmentPaths.push(targetPath);
+      } catch (error) {
+        log("Attachment download failed", {
+          commentId: comment.id,
+          url,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
   const beforeVersion = currentPackageVersion(CLONE_DIR);
   runPiForComment({
     options,
-    commentId: comment.id,
+    commentIds: targetComments.map((comment) => comment.id),
     runDir,
     issueContextPath,
     commentPath,
@@ -754,19 +802,21 @@ function processComment(
   maybeRefreshPackageLock(CLONE_DIR, beforeVersion, afterVersion);
 
   if (result.status !== "ready-for-beta") {
-    markHandled(state, {
-      commentId: comment.id,
-      author: comment.user?.login || "unknown",
-      createdAt: comment.created_at,
-      status: result.status,
-      runDir,
-      releaseVersion: null,
-      updatedAt: new Date().toISOString(),
-    });
+    for (const comment of targetComments) {
+      markHandled(state, {
+        commentId: comment.id,
+        author: comment.user?.login || "unknown",
+        createdAt: comment.created_at,
+        status: result.status,
+        runDir,
+        releaseVersion: null,
+        updatedAt: new Date().toISOString(),
+      });
+    }
     state.cycleCount += 1;
     saveState(state);
     log("Autopilot finished without public release", {
-      commentId: comment.id,
+      commentIds: targetComments.map((comment) => comment.id),
       status: result.status,
       summary: result.summary,
     });
@@ -804,23 +854,25 @@ function processComment(
     }
   } else {
     log("Dry run / no public actions enabled; skipping push, release, and issue comment", {
-      commentId: comment.id,
+      commentIds: targetComments.map((comment) => comment.id),
       releaseVersion: result.releaseVersion,
     });
   }
 
-  markHandled(state, {
-    commentId: comment.id,
-    author: comment.user?.login || "unknown",
-    createdAt: comment.created_at,
-    status: "ready-for-beta",
-    runDir,
-    releaseVersion: result.releaseVersion,
-    commitSha,
-    releaseUrl,
-    issueCommentUrl,
-    updatedAt: new Date().toISOString(),
-  });
+  for (const comment of targetComments) {
+    markHandled(state, {
+      commentId: comment.id,
+      author: comment.user?.login || "unknown",
+      createdAt: comment.created_at,
+      status: "ready-for-beta",
+      runDir,
+      releaseVersion: result.releaseVersion,
+      commitSha,
+      releaseUrl,
+      issueCommentUrl,
+      updatedAt: new Date().toISOString(),
+    });
+  }
   state.cycleCount += 1;
   saveState(state);
 }
@@ -906,27 +958,34 @@ async function main(): Promise<void> {
       continue;
     }
 
-    log("Processing new reporter comment", {
-      commentId: nextComment.id,
-      author: nextComment.user?.login,
-      createdAt: nextComment.created_at,
+    const targetComments = buildCommentBatch(pendingComments);
+    const batchRunId = getRunIdForComments(targetComments);
+
+    log("Processing reporter comment slice", {
+      commentIds: targetComments.map((comment) => comment.id),
+      author: targetComments[0].user?.login,
+      createdAt: targetComments[0].created_at,
       pendingCount: pendingComments.length,
+      batchCount: targetComments.length,
     });
 
     try {
-      processComment(issue, comments, nextComment, state, options);
+      processCommentBatch(issue, comments, targetComments, state, options);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log("Autopilot cycle failed", { commentId: nextComment.id, error: message });
-      markHandled(state, {
-        commentId: nextComment.id,
-        author: nextComment.user?.login || "unknown",
-        createdAt: nextComment.created_at,
-        status: "failed",
-        runDir: path.join(RUNS_DIR, `comment-${nextComment.id}`),
-        error: message,
-        updatedAt: new Date().toISOString(),
-      });
+      log("Autopilot cycle failed", { commentIds: targetComments.map((comment) => comment.id), error: message });
+      for (const comment of targetComments) {
+        markHandled(state, {
+          commentId: comment.id,
+          author: comment.user?.login || "unknown",
+          createdAt: comment.created_at,
+          status: "failed",
+          runDir:
+            path.join(RUNS_DIR, batchRunId),
+          error: message,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       state.cycleCount += 1;
       saveState(state);
       if (options.once || !options.loop) {
