@@ -11,6 +11,7 @@ When a new reporter comment appears on issue `#49`, the autopilot can:
 1. poll the issue with `gh`
 2. clone/sync a dedicated local repo under `.tmp/issue49-autopilot/repo`
 3. download comment attachments into `.tmp/issue49-autopilot/runs/comment-<id>/attachments/`
+   - supports GitHub attachments and Google Drive file links
 4. invoke `pi` in that dedicated clone with a persistent session directory
 5. let `pi` analyze the new comment and attachments, implement a minimal fix if warranted, add tests, and prepare the next beta release metadata
 6. rerun validation locally:

@@ -334,6 +334,7 @@ function ensureTooling(): void {
   runCommand("gh", ["--version"]);
   runCommand("git", ["--version"]);
   runCommand("pi", ["--version"]);
+  runCommand("python3", ["--version"]);
 }
 
 function ensureCloneSynced(owner: string, repo: string, remoteUrl: string): void {
@@ -367,6 +368,8 @@ function collectAttachmentUrls(body: string): string[] {
     const interesting =
       /githubusercontent\.com/i.test(value) ||
       /user-attachments/i.test(value) ||
+      /drive\.google\.com\/file\//i.test(value) ||
+      /drive\.usercontent\.google\.com\/download/i.test(value) ||
       /\.(zip|png|jpg|jpeg|gif|webp|txt|log|json)$/i.test(value);
     if (!interesting || seen.has(value)) {
       continue;
@@ -381,8 +384,77 @@ function sanitizeFileComponent(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+function extractGoogleDriveFileId(url: string): string | null {
+  const directMatch = url.match(/\/file\/d\/([^/]+)/i);
+  if (directMatch?.[1]) {
+    return directMatch[1];
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get("id");
+  } catch {
+    return null;
+  }
+}
+
+function downloadGoogleDriveFile(url: string, targetPath: string): void {
+  const fileId = extractGoogleDriveFileId(url);
+  if (!fileId) {
+    throw new Error(`Could not extract Google Drive file id from ${url}`);
+  }
+  ensureDir(path.dirname(targetPath));
+  const pythonScript = String.raw`
+import pathlib, re, sys, urllib.parse, urllib.request
+from html.parser import HTMLParser
+
+file_id = sys.argv[1]
+out_path = pathlib.Path(sys.argv[2])
+first_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+response = urllib.request.urlopen(first_url)
+content_type = response.headers.get('Content-Type', '')
+data = response.read()
+
+if 'text/html' not in content_type.lower():
+    out_path.write_bytes(data)
+    sys.exit(0)
+
+html_text = data.decode('utf-8', 'replace')
+
+class FormParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.action = None
+        self.inputs = {}
+        self.capture = False
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'form' and attrs.get('id') == 'download-form':
+            self.capture = True
+            self.action = attrs.get('action')
+        elif tag == 'input' and self.capture:
+            name = attrs.get('name')
+            if name:
+                self.inputs[name] = attrs.get('value', '')
+    def handle_endtag(self, tag):
+        if tag == 'form' and self.capture:
+            self.capture = False
+
+parser = FormParser()
+parser.feed(html_text)
+if not parser.action or not parser.inputs:
+    raise SystemExit('Unable to parse Google Drive download form')
+final_url = parser.action + '?' + urllib.parse.urlencode(parser.inputs)
+out_path.write_bytes(urllib.request.urlopen(final_url).read())
+`;
+  runCommand("python3", ["-c", pythonScript, fileId, targetPath]);
+}
+
 function downloadFile(url: string, targetPath: string): void {
   ensureDir(path.dirname(targetPath));
+  if (/drive\.google\.com\/file\//i.test(url)) {
+    downloadGoogleDriveFile(url, targetPath);
+    return;
+  }
   runCommand("bash", ["-lc", `curl -L --fail --silent --show-error ${JSON.stringify(url)} -o ${JSON.stringify(targetPath)}`]);
 }
 
