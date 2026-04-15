@@ -84,6 +84,26 @@ type CliOptions = {
   thinking?: string;
 };
 
+function getPendingWatchedComments(
+  comments: GitHubIssueComment[],
+  state: AutopilotState,
+  ownerLogin: string,
+  watchUsers: string[],
+): GitHubIssueComment[] {
+  return comments.filter((comment) => {
+    if (!shouldWatchComment(comment, ownerLogin, watchUsers)) {
+      return false;
+    }
+    if (
+      typeof state.lastSeenWatchedCommentId === "number" &&
+      comment.id <= state.lastSeenWatchedCommentId
+    ) {
+      return false;
+    }
+    return !state.handledComments[String(comment.id)];
+  });
+}
+
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -521,22 +541,7 @@ function findNextComment(
   ownerLogin: string,
   watchUsers: string[],
 ): GitHubIssueComment | null {
-  for (const comment of comments) {
-    if (!shouldWatchComment(comment, ownerLogin, watchUsers)) {
-      continue;
-    }
-    if (
-      typeof state.lastSeenWatchedCommentId === "number" &&
-      comment.id <= state.lastSeenWatchedCommentId
-    ) {
-      continue;
-    }
-    if (state.handledComments[String(comment.id)]) {
-      continue;
-    }
-    return comment;
-  }
-  return null;
+  return getPendingWatchedComments(comments, state, ownerLogin, watchUsers)[0] ?? null;
 }
 
 function gitStatusShort(repoDir: string): string {
@@ -884,7 +889,13 @@ async function main(): Promise<void> {
     }
     state.bootstrapComplete = true;
     saveState(state);
-    const nextComment = findNextComment(comments, state, ownerLogin, options.watchUsers);
+    const pendingComments = getPendingWatchedComments(
+      comments,
+      state,
+      ownerLogin,
+      options.watchUsers,
+    );
+    const nextComment = pendingComments[0] ?? null;
 
     if (!nextComment) {
       log("No new reporter comment found", { issueNumber: options.issueNumber });
@@ -899,6 +910,7 @@ async function main(): Promise<void> {
       commentId: nextComment.id,
       author: nextComment.user?.login,
       createdAt: nextComment.created_at,
+      pendingCount: pendingComments.length,
     });
 
     try {
@@ -924,6 +936,20 @@ async function main(): Promise<void> {
 
     if (options.once || !options.loop) {
       return;
+    }
+
+    const remainingPending = getPendingWatchedComments(
+      fetchComments(owner, repo, options.issueNumber),
+      state,
+      ownerLogin,
+      options.watchUsers,
+    );
+    if (remainingPending.length > 0) {
+      log("Draining queued reporter comments without sleeping", {
+        nextCommentId: remainingPending[0].id,
+        remainingCount: remainingPending.length,
+      });
+      continue;
     }
 
     await sleep(options.pollSeconds * 1000);
