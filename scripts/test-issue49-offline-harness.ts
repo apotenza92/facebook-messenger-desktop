@@ -437,6 +437,50 @@ const simulateWakeDecision = (input: {
     "offline marketplace harness failed to bridge a detoured Marketplace re-entry from recent continuity",
   );
 
+  const mutedPreviewReplyLeak =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title:
+          "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+      [
+        {
+          href: "/t/account-a-direct",
+          title: "Account A",
+          body:
+            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/group-muted-preview",
+          title: "Group Thread",
+          body:
+            "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          searchText:
+            "Account B replied to Account C - Group Thread Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    {
+      reason: mutedPreviewReplyLeak.reason,
+      ambiguous: mutedPreviewReplyLeak.ambiguous,
+      muted: mutedPreviewReplyLeak.muted,
+      matchedHref: mutedPreviewReplyLeak.matchedHref ?? null,
+    },
+    {
+      reason: "muted-conflict",
+      ambiguous: true,
+      muted: true,
+      matchedHref: null,
+    },
+    "offline notification harness failed to fail closed for a muted reply-style preview that only arrived with a generic New message body",
+  );
+
   await page.setContent(
     notificationHtml([
       {

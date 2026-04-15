@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.6] - 2026-04-15
+
+### Fixed
+
+- **Issue #49 follow-up: fail closed for muted reply-style leaks that arrive as generic `New message` notifications** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Treat reply-style notification payloads that carry the actual preview in the title while the body collapses to generic `New message` text as ambiguous whenever a muted unread group row still overlaps that preview.
+  - Keep normal direct-message delivery intact when the same preview only overlaps unmuted candidates, so the new guard targets muted leaks without broadly suppressing legitimate notifications.
+  - Extend the deterministic and offline Issue #49 coverage for the reported muted group reply leak shape.
+
+### Validation
+
+- `npm run test:release`
+- `npm run test:issues`
+- `npm run test:issue49:offline`
+- `npm run build`
+
 ## [1.3.1-beta.5] - 2026-04-15
 
 ### Fixed

@@ -3121,6 +3121,84 @@ const runNotificationPolicyTests = () => {
     "#46 generic Notification titles should preserve placeholder-title ambiguity",
   );
 
+  const previewTitlePlaceholderBodyMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title:
+          "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+      [
+        {
+          href: "/t/account-a-direct",
+          title: "Account A",
+          body:
+            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/group-muted-preview",
+          title: "Group Thread",
+          body:
+            "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          searchText:
+            "Account B replied to Account C - Group Thread Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    previewTitlePlaceholderBodyMutedConflict.reason,
+    "muted-conflict",
+    "#49 sender-prefixed preview titles with a generic New message body should fail closed when a muted group row overlaps",
+  );
+  assertEqual(
+    previewTitlePlaceholderBodyMutedConflict.matchedHref,
+    undefined,
+    "#49 sender-prefixed preview title muted conflicts should not resolve a target conversation",
+  );
+
+  const previewTitlePlaceholderBodyUnmutedAlternative =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title:
+          "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+      [
+        {
+          href: "/t/account-a-direct",
+          title: "Account A",
+          body:
+            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/group-unmuted-preview",
+          title: "Group Thread",
+          body:
+            "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          searchText:
+            "Account B replied to Account C - Group Thread Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    previewTitlePlaceholderBodyUnmutedAlternative.reason,
+    "matched",
+    "#49 sender-prefixed preview titles with a generic New message body should still match when no muted overlap exists",
+  );
+  assertEqual(
+    previewTitlePlaceholderBodyUnmutedAlternative.matchedHref,
+    "/t/account-a-direct",
+    "#49 sender-prefixed preview titles without muted overlap should still prefer the direct conversation match",
+  );
+
   const mutedGroupTitleMatch =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {

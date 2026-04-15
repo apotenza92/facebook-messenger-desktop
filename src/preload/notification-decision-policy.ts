@@ -460,21 +460,31 @@ function createMutedConflictResult(
   };
 }
 
-function getPlaceholderNotificationTitle(
-  payload: NotificationPayload,
-): string | null {
-  const normalizedTitle = normalizeText(payload.title);
-  if (!normalizedTitle) return null;
+function getPlaceholderNotificationText(value: string): string | null {
+  const normalizedValue = normalizeText(value);
+  if (!normalizedValue) return null;
 
   if (
     PLACEHOLDER_NOTIFICATION_TITLE_PATTERNS.some((pattern) =>
-      pattern.test(normalizedTitle),
+      pattern.test(normalizedValue),
     )
   ) {
-    return normalizedTitle;
+    return normalizedValue;
   }
 
   return null;
+}
+
+function getPlaceholderNotificationTitle(
+  payload: NotificationPayload,
+): string | null {
+  return getPlaceholderNotificationText(payload.title);
+}
+
+function getPlaceholderNotificationBody(
+  payload: NotificationPayload,
+): string | null {
+  return getPlaceholderNotificationText(payload.body);
 }
 
 function computeCandidateScore(
@@ -591,6 +601,7 @@ function resolveNativeNotificationTarget(
   const top = scored[0];
   const second = scored[1];
   const placeholderTitle = getPlaceholderNotificationTitle(payload);
+  const placeholderBody = getPlaceholderNotificationBody(payload);
   const hasMutedUnreadCandidate = unreadRows.some(
     (candidate) => candidate.muted,
   );
@@ -719,6 +730,26 @@ function resolveNativeNotificationTarget(
         ambiguityReason: "placeholder-title",
         placeholderTitle,
       });
+    }
+  }
+
+  if (placeholderBody && hasMutedUnreadCandidate) {
+    const payloadTitle = normalizeText(payload.title);
+    const mutedPreviewOverlapFromTitle = scored.some(
+      (entry) =>
+        entry.candidate.muted &&
+        entry.score >= MUTED_CONFLICT_SCORE_FLOOR &&
+        payloadTitle.length >= 8 &&
+        payloadTitle !== normalizeText(entry.candidate.title) &&
+        (buildCandidateSearchCorpus(entry.candidate).includes(payloadTitle) ||
+          tokenOverlapRatio(
+            tokenize(payloadTitle),
+            tokenize(buildCandidateSearchCorpus(entry.candidate)),
+          ) >= 0.6),
+    );
+
+    if (mutedPreviewOverlapFromTitle) {
+      return createMutedConflict(top.score);
     }
   }
 
