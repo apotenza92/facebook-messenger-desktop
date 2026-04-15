@@ -23,6 +23,7 @@ const assertEqual = (actual: unknown, expected: unknown, message: string) => {
 
 const MARKETPLACE_SESSION_DOM_GRACE_MS = 2500;
 const MARKETPLACE_ROUTE_CHANGE_RESCUE_MS = 1800;
+const MARKETPLACE_RECENT_CONTINUITY_GRACE_MS = 10000;
 
 const viewportStyle = `
   html, body {
@@ -400,6 +401,40 @@ const simulateWakeDecision = (input: {
       visualCropHeight: 36,
     },
     "offline marketplace harness failed to bridge recent weak-bootstrap continuity across a route change",
+  );
+
+  const detachedRecentContinuityBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-detoured-thread-E",
+      nowMs: 17000,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      recentContinuityGraceMs: MARKETPLACE_RECENT_CONTINUITY_GRACE_MS,
+      previousSession: null,
+      recentSession: {
+        ...confirmed.nextSession,
+        routeKey: "/messages/t/marketplace-detoured-thread-B",
+        lastMatchedAt: 10150,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    {
+      sessionActive: detachedRecentContinuityBridge.sessionActive,
+      transition: detachedRecentContinuityBridge.transition,
+      signalSource: detachedRecentContinuityBridge.signalSource,
+      lifecycleReason: detachedRecentContinuityBridge.lifecycleReason,
+      visualCropHeight: detachedRecentContinuityBridge.visualCropHeight,
+    },
+    {
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "right-pane-action",
+      lifecycleReason: "route-changed",
+      visualCropHeight: 56,
+    },
+    "offline marketplace harness failed to bridge a detoured Marketplace re-entry from recent continuity",
   );
 
   await page.setContent(

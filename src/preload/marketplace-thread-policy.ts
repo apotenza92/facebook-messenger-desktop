@@ -727,6 +727,8 @@ export function resolveMarketplaceVisualSessionDecision(input: {
   graceMs: number;
   routeChangeRescueMs?: number;
   previousSession?: MarketplaceVisualSessionState | null;
+  recentSession?: MarketplaceVisualSessionState | null;
+  recentContinuityGraceMs?: number;
   strongSignalSource?:
     | Extract<
         MarketplaceSessionSignalSource,
@@ -758,6 +760,22 @@ export function resolveMarketplaceVisualSessionDecision(input: {
     priorSession && priorSession.routeKey === input.currentRouteKey
       ? priorSession
       : null;
+  const recentSession =
+    !hadPreviousSession &&
+    input.recentSession !== null &&
+    input.recentSession !== undefined &&
+    input.recentSession.routeKey !== input.currentRouteKey
+      ? input.recentSession
+      : null;
+  const routeBridgeSession = routeChanged ? priorSession : recentSession;
+  const routeBridgeGraceMs = recentSession
+    ? Math.max(
+        0,
+        Number.isFinite(input.recentContinuityGraceMs)
+          ? Math.round(input.recentContinuityGraceMs ?? 0)
+          : input.graceMs,
+      )
+    : input.graceMs;
 
   const weakHeaderMatchesSessionHeaderBand = doesMarketplaceThreadHeaderBandMatch(
     {
@@ -766,16 +784,20 @@ export function resolveMarketplaceVisualSessionDecision(input: {
     },
   );
   const routeChangeWeakHeaderMatchesPriorSession =
-    routeChanged &&
+    routeBridgeSession !== null &&
     doesMarketplaceThreadRouteChangeWeakHeaderMatch({
-      confirmedHeaderBand: priorSession?.headerBand,
+      confirmedHeaderBand: routeBridgeSession.headerBand,
       candidateHeaderBand: input.weakHeaderBand,
     });
   const routeChangeRecentMarketplaceMatch =
-    routeChanged &&
-    priorSession &&
-    Number.isFinite(priorSession.lastMatchedAt) &&
-    input.nowMs - priorSession.lastMatchedAt <= input.graceMs;
+    routeBridgeSession !== null &&
+    Number.isFinite(routeBridgeSession.lastMatchedAt) &&
+    input.nowMs - routeBridgeSession.lastMatchedAt <= routeBridgeGraceMs;
+  const recentPendingBootstrapBridgeAllowed =
+    recentSession !== null &&
+    routeChangeRecentMarketplaceMatch &&
+    input.pendingBootstrapAllowed === true &&
+    input.pendingBootstrapSignalSource === "right-pane-action";
 
   if (input.strongSignalSource) {
     const visualCropHeight = normalizeMarketplaceVisualCropHeight(
@@ -827,19 +849,19 @@ export function resolveMarketplaceVisualSessionDecision(input: {
     };
   }
 
-  if (routeChanged) {
+  if (routeChanged || recentSession) {
     if (routeChangeWeakHeaderMatchesPriorSession && routeChangeRecentMarketplaceMatch) {
       const nextSession: MarketplaceVisualSessionState = {
         routeKey: input.currentRouteKey,
-        visualCropHeight: priorSession?.visualCropHeight ?? null,
+        visualCropHeight: routeBridgeSession?.visualCropHeight ?? null,
         headerBand:
           normalizeMarketplaceThreadHeaderBand(input.weakHeaderBand) ??
-          priorSession?.headerBand ??
+          routeBridgeSession?.headerBand ??
           null,
-        lastConfirmedAt: priorSession?.lastConfirmedAt ?? input.nowMs,
-        lastStrongConfirmedAt: priorSession?.lastStrongConfirmedAt ?? null,
+        lastConfirmedAt: routeBridgeSession?.lastConfirmedAt ?? input.nowMs,
+        lastStrongConfirmedAt: routeBridgeSession?.lastStrongConfirmedAt ?? null,
         lastMatchedAt: input.nowMs,
-        confirmationKind: priorSession?.confirmationKind ?? "strong-header",
+        confirmationKind: routeBridgeSession?.confirmationKind ?? "strong-header",
         signalSource: "weak-header",
         lifecycleReason: "route-changed",
         lastLifecycleAt: input.nowMs,
@@ -862,22 +884,24 @@ export function resolveMarketplaceVisualSessionDecision(input: {
 
     if (
       routeChangeRecentMarketplaceMatch &&
-      shouldBridgePendingBootstrapOnRouteChange({
-        pendingBootstrapSignalSource: input.pendingBootstrapSignalSource,
-        pendingBootstrapAllowed: input.pendingBootstrapAllowed,
-        headerBackDetected: input.headerBackDetected,
-      })
+      (
+        shouldBridgePendingBootstrapOnRouteChange({
+          pendingBootstrapSignalSource: input.pendingBootstrapSignalSource,
+          pendingBootstrapAllowed: input.pendingBootstrapAllowed,
+          headerBackDetected: input.headerBackDetected,
+        }) || recentPendingBootstrapBridgeAllowed
+      )
     ) {
       const routeChangePendingBootstrapSignalSource =
         input.pendingBootstrapSignalSource!;
       const nextSession: MarketplaceVisualSessionState = {
         routeKey: input.currentRouteKey,
-        visualCropHeight: priorSession?.visualCropHeight ?? null,
-        headerBand: priorSession?.headerBand ?? null,
-        lastConfirmedAt: priorSession?.lastConfirmedAt ?? input.nowMs,
-        lastStrongConfirmedAt: priorSession?.lastStrongConfirmedAt ?? null,
+        visualCropHeight: routeBridgeSession?.visualCropHeight ?? null,
+        headerBand: routeBridgeSession?.headerBand ?? null,
+        lastConfirmedAt: routeBridgeSession?.lastConfirmedAt ?? input.nowMs,
+        lastStrongConfirmedAt: routeBridgeSession?.lastStrongConfirmedAt ?? null,
         lastMatchedAt: input.nowMs,
-        confirmationKind: priorSession?.confirmationKind ?? "strong-header",
+        confirmationKind: routeBridgeSession?.confirmationKind ?? "strong-header",
         signalSource: routeChangePendingBootstrapSignalSource,
         lifecycleReason: "route-changed",
         lastLifecycleAt: input.nowMs,
@@ -901,7 +925,7 @@ export function resolveMarketplaceVisualSessionDecision(input: {
     if (
       routeChangeRecentMarketplaceMatch &&
       shouldBridgeWeakBootstrapOnRouteChange({
-        previousSession: priorSession,
+        previousSession: routeBridgeSession,
         pendingBootstrapSignalSource: input.pendingBootstrapSignalSource,
         pendingBootstrapAllowed: input.pendingBootstrapAllowed,
       })
@@ -910,12 +934,12 @@ export function resolveMarketplaceVisualSessionDecision(input: {
         input.pendingBootstrapSignalSource!;
       const nextSession: MarketplaceVisualSessionState = {
         routeKey: input.currentRouteKey,
-        visualCropHeight: priorSession?.visualCropHeight ?? null,
-        headerBand: priorSession?.headerBand ?? null,
-        lastConfirmedAt: priorSession?.lastConfirmedAt ?? input.nowMs,
-        lastStrongConfirmedAt: priorSession?.lastStrongConfirmedAt ?? null,
+        visualCropHeight: routeBridgeSession?.visualCropHeight ?? null,
+        headerBand: routeBridgeSession?.headerBand ?? null,
+        lastConfirmedAt: routeBridgeSession?.lastConfirmedAt ?? input.nowMs,
+        lastStrongConfirmedAt: routeBridgeSession?.lastStrongConfirmedAt ?? null,
         lastMatchedAt: input.nowMs,
-        confirmationKind: priorSession?.confirmationKind ?? "weak-bootstrap",
+        confirmationKind: routeBridgeSession?.confirmationKind ?? "weak-bootstrap",
         signalSource: weakBootstrapRouteChangeSignalSource,
         lifecycleReason: "route-changed",
         lastLifecycleAt: input.nowMs,

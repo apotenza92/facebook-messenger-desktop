@@ -346,6 +346,7 @@ ipcRenderer.on(
   const MEDIA_OVERLAY_DEBUG_COOLDOWN_MS = 120;
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
   const MARKETPLACE_ROUTE_CHANGE_RESCUE_MS = 1_800;
+  const MARKETPLACE_RECENT_CONTINUITY_GRACE_MS = 10_000;
   const MARKETPLACE_WEAK_BOOTSTRAP_SETTLE_MS = 10_000;
   const MARKETPLACE_WEAK_BOOTSTRAP_REQUIRED_PASSES = 2;
   const MARKETPLACE_WEAK_BOOTSTRAP_MIN_CONFIRM_AGE_MS = 800;
@@ -411,6 +412,9 @@ ipcRenderer.on(
     marketplaceSessionHeaderBand: MarketplaceThreadHeaderBand | null;
     marketplaceLastConfirmedAgeMs: number | null;
     marketplaceLastStrongConfirmedAgeMs: number | null;
+    recentMarketplaceContinuityAgeMs: number | null;
+    recentMarketplaceContinuityConfirmationKind: MarketplaceSessionConfirmationKind | null;
+    recentMarketplaceContinuityRouteKey: string | null;
     marketplaceCurrentEvidenceClass: MarketplaceCurrentEvidenceClass;
     marketplacePostConfirmGraceActive: boolean;
     marketplaceOrdinaryClearBlockedReason: MarketplaceOrdinaryClearBlockedReason | null;
@@ -474,6 +478,8 @@ ipcRenderer.on(
     null;
   let lastHeaderSuppressionDetectedAt = 0;
   let marketplaceVisualSession: MarketplaceVisualSessionState | null = null;
+  let marketplaceRecentContinuitySession: MarketplaceVisualSessionState | null =
+    null;
   let marketplaceWeakBootstrapState: MarketplaceWeakBootstrapState | null = null;
   let marketplaceOrdinaryClearState: MarketplaceOrdinaryClearState | null = null;
   let lastInterceptedExternalNavigation:
@@ -1405,6 +1411,9 @@ ipcRenderer.on(
       marketplaceSessionHeaderBand: null,
       marketplaceLastConfirmedAgeMs: null,
       marketplaceLastStrongConfirmedAgeMs: null,
+      recentMarketplaceContinuityAgeMs: null,
+      recentMarketplaceContinuityConfirmationKind: null,
+      recentMarketplaceContinuityRouteKey: null,
       marketplaceCurrentEvidenceClass: "none",
       marketplacePostConfirmGraceActive: false,
       marketplaceOrdinaryClearBlockedReason: null,
@@ -1640,6 +1649,19 @@ ipcRenderer.on(
         previousMarketplaceSession.routeKey === routeKey
           ? previousMarketplaceSession
           : null;
+      if (
+        marketplaceRecentContinuitySession &&
+        now - marketplaceRecentContinuitySession.lastMatchedAt >
+          MARKETPLACE_RECENT_CONTINUITY_GRACE_MS
+      ) {
+        marketplaceRecentContinuitySession = null;
+      }
+      const recentMarketplaceContinuitySession =
+        !previousMarketplaceSession &&
+        marketplaceRecentContinuitySession &&
+        marketplaceRecentContinuitySession.routeKey !== routeKey
+          ? marketplaceRecentContinuitySession
+          : null;
       const matchedSignals = new Set<string>();
       const weakBootstrapSettled = isMarketplaceWeakBootstrapSettled();
       state.weakBootstrapSettled = weakBootstrapSettled;
@@ -1661,6 +1683,17 @@ ipcRenderer.on(
           0,
           now - previousMarketplaceSession.lastMatchedAt,
         );
+      }
+      if (recentMarketplaceContinuitySession) {
+        state.recentMarketplaceContinuityAgeMs = Math.max(
+          0,
+          now - recentMarketplaceContinuitySession.lastMatchedAt,
+        );
+        state.recentMarketplaceContinuityConfirmationKind =
+          recentMarketplaceContinuitySession.confirmationKind;
+        state.recentMarketplaceContinuityRouteKey =
+          recentMarketplaceContinuitySession.routeKey;
+        matchedSignals.add("recent-marketplace-continuity-available");
       }
       const rightPaneMinLeft = Math.max(
         160,
@@ -2097,6 +2130,8 @@ ipcRenderer.on(
         graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
         routeChangeRescueMs: MARKETPLACE_ROUTE_CHANGE_RESCUE_MS,
         previousSession: previousMarketplaceSession,
+        recentSession: recentMarketplaceContinuitySession,
+        recentContinuityGraceMs: MARKETPLACE_RECENT_CONTINUITY_GRACE_MS,
         strongSignalSource,
         isWeakBootstrapConfirmation,
         pendingBootstrapSignalSource,
@@ -2120,6 +2155,11 @@ ipcRenderer.on(
         ordinaryClearPending,
       });
       marketplaceVisualSession = sessionDecision.nextSession;
+      if (sessionDecision.nextSession) {
+        marketplaceRecentContinuitySession = sessionDecision.nextSession;
+      } else if (previousMarketplaceSession) {
+        marketplaceRecentContinuitySession = previousMarketplaceSession;
+      }
       if (sessionDecision.nextSession) {
         state.marketplaceLastConfirmedAgeMs = Math.max(
           0,
@@ -2175,6 +2215,15 @@ ipcRenderer.on(
         } else {
           matchedSignals.add("header-marketplace-rejected");
         }
+      }
+      if (
+        !previousMarketplaceSession &&
+        recentMarketplaceContinuitySession &&
+        sessionDecision.transition === "bridged"
+      ) {
+        matchedSignals.add(
+          `recent-marketplace-continuity-bridge:${sessionDecision.signalSource ?? "unknown"}`,
+        );
       }
       if (sessionDecision.transition === "route-change-rescue-pending") {
         matchedSignals.add("route-change-rescue-pending");

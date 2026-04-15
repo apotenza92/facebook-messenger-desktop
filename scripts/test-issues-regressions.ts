@@ -541,6 +541,7 @@ const runMarketplaceThreadPolicyTests = () => {
 
   const MARKETPLACE_SESSION_DOM_GRACE_MS = 2_500;
   const MARKETPLACE_ROUTE_CHANGE_RESCUE_MS = 1_800;
+  const MARKETPLACE_RECENT_CONTINUITY_GRACE_MS = 10_000;
   const confirmedSession = resolveMarketplaceVisualSessionDecision({
     currentRouteKey: "/messages/t/marketplace-thread",
     nowMs: 10_000,
@@ -1501,6 +1502,151 @@ const runMarketplaceThreadPolicyTests = () => {
       visualCropHeight: null,
     }),
     "#49 ordinary chats with only a transient pending Marketplace bootstrap signal and no back-control corroboration should still fail closed on route change",
+  );
+
+  const detachedRecentContinuityPendingBootstrapBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-detoured-E",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      recentContinuityGraceMs: MARKETPLACE_RECENT_CONTINUITY_GRACE_MS,
+      previousSession: null,
+      recentSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-detoured-B",
+        lastMatchedAt: 12_100,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: detachedRecentContinuityPendingBootstrapBridge.sessionActive,
+      transition: detachedRecentContinuityPendingBootstrapBridge.transition,
+      signalSource: detachedRecentContinuityPendingBootstrapBridge.signalSource,
+      lifecycleReason:
+        detachedRecentContinuityPendingBootstrapBridge.lifecycleReason,
+      visualCropHeight:
+        detachedRecentContinuityPendingBootstrapBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "right-pane-action",
+      lifecycleReason: "route-changed",
+      visualCropHeight: 56,
+    }),
+    "#49 a recently confirmed Marketplace thread should still bridge back in after one or more ordinary-chat detours when the new route only exposes a right-pane Marketplace action at first",
+  );
+
+  const detachedRecentContinuityWeakHeaderBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-detoured-F",
+      nowMs: 18_450,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      recentContinuityGraceMs: MARKETPLACE_RECENT_CONTINUITY_GRACE_MS,
+      previousSession: null,
+      recentSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-detoured-B",
+        lastMatchedAt: 12_100,
+        headerBand: {
+          top: 62,
+          bottom: 106,
+          left: 76,
+          right: 264,
+        },
+      },
+      weakHeaderBand: {
+        top: 70,
+        bottom: 99,
+        left: 20,
+        right: 167,
+      },
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: detachedRecentContinuityWeakHeaderBridge.sessionActive,
+      transition: detachedRecentContinuityWeakHeaderBridge.transition,
+      signalSource: detachedRecentContinuityWeakHeaderBridge.signalSource,
+      lifecycleReason:
+        detachedRecentContinuityWeakHeaderBridge.lifecycleReason,
+      visualCropHeight:
+        detachedRecentContinuityWeakHeaderBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: true,
+      transition: "bridged",
+      signalSource: "weak-header",
+      lifecycleReason: "route-changed",
+      visualCropHeight: 56,
+    }),
+    "#49 a recent Marketplace continuity snapshot should rescue a detoured re-entry when the next weak header matches even after the active session was already cleared",
+  );
+
+  const staleDetachedRecentContinuityBridge =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/marketplace-thread-detoured-G",
+      nowMs: 22_250,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      recentContinuityGraceMs: MARKETPLACE_RECENT_CONTINUITY_GRACE_MS,
+      previousSession: null,
+      recentSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-detoured-B",
+        lastMatchedAt: 12_100,
+      },
+      pendingBootstrapSignalSource: "right-pane-action",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: staleDetachedRecentContinuityBridge.sessionActive,
+      transition: staleDetachedRecentContinuityBridge.transition,
+      lifecycleReason: staleDetachedRecentContinuityBridge.lifecycleReason,
+      visualCropHeight: staleDetachedRecentContinuityBridge.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 detached Marketplace continuity must still expire once the recent detour window has gone stale",
+  );
+
+  const detachedRecentContinuityItemLinkRejected =
+    resolveMarketplaceVisualSessionDecision({
+      currentRouteKey: "/messages/t/ordinary-chat-detoured-H",
+      nowMs: 18_320,
+      graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
+      recentContinuityGraceMs: MARKETPLACE_RECENT_CONTINUITY_GRACE_MS,
+      previousSession: null,
+      recentSession: {
+        ...confirmedSession.nextSession,
+        routeKey: "/messages/t/marketplace-thread-detoured-B",
+        lastMatchedAt: 12_100,
+      },
+      pendingBootstrapSignalSource: "item-link",
+      pendingBootstrapAllowed: true,
+      headerBackDetected: false,
+    });
+  assertEqual(
+    JSON.stringify({
+      sessionActive: detachedRecentContinuityItemLinkRejected.sessionActive,
+      transition: detachedRecentContinuityItemLinkRejected.transition,
+      lifecycleReason: detachedRecentContinuityItemLinkRejected.lifecycleReason,
+      visualCropHeight: detachedRecentContinuityItemLinkRejected.visualCropHeight,
+    }),
+    JSON.stringify({
+      sessionActive: false,
+      transition: "cleared",
+      lifecycleReason: "route-changed",
+      visualCropHeight: null,
+    }),
+    "#49 detached Marketplace continuity must still fail closed for ordinary chats that only surface Marketplace item-link noise after a detour",
   );
 
   const detouredMarketplaceSession = resolveMarketplaceVisualSessionDecision({

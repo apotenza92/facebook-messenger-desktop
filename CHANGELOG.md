@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.5] - 2026-04-15
+
+### Fixed
+
+- **Issue #49 follow-up: keep Marketplace re-entry alive after multiple ordinary-chat detours** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49))
+  - Retain a short-lived recent Marketplace continuity snapshot even after the active Marketplace session has already cleared, so a later Marketplace re-entry can still recover the native back/header treatment when Facebook first re-renders only a right-pane Marketplace action or a weak matching header.
+  - Keep the detached continuity bridge time-bounded and require corroborating Marketplace evidence, so ordinary chats and generic Marketplace item-link noise still fail closed.
+  - Extend the deterministic and offline Issue #49 coverage for the reported multi-chat detour sequence, including detached recent-continuity bridging, stale expiry, and ordinary-chat rejection.
+
+### Validation
+
+- `npm run test:release`
+- `npm run test:issues`
+- `npm run test:issue49:offline`
+- `npm run build`
+
 ## [1.3.1-beta.4] - 2026-04-14
 
 ### Fixed
