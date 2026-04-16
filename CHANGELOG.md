@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.1-beta.8] - 2026-04-16
+
+### Fixed
+
+- **Marketplace threads should no longer trigger ghost incoming-call notifications**
+  - Tighten incoming-call button matching so generic Marketplace `Accept` / `Decline` style actions and broad `data-testid*="call"` matches no longer escalate into high-confidence incoming-call popups.
+  - Stop treating overlapping `Join call` selectors as both the accept and join side of an explicit call-control pair, which could previously promote a stale Marketplace/thread action into a fake incoming call.
+  - Keep real call detection working by still accepting explicit decline+answer or decline+join call control pairs, while adding deterministic coverage for the Marketplace-style false-positive shape.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run build`
+
 ## [1.3.1-beta.7] - 2026-04-16
 
 ### Added

@@ -2323,6 +2323,42 @@ const runIncomingCallHintPolicyTests = () => {
     "#47 call text signal should keep incoming-call hint visible",
   );
   assertEqual(
+    incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible({
+      answerVisible: false,
+      declineVisible: false,
+      joinVisible: true,
+      titleSignal: false,
+      selectorSignal: false,
+      textSignal: false,
+    }),
+    false,
+    "#49 join-only Marketplace-like controls should not count as visible incoming-call UI",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible({
+      answerVisible: true,
+      declineVisible: false,
+      joinVisible: true,
+      titleSignal: false,
+      selectorSignal: false,
+      textSignal: false,
+    }),
+    false,
+    "#49 accept-or-join without decline should not count as visible incoming-call UI",
+  );
+  assertEqual(
+    incomingCallHintPolicy.shouldTreatIncomingCallUiAsVisible({
+      answerVisible: false,
+      declineVisible: true,
+      joinVisible: true,
+      titleSignal: false,
+      selectorSignal: false,
+      textSignal: false,
+    }),
+    true,
+    "#49 join plus decline should still count as visible incoming-call UI",
+  );
+  assertEqual(
     incomingCallHintPolicy.shouldActivateIncomingCallHint({
       evidence: {
         source: "dom-soft",

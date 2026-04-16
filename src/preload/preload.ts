@@ -62,17 +62,16 @@ import {
 
 const incomingCallAnswerSelectors = [
   '[aria-label*="Answer" i]',
-  '[aria-label="Accept" i]',
   '[aria-label*="Accept call" i]',
-  '[aria-label*="Join call" i]',
   '[aria-label*="Accept video call" i]',
   '[aria-label*="Accept audio call" i]',
 ];
 
 const incomingCallDeclineSelectors = [
-  '[aria-label*="Decline" i]',
   '[aria-label*="Ignore call" i]',
   '[aria-label*="Decline call" i]',
+  '[aria-label*="Decline video call" i]',
+  '[aria-label*="Decline audio call" i]',
 ];
 
 const incomingCallJoinSelectors = [
@@ -83,7 +82,6 @@ const incomingCallJoinSelectors = [
 
 const incomingCallSoftSignalSelectors = [
   '[data-testid*="incoming"]',
-  '[data-testid*="call"]',
   '[aria-label*="calling" i]',
   '[aria-label*="incoming call" i]',
   '[aria-label*="video call" i]',
@@ -116,7 +114,6 @@ const incomingCallSignalContainerSelectors = [
   '[aria-modal="true"]',
   '[role="banner"]',
   '[data-testid*="incoming"]',
-  '[data-testid*="call"]',
 ];
 
 const incomingCallSidebarExclusionSelectors = [

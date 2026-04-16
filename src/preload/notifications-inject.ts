@@ -2217,17 +2217,16 @@
 
     const incomingCallAnswerSelectors = [
       '[aria-label*="Answer" i]',
-      '[aria-label="Accept" i]',
       '[aria-label*="Accept call" i]',
-      '[aria-label*="Join call" i]',
       '[aria-label*="Accept video call" i]',
       '[aria-label*="Accept audio call" i]',
     ];
 
     const incomingCallDeclineSelectors = [
-      '[aria-label*="Decline" i]',
       '[aria-label*="Ignore call" i]',
       '[aria-label*="Decline call" i]',
+      '[aria-label*="Decline video call" i]',
+      '[aria-label*="Decline audio call" i]',
     ];
 
     const incomingCallJoinSelectors = [
@@ -2238,7 +2237,6 @@
 
     const incomingCallSoftSignalSelectors = [
       '[data-testid*="incoming"]',
-      '[data-testid*="call"]',
       '[aria-label*="calling" i]',
       '[aria-label*="incoming call" i]',
       '[aria-label*="video call" i]',
@@ -2250,7 +2248,6 @@
       '[aria-modal="true"]',
       '[role="banner"]',
       '[data-testid*="incoming"]',
-      '[data-testid*="call"]',
     ];
 
     const incomingCallSidebarExclusionSelectors = [
@@ -2269,18 +2266,18 @@
     const callPopupSelectors = [
       // Buttons with call-related aria-labels (case-insensitive)
       '[aria-label*="Answer" i]',
-      '[aria-label="Accept" i]',
-      '[aria-label*="Decline" i]',
       '[aria-label*="Accept call" i]',
       '[aria-label*="Ignore call" i]',
+      '[aria-label*="Decline call" i]',
       '[aria-label*="Accept video call" i]',
       '[aria-label*="Accept audio call" i]',
+      '[aria-label*="Decline video call" i]',
+      '[aria-label*="Decline audio call" i]',
       '[aria-label*="Join call" i]',
       '[aria-label*="Join video" i]',
       '[aria-label*="Join audio" i]',
-      // data-testid patterns (kept narrow to avoid matching unrelated quiz/event UI)
+      // data-testid patterns kept strict to avoid Marketplace/action false positives.
       '[data-testid*="incoming"]',
-      '[data-testid*="call"]',
     ];
 
     const nonIncomingCallTextPatterns = [
@@ -2390,7 +2387,7 @@
       const joinVisible =
         queryVisibleElements(incomingCallJoinSelectors).length > 0;
       const hasVisibleControls =
-        (answerVisible && declineVisible) || (answerVisible && joinVisible);
+        declineVisible && (answerVisible || joinVisible);
       const visibleSoftSignals = queryVisibleElements(
         incomingCallSoftSignalSelectors,
       );

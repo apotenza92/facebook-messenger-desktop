@@ -43,17 +43,16 @@ process.on("uncaughtException", (error) => {
 
 const INCOMING_ANSWER_SELECTORS = [
   '[aria-label*="Answer" i]',
-  '[aria-label*="Accept" i]',
   '[aria-label*="Accept call" i]',
-  '[aria-label*="Join call" i]',
   '[aria-label*="Accept video call" i]',
   '[aria-label*="Accept audio call" i]',
 ];
 
 const INCOMING_DECLINE_SELECTORS = [
-  '[aria-label*="Decline" i]',
   '[aria-label*="Ignore call" i]',
   '[aria-label*="Decline call" i]',
+  '[aria-label*="Decline video call" i]',
+  '[aria-label*="Decline audio call" i]',
 ];
 
 const INCOMING_JOIN_PATTERN =

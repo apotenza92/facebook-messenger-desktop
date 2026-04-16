@@ -16,11 +16,7 @@ export type IncomingCallOverlayHintEvidence = {
 export function shouldTreatIncomingCallUiAsVisible(
   signals: IncomingCallUiVisibilitySignals,
 ): boolean {
-  if (signals.answerVisible && signals.declineVisible) {
-    return true;
-  }
-
-  if (signals.answerVisible && signals.joinVisible) {
+  if (signals.declineVisible && (signals.answerVisible || signals.joinVisible)) {
     return true;
   }
 
