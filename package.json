@@ -27,6 +27,7 @@
     "test:issue49:offline": "node -r ./scripts/register-ts.js scripts/test-issue49-offline-harness.ts",
     "test:issues": "npm run test:issues:deterministic",
     "test:window-open": "node -r ./scripts/register-ts.js scripts/test-window-open-policy.ts",
+    "test:reload-policy": "node -r ./scripts/register-ts.js scripts/test-reload-policy.ts",
     "test:window-open:gui": "node scripts/test-window-open-gui.js",
     "test:emoji:gui": "node scripts/test-emoji-composer-gui.js",
     "test:media:modern:gui": "node scripts/test-media-click-route-gui.js --source chat --click-mode os",

@@ -43,6 +43,7 @@ import {
   shouldOpenInApp,
   decideWindowOpenAction,
 } from "./url-policy";
+import { decideMessengerReload } from "./reload-policy";
 import {
   ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
   shouldAllowAboutBlankChildBootstrapNavigation,
@@ -265,6 +266,7 @@ const MAC_DO_NOT_DISTURB_CACHE_MS = 5_000;
 type MenuBarMode = "always" | "hover" | "never";
 let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
+let debugLogExportUiActive = false;
 const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar show
 const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
@@ -1078,54 +1080,62 @@ async function exportDebugLogs(): Promise<void> {
     properties: ["openDirectory", "createDirectory"],
   };
 
-  const selection = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, openDialogOptions)
-    : await dialog.showOpenDialog(openDialogOptions);
-
-  if (selection.canceled || selection.filePaths.length === 0) {
-    return;
-  }
-
-  let exported:
-    | {
-        bundleDir: string;
-        summaryPath: string;
-        copiedPaths: string[];
-      }
-    | undefined;
+  debugLogExportUiActive = true;
+  console.log("[Debug Export] Export UI opened");
 
   try {
-    exported = exportDebugArtifactsToDirectory(selection.filePaths[0]);
-  } catch (error) {
-    const errorDialogOptions: Electron.MessageBoxOptions = {
-      type: "error",
-      title: "Export Failed",
-      message: "Could not export debug logs.",
-      detail: String((error as Error)?.message || error),
-    };
-    if (mainWindow) {
-      await dialog.showMessageBox(mainWindow, errorDialogOptions);
-    } else {
-      await dialog.showMessageBox(errorDialogOptions);
+    const selection = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, openDialogOptions)
+      : await dialog.showOpenDialog(openDialogOptions);
+
+    if (selection.canceled || selection.filePaths.length === 0) {
+      return;
     }
-    return;
-  }
 
-  const doneDialogOptions: Electron.MessageBoxOptions = {
-    type: "info",
-    title: "Debug Logs Exported",
-    message: "Debug logs exported successfully.",
-    detail: exported.bundleDir,
-    buttons: ["Show in Folder", "OK"],
-    defaultId: 0,
-    cancelId: 1,
-  };
-  const done = mainWindow
-    ? await dialog.showMessageBox(mainWindow, doneDialogOptions)
-    : await dialog.showMessageBox(doneDialogOptions);
+    let exported:
+      | {
+          bundleDir: string;
+          summaryPath: string;
+          copiedPaths: string[];
+        }
+      | undefined;
 
-  if (done.response === 0) {
-    shell.showItemInFolder(exported.summaryPath);
+    try {
+      exported = exportDebugArtifactsToDirectory(selection.filePaths[0]);
+    } catch (error) {
+      const errorDialogOptions: Electron.MessageBoxOptions = {
+        type: "error",
+        title: "Export Failed",
+        message: "Could not export debug logs.",
+        detail: String((error as Error)?.message || error),
+      };
+      if (mainWindow) {
+        await dialog.showMessageBox(mainWindow, errorDialogOptions);
+      } else {
+        await dialog.showMessageBox(errorDialogOptions);
+      }
+      return;
+    }
+
+    const doneDialogOptions: Electron.MessageBoxOptions = {
+      type: "info",
+      title: "Debug Logs Exported",
+      message: "Debug logs exported successfully.",
+      detail: exported.bundleDir,
+      buttons: ["Show in Folder", "OK"],
+      defaultId: 0,
+      cancelId: 1,
+    };
+    const done = mainWindow
+      ? await dialog.showMessageBox(mainWindow, doneDialogOptions)
+      : await dialog.showMessageBox(doneDialogOptions);
+
+    if (done.response === 0) {
+      shell.showItemInFolder(exported.summaryPath);
+    }
+  } finally {
+    debugLogExportUiActive = false;
+    console.log("[Debug Export] Export UI closed");
   }
 }
 
@@ -2485,8 +2495,22 @@ function getOfflinePageHTML(errorDescription: string): string {
 function reloadMessengerTarget(
   target: Electron.WebContents | undefined,
   ignoreCache: boolean = false,
+  source: string = "menu",
 ): void {
   if (!target) return;
+
+  const reloadDecision = decideMessengerReload({
+    debugExportUiActive: debugLogExportUiActive,
+  });
+  if (!reloadDecision.allowed) {
+    console.log("[Reload] Suppressed reload request", {
+      source,
+      reason: reloadDecision.reason,
+      ignoreCache,
+      currentUrl: target.getURL(),
+    });
+    return;
+  }
 
   const currentUrl = target.getURL();
   if (currentUrl.includes(OFFLINE_PAGE_MARKER)) {
@@ -7530,7 +7554,15 @@ function createApplicationMenu(): void {
           target?.toggleDevTools();
         },
       },
-      { role: "forceReload" as const },
+      {
+        label: "Force Reload",
+        accelerator:
+          process.platform === "darwin" ? "CmdOrCtrl+Shift+R" : "Ctrl+Shift+R",
+        click: () => {
+          const target = contentView?.webContents ?? mainWindow?.webContents;
+          reloadMessengerTarget(target, true, "develop-force-reload");
+        },
+      },
     ],
   };
 
@@ -7575,7 +7607,7 @@ function createApplicationMenu(): void {
               // Target contentView on macOS (where Messenger runs), mainWindow on other platforms
               const target =
                 contentView?.webContents ?? mainWindow?.webContents;
-              reloadMessengerTarget(target);
+              reloadMessengerTarget(target, false, "menu-reload");
             },
           },
           {
@@ -7584,7 +7616,7 @@ function createApplicationMenu(): void {
             click: () => {
               const target =
                 contentView?.webContents ?? mainWindow?.webContents;
-              reloadMessengerTarget(target, true);
+              reloadMessengerTarget(target, true, "menu-force-reload");
             },
           },
           {
@@ -7675,7 +7707,7 @@ function createApplicationMenu(): void {
           click: () => {
             // Target contentView on macOS (where Messenger runs), mainWindow on other platforms
             const target = contentView?.webContents ?? mainWindow?.webContents;
-            reloadMessengerTarget(target);
+            reloadMessengerTarget(target, false, "menu-reload");
           },
         },
         {
@@ -7683,7 +7715,7 @@ function createApplicationMenu(): void {
           accelerator: "CmdOrCtrl+Shift+R",
           click: () => {
             const target = contentView?.webContents ?? mainWindow?.webContents;
-            reloadMessengerTarget(target, true);
+            reloadMessengerTarget(target, true, "menu-force-reload");
           },
         },
         {
