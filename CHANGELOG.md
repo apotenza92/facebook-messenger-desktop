@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.1-beta.7] - 2026-04-16
+
+### Added
+
+- **Extra debug provenance for unexpected refresh/reload reports**
+  - Record explicit app-owned reload requests, suppression decisions, offline-page reroutes, renderer-recovery dialog responses, and app-triggered `loadURL(...)` requests in a new bundled `reload-debug.ndjson` log.
+  - Capture main-frame navigation lifecycle events such as `will-navigate`, `did-start-navigation`, `did-redirect-navigation`, `did-navigate`, and `did-navigate-in-page` for the main Messenger surfaces and child windows so future bundles can distinguish page-driven reboots from app-owned reload paths.
+  - Include the new reload/navigation trace in exported debug bundles and `debug-summary.json` so future reports can show who initiated a refresh and what URL transition actually happened.
+
+### Fixed
+
+- **Exported debug bundles now preserve reload/navigation evidence across app-owned fallback paths**
+  - Log session-start routing, login/homepage redirects, reset/logout reloads, and offline fallback loads through the same provenance-aware helper so those app-owned navigations are visible in future bundles instead of only appearing as a final URL change.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:reload-policy`
+- `npm run test:release`
+
 ## [1.3.1-beta.6] - 2026-04-15
 
 ### Fixed

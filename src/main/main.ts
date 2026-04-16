@@ -468,13 +468,24 @@ type MediaOverlayDebugEvent = {
   [key: string]: unknown;
 };
 
+type ReloadDebugEvent = {
+  timestamp: number;
+  source: "main" | "preload";
+  event: string;
+  webContentsId?: number;
+  url?: string;
+  [key: string]: unknown;
+};
+
 const MAX_MEDIA_OVERLAY_DEBUG_EVENTS = 3000;
 const MAX_INCOMING_CALL_DEBUG_EVENTS = 3000;
 const MAX_NOTIFICATION_DEBUG_EVENTS = 12000;
+const MAX_RELOAD_DEBUG_EVENTS = 6000;
 const DEBUG_LOG_SUMMARY_TAIL_LINES = 8000;
 const mediaOverlayDebugEvents: MediaOverlayDebugEvent[] = [];
 const incomingCallDebugEvents: IncomingCallDebugEvent[] = [];
 const notificationDebugEvents: NotificationDebugEvent[] = [];
+const reloadDebugEvents: ReloadDebugEvent[] = [];
 
 function shouldCaptureDebugLogsByDefault(): boolean {
   return isDev || isBetaVersion;
@@ -748,6 +759,57 @@ function pushNotificationDebugEvent(event: NotificationDebugEvent): void {
   }
 }
 
+function shouldWriteReloadDebugLog(): boolean {
+  return (
+    shouldCaptureDebugLogsByDefault() ||
+    process.env.MESSENGER_RELOAD_DEBUG === "1" ||
+    process.env.MESSENGER_RELOAD_DEBUG === "true"
+  );
+}
+
+function getReloadDebugLogPath(): string {
+  return path.join(app.getPath("logs"), "reload-debug.ndjson");
+}
+
+function shouldResetReloadDebugLogOnStart(): boolean {
+  return (
+    shouldWriteReloadDebugLog() ||
+    process.env.MESSENGER_RELOAD_DEBUG_RESET === "1" ||
+    process.env.MESSENGER_RELOAD_DEBUG_RESET === "true"
+  );
+}
+
+function maybeResetReloadDebugLogOnStart(): void {
+  if (!shouldResetReloadDebugLogOnStart()) {
+    return;
+  }
+
+  try {
+    const debugLogPath = getReloadDebugLogPath();
+    if (fs.existsSync(debugLogPath)) {
+      fs.unlinkSync(debugLogPath);
+    }
+  } catch (error) {
+    console.warn("[ReloadDebug] Failed to reset reload debug log", error);
+  }
+}
+
+function pushReloadDebugEvent(event: ReloadDebugEvent): void {
+  if (!shouldWriteReloadDebugLog()) {
+    return;
+  }
+
+  recordBoundedDebugEvent(reloadDebugEvents, event, MAX_RELOAD_DEBUG_EVENTS);
+
+  try {
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(getReloadDebugLogPath(), `${JSON.stringify(event)}\n`);
+  } catch {
+    // Ignore debug log write failures.
+  }
+}
+
 type Issue45TestExportConfig = {
   dir: string;
   label: string;
@@ -989,6 +1051,7 @@ function buildDebugLogsReport(): Record<string, unknown> {
       layoutEnabled: shouldWriteMediaOverlayDebugLog(),
       incomingCallEnabled: shouldWriteIncomingCallDebugLog(),
       notificationEnabled: shouldWriteNotificationDebugLog(),
+      reloadEnabled: shouldWriteReloadDebugLog(),
     },
     paths: {
       userData: app.getPath("userData"),
@@ -996,6 +1059,7 @@ function buildDebugLogsReport(): Record<string, unknown> {
       mediaOverlayDebugLog: getMediaOverlayDebugLogPath(),
       incomingCallDebugLog: getIncomingCallDebugLogPath(),
       notificationDebugLog: getNotificationDebugLogPath(),
+      reloadDebugLog: getReloadDebugLogPath(),
       rendererFailureDebugLog: getRendererFailureDebugLogPath(),
     },
     currentState: {
@@ -1015,6 +1079,7 @@ function buildDebugLogsReport(): Record<string, unknown> {
       mediaOverlay: mediaOverlayDebugEvents,
       incomingCall: incomingCallDebugEvents,
       notification: notificationDebugEvents,
+      reload: reloadDebugEvents,
     },
     logFiles: {
       mediaOverlay: buildDebugLogFileSummary(
@@ -1028,6 +1093,10 @@ function buildDebugLogsReport(): Record<string, unknown> {
       notification: buildDebugLogFileSummary(
         "notification-debug.ndjson",
         getNotificationDebugLogPath(),
+      ),
+      reload: buildDebugLogFileSummary(
+        "reload-debug.ndjson",
+        getReloadDebugLogPath(),
       ),
       rendererFailure: buildDebugLogFileSummary(
         "renderer-failure-debug.ndjson",
@@ -1057,13 +1126,15 @@ function exportDebugArtifactsToDirectory(dir: string): {
     path.join(bundleDir, "media-overlay-debug.ndjson"),
     path.join(bundleDir, "incoming-call-debug.ndjson"),
     path.join(bundleDir, "notification-debug.ndjson"),
+    path.join(bundleDir, "reload-debug.ndjson"),
     path.join(bundleDir, "renderer-failure-debug.ndjson"),
   ];
 
   copyDebugLogFile(copiedPaths[0], getMediaOverlayDebugLogPath());
   copyDebugLogFile(copiedPaths[1], getIncomingCallDebugLogPath());
   copyDebugLogFile(copiedPaths[2], getNotificationDebugLogPath());
-  copyDebugLogFile(copiedPaths[3], getRendererFailureDebugLogPath());
+  copyDebugLogFile(copiedPaths[3], getReloadDebugLogPath());
+  copyDebugLogFile(copiedPaths[4], getRendererFailureDebugLogPath());
 
   return {
     bundleDir,
@@ -1334,6 +1405,168 @@ function getRendererFailureContext(
   };
 }
 
+function loadWebContentsURLWithDebug(
+  target: WebContents | undefined,
+  nextUrl: string,
+  input: {
+    label: string;
+    trigger: string;
+    source: string;
+    extra?: Record<string, unknown>;
+  },
+): Promise<void> | undefined {
+  if (!target || target.isDestroyed()) {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "app-load-url-skipped",
+      webContentsId: target?.id,
+      url: nextUrl,
+      label: input.label,
+      trigger: input.trigger,
+      requestSource: input.source,
+      skippedReason: "missing-target",
+      ...input.extra,
+    });
+    return undefined;
+  }
+
+  const currentUrl = target.getURL();
+  pushReloadDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "app-load-url-request",
+    webContentsId: target.id,
+    url: currentUrl,
+    label: input.label,
+    trigger: input.trigger,
+    requestSource: input.source,
+    nextUrl,
+    ...input.extra,
+  });
+
+  return target.loadURL(nextUrl).catch((error) => {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "app-load-url-failed",
+      webContentsId: target.id,
+      url: currentUrl,
+      label: input.label,
+      trigger: input.trigger,
+      requestSource: input.source,
+      nextUrl,
+      error: String((error as Error)?.message || error),
+      ...input.extra,
+    });
+    throw error;
+  });
+}
+
+function attachWebContentsReloadDebugHandlers(
+  webContents: WebContents,
+  label: string,
+): void {
+  webContents.on("will-navigate", (_event, navigationUrl) => {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "will-navigate",
+      label,
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? navigationUrl : webContents.getURL(),
+      nextUrl: navigationUrl,
+    });
+  });
+
+  webContents.on(
+    "did-start-navigation",
+    (_event, navigationUrl, isInPlace, isMainFrame) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "did-start-navigation",
+        label,
+        webContentsId: webContents.id,
+        url: webContents.isDestroyed() ? navigationUrl : webContents.getURL(),
+        nextUrl: navigationUrl,
+        isInPlace,
+        isMainFrame,
+      });
+    },
+  );
+
+  webContents.on(
+    "did-redirect-navigation",
+    (_event, navigationUrl, isInPlace, isMainFrame) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "did-redirect-navigation",
+        label,
+        webContentsId: webContents.id,
+        url: webContents.isDestroyed() ? navigationUrl : webContents.getURL(),
+        nextUrl: navigationUrl,
+        isInPlace,
+        isMainFrame,
+      });
+    },
+  );
+
+  webContents.on("did-start-loading", () => {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "did-start-loading",
+      label,
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? "" : webContents.getURL(),
+    });
+  });
+
+  webContents.on("did-stop-loading", () => {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "did-stop-loading",
+      label,
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? "" : webContents.getURL(),
+    });
+  });
+
+  webContents.on(
+    "did-navigate",
+    (_event, navigationUrl, httpResponseCode, httpStatusText) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "did-navigate",
+        label,
+        webContentsId: webContents.id,
+        url: navigationUrl,
+        httpResponseCode,
+        httpStatusText,
+      });
+    },
+  );
+
+  webContents.on(
+    "did-navigate-in-page",
+    (_event, navigationUrl, isMainFrame) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "did-navigate-in-page",
+        label,
+        webContentsId: webContents.id,
+        url: navigationUrl,
+        isMainFrame,
+      });
+    },
+  );
+}
+
 function getMessengerDesktopUserAgent(): string {
   const chromeVersion = process.versions.chrome;
 
@@ -1377,12 +1610,32 @@ function reloadWebContentsSafely(webContents: WebContents): void {
   try {
     const currentUrl = webContents.getURL();
     if (currentUrl && currentUrl !== "about:blank") {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "renderer-recovery-reload-request",
+        webContentsId: webContents.id,
+        url: currentUrl,
+        action: "reload",
+      });
       webContents.reload();
       return;
     }
 
-    void webContents.loadURL(MESSAGES_HOME_URL);
+    void loadWebContentsURLWithDebug(webContents, MESSAGES_HOME_URL, {
+      label: "renderer-recovery",
+      trigger: "renderer-recovery-fallback-load",
+      source: "renderer-recovery",
+    });
   } catch (error) {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "renderer-recovery-reload-failed",
+      webContentsId: webContents.id,
+      url: webContents.isDestroyed() ? "" : webContents.getURL(),
+      error: String((error as Error)?.message || error),
+    });
     console.error("[Renderer Failure] Reload failed:", error);
   }
 }
@@ -1403,6 +1656,15 @@ function promptForRendererRecovery(
   if (!targetWindow) return;
 
   activeRendererFailureDialogs.add(webContentsId);
+  pushReloadDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "renderer-recovery-dialog-shown",
+    label: message,
+    webContentsId,
+    url: webContents.getURL(),
+    detail,
+  });
 
   void dialog
     .showMessageBox(targetWindow, {
@@ -1416,6 +1678,16 @@ function promptForRendererRecovery(
       noLink: true,
     })
     .then(({ response }) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "renderer-recovery-dialog-response",
+        label: message,
+        webContentsId,
+        url: webContents.isDestroyed() ? "" : webContents.getURL(),
+        response,
+        action: response === 0 ? "reload" : "dismiss",
+      });
       if (response === 0) {
         reloadWebContentsSafely(webContents);
       }
@@ -1510,6 +1782,7 @@ app.setPath("logs", path.join(userDataPath, "logs"));
 maybeResetMediaOverlayDebugLogOnStart();
 maybeResetIncomingCallDebugLogOnStart();
 maybeResetNotificationDebugLogOnStart();
+maybeResetReloadDebugLogOnStart();
 
 app.on("child-process-gone", (_event, details) => {
   const event = {
@@ -1527,6 +1800,19 @@ app.on("child-process-gone", (_event, details) => {
 });
 
 pushMediaOverlayDebugEvent({
+  timestamp: Date.now(),
+  source: "main",
+  event: "app-start",
+  url: "",
+  appVersion,
+  platform: process.platform,
+  arch: process.arch,
+  isDev,
+  isBetaVersion,
+  userDataPath: app.getPath("userData"),
+  logsPath: app.getPath("logs"),
+});
+pushReloadDebugEvent({
   timestamp: Date.now(),
   source: "main",
   event: "app-start",
@@ -2499,36 +2785,101 @@ function reloadMessengerTarget(
 ): void {
   if (!target) return;
 
+  const currentUrl = target.getURL();
+  pushReloadDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "reload-requested",
+    webContentsId: target.id,
+    url: currentUrl,
+    requestSource: source,
+    ignoreCache,
+    debugExportUiActive: debugLogExportUiActive,
+  });
+
   const reloadDecision = decideMessengerReload({
     debugExportUiActive: debugLogExportUiActive,
   });
   if (!reloadDecision.allowed) {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "reload-suppressed",
+      webContentsId: target.id,
+      url: currentUrl,
+      requestSource: source,
+      ignoreCache,
+      reason: reloadDecision.reason,
+    });
     console.log("[Reload] Suppressed reload request", {
       source,
       reason: reloadDecision.reason,
       ignoreCache,
-      currentUrl: target.getURL(),
+      currentUrl,
     });
     return;
   }
 
-  const currentUrl = target.getURL();
   if (currentUrl.includes(OFFLINE_PAGE_MARKER)) {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "reload-rerouted-to-messages-home",
+      webContentsId: target.id,
+      url: currentUrl,
+      requestSource: source,
+      ignoreCache,
+      reason: "offline-page-marker",
+      nextUrl: MESSAGES_HOME_URL,
+    });
     console.log("[Reload] Offline page detected, loading Messenger home");
-    target.loadURL(MESSAGES_HOME_URL).catch((error) => {
-      console.error("[Reload] Failed to load Messenger home:", error);
+    void loadWebContentsURLWithDebug(target, MESSAGES_HOME_URL, {
+      label: "Messenger reload target",
+      trigger: "reload-offline-page",
+      source,
+      extra: {
+        ignoreCache,
+        previousUrl: currentUrl,
+      },
     });
     return;
   }
 
   if (shouldReloadToMessagesHome(currentUrl)) {
+    pushReloadDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "reload-rerouted-to-messages-home",
+      webContentsId: target.id,
+      url: currentUrl,
+      requestSource: source,
+      ignoreCache,
+      reason: "off-scope-route",
+      nextUrl: MESSAGES_HOME_URL,
+    });
     console.log("[Reload] Resetting off-scope route back to Messenger home");
-    target.loadURL(MESSAGES_HOME_URL).catch((error) => {
-      console.error("[Reload] Failed to reset Messenger home:", error);
+    void loadWebContentsURLWithDebug(target, MESSAGES_HOME_URL, {
+      label: "Messenger reload target",
+      trigger: "reload-off-scope-route",
+      source,
+      extra: {
+        ignoreCache,
+        previousUrl: currentUrl,
+      },
     });
     return;
   }
 
+  pushReloadDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "reload-dispatched",
+    webContentsId: target.id,
+    url: currentUrl,
+    requestSource: source,
+    ignoreCache,
+    action: ignoreCache ? "reloadIgnoringCache" : "reload",
+  });
   if (ignoreCache) {
     target.reloadIgnoringCache();
   } else {
@@ -3815,6 +4166,7 @@ function createWindow(source: string = "unknown"): void {
     },
   });
   attachWebContentsFailureHandlers(mainWindow.webContents, "Main window");
+  attachWebContentsReloadDebugHandlers(mainWindow.webContents, "Main window");
   const mainWindowWebContentsId = mainWindow.webContents.id;
   let contentViewWebContentsId: number | null = null;
 
@@ -3902,6 +4254,10 @@ function createWindow(source: string = "unknown"): void {
       contentView.webContents,
       "Messenger content view",
       mainWindow,
+    );
+    attachWebContentsReloadDebugHandlers(
+      contentView.webContents,
+      "Messenger content view",
     );
     contentViewWebContentsId = contentView.webContents.id;
 
@@ -4153,13 +4509,25 @@ function createWindow(source: string = "unknown"): void {
             "[ContentView] Session cookies found, loading facebook.com/messages...",
           );
           // Don't set loginFlowActive here - let did-finish-load handle it.
-          contentView?.webContents.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(contentView?.webContents, MESSAGES_HOME_URL, {
+            label: "Messenger content view",
+            trigger: "session-cookie-check",
+            source: "startup-session-check",
+          });
         } else {
           // No session, show custom login page directly (no flash)
           console.log(
             "[ContentView] No session cookies, showing login page directly...",
           );
-          contentView?.webContents.loadURL(getCustomLoginPageURL());
+          void loadWebContentsURLWithDebug(
+            contentView?.webContents,
+            getCustomLoginPageURL(),
+            {
+              label: "Messenger content view",
+              trigger: "session-cookie-check",
+              source: "startup-session-check",
+            },
+          );
         }
         _hasTriedMessagesOnce = true;
       })
@@ -4168,7 +4536,14 @@ function createWindow(source: string = "unknown"): void {
           "[ContentView] Cookie check failed, trying facebook.com/messages:",
           err,
         );
-        contentView?.webContents.loadURL(MESSAGES_HOME_URL);
+        void loadWebContentsURLWithDebug(contentView?.webContents, MESSAGES_HOME_URL, {
+          label: "Messenger content view",
+          trigger: "session-cookie-check-error",
+          source: "startup-session-check",
+          extra: {
+            error: String((err as Error)?.message || err),
+          },
+        });
         _hasTriedMessagesOnce = true;
       });
 
@@ -4252,6 +4627,10 @@ function createWindow(source: string = "unknown"): void {
         childWindow.webContents,
         "Messenger child window",
         childWindow,
+      );
+      attachWebContentsReloadDebugHandlers(
+        childWindow.webContents,
+        "Messenger child window",
       );
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
@@ -4577,7 +4956,11 @@ function createWindow(source: string = "unknown"): void {
         );
         // Give cookies a moment to settle before redirecting.
         setTimeout(() => {
-          contentView?.webContents.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(contentView?.webContents, MESSAGES_HOME_URL, {
+            label: "Messenger content view",
+            trigger: "facebook-homepage-post-login",
+            source: "did-finish-load",
+          });
         }, 500);
         return;
       }
@@ -4588,7 +4971,15 @@ function createWindow(source: string = "unknown"): void {
           console.log(
             "[ContentView] Facebook login page detected (no active login flow), showing custom login...",
           );
-          contentView?.webContents.loadURL(getCustomLoginPageURL());
+          void loadWebContentsURLWithDebug(
+            contentView?.webContents,
+            getCustomLoginPageURL(),
+            {
+              label: "Messenger content view",
+              trigger: "facebook-login-page-no-active-flow",
+              source: "did-finish-load",
+            },
+          );
           return;
         }
 
@@ -4669,7 +5060,11 @@ function createWindow(source: string = "unknown"): void {
           "[ContentView] Facebook login complete, redirecting to Messages...",
         );
         setTimeout(() => {
-          contentView?.webContents.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(contentView?.webContents, MESSAGES_HOME_URL, {
+            label: "Messenger content view",
+            trigger: "facebook-homepage-post-login",
+            source: "did-navigate",
+          });
         }, 500);
         return;
       }
@@ -4703,7 +5098,11 @@ function createWindow(source: string = "unknown"): void {
           "[ContentView] Facebook login complete (SPA nav), redirecting to Messages...",
         );
         setTimeout(() => {
-          contentView?.webContents.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(contentView?.webContents, MESSAGES_HOME_URL, {
+            label: "Messenger content view",
+            trigger: "facebook-homepage-post-login",
+            source: "did-navigate-in-page",
+          });
         }, 500);
         return;
       }
@@ -4736,6 +5135,17 @@ function createWindow(source: string = "unknown"): void {
         console.log(
           `[ContentView] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`,
         );
+        pushReloadDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "did-fail-load",
+          label: "Messenger content view",
+          webContentsId: contentView?.webContents.id,
+          url: validatedURL,
+          errorCode,
+          errorDescription,
+          isMainFrame,
+        });
 
         // Network-related error codes that warrant showing offline page
         // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
@@ -4755,9 +5165,28 @@ function createWindow(source: string = "unknown"): void {
             "[ContentView] Network error detected, showing offline page",
           );
           const offlineHTML = getOfflinePageHTML(errorDescription);
-          contentView?.webContents.loadURL(
-            `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`,
-          );
+          const offlineUrl = `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`;
+          pushReloadDebugEvent({
+            timestamp: Date.now(),
+            source: "main",
+            event: "offline-page-load-request",
+            label: "Messenger content view",
+            webContentsId: contentView?.webContents.id,
+            url: validatedURL,
+            errorCode,
+            errorDescription,
+            nextUrl: offlineUrl,
+          });
+          void loadWebContentsURLWithDebug(contentView?.webContents, offlineUrl, {
+            label: "Messenger content view",
+            trigger: "did-fail-load-network-offline-page",
+            source: "network-error-handler",
+            extra: {
+              previousUrl: validatedURL,
+              errorCode,
+              errorDescription,
+            },
+          });
         }
       },
     );
@@ -4921,13 +5350,25 @@ function createWindow(source: string = "unknown"): void {
             "[MainWindow] Session cookies found, loading facebook.com/messages...",
           );
           // Don't set loginFlowActive here - let did-finish-load handle it.
-          mainWindow?.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(mainWindow?.webContents, MESSAGES_HOME_URL, {
+            label: "Main window",
+            trigger: "session-cookie-check",
+            source: "startup-session-check",
+          });
         } else {
           // No session, show custom login page directly (no flash)
           console.log(
             "[MainWindow] No session cookies, showing login page directly...",
           );
-          mainWindow?.loadURL(getCustomLoginPageURL());
+          void loadWebContentsURLWithDebug(
+            mainWindow?.webContents,
+            getCustomLoginPageURL(),
+            {
+              label: "Main window",
+              trigger: "session-cookie-check",
+              source: "startup-session-check",
+            },
+          );
         }
         _hasTriedMessagesOnce = true;
       })
@@ -4936,7 +5377,14 @@ function createWindow(source: string = "unknown"): void {
           "[MainWindow] Cookie check failed, showing login page:",
           err,
         );
-        mainWindow?.loadURL(getCustomLoginPageURL());
+        void loadWebContentsURLWithDebug(mainWindow?.webContents, getCustomLoginPageURL(), {
+          label: "Main window",
+          trigger: "session-cookie-check-error",
+          source: "startup-session-check",
+          extra: {
+            error: String((err as Error)?.message || err),
+          },
+        });
         _hasTriedMessagesOnce = true;
       });
 
@@ -5020,6 +5468,10 @@ function createWindow(source: string = "unknown"): void {
         childWindow.webContents,
         "Messenger child window",
         childWindow,
+      );
+      attachWebContentsReloadDebugHandlers(
+        childWindow.webContents,
+        "Messenger child window",
       );
 
       // Keep child windows scoped to call flows; reroute/open externally otherwise.
@@ -5334,6 +5786,17 @@ function createWindow(source: string = "unknown"): void {
         console.log(
           `[MainWindow] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`,
         );
+        pushReloadDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "did-fail-load",
+          label: "Main window",
+          webContentsId: mainWindow?.webContents.id,
+          url: validatedURL,
+          errorCode,
+          errorDescription,
+          isMainFrame,
+        });
 
         // Network-related error codes that warrant showing offline page
         // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
@@ -5347,9 +5810,28 @@ function createWindow(source: string = "unknown"): void {
             "[MainWindow] Network error detected, showing offline page",
           );
           const offlineHTML = getOfflinePageHTML(errorDescription);
-          mainWindow?.webContents.loadURL(
-            `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`,
-          );
+          const offlineUrl = `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`;
+          pushReloadDebugEvent({
+            timestamp: Date.now(),
+            source: "main",
+            event: "offline-page-load-request",
+            label: "Main window",
+            webContentsId: mainWindow?.webContents.id,
+            url: validatedURL,
+            errorCode,
+            errorDescription,
+            nextUrl: offlineUrl,
+          });
+          void loadWebContentsURLWithDebug(mainWindow?.webContents, offlineUrl, {
+            label: "Main window",
+            trigger: "did-fail-load-network-offline-page",
+            source: "network-error-handler",
+            extra: {
+              previousUrl: validatedURL,
+              errorCode,
+              errorDescription,
+            },
+          });
         }
       },
     );
@@ -5384,7 +5866,11 @@ function createWindow(source: string = "unknown"): void {
           "[MainWindow] Facebook homepage detected after login, redirecting to Messages...",
         );
         setTimeout(() => {
-          mainWindow?.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(mainWindow?.webContents, MESSAGES_HOME_URL, {
+            label: "Main window",
+            trigger: "facebook-homepage-post-login",
+            source: "did-finish-load",
+          });
         }, 500);
         return;
       }
@@ -5395,7 +5881,15 @@ function createWindow(source: string = "unknown"): void {
           console.log(
             "[MainWindow] Facebook login page detected (no active login flow), showing custom login...",
           );
-          mainWindow?.loadURL(getCustomLoginPageURL());
+          void loadWebContentsURLWithDebug(
+            mainWindow?.webContents,
+            getCustomLoginPageURL(),
+            {
+              label: "Main window",
+              trigger: "facebook-login-page-no-active-flow",
+              source: "did-finish-load",
+            },
+          );
           return;
         }
 
@@ -5466,7 +5960,11 @@ function createWindow(source: string = "unknown"): void {
           "[MainWindow] Facebook login complete, redirecting to Messages...",
         );
         setTimeout(() => {
-          mainWindow?.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(mainWindow?.webContents, MESSAGES_HOME_URL, {
+            label: "Main window",
+            trigger: "facebook-homepage-post-login",
+            source: "did-navigate",
+          });
         }, 500);
         return;
       }
@@ -5498,7 +5996,11 @@ function createWindow(source: string = "unknown"): void {
           "[MainWindow] Facebook login complete (SPA nav), redirecting to Messages...",
         );
         setTimeout(() => {
-          mainWindow?.loadURL(MESSAGES_HOME_URL);
+          void loadWebContentsURLWithDebug(mainWindow?.webContents, MESSAGES_HOME_URL, {
+            label: "Main window",
+            trigger: "facebook-homepage-post-login",
+            source: "did-navigate-in-page",
+          });
         }, 500);
         return;
       }
@@ -6997,9 +7499,21 @@ async function handleResetAndLogout(): Promise<void> {
 
       // Reload the app to show login page
       if (contentView) {
-        contentView.webContents.loadURL(getCustomLoginPageURL());
+        void loadWebContentsURLWithDebug(
+          contentView.webContents,
+          getCustomLoginPageURL(),
+          {
+            label: "Messenger content view",
+            trigger: "reset-and-logout",
+            source: "handle-reset-and-logout",
+          },
+        );
       } else if (mainWindow) {
-        mainWindow.loadURL(getCustomLoginPageURL());
+        void loadWebContentsURLWithDebug(mainWindow.webContents, getCustomLoginPageURL(), {
+          label: "Main window",
+          trigger: "reset-and-logout",
+          source: "handle-reset-and-logout",
+        });
       }
 
       // Show the main window if it was hidden
