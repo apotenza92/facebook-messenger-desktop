@@ -67,7 +67,9 @@ type NotificationDeduper = {
 
 type NotificationCallClassification = {
   isIncomingCall: boolean;
-  reason: "incoming-call-pattern" | "non-incoming-call-status" | "not-call";
+  shouldSuppressNotification: boolean;
+  isCallActivity: boolean;
+  reason: "incoming-call-pattern" | "call-history-pattern" | "not-call";
   matchedPattern?: string;
   usedTitleOnly?: boolean;
 };
@@ -103,6 +105,11 @@ type NotificationDecisionPolicyApi = {
   classifyCallNotification: (
     payload: NotificationPayload,
   ) => NotificationCallClassification;
+  classifyGroupManagementNotification?: (payload: NotificationPayload) => {
+    isGroupManagement: boolean;
+    reason: string;
+    matchedPattern?: string;
+  };
   shouldSnapshotFreshUnreadOnBoundary: (reason: string) => boolean;
 };
 
@@ -981,6 +988,8 @@ const CALL_BODY_PATTERNS: RegExp[] = [
 
 const NON_INCOMING_CALL_PATTERNS: RegExp[] = [
   /ongoing call/i,
+  /\b[\p{L}\p{M}'’.-]+(?:\s+[\p{L}\p{M}'’.-]+){0,3}\s+called you\b/iu,
+  /\byou called\s+[\p{L}\p{M}'’.-]+(?:\s+[\p{L}\p{M}'’.-]+){0,3}\b/iu,
   /\byou started (?:an? )?(?:video |audio )?call\b/i,
   /\bstarted (?:an? )?(?:video |audio )?call\b/i,
   /\b(?:video |audio )?call (?:has )?started\b/i,
@@ -1000,7 +1009,13 @@ function classifyCallNotification(
   const body = normalizeText(payload.body);
   const combined = `${title} ${body}`.trim();
   if (!combined) {
-    return { isIncomingCall: false, reason: "not-call", usedTitleOnly: false };
+    return {
+      isIncomingCall: false,
+      shouldSuppressNotification: false,
+      isCallActivity: false,
+      reason: "not-call",
+      usedTitleOnly: false,
+    };
   }
 
   const excludedPattern = NON_INCOMING_CALL_PATTERNS.find((pattern) =>
@@ -1009,7 +1024,9 @@ function classifyCallNotification(
   if (excludedPattern) {
     return {
       isIncomingCall: false,
-      reason: "non-incoming-call-status",
+      shouldSuppressNotification: true,
+      isCallActivity: true,
+      reason: "call-history-pattern",
       matchedPattern: excludedPattern.source,
       usedTitleOnly: false,
     };
@@ -1019,6 +1036,8 @@ function classifyCallNotification(
   if (bodyPattern) {
     return {
       isIncomingCall: true,
+      shouldSuppressNotification: false,
+      isCallActivity: true,
       reason: "incoming-call-pattern",
       matchedPattern: bodyPattern.source,
       usedTitleOnly: false,
@@ -1031,13 +1050,21 @@ function classifyCallNotification(
   if (titlePattern) {
     return {
       isIncomingCall: true,
+      shouldSuppressNotification: false,
+      isCallActivity: true,
       reason: "incoming-call-pattern",
       matchedPattern: titlePattern.source,
       usedTitleOnly: true,
     };
   }
 
-  return { isIncomingCall: false, reason: "not-call", usedTitleOnly: false };
+  return {
+    isIncomingCall: false,
+    shouldSuppressNotification: false,
+    isCallActivity: false,
+    reason: "not-call",
+    usedTitleOnly: false,
+  };
 }
 
 function isLikelyGlobalFacebookNotification(
@@ -1164,6 +1191,14 @@ const policyApi: NotificationDecisionPolicyApi = {
   shouldSuppressSelfAuthoredNotification,
   classifyCallNotification: (payload) =>
     notificationActivityPolicy.classifyCallNotification(payload),
+  classifyGroupManagementNotification:
+    typeof notificationActivityPolicy.classifyGroupManagementNotification ===
+      "function"
+      ? (payload) =>
+          notificationActivityPolicy.classifyGroupManagementNotification!(
+            payload,
+          )
+      : undefined,
   shouldSnapshotFreshUnreadOnBoundary,
 };
 

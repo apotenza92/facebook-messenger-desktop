@@ -4,6 +4,7 @@ import {
   buildIncomingCallNotificationBody,
 } from '../shared/incoming-call-evidence';
 import {
+  classifyCallNotification,
   classifyGroupManagementNotification,
   isLikelyGlobalFacebookNotification,
 } from '../shared/notification-activity-policy';
@@ -41,6 +42,18 @@ export function resolveNotificationDisplayBoundary(
     title: normalizedTitle,
     body: String(data.body || "").replace(/\s+/g, " ").trim(),
   };
+  const callClassification = classifyCallNotification(activityPayload);
+  if (callClassification.shouldSuppressNotification) {
+    return {
+      suppress: true,
+      reason: "display-boundary-call-history-activity",
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: activityPayload.body,
+      },
+    };
+  }
   if (classifyGroupManagementNotification(activityPayload).isGroupManagement) {
     return {
       suppress: true,
@@ -66,8 +79,7 @@ export function resolveNotificationDisplayBoundary(
   }
 
   const normalizedBody =
-    /incoming\s+call/i.test(normalizedTitle) ||
-    /is\s+calling\s+you/i.test(String(data.body || ""))
+    callClassification.isIncomingCall
       ? buildIncomingCallNotificationBody({ body: String(data.body || "") })
       : String(data.body || "");
 

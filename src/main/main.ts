@@ -62,6 +62,7 @@ import {
 import {
   INCOMING_CALL_NO_KEY_MAP_KEY,
   decideIncomingCallNativeNotification,
+  decideIncomingCallSessionUpdate,
   decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
 } from "./incoming-call-ipc-policy";
@@ -3089,6 +3090,21 @@ async function injectNotificationScripts(
       "[Main Process] Notification activity policy script not found at:",
     errorMessage:
       "[Main Process] Failed to inject notification activity policy script:",
+    sanitizeCommonJsExports: true,
+  });
+
+  const incomingCallEvidenceScriptPath = path.join(
+    __dirname,
+    "../shared/incoming-call-evidence.js",
+  );
+  await executeInjectedScript({
+    scriptPath: incomingCallEvidenceScriptPath,
+    successMessage:
+      "[Main Process] Incoming-call evidence script injected successfully",
+    missingMessage:
+      "[Main Process] Incoming-call evidence script not found at:",
+    errorMessage:
+      "[Main Process] Failed to inject incoming-call evidence script:",
     sanitizeCommonJsExports: true,
   });
 
@@ -8942,19 +8958,23 @@ function setupIpcHandlers(): void {
     const sameActiveSession =
       activeIncomingCallSessionKey === sessionKey ||
       activeIncomingCallNotificationTag === notificationTag;
-    const shouldUpdateActiveSessionBody =
-      sameActiveSession &&
-      activeIncomingCallNotificationBody !== notificationBody;
+    const sessionUpdate = decideIncomingCallSessionUpdate({
+      sameActiveSession,
+      normalizedCaller: caller,
+      notificationBody,
+      activeNotificationBody: activeIncomingCallNotificationBody,
+      dedupeReason: decision.reason,
+    });
 
-    if (
-      sameActiveSession &&
-      caller === null &&
-      activeIncomingCallNotificationBody
-    ) {
+    if (sessionUpdate.action === "ignore-placeholder-echo") {
+      const activeBody = activeIncomingCallNotificationBody;
+      if (!activeBody) {
+        return;
+      }
       refreshIncomingCallNotificationReminder(
         sessionKey,
         notificationTag,
-        activeIncomingCallNotificationBody,
+        activeBody,
         activeIncomingCallCaller,
         decision.now,
       );
@@ -8976,7 +8996,24 @@ function setupIpcHandlers(): void {
     }
 
     if (!decision.shouldNotify) {
-      if (sameActiveSession) {
+      if (sessionUpdate.action === "show-improved-notification") {
+        notificationHandler?.closeNotification(notificationTag);
+        showNativeNotification({
+          data: {
+            title: "Incoming call",
+            body: notificationBody,
+            tag: notificationTag,
+            silent: false,
+            requireInteraction: true,
+          },
+          displaySource: "incoming-call",
+          webContentsId: event.sender.id,
+          url: senderUrl,
+          reason: `${decision.callKey ?? "no-key"}:upgraded-caller`,
+        });
+      }
+
+      if (sessionUpdate.shouldRefreshReminder) {
         refreshIncomingCallNotificationReminder(
           sessionKey,
           notificationTag,
@@ -9000,7 +9037,9 @@ function setupIpcHandlers(): void {
         reason: decision.reason,
         caller,
         sessionKey,
-        updatedActiveSession: shouldUpdateActiveSessionBody,
+        updatedActiveSession:
+          sessionUpdate.action === "show-improved-notification" ||
+          activeIncomingCallNotificationBody !== notificationBody,
         confidence: evidence.confidence,
         evidenceSource: evidence.source,
       });

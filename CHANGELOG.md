@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.9] - 2026-04-20
+
+### Fixed
+
+- **Issue #50 follow-up: tighten call notifications and harden admin replay diagnostics** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Route incoming-call caller extraction through a shared normalisation path so placeholder accessibility chrome such as `callProfile pictureIncoming` fails closed instead of degrading the first ring notification to `Someone is calling you`.
+  - Upgrade same-session incoming-call notifications immediately when the real caller name arrives, instead of waiting for the reminder loop to correct an earlier generic toast.
+  - Suppress call-history and call-status notification rows such as `X called you`, `You called X`, `Call ended`, missed calls, answered-elsewhere states, and joined/started call status updates across preload interception and the main-process display boundary.
+  - Record richer notification activity diagnostics, including raw-vs-matched classifier results and classification-aware wake-boundary snapshot state, so any remaining admin/group-management leak can be traced to a phrase gap, row match gap, or wake replay mismatch in the next debug bundle.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.8] - 2026-04-16
 
 ### Fixed

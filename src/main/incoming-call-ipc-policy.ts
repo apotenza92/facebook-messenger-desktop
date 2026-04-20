@@ -31,6 +31,19 @@ export type IncomingCallNativeNotificationDecision = {
   now: number;
 };
 
+export type IncomingCallSessionUpdateAction =
+  | "ignore-placeholder-echo"
+  | "show-improved-notification"
+  | "refresh-active-session"
+  | "none";
+
+export type IncomingCallSessionUpdateDecision = {
+  action: IncomingCallSessionUpdateAction;
+  shouldRefreshReminder: boolean;
+  shouldShowImprovedNotification: boolean;
+  shouldUseActiveSessionBody: boolean;
+};
+
 export type IncomingCallSignalEscalationDecision = IncomingCallEscalationDecision;
 
 export type IncomingCallWindowFocusTarget = {
@@ -166,5 +179,66 @@ export function decideIncomingCallNativeNotification(params: {
     reason: "notify",
     callKey,
     now,
+  };
+}
+
+export function decideIncomingCallSessionUpdate(params: {
+  sameActiveSession: boolean;
+  normalizedCaller: string | null;
+  notificationBody: string;
+  activeNotificationBody: string | null;
+  dedupeReason: IncomingCallNotificationDecisionReason;
+}): IncomingCallSessionUpdateDecision {
+  const {
+    sameActiveSession,
+    normalizedCaller,
+    notificationBody,
+    activeNotificationBody,
+    dedupeReason,
+  } = params;
+
+  if (
+    sameActiveSession &&
+    normalizedCaller === null &&
+    typeof activeNotificationBody === "string" &&
+    activeNotificationBody.length > 0
+  ) {
+    return {
+      action: "ignore-placeholder-echo",
+      shouldRefreshReminder: true,
+      shouldShowImprovedNotification: false,
+      shouldUseActiveSessionBody: true,
+    };
+  }
+
+  if (!sameActiveSession) {
+    return {
+      action: "none",
+      shouldRefreshReminder: false,
+      shouldShowImprovedNotification: false,
+      shouldUseActiveSessionBody: false,
+    };
+  }
+
+  if (
+    dedupeReason === "same-key" &&
+    normalizedCaller !== null &&
+    typeof activeNotificationBody === "string" &&
+    activeNotificationBody.length > 0 &&
+    activeNotificationBody !== notificationBody
+  ) {
+    return {
+      action: "show-improved-notification",
+      shouldRefreshReminder: true,
+      shouldShowImprovedNotification: true,
+      shouldUseActiveSessionBody: false,
+    };
+  }
+
+  return {
+    action: "refresh-active-session",
+    shouldRefreshReminder: true,
+    shouldShowImprovedNotification: false,
+    shouldUseActiveSessionBody: false,
   };
 }

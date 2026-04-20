@@ -21,6 +21,10 @@
     muted: boolean;
     unread: boolean;
   };
+  type NotificationPayload = {
+    title: string;
+    body: string;
+  };
   type NotificationMatchResult = {
     matchedHref?: string;
     confidence: number;
@@ -39,6 +43,8 @@
   };
   type NotificationCallClassification = {
     isIncomingCall: boolean;
+    shouldSuppressNotification?: boolean;
+    isCallActivity?: boolean;
     reason: string;
     matchedPattern?: string;
     usedTitleOnly?: boolean;
@@ -69,7 +75,34 @@
       title: string;
       body: string;
     }) => NotificationCallClassification;
+    classifyGroupManagementNotification?: (payload: {
+      title: string;
+      body: string;
+    }) => {
+      isGroupManagement: boolean;
+      reason: string;
+      matchedPattern?: string;
+    };
     shouldSnapshotFreshUnreadOnBoundary?: (reason: string) => boolean;
+  };
+
+  type IncomingCallEvidenceApi = {
+    extractIncomingCallCallerName?: (raw: unknown) => {
+      caller: string | null;
+      matchedPattern?: string;
+      usedFallback: boolean;
+    };
+  };
+
+  type NotificationActivityEvaluation = {
+    call: NotificationCallClassification;
+    groupManagement: {
+      isGroupManagement: boolean;
+      reason: string;
+      matchedPattern?: string;
+    } | null;
+    suppressionClass: "message" | "global-activity" | "call-history";
+    isGlobalActivity: boolean;
   };
 
   type IncomingCallSignalPayload = {
@@ -106,140 +139,22 @@
       .trim()
       .slice(0, 180);
 
-  const extractIncomingCallerName = (text: string): string | undefined => {
-    const normalized = String(text || "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!normalized) return undefined;
-
-    const withWordBreaks = normalized.replace(/([a-z])([A-Z])/g, "$1 $2");
-
-    const patterns = [
-      /\b([^\n]{1,120}?)\s+is calling\b/i,
-      /\bincoming\s+(?:video\s+|audio\s+)?call\s+from\s+([^\n]{1,120}?)(?:\.|$)/i,
-      /\b([^\n]{1,120}?)\s+wants to\s+(?:video\s+)?call\b/i,
-    ];
-
-    const dedupeRepeatedWords = (input: string): string => {
-      const words = input.split(" ").filter(Boolean);
-      if (words.length < 2) return input;
-
-      // Collapse adjacent duplicate words.
-      const compact: string[] = [];
-      for (const word of words) {
-        if (
-          compact.length === 0 ||
-          compact[compact.length - 1].toLowerCase() !== word.toLowerCase()
-        ) {
-          compact.push(word);
-        }
-      }
-
-      // Collapse repeated full name halves: "Michael Potenza Michael Potenza".
-      if (compact.length % 2 === 0) {
-        const half = compact.length / 2;
-        const firstHalf = compact.slice(0, half).join(" ").toLowerCase();
-        const secondHalf = compact.slice(half).join(" ").toLowerCase();
-        if (firstHalf === secondHalf) {
-          return compact.slice(0, half).join(" ");
-        }
-      }
-
-      return compact.join(" ");
-    };
-
-    const sanitize = (input: string): string => {
-      let value = String(input)
-        .replace(/[|•·]+/g, " ")
-        .replace(
-          /\b(incoming|video|audio|call|from|end-to-end encrypted|decline|accept|join|ignore|cancel|messenger|facebook)\b/gi,
-          " ",
-        )
-        .replace(/^[:\-\s]+|[:\-\s]+$/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      // Collapse immediate repeated chunks (e.g. "Michael PotenzaMichael Potenza")
-      const repeatedChunk = value.match(/^(.{2,60}?)\1+$/i);
-      if (repeatedChunk?.[1]) {
-        value = repeatedChunk[1].trim();
-      }
-
-      // Collapse repeated phrase with separator (e.g. "Michael Potenza Michael Potenza")
-      const repeatedPhrase = value.match(/^(.{2,60}?)\s+\1$/i);
-      if (repeatedPhrase?.[1]) {
-        value = repeatedPhrase[1].trim();
-      }
-
-      value = dedupeRepeatedWords(value);
-      return value;
-    };
-
-    const isGenericCallerLabel = (input: string): boolean => {
-      const normalizedInput = String(input || "")
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      if (!normalizedInput) return true;
-
-      const genericLabels = new Set([
-        "profile",
-        "profile picture",
-        "picture",
-        "incoming call",
-        "video call",
-        "audio call",
-        "call",
-        "caller",
-        "unknown caller",
-        "messenger",
-        "facebook",
-        "someone",
-      ]);
-
-      if (genericLabels.has(normalizedInput)) {
-        return true;
-      }
-
-      if (/^profile picture(?: of)?$/.test(normalizedInput)) {
-        return true;
-      }
-
-      return false;
-    };
-
-    for (const sourceText of [withWordBreaks, normalized]) {
-      for (const pattern of patterns) {
-        const match = sourceText.match(pattern);
-        const candidate = sanitize(match?.[1] || "");
-        if (candidate.length >= 2 && !isGenericCallerLabel(candidate)) {
-          const words = candidate.split(" ").filter(Boolean);
-          return words.slice(0, 4).join(" ").slice(0, 80);
-        }
-      }
-
-      let fallbackMatch: RegExpMatchArray | null = null;
-      try {
-        fallbackMatch = sourceText.match(
-          /\b([\p{L}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}][\p{L}\p{M}'’.-]*){0,3})\b/u,
-        );
-      } catch {
-        fallbackMatch = sourceText.match(
-          /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b/,
-        );
-      }
-      const fallbackCandidate = sanitize(fallbackMatch?.[1] || "");
-      if (
-        fallbackCandidate.length >= 2 &&
-        !isGenericCallerLabel(fallbackCandidate)
-      ) {
-        return fallbackCandidate.slice(0, 80);
-      }
+  const getIncomingCallEvidenceApi = (): IncomingCallEvidenceApi | null => {
+    const api = (globalThis as typeof globalThis & {
+      __mdIncomingCallEvidence?: IncomingCallEvidenceApi;
+    }).__mdIncomingCallEvidence;
+    if (!api || typeof api !== "object") {
+      return null;
     }
+    return api;
+  };
 
-    return undefined;
+  const extractIncomingCallerName = (text: string): string | undefined => {
+    const caller = getIncomingCallEvidenceApi()
+      ?.extractIncomingCallCallerName?.(text)?.caller;
+    return typeof caller === "string" && caller.trim().length > 0
+      ? caller
+      : undefined;
   };
 
   const emitIncomingCallDebug = (
@@ -589,7 +504,12 @@
   ): NotificationCallClassification => {
     const policy = getNotificationDecisionPolicy();
     if (!policy) {
-      return { isIncomingCall: false, reason: "policy-unavailable" };
+      return {
+        isIncomingCall: false,
+        shouldSuppressNotification: false,
+        isCallActivity: false,
+        reason: "policy-unavailable",
+      };
     }
 
     return policy.classifyCallNotification({
@@ -597,6 +517,63 @@
       body: String(body),
     });
   };
+
+  const evaluateNotificationActivity = (
+    payload: NotificationPayload,
+  ): NotificationActivityEvaluation => {
+    const policy = getNotificationDecisionPolicy();
+    const call = classifyCallPayload(payload.title, payload.body);
+    const groupManagement =
+      typeof (policy as NotificationDecisionPolicyApi | null)
+        ?.classifyGroupManagementNotification === "function"
+        ? (policy as NotificationDecisionPolicyApi & {
+            classifyGroupManagementNotification: (
+              payload: NotificationPayload,
+            ) => {
+              isGroupManagement: boolean;
+              reason: string;
+              matchedPattern?: string;
+            };
+          }).classifyGroupManagementNotification(payload)
+        : null;
+    const isGlobalActivity = Boolean(
+      policy?.isLikelyGlobalFacebookNotification(payload),
+    );
+    const suppressionClass = call.shouldSuppressNotification
+      ? "call-history"
+      : isGlobalActivity || groupManagement?.isGroupManagement
+        ? "global-activity"
+        : "message";
+
+    return {
+      call,
+      groupManagement,
+      suppressionClass,
+      isGlobalActivity,
+    };
+  };
+
+  const summarizeNotificationActivity = (
+    activity: NotificationActivityEvaluation,
+  ) => ({
+    suppressionClass: activity.suppressionClass,
+    isGlobalActivity: activity.isGlobalActivity,
+    call: {
+      isIncomingCall: activity.call.isIncomingCall,
+      shouldSuppressNotification: activity.call.shouldSuppressNotification === true,
+      isCallActivity: activity.call.isCallActivity === true,
+      reason: activity.call.reason,
+      matchedPattern: activity.call.matchedPattern,
+      usedTitleOnly: activity.call.usedTitleOnly === true,
+    },
+    groupManagement: activity.groupManagement
+      ? {
+          isGroupManagement: activity.groupManagement.isGroupManagement,
+          reason: activity.groupManagement.reason,
+          matchedPattern: activity.groupManagement.matchedPattern,
+        }
+      : null,
+  });
 
   const normalizeCallDedupeKey = (title: string, body: string): string => {
     const normalized = `${title} ${body}`
@@ -622,12 +599,14 @@
     source: "notification" | "snapshot";
     boundaryReason?: string;
     wakeGeneration?: number;
+    suppressionClass?: "message" | "global-activity" | "call-history";
     recordedAt: number;
   };
   type BoundarySnapshotRecord = {
     body: string;
     reason: string;
     wakeGeneration: number;
+    suppressionClass: "message" | "global-activity" | "call-history";
     recordedAt: number;
   };
 
@@ -717,13 +696,23 @@
   const getBoundarySnapshotReplaySuppression = (
     href: string,
     body: string,
+    suppressionClass: "message" | "global-activity" | "call-history" = "message",
   ): BoundarySnapshotRecord | null => {
     const key = normalizeConversationKey(href);
     const existing = boundarySnapshotRecords.get(key);
-    if (!existing || existing.body !== body) {
+    if (!existing) {
       return null;
     }
-    return existing;
+    if (existing.body === body) {
+      return existing;
+    }
+    if (
+      existing.suppressionClass !== "message" &&
+      existing.suppressionClass === suppressionClass
+    ) {
+      return existing;
+    }
+    return null;
   };
 
   const isMessagesNotificationRoute = (): boolean => {
@@ -762,6 +751,11 @@
         typeof metadata.wakeGeneration === "number"
           ? metadata.wakeGeneration
           : undefined,
+      suppressionClass:
+        metadata.suppressionClass === "global-activity" ||
+        metadata.suppressionClass === "call-history"
+          ? metadata.suppressionClass
+          : "message",
       recordedAt:
         typeof metadata.recordedAt === "number"
           ? metadata.recordedAt
@@ -1452,20 +1446,63 @@
         }
 
         const matchedInfo = extractConversationInfo(matchedRow);
-        const matchedInfoLooksGlobalActivity = Boolean(
-          matchedInfo &&
-            policy.isLikelyGlobalFacebookNotification({
+        const rawActivity = evaluateNotificationActivity(nativePayload);
+        const matchedActivity = matchedInfo
+          ? evaluateNotificationActivity({
               title: matchedInfo.title,
               body: matchedInfo.body,
-            }),
+            })
+          : null;
+        const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
+          normalizedHref,
+          matchedInfo?.body || bodyStr,
+          matchedActivity?.suppressionClass ?? rawActivity.suppressionClass,
         );
-        if (matchedInfoLooksGlobalActivity) {
+        log("Native notification candidate analysis", {
+          source: "native",
+          normalizedHref,
+          raw: summarizeNotificationActivity(rawActivity),
+          matched: matchedActivity
+            ? summarizeNotificationActivity(matchedActivity)
+            : null,
+          wakeGeneration,
+          isSettling,
+          boundarySnapshotPresent: wakeReplaySuppression !== null,
+          boundarySnapshotReason: wakeReplaySuppression?.reason,
+        });
+
+        if (
+          rawActivity.suppressionClass === "call-history" ||
+          matchedActivity?.suppressionClass === "call-history"
+        ) {
+          log("Native notification suppressed - call history/system activity", {
+            title,
+            href: normalizedHref,
+            raw: summarizeNotificationActivity(rawActivity),
+            matched: matchedActivity
+              ? summarizeNotificationActivity(matchedActivity)
+              : null,
+          });
+          return;
+        }
+
+        const matchedInfoLooksGlobalActivity = Boolean(
+          matchedActivity?.suppressionClass === "global-activity",
+        );
+        if (
+          rawActivity.suppressionClass === "global-activity" ||
+          matchedInfoLooksGlobalActivity
+        ) {
           log(
             "Native notification suppressed - matched sidebar row is non-message Facebook activity",
             {
-              title: matchedInfo?.title,
-              body: matchedInfo?.body,
+              title: matchedInfo?.title || title,
+              body: matchedInfo?.body || body,
               href: normalizedHref,
+              raw: summarizeNotificationActivity(rawActivity),
+              matched: matchedActivity
+                ? summarizeNotificationActivity(matchedActivity)
+                : null,
             },
           );
           return;
@@ -1516,10 +1553,6 @@
         }
 
         if (hasAlreadyNotified(normalizedHref, bodyStr)) {
-          const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
-            normalizedHref,
-            bodyStr,
-          );
           if (wakeReplaySuppression) {
             log("Native notification suppressed - pre-existing after wake boundary", {
               href: normalizedHref,
@@ -1710,17 +1743,23 @@
         const info = extractConversationInfo(row);
         if (info) {
           const normalizedHref = normalizeConversationKey(info.href);
+          const snapshotActivity = evaluateNotificationActivity({
+            title: info.title,
+            body: info.body,
+          });
           // Mark as already notified so we don't send notifications for these
           recordNotification(info.href, info.body, {
             source: "snapshot",
             boundaryReason: reason,
             wakeGeneration: boundarySnapshotWakeGeneration ?? undefined,
+            suppressionClass: snapshotActivity.suppressionClass,
           });
           if (boundarySnapshotWakeGeneration !== null && reason) {
             boundarySnapshotRecords.set(normalizedHref, {
               body: info.body,
               reason,
               wakeGeneration: boundarySnapshotWakeGeneration,
+              suppressionClass: snapshotActivity.suppressionClass,
               recordedAt: Date.now(),
             });
           }
@@ -1871,21 +1910,55 @@
         }
 
         const matchedInfo = extractConversationInfo(matchedRow) || info;
+        const observedActivity = evaluateNotificationActivity({
+          title: info.title,
+          body: info.body,
+        });
+        const matchedActivity = evaluateNotificationActivity({
+          title: matchedInfo.title,
+          body: matchedInfo.body,
+        });
+        const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
+          normalizedMatchedHref,
+          matchedInfo.body,
+          matchedActivity.suppressionClass,
+        );
+        log("Mutation notification candidate analysis", {
+          source: "observed-row",
+          normalizedHref: normalizedMatchedHref,
+          observedHref: normalizedObservedHref,
+          raw: summarizeNotificationActivity(observedActivity),
+          matched: summarizeNotificationActivity(matchedActivity),
+          wakeGeneration,
+          isSettling,
+          boundarySnapshotPresent: wakeReplaySuppression !== null,
+          boundarySnapshotReason: wakeReplaySuppression?.reason,
+        });
 
         if (
-          policy.isLikelyGlobalFacebookNotification({
-            title: info.title,
-            body: info.body,
-          }) ||
-          policy.isLikelyGlobalFacebookNotification({
+          observedActivity.suppressionClass === "call-history" ||
+          matchedActivity.suppressionClass === "call-history"
+        ) {
+          log("Mutation notification suppressed - call history/system activity", {
             title: matchedInfo.title,
             body: matchedInfo.body,
-          })
+            href: normalizedMatchedHref,
+            raw: summarizeNotificationActivity(observedActivity),
+            matched: summarizeNotificationActivity(matchedActivity),
+          });
+          continue;
+        }
+
+        if (
+          observedActivity.suppressionClass === "global-activity" ||
+          matchedActivity.suppressionClass === "global-activity"
         ) {
           log("Mutation notification suppressed - non-message Facebook activity", {
             title: matchedInfo.title,
             body: matchedInfo.body,
             href: normalizedMatchedHref,
+            raw: summarizeNotificationActivity(observedActivity),
+            matched: summarizeNotificationActivity(matchedActivity),
           });
           continue;
         }
@@ -1943,10 +2016,6 @@
 
         // Check if we've already notified for this exact message
         if (hasAlreadyNotified(normalizedMatchedHref, matchedInfo.body)) {
-          const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
-            normalizedMatchedHref,
-            matchedInfo.body,
-          );
           if (wakeReplaySuppression) {
             log("Mutation notification suppressed - pre-existing after wake boundary", {
               title: matchedInfo.title,

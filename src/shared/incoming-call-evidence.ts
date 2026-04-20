@@ -25,6 +25,12 @@ export type IncomingCallTextClassification = {
   usedTitleOnly: boolean;
 };
 
+export type IncomingCallExtractionResult = {
+  caller: string | null;
+  matchedPattern?: string;
+  usedFallback: boolean;
+};
+
 export type IncomingCallEscalationDecision = {
   shouldEscalate: boolean;
   reason:
@@ -75,8 +81,21 @@ const GENERIC_INCOMING_CALL_LABELS = new Set([
   "someone",
 ]);
 
+const INCOMING_CALL_CALLER_PATTERNS: RegExp[] = [
+  /\b([^\n]{1,120}?)\s+is calling\b/i,
+  /\bincoming\s+(?:video\s+|audio\s+)?call\s+from\s+([^\n]{1,120}?)(?:\.|$)/i,
+  /\b([^\n]{1,120}?)\s+wants to\s+(?:video\s+)?call\b/i,
+];
+
 function normalizeText(value: string): string {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function normalizeIncomingCallExtractionText(value: unknown): string {
+  return String(value || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function dedupeRepeatedIncomingCallWords(input: string): string {
@@ -180,6 +199,46 @@ export function buildIncomingCallNotificationBody(params: {
   return caller
     ? `${caller} is calling you on Messenger`
     : "Someone is calling you on Messenger";
+}
+
+export function extractIncomingCallCallerName(
+  raw: unknown,
+): IncomingCallExtractionResult {
+  const normalized = normalizeIncomingCallExtractionText(raw);
+  if (!normalized) {
+    return {
+      caller: null,
+      usedFallback: false,
+    };
+  }
+
+  for (const pattern of INCOMING_CALL_CALLER_PATTERNS) {
+    const match = normalized.match(pattern);
+    const caller = normalizeIncomingCallCaller(match?.[1] || "");
+    if (caller) {
+      return {
+        caller,
+        matchedPattern: pattern.source,
+        usedFallback: false,
+      };
+    }
+  }
+
+  let fallbackMatch: RegExpMatchArray | null = null;
+  try {
+    fallbackMatch = normalized.match(
+      /\b([\p{L}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}][\p{L}\p{M}'’.-]*){0,3})\b/u,
+    );
+  } catch {
+    fallbackMatch = normalized.match(
+      /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b/,
+    );
+  }
+
+  return {
+    caller: normalizeIncomingCallCaller(fallbackMatch?.[1] || normalized),
+    usedFallback: true,
+  };
 }
 
 export function classifyIncomingCallText(payload: {
@@ -337,4 +396,26 @@ export function shouldEscalateIncomingCallEvidence(params: {
     reason: "escalate",
     evidence,
   };
+}
+
+const incomingCallEvidenceApi = {
+  extractIncomingCallCallerName,
+  classifyIncomingCallText,
+  normalizeIncomingCallCaller,
+  buildIncomingCallNotificationBody,
+  buildIncomingCallEvidence,
+  normalizeIncomingCallEvidenceSource,
+  shouldEscalateIncomingCallEvidence,
+};
+
+(globalThis as typeof globalThis & {
+  __mdIncomingCallEvidence?: typeof incomingCallEvidenceApi;
+}).__mdIncomingCallEvidence = incomingCallEvidenceApi;
+
+try {
+  if (typeof module !== "undefined" && module?.exports) {
+    module.exports = incomingCallEvidenceApi;
+  }
+} catch {
+  // Running in browser context without CommonJS; global binding above is enough.
 }

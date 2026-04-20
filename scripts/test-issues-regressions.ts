@@ -45,6 +45,8 @@ const loadNotificationActivityPolicy = () =>
   require(path.join(APP_ROOT, "src/shared/notification-activity-policy.ts"));
 const loadNotificationDisplayPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-display-policy.ts"));
+const loadNotificationHandler = () =>
+  require(path.join(APP_ROOT, "src/main/notification-handler.ts"));
 const loadIncomingCallOverlayPolicy = () =>
   require(path.join(APP_ROOT, "src/main/incoming-call-overlay-policy.ts"));
 const loadIncomingCallIpcPolicy = () =>
@@ -2786,12 +2788,89 @@ const runIncomingCallIpcPolicyTests = () => {
     "#49 incoming-call notification bodies should reuse the active session caller when a placeholder echo arrives",
   );
   assertEqual(
+    incomingCallEvidence.normalizeIncomingCallCaller(
+      "callProfile pictureIncoming",
+    ),
+    null,
+    "#50 incoming-call caller normalisation should reject accessibility chrome junk",
+  );
+  assertEqual(
+    incomingCallEvidence.normalizeIncomingCallCaller(
+      "call Profile picture Incoming",
+    ),
+    null,
+    "#50 incoming-call caller normalisation should reject mixed placeholder caller labels",
+  );
+  assertEqual(
+    incomingCallEvidence.extractIncomingCallCallerName(
+      "callProfile pictureIncoming",
+    ).caller,
+    null,
+    "#50 incoming-call caller extraction should fail closed for placeholder junk",
+  );
+  assertEqual(
+    incomingCallEvidence.extractIncomingCallCallerName(
+      "Amanda Goodwin is calling you",
+    ).caller,
+    "Amanda Goodwin",
+    "#50 incoming-call caller extraction should keep real caller names from active-ring text",
+  );
+  assertEqual(
+    incomingCallEvidence.extractIncomingCallCallerName(
+      "Incoming call from Amanda Goodwin",
+    ).caller,
+    "Amanda Goodwin",
+    "#50 incoming-call caller extraction should keep real caller names from incoming-call titles",
+  );
+  assertEqual(
     incomingCallEvidence.buildIncomingCallNotificationBody({
       caller: "",
       body: "Unknown caller",
     }),
     "Someone is calling you on Messenger",
     "#49 incoming-call notification bodies should stay generic when no usable caller survives normalisation",
+  );
+
+  const placeholderEchoDecision =
+    incomingCallIpcPolicy.decideIncomingCallSessionUpdate({
+      sameActiveSession: true,
+      normalizedCaller: null,
+      notificationBody: "Someone is calling you on Messenger",
+      activeNotificationBody: "Amanda Goodwin is calling you on Messenger",
+      dedupeReason: "same-key",
+    });
+  assertEqual(
+    placeholderEchoDecision.action,
+    "ignore-placeholder-echo",
+    "#50 incoming-call IPC should ignore same-session placeholder echoes once a better caller is active",
+  );
+
+  const improvedCallerDecision =
+    incomingCallIpcPolicy.decideIncomingCallSessionUpdate({
+      sameActiveSession: true,
+      normalizedCaller: "Amanda Goodwin",
+      notificationBody: "Amanda Goodwin is calling you on Messenger",
+      activeNotificationBody: "Someone is calling you on Messenger",
+      dedupeReason: "same-key",
+    });
+  assertEqual(
+    improvedCallerDecision.action,
+    "show-improved-notification",
+    "#50 incoming-call IPC should immediately upgrade a generic active notification when a same-key caller name arrives",
+  );
+
+  const unchangedCallerDecision =
+    incomingCallIpcPolicy.decideIncomingCallSessionUpdate({
+      sameActiveSession: true,
+      normalizedCaller: "Amanda Goodwin",
+      notificationBody: "Amanda Goodwin is calling you on Messenger",
+      activeNotificationBody: "Amanda Goodwin is calling you on Messenger",
+      dedupeReason: "same-key",
+    });
+  assertEqual(
+    unchangedCallerDecision.action,
+    "refresh-active-session",
+    "#50 incoming-call IPC should avoid re-showing notifications when the same-key caller body is unchanged",
   );
 };
 
@@ -3633,16 +3712,38 @@ const runNotificationPolicyTests = () => {
       searchText?: string;
     };
   }) => {
+    const classifySuppressionClass = (payload: { title: string; body: string }) => {
+      const callClassification =
+        notificationDecisionPolicy.classifyCallNotification(payload);
+      if (callClassification.shouldSuppressNotification) {
+        return "call-history";
+      }
+      if (
+        notificationDecisionPolicy.isLikelyGlobalFacebookNotification(payload)
+      ) {
+        return "global-activity";
+      }
+      return "message";
+    };
     const snapshotFresh =
       typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
         "function" &&
       notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary(
         input.reason,
       );
-    const recordedBodies = new Map<string, string>();
+    const recordedState = new Map<
+      string,
+      { body: string; suppressionClass: "message" | "global-activity" | "call-history" }
+    >();
     if (snapshotFresh) {
       for (const row of input.existingUnreadRows) {
-        recordedBodies.set(row.href, row.body);
+        recordedState.set(row.href, {
+          body: row.body,
+          suppressionClass: classifySuppressionClass({
+            title: row.title,
+            body: row.body,
+          }),
+        });
       }
     }
 
@@ -3650,6 +3751,13 @@ const runNotificationPolicyTests = () => {
       input.replayPayload,
       [input.replayRow],
     );
+    const replaySuppressionClass =
+      classifySuppressionClass(input.replayPayload) === "message"
+        ? classifySuppressionClass({
+            title: input.replayRow.title,
+            body: input.replayRow.body,
+          })
+        : classifySuppressionClass(input.replayPayload);
     const replayLooksGlobalActivity =
       notificationDecisionPolicy.isLikelyGlobalFacebookNotification(
         input.replayPayload,
@@ -3660,7 +3768,15 @@ const runNotificationPolicyTests = () => {
       });
     const preExistingReplaySuppressed = Boolean(
       match.matchedHref &&
-        recordedBodies.get(match.matchedHref) === input.replayRow.body,
+        (() => {
+          const existing = recordedState.get(match.matchedHref!);
+          return Boolean(
+            existing &&
+              (existing.body === input.replayRow.body ||
+                (existing.suppressionClass !== "message" &&
+                  existing.suppressionClass === replaySuppressionClass)),
+          );
+        })(),
     );
     const shouldNotify =
       !match.ambiguous &&
@@ -3964,6 +4080,39 @@ const runNotificationPolicyTests = () => {
     "#46 should not globally suppress incoming call notifications",
   );
 
+  const calledYouClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Amanda",
+      body: "Amanda called you",
+    });
+  assertEqual(
+    calledYouClassifier.shouldSuppressNotification,
+    true,
+    "#50 call classifier should suppress connected-call history rows such as X called you",
+  );
+
+  const youCalledClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Amanda",
+      body: "You called Amanda",
+    });
+  assertEqual(
+    youCalledClassifier.shouldSuppressNotification,
+    true,
+    "#50 call classifier should suppress self-authored connected-call history rows",
+  );
+
+  const ordinaryMessageClassifier =
+    notificationDecisionPolicy.classifyCallNotification({
+      title: "Amanda",
+      body: "Can you call me later?",
+    });
+  assertEqual(
+    ordinaryMessageClassifier.shouldSuppressNotification,
+    false,
+    "#50 call classifier should not suppress ordinary messages that mention calls",
+  );
+
   const deduper = notificationDecisionPolicy.createNotificationDeduper(5000);
   assertEqual(
     deduper.shouldSuppress("/t/group-project", 1000),
@@ -3984,6 +4133,7 @@ const runNotificationPolicyTests = () => {
 
 const runNotificationDisplayPolicyTests = () => {
   const notificationDisplayPolicy = loadNotificationDisplayPolicy();
+  const { resolveNotificationDisplayBoundary } = loadNotificationHandler();
   assert(
     typeof notificationDisplayPolicy.formatNotificationDisplayTitle ===
       "function",
@@ -4087,6 +4237,39 @@ const runNotificationDisplayPolicyTests = () => {
       },
     }),
     "#49 notification name-cache cleanup should migrate legacy single-name entries and supply fallback timestamps",
+  );
+
+  const calledYouBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Amanda",
+      body: "Amanda called you",
+    });
+  assertEqual(
+    calledYouBoundary.suppress,
+    true,
+    "#50 display-boundary policy should suppress connected-call history notifications",
+  );
+
+  const callEndedBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Messenger",
+      body: "Call ended",
+    });
+  assertEqual(
+    callEndedBoundary.suppress,
+    true,
+    "#50 display-boundary policy should suppress call ended status notifications",
+  );
+
+  const incomingCallBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Incoming call",
+      body: "Amanda Goodwin is calling you on Messenger",
+    });
+  assertEqual(
+    incomingCallBoundary.suppress,
+    false,
+    "#50 display-boundary policy should keep genuine incoming-call notifications",
   );
 };
 

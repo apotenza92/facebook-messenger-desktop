@@ -82,6 +82,36 @@
         "preExistingReplaySuppressed": true,
         "shouldNotify": false
       }
+    },
+    {
+      "name": "resume-replays-existing-group-approval-row-with-rewritten-body",
+      "reason": "resume",
+      "existingUnreadRows": [
+        {
+          "href": "/t/group-admin-queue-rewritten",
+          "title": "Account D",
+          "body": "Membership request pending in a group you're managing",
+          "muted": false,
+          "unread": true
+        }
+      ],
+      "replayPayload": {
+        "title": "Account D",
+        "body": "New message"
+      },
+      "replayRow": {
+        "href": "/t/group-admin-queue-rewritten",
+        "title": "Account D",
+        "body": "Taylor requested to join this group you're managing",
+        "muted": false,
+        "unread": true
+      },
+      "expect": {
+        "snapshotFresh": true,
+        "replayLooksGlobalActivity": true,
+        "preExistingReplaySuppressed": true,
+        "shouldNotify": false
+      }
     }
   ]
 }
