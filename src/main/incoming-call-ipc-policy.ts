@@ -44,6 +44,11 @@ export type IncomingCallSessionUpdateDecision = {
   shouldUseActiveSessionBody: boolean;
 };
 
+export type IncomingCallFirstNotificationDelayDecision = {
+  shouldDelay: boolean;
+  reason: "callerless-first-signal" | "has-caller" | "active-session" | "not-first-display";
+};
+
 export type IncomingCallSignalEscalationDecision = IncomingCallEscalationDecision;
 
 export type IncomingCallWindowFocusTarget = {
@@ -240,5 +245,37 @@ export function decideIncomingCallSessionUpdate(params: {
     shouldRefreshReminder: true,
     shouldShowImprovedNotification: false,
     shouldUseActiveSessionBody: false,
+  };
+}
+
+export function decideIncomingCallFirstNotificationDelay(params: {
+  shouldNotify: boolean;
+  sameActiveSession: boolean;
+  normalizedCaller: string | null;
+}): IncomingCallFirstNotificationDelayDecision {
+  if (!params.shouldNotify) {
+    return {
+      shouldDelay: false,
+      reason: "not-first-display",
+    };
+  }
+
+  if (params.sameActiveSession) {
+    return {
+      shouldDelay: false,
+      reason: "active-session",
+    };
+  }
+
+  if (params.normalizedCaller !== null) {
+    return {
+      shouldDelay: false,
+      reason: "has-caller",
+    };
+  }
+
+  return {
+    shouldDelay: true,
+    reason: "callerless-first-signal",
   };
 }

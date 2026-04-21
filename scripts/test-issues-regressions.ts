@@ -2459,6 +2459,11 @@ const runIncomingCallIpcPolicyTests = () => {
       "function",
     "incoming call IPC policy missing decideIncomingCallSignalEscalation",
   );
+  assert(
+    typeof incomingCallIpcPolicy.decideIncomingCallFirstNotificationDelay ===
+      "function",
+    "incoming call IPC policy missing decideIncomingCallFirstNotificationDelay",
+  );
 
   const notificationOnlyEscalation =
     incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
@@ -2857,6 +2862,42 @@ const runIncomingCallIpcPolicyTests = () => {
     improvedCallerDecision.action,
     "show-improved-notification",
     "#50 incoming-call IPC should immediately upgrade a generic active notification when a same-key caller name arrives",
+  );
+
+  const callerlessFirstToastDecision =
+    incomingCallIpcPolicy.decideIncomingCallFirstNotificationDelay({
+      shouldNotify: true,
+      sameActiveSession: false,
+      normalizedCaller: null,
+    });
+  assertEqual(
+    callerlessFirstToastDecision.shouldDelay,
+    true,
+    "#50 incoming-call IPC should hold a callerless first toast briefly while waiting for better caller evidence",
+  );
+
+  const namedFirstToastDecision =
+    incomingCallIpcPolicy.decideIncomingCallFirstNotificationDelay({
+      shouldNotify: true,
+      sameActiveSession: false,
+      normalizedCaller: "User A",
+    });
+  assertEqual(
+    namedFirstToastDecision.shouldDelay,
+    false,
+    "#50 incoming-call IPC should show a named first toast immediately",
+  );
+
+  const activeSessionFirstToastDecision =
+    incomingCallIpcPolicy.decideIncomingCallFirstNotificationDelay({
+      shouldNotify: true,
+      sameActiveSession: true,
+      normalizedCaller: null,
+    });
+  assertEqual(
+    activeSessionFirstToastDecision.shouldDelay,
+    false,
+    "#50 incoming-call IPC should not delay active-session placeholder echoes",
   );
 
   const unchangedCallerDecision =

@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.1-beta.10] - 2026-04-21
+
+### Fixed
+
+- **Issue #50 follow-up: reduce first-ring call noise and trace remaining admin leaks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Hold callerless incoming-call notifications briefly so same-session caller evidence can replace the generic first toast before anything is displayed.
+  - Allow improved caller evidence to bypass the short DOM call-signal debounce, preventing the first usable caller name from being delayed until a later reminder.
+  - Stop pending and reminder incoming-call notifications as soon as the answered call window reports an active call surface, avoiding duplicate named call toasts after pickup.
+  - Record browser notification permission decisions and service-worker notification candidates so remaining group/admin leaks can be tied to a browser-originated path, app bridge path, or classifier miss.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.1-beta.9] - 2026-04-20
 
 ### Fixed

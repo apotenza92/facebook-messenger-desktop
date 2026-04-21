@@ -2256,6 +2256,48 @@
     log("Using fallback Notification override method");
   }
 
+  try {
+    const registrationPrototype = window.ServiceWorkerRegistration?.prototype;
+    const originalShowNotification = registrationPrototype?.showNotification;
+    if (
+      registrationPrototype &&
+      typeof originalShowNotification === "function" &&
+      !(registrationPrototype as any).__mdShowNotificationWrapped
+    ) {
+      Object.defineProperty(registrationPrototype, "__mdShowNotificationWrapped", {
+        value: true,
+        configurable: false,
+      });
+      registrationPrototype.showNotification = function (
+        title: string,
+        options?: NotificationOptions,
+      ): Promise<void> {
+        const payload = {
+          title: String(title || ""),
+          body: String(options?.body || ""),
+        };
+        const policy = getNotificationDecisionPolicy();
+        log("Service worker notification candidate analysis", {
+          source: "service-worker-registration",
+          payload,
+          callClassification:
+            policy?.classifyCallNotification?.(payload) ?? null,
+          groupManagementClassification:
+            policy?.classifyGroupManagementNotification?.(payload) ?? null,
+          globalActivity:
+            policy?.isLikelyGlobalFacebookNotification?.(payload) ?? null,
+          permission: Notification.permission,
+        });
+        return originalShowNotification.call(this, title, options);
+      };
+      log("Service worker notification diagnostics installed");
+    }
+  } catch (error) {
+    log("Service worker notification diagnostics unavailable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   // Start MutationObserver detection
   log("Starting MutationObserver notification detection...");
   setupMutationObserver();
@@ -2271,6 +2313,7 @@
 
     // Track if we've already signaled for the current call to avoid repeated signals
     let lastCallSignalTime = 0;
+    let lastCallSignalCaller: string | null = null;
     const CALL_SIGNAL_DEBOUNCE_MS = 5000; // Don't signal more than once every 5 seconds
     // Throttle attribute-mutation checks — class changes fire constantly in React apps
     let lastAttributeScanTime = 0;
@@ -2554,6 +2597,43 @@
       };
     };
 
+    const normalizeSignaledCaller = (caller?: string): string | null => {
+      if (typeof caller !== "string" || !caller.trim()) {
+        return null;
+      }
+      return (
+        extractIncomingCallerName(`${caller} is calling you`) ??
+        extractIncomingCallerName(caller) ??
+        null
+      );
+    };
+
+    const shouldSignalIncomingCallState = (
+      now: number,
+      caller?: string,
+    ): boolean => {
+      if (now - lastCallSignalTime >= CALL_SIGNAL_DEBOUNCE_MS) {
+        return true;
+      }
+
+      const normalizedCaller = normalizeSignaledCaller(caller);
+      return (
+        normalizedCaller !== null &&
+        normalizedCaller !== lastCallSignalCaller
+      );
+    };
+
+    const rememberIncomingCallSignal = (
+      now: number,
+      caller?: string,
+    ): void => {
+      lastCallSignalTime = now;
+      const normalizedCaller = normalizeSignaledCaller(caller);
+      if (normalizedCaller !== null) {
+        lastCallSignalCaller = normalizedCaller;
+      }
+    };
+
     const extractIncomingCallerFromVisibleUi = (): string | undefined => {
       const uiState = getVisibleIncomingCallUiState();
       return uiState.caller;
@@ -2687,9 +2767,6 @@
     // Process added nodes to check for call popup
     const checkForCallPopup = (nodes: NodeList) => {
       const now = Date.now();
-      if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) {
-        return; // Debounce - don't check if we recently signaled
-      }
 
       for (const node of Array.from(nodes)) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -2705,15 +2782,18 @@
           if (!uiState.source) {
             continue;
           }
+          if (!shouldSignalIncomingCallState(now, uiState.caller)) {
+            continue;
+          }
           log("Call popup detected in DOM - bringing window to foreground");
           markIncomingCallUiVisible(now);
-          lastCallSignalTime = now;
           const payload = buildIncomingCallPayload(uiState.source, {
             caller: uiState.caller,
             matchedPattern: uiState.matchedPattern,
             hasVisibleControls: uiState.hasVisibleControls,
             capturedAt: now,
           });
+          rememberIncomingCallSignal(now, payload.evidence?.caller);
           rememberIncomingCallEvidence(
             payload.evidence as IncomingCallEvidence,
           );
@@ -2740,17 +2820,20 @@
             if (!uiState.source) {
               continue;
             }
+            if (!shouldSignalIncomingCallState(now, uiState.caller)) {
+              continue;
+            }
             log(
               "Call popup detected in descendant - bringing window to foreground",
             );
             markIncomingCallUiVisible(now);
-            lastCallSignalTime = now;
             const payload = buildIncomingCallPayload(uiState.source, {
               caller: uiState.caller,
               matchedPattern: uiState.matchedPattern,
               hasVisibleControls: uiState.hasVisibleControls,
               capturedAt: now,
             });
+            rememberIncomingCallSignal(now, payload.evidence?.caller);
             rememberIncomingCallEvidence(
               payload.evidence as IncomingCallEvidence,
             );
@@ -2801,7 +2884,6 @@
           if (changedEl.nodeType !== Node.ELEMENT_NODE) continue;
           if (isComposerOverlayElement(changedEl)) continue;
           const now = Date.now();
-          if (now - lastCallSignalTime < CALL_SIGNAL_DEBOUNCE_MS) continue;
           // Throttle: class changes fire constantly in React — check at most twice/sec
           if (now - lastAttributeScanTime < ATTRIBUTE_SCAN_THROTTLE_MS)
             continue;
@@ -2815,15 +2897,18 @@
             if (!uiState.source) {
               continue;
             }
+            if (!shouldSignalIncomingCallState(now, uiState.caller)) {
+              continue;
+            }
             log("Call popup detected via attribute change");
             markIncomingCallUiVisible(now);
-            lastCallSignalTime = now;
             const payload = buildIncomingCallPayload(uiState.source, {
               caller: uiState.caller,
               matchedPattern: uiState.matchedPattern,
               hasVisibleControls: uiState.hasVisibleControls,
               capturedAt: now,
             });
+            rememberIncomingCallSignal(now, payload.evidence?.caller);
             rememberIncomingCallEvidence(
               payload.evidence as IncomingCallEvidence,
             );
@@ -2853,7 +2938,7 @@
           markIncomingCallUiVisible(now);
 
           if (
-            now - lastCallSignalTime >= CALL_SIGNAL_DEBOUNCE_MS &&
+            shouldSignalIncomingCallState(now, uiState.caller) &&
             !isWindowFocused()
           ) {
             const periodicScanEvidenceSource: IncomingCallEvidenceSource =
@@ -2880,7 +2965,7 @@
               return;
             }
             log("Periodic scan: incoming call UI detected");
-            lastCallSignalTime = now;
+            rememberIncomingCallSignal(now, payload.evidence?.caller);
             rememberIncomingCallEvidence(
               payload.evidence as IncomingCallEvidence,
             );

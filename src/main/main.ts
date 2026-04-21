@@ -62,6 +62,7 @@ import {
 import {
   INCOMING_CALL_NO_KEY_MAP_KEY,
   decideIncomingCallNativeNotification,
+  decideIncomingCallFirstNotificationDelay,
   decideIncomingCallSessionUpdate,
   decideIncomingCallSignalEscalation,
   type IncomingCallIpcPayload,
@@ -258,8 +259,23 @@ let activeIncomingCallNotificationBody: string | null = null;
 let activeIncomingCallCaller: string | null = null;
 let activeIncomingCallNotificationSeenAt = 0;
 let incomingCallNotificationReminderTimer: NodeJS.Timeout | null = null;
+type PendingIncomingCallNotification = {
+  sessionKey: string;
+  notificationTag: string;
+  notificationBody: string;
+  caller: string | null;
+  callKey: string | null;
+  webContentsId: number;
+  url: string;
+  confidence?: string;
+  evidenceSource?: string;
+  timer: NodeJS.Timeout;
+};
+let pendingIncomingCallNotification: PendingIncomingCallNotification | null =
+  null;
 const INCOMING_CALL_NOTIFICATION_REMINDER_MS = 12_000;
 const INCOMING_CALL_NOTIFICATION_STALE_MS = 120_000;
+const INCOMING_CALL_FIRST_TOAST_CALLER_GRACE_MS = 6_000;
 let isSystemSuspendedOrLocked = false;
 let cachedMacDoNotDisturbActive = false;
 let lastMacDoNotDisturbCheckMs = 0;
@@ -311,7 +327,155 @@ function normalizeMessagesTopCrop(
   );
 }
 
+function clearPendingIncomingCallNotification(reason: string): void {
+  if (pendingIncomingCallNotification === null) {
+    return;
+  }
+
+  clearTimeout(pendingIncomingCallNotification.timer);
+  pushIncomingCallDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "incoming-call-pending-notification-cleared",
+    webContentsId: pendingIncomingCallNotification.webContentsId,
+    url: pendingIncomingCallNotification.url,
+    reason,
+    sessionKey: pendingIncomingCallNotification.sessionKey,
+    notificationTag: pendingIncomingCallNotification.notificationTag,
+    caller: pendingIncomingCallNotification.caller,
+  });
+  pendingIncomingCallNotification = null;
+}
+
+function hasPendingIncomingCallNotification(): boolean {
+  return pendingIncomingCallNotification !== null;
+}
+
+function isPendingIncomingCallNotificationSession(
+  sessionKey: string,
+  notificationTag: string,
+): boolean {
+  return (
+    pendingIncomingCallNotification !== null &&
+    (pendingIncomingCallNotification.sessionKey === sessionKey ||
+      pendingIncomingCallNotification.notificationTag === notificationTag)
+  );
+}
+
+function flushPendingIncomingCallNotification(reason: string): void {
+  const pending = pendingIncomingCallNotification;
+  if (pending === null) {
+    return;
+  }
+
+  clearTimeout(pending.timer);
+  pendingIncomingCallNotification = null;
+
+  const now = Date.now();
+  incomingCallNotificationByKey.set(
+    pending.callKey ?? INCOMING_CALL_NO_KEY_MAP_KEY,
+    now,
+  );
+  incomingCallNotificationByKey.set(INCOMING_CALL_NO_KEY_MAP_KEY, now);
+  lastNoKeyIncomingCallNotificationAt = now;
+
+  showNativeNotification({
+    data: {
+      title: "Incoming call",
+      body: pending.notificationBody,
+      tag: pending.notificationTag,
+      silent: false,
+      requireInteraction: true,
+    },
+    displaySource: "incoming-call",
+    webContentsId: pending.webContentsId,
+    url: pending.url,
+    reason,
+  });
+
+  refreshIncomingCallNotificationReminder(
+    pending.sessionKey,
+    pending.notificationTag,
+    pending.notificationBody,
+    pending.caller,
+    now,
+  );
+
+  pushIncomingCallDebugEvent({
+    timestamp: now,
+    source: "main",
+    event: "incoming-call-pending-notification-flushed",
+    webContentsId: pending.webContentsId,
+    url: pending.url,
+    reason,
+    callKey: pending.callKey,
+    caller: pending.caller,
+    sessionKey: pending.sessionKey,
+    notificationTag: pending.notificationTag,
+    confidence: pending.confidence,
+    evidenceSource: pending.evidenceSource,
+  });
+}
+
+function schedulePendingIncomingCallNotification(params: {
+  sessionKey: string;
+  notificationTag: string;
+  notificationBody: string;
+  caller: string | null;
+  callKey: string | null;
+  webContentsId: number;
+  url: string;
+  confidence?: string;
+  evidenceSource?: string;
+}): void {
+  if (
+    pendingIncomingCallNotification !== null &&
+    !isPendingIncomingCallNotificationSession(
+      params.sessionKey,
+      params.notificationTag,
+    )
+  ) {
+    clearPendingIncomingCallNotification("replaced-by-new-call-session");
+  }
+
+  if (pendingIncomingCallNotification !== null) {
+    pendingIncomingCallNotification.notificationBody = params.notificationBody;
+    pendingIncomingCallNotification.caller = params.caller;
+    pendingIncomingCallNotification.callKey = params.callKey;
+    pendingIncomingCallNotification.webContentsId = params.webContentsId;
+    pendingIncomingCallNotification.url = params.url;
+    pendingIncomingCallNotification.confidence = params.confidence;
+    pendingIncomingCallNotification.evidenceSource = params.evidenceSource;
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    flushPendingIncomingCallNotification("caller-grace-timeout");
+  }, INCOMING_CALL_FIRST_TOAST_CALLER_GRACE_MS);
+
+  pendingIncomingCallNotification = {
+    ...params,
+    timer,
+  };
+
+  pushIncomingCallDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "incoming-call-pending-notification-scheduled",
+    webContentsId: params.webContentsId,
+    url: params.url,
+    reason: "callerless-first-signal",
+    callKey: params.callKey,
+    sessionKey: params.sessionKey,
+    notificationTag: params.notificationTag,
+    confidence: params.confidence,
+    evidenceSource: params.evidenceSource,
+  });
+}
+
 function stopIncomingCallNotificationReminder(closeActive: boolean): void {
+  clearPendingIncomingCallNotification("incoming-call-reminder-stopped");
+
   if (incomingCallNotificationReminderTimer !== null) {
     clearInterval(incomingCallNotificationReminderTimer);
     incomingCallNotificationReminderTimer = null;
@@ -758,6 +922,39 @@ function pushNotificationDebugEvent(event: NotificationDebugEvent): void {
   } catch {
     // Ignore debug log write failures.
   }
+}
+
+function recordWebNotificationPermissionDecision(params: {
+  source: "permission-request" | "permission-check";
+  permission: string;
+  granted: boolean;
+  url?: string;
+  requestingUrl?: string;
+  requestingOrigin?: string;
+  webContentsId?: number;
+  isMainFrame?: boolean;
+  reason: string;
+}): void {
+  if (params.permission !== "notifications") {
+    return;
+  }
+
+  pushNotificationDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "web-notification-permission-decision",
+    webContentsId: params.webContentsId,
+    url: params.url,
+    permissionSource: params.source,
+    permission: params.permission,
+    granted: params.granted,
+    reason: params.reason,
+    payload: {
+      requestingUrl: params.requestingUrl,
+      requestingOrigin: params.requestingOrigin,
+      isMainFrame: params.isMainFrame,
+    },
+  });
 }
 
 function shouldWriteReloadDebugLog(): boolean {
@@ -4305,6 +4502,31 @@ function createWindow(source: string = "unknown"): void {
           console.log(
             `[Permissions] Denied ${permission} for non-allowed URL: ${url}`,
           );
+          recordWebNotificationPermissionDecision({
+            source: "permission-request",
+            permission,
+            granted: false,
+            url,
+            requestingUrl: details.requestingUrl,
+            webContentsId: webContents.id,
+            isMainFrame: details.isMainFrame,
+            reason: "non-allowed-origin",
+          });
+          callback(false);
+          return;
+        }
+
+        if (permission === "notifications") {
+          recordWebNotificationPermissionDecision({
+            source: "permission-request",
+            permission,
+            granted: false,
+            url,
+            requestingUrl: details.requestingUrl,
+            webContentsId: webContents.id,
+            isMainFrame: details.isMainFrame,
+            reason: "browser-notifications-disabled",
+          });
           callback(false);
           return;
         }
@@ -4340,6 +4562,17 @@ function createWindow(source: string = "unknown"): void {
         console.log(
           `[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
         );
+        recordWebNotificationPermissionDecision({
+          source: "permission-check",
+          permission,
+          granted: false,
+          url: webContents?.getURL(),
+          requestingOrigin,
+          webContentsId: webContents?.id,
+          reason: permission === "notifications"
+            ? "browser-notifications-disabled"
+            : "not-notification-permission",
+        });
         return hasPermission;
       },
     );
@@ -4764,6 +4997,31 @@ function createWindow(source: string = "unknown"): void {
             console.log(
               `[Permissions] Denied ${permission} for non-allowed URL: ${url} (requesting: ${requestingUrl})`,
             );
+            recordWebNotificationPermissionDecision({
+              source: "permission-request",
+              permission,
+              granted: false,
+              url,
+              requestingUrl,
+              webContentsId: webContents.id,
+              isMainFrame: details.isMainFrame,
+              reason: "non-allowed-origin",
+            });
+            callback(false);
+            return;
+          }
+
+          if (permission === "notifications") {
+            recordWebNotificationPermissionDecision({
+              source: "permission-request",
+              permission,
+              granted: false,
+              url,
+              requestingUrl,
+              webContentsId: webContents.id,
+              isMainFrame: details.isMainFrame,
+              reason: "browser-notifications-disabled",
+            });
             callback(false);
             return;
           }
@@ -4801,6 +5059,18 @@ function createWindow(source: string = "unknown"): void {
           console.log(
             `[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
           );
+          recordWebNotificationPermissionDecision({
+            source: "permission-check",
+            permission,
+            granted: false,
+            url: webContents?.getURL(),
+            requestingOrigin,
+            webContentsId: webContents?.id,
+            reason:
+              permission === "notifications"
+                ? "browser-notifications-disabled"
+                : "not-notification-permission",
+          });
           return hasPermission;
         },
       );
@@ -5239,6 +5509,31 @@ function createWindow(source: string = "unknown"): void {
           console.log(
             `[Permissions] Denied ${permission} for non-allowed URL: ${url}`,
           );
+          recordWebNotificationPermissionDecision({
+            source: "permission-request",
+            permission,
+            granted: false,
+            url,
+            requestingUrl: details.requestingUrl,
+            webContentsId: webContents.id,
+            isMainFrame: details.isMainFrame,
+            reason: "non-allowed-origin",
+          });
+          callback(false);
+          return;
+        }
+
+        if (permission === "notifications") {
+          recordWebNotificationPermissionDecision({
+            source: "permission-request",
+            permission,
+            granted: false,
+            url,
+            requestingUrl: details.requestingUrl,
+            webContentsId: webContents.id,
+            isMainFrame: details.isMainFrame,
+            reason: "browser-notifications-disabled",
+          });
           callback(false);
           return;
         }
@@ -5274,6 +5569,18 @@ function createWindow(source: string = "unknown"): void {
         console.log(
           `[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
         );
+        recordWebNotificationPermissionDecision({
+          source: "permission-check",
+          permission,
+          granted: false,
+          url: webContents?.getURL(),
+          requestingOrigin,
+          webContentsId: webContents?.id,
+          reason:
+            permission === "notifications"
+              ? "browser-notifications-disabled"
+              : "not-notification-permission",
+        });
         return hasPermission;
       },
     );
@@ -5605,6 +5912,31 @@ function createWindow(source: string = "unknown"): void {
             console.log(
               `[Permissions] Denied ${permission} for non-allowed URL: ${url} (requesting: ${requestingUrl})`,
             );
+            recordWebNotificationPermissionDecision({
+              source: "permission-request",
+              permission,
+              granted: false,
+              url,
+              requestingUrl,
+              webContentsId: webContents.id,
+              isMainFrame: details.isMainFrame,
+              reason: "non-allowed-origin",
+            });
+            callback(false);
+            return;
+          }
+
+          if (permission === "notifications") {
+            recordWebNotificationPermissionDecision({
+              source: "permission-request",
+              permission,
+              granted: false,
+              url,
+              requestingUrl,
+              webContentsId: webContents.id,
+              isMainFrame: details.isMainFrame,
+              reason: "browser-notifications-disabled",
+            });
             callback(false);
             return;
           }
@@ -5642,6 +5974,18 @@ function createWindow(source: string = "unknown"): void {
           console.log(
             `[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
           );
+          recordWebNotificationPermissionDecision({
+            source: "permission-check",
+            permission,
+            granted: false,
+            url: webContents?.getURL(),
+            requestingOrigin,
+            webContentsId: webContents?.id,
+            reason:
+              permission === "notifications"
+                ? "browser-notifications-disabled"
+                : "not-notification-permission",
+          });
           return hasPermission;
         },
       );
@@ -8841,6 +9185,30 @@ function setupIpcHandlers(): void {
       ...normalizedState,
     });
 
+    if (
+      basePayload.callWindowOpen === true &&
+      (activeIncomingCallNotificationTag !== null ||
+        hasPendingIncomingCallNotification())
+    ) {
+      pushIncomingCallDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "incoming-call-ended",
+        webContentsId: event.sender.id,
+        url,
+        reason: "call-window-open",
+        activeTag: activeIncomingCallNotificationTag,
+        statusText:
+          typeof basePayload.statusText === "string"
+            ? basePayload.statusText
+            : undefined,
+        activeControlLabels: Array.isArray(basePayload.activeControlLabels)
+          ? basePayload.activeControlLabels
+          : undefined,
+      });
+      stopIncomingCallNotificationReminder(true);
+    }
+
     if (basePayload.callWindowOpen === false) {
       requestMessagesViewportRecovery("child-call-window-closed");
     }
@@ -8965,6 +9333,43 @@ function setupIpcHandlers(): void {
       activeNotificationBody: activeIncomingCallNotificationBody,
       dedupeReason: decision.reason,
     });
+    const pendingSameSession = isPendingIncomingCallNotificationSession(
+      sessionKey,
+      notificationTag,
+    );
+
+    if (pendingSameSession && caller === null) {
+      schedulePendingIncomingCallNotification({
+        sessionKey,
+        notificationTag,
+        notificationBody,
+        caller,
+        callKey: decision.callKey,
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        confidence: evidence.confidence,
+        evidenceSource: evidence.source,
+      });
+      pushIncomingCallDebugEvent({
+        timestamp: now,
+        source: "main",
+        event: "incoming-call-notification-deduplicated",
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        callKey: decision.callKey,
+        reason: "pending-callerless-first-signal",
+        caller,
+        sessionKey,
+        updatedActiveSession: false,
+        confidence: evidence.confidence,
+        evidenceSource: evidence.source,
+      });
+      return;
+    }
+
+    if (pendingSameSession && caller !== null) {
+      clearPendingIncomingCallNotification("better-caller-arrived");
+    }
 
     if (sessionUpdate.action === "ignore-placeholder-echo") {
       const activeBody = activeIncomingCallNotificationBody;
@@ -9042,6 +9447,31 @@ function setupIpcHandlers(): void {
           activeIncomingCallNotificationBody !== notificationBody,
         confidence: evidence.confidence,
         evidenceSource: evidence.source,
+      });
+      return;
+    }
+
+    const firstNotificationDelay = decideIncomingCallFirstNotificationDelay({
+      shouldNotify: decision.shouldNotify,
+      sameActiveSession,
+      normalizedCaller: caller,
+    });
+    if (firstNotificationDelay.shouldDelay) {
+      schedulePendingIncomingCallNotification({
+        sessionKey,
+        notificationTag,
+        notificationBody,
+        caller,
+        callKey: decision.callKey,
+        webContentsId: event.sender.id,
+        url: senderUrl,
+        confidence: evidence.confidence,
+        evidenceSource: evidence.source,
+      });
+      console.log("[IPC] Incoming call native notification delayed", {
+        callKey: decision.callKey,
+        reason: firstNotificationDelay.reason,
+        sessionKey,
       });
       return;
     }
