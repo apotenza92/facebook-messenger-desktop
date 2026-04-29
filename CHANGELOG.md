@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.1-beta.11] - 2026-04-29
+
+### Fixed
+
+- **Issues #50/#51: simplify notification delivery and stop message-request header leaks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50), [#51](https://github.com/apotenza92/facebook-messenger-desktop/issues/51))
+  - Treat Facebook's own notification title/body as the source of truth instead of enriching notifications with sidebar-derived names.
+  - Keep sidebar observation as a conservative fallback only, with native notifications taking precedence when both paths see the same message.
+  - Suppress group/admin management notifications, global Facebook activity, and post-call history/status notifications at the final display boundary.
+  - Drop generic Messenger image-alt artefacts such as `Icon for this message` while preserving real emoji aliases.
+  - Stop normal chat/message-request top bars from being misclassified as media overlays unless large media is actually present.
+
+### Validation
+
+- `npm run test:issues:deterministic`
+- `npm run test:window-open`
+- `npm run test:notification`
+- `npm run build`
+- Real Electron notification smoke test for direct, group, admin, and post-call fake notifications
+
 ## [1.3.1-beta.10] - 2026-04-21
 
 ### Fixed

@@ -3319,6 +3319,20 @@ async function injectNotificationScripts(
       "[Main Process] Failed to inject notification display policy script:",
   });
 
+  const notificationTextPolicyScriptPath = path.join(
+    __dirname,
+    "../preload/notification-text-policy.js",
+  );
+  await executeInjectedScript({
+    scriptPath: notificationTextPolicyScriptPath,
+    successMessage:
+      "[Main Process] Notification text policy script injected successfully",
+    missingMessage:
+      "[Main Process] Notification text policy script not found at:",
+    errorMessage:
+      "[Main Process] Failed to inject notification text policy script:",
+  });
+
   const notificationDecisionPolicyScriptPath = path.join(
     __dirname,
     "../preload/notification-decision-policy.js",

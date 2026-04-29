@@ -34,13 +34,29 @@ export type NotificationSoundDecisionResolver = (
   data: NotificationData,
 ) => NotificationSoundDecision | null | undefined;
 
+function normalizeNotificationBodyText(value: string): string {
+  const body = String(value || "").replace(/\s+/g, " ").trim();
+  if (!body) return "";
+
+  if (/^\(?icon for this message\)?$/i.test(body)) {
+    return "";
+  }
+
+  if (body === "(Y)" || body === "(y)") {
+    return "👍";
+  }
+
+  return body;
+}
+
 export function resolveNotificationDisplayBoundary(
   data: NotificationData,
 ): NotificationDisplayBoundaryDecision {
   const normalizedTitle = String(data.title || "").trim();
+  const normalizedBody = normalizeNotificationBodyText(data.body || "");
   const activityPayload = {
     title: normalizedTitle,
-    body: String(data.body || "").replace(/\s+/g, " ").trim(),
+    body: normalizedBody,
   };
   const callClassification = classifyCallNotification(activityPayload);
   if (callClassification.shouldSuppressNotification) {
@@ -78,10 +94,10 @@ export function resolveNotificationDisplayBoundary(
     };
   }
 
-  const normalizedBody =
+  const displayBody =
     callClassification.isIncomingCall
-      ? buildIncomingCallNotificationBody({ body: String(data.body || "") })
-      : String(data.body || "");
+      ? buildIncomingCallNotificationBody({ body: normalizedBody })
+      : normalizedBody;
 
   return {
     suppress: false,
@@ -89,7 +105,7 @@ export function resolveNotificationDisplayBoundary(
     normalizedData: {
       ...data,
       title: normalizedTitle,
-      body: normalizedBody,
+      body: displayBody,
     },
   };
 }

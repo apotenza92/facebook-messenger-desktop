@@ -584,6 +584,21 @@
     return `native:call:${normalized}`;
   };
 
+  const normalizeNativeNotificationDedupeKey = (
+    title: string,
+    body: string,
+  ): string => {
+    const normalized = `${title} ${body}`
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240);
+    return `native:message:${normalized}`;
+  };
+
+  const normalizeNativeConversationDeliveryKey = (href: string): string =>
+    `native:conversation:${normalizeConversationKey(href)}`;
+
   // ============================================================================
   // SHARED STATE - used by both MutationObserver and Title-based detection
   // ============================================================================
@@ -614,6 +629,8 @@
   const boundarySnapshotRecords = new Map<string, BoundarySnapshotRecord>();
   const conversationNotificationDeduper =
     getNotificationDecisionPolicy()?.createNotificationDeduper(4000) ?? null;
+  const recentNativeMessageDeliveries = new Map<string, number>();
+  const MUTATION_FALLBACK_NATIVE_GRACE_MS = 2500;
 
   const normalizeConversationKey = (raw: string): string => {
     if (raw.startsWith("native:")) {
@@ -693,6 +710,54 @@
     return existing.body === body;
   };
 
+  const pruneRecentNativeMessageDeliveries = (now = Date.now()): void => {
+    for (const [key, deliveredAt] of recentNativeMessageDeliveries) {
+      if (now - deliveredAt > MUTATION_FALLBACK_NATIVE_GRACE_MS) {
+        recentNativeMessageDeliveries.delete(key);
+      }
+    }
+  };
+
+  const rememberNativeMessageDelivery = (
+    href: string | undefined,
+    body: string,
+    now = Date.now(),
+  ): void => {
+    recentNativeMessageDeliveries.set(
+      normalizeNativeNotificationDedupeKey(href || "", body),
+      now,
+    );
+    if (href) {
+      recentNativeMessageDeliveries.set(
+        normalizeNativeConversationDeliveryKey(href),
+        now,
+      );
+    }
+    pruneRecentNativeMessageDeliveries(now);
+  };
+
+  const hasRecentNativeMessageDelivery = (
+    href: string | undefined,
+    body: string,
+    now = Date.now(),
+  ): boolean => {
+    pruneRecentNativeMessageDeliveries(now);
+    const deliveredAt = recentNativeMessageDeliveries.get(
+      normalizeNativeNotificationDedupeKey(href || "", body),
+    );
+    const conversationDeliveredAt = href
+      ? recentNativeMessageDeliveries.get(normalizeNativeConversationDeliveryKey(href))
+      : undefined;
+    const mostRecentDeliveredAt = Math.max(
+      deliveredAt ?? 0,
+      conversationDeliveredAt ?? 0,
+    );
+    return (
+      mostRecentDeliveredAt > 0 &&
+      now - mostRecentDeliveredAt <= MUTATION_FALLBACK_NATIVE_GRACE_MS
+    );
+  };
+
   const getBoundarySnapshotReplaySuppression = (
     href: string,
     body: string,
@@ -770,6 +835,21 @@
   // UTILITY FUNCTIONS
   // ============================================================================
 
+  const normalizeNotificationImageAltText = (
+    value: string | null | undefined,
+  ): string => {
+    const policy = (window as any).__mdNotificationTextPolicy;
+    if (typeof policy?.normalizeNotificationImageAltText === "function") {
+      return policy.normalizeNotificationImageAltText(value);
+    }
+
+    const alt = String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (alt === "(Y)" || alt === "(y)") return "👍";
+    return /^\(?icon for this message\)?$/i.test(alt) ? "" : alt;
+  };
+
   // Generate text from a node, handling emojis
   const generateStringFromNode = (
     element: Element | null,
@@ -778,10 +858,7 @@
     const cloneElement = element.cloneNode(true) as Element;
     const images = Array.from(cloneElement.querySelectorAll("img"));
     for (const image of images) {
-      let emojiString = image.alt;
-      if (emojiString === "(Y)" || emojiString === "(y)") {
-        emojiString = "👍";
-      }
+      const emojiString = normalizeNotificationImageAltText(image.alt);
       image.parentElement?.replaceWith(
         document.createTextNode(emojiString || ""),
       );
@@ -1402,62 +1479,119 @@
           return;
         }
 
-        const bodyStr = String(body).slice(0, 100);
+        const bodyStr = String(body);
+        const bodyDedupeValue = bodyStr.slice(0, 100);
+        let notificationHref: string | undefined;
         const sidebar = findSidebarElement();
-        if (!sidebar) {
-          log("Native notification skipped - sidebar unavailable", { title });
-          return;
-        }
-
-        const { rowByHref, conversationCandidates } =
-          collectSidebarConversationSnapshot(sidebar);
-
-        const match = policy.resolveNativeNotificationTarget(
-          { title: String(title), body: String(body) },
-          conversationCandidates,
-        );
-        log("Native notification match", match);
-
-        if (match.ambiguous || !match.matchedHref) {
-          log("Native notification ambiguous - suppressing", {
-            title,
-            confidence: match.confidence,
-            reason: match.reason,
-          });
-          return;
-        }
-
-        if (match.muted) {
-          log("Native notification for muted conversation - skipping", {
-            title,
-            href: match.matchedHref,
-          });
-          return;
-        }
-
-        const normalizedHref = normalizeConversationKey(match.matchedHref);
-        const matchedRow = rowByHref.get(normalizedHref);
-        if (!matchedRow) {
-          log("Native notification match had no unread row - suppressing", {
-            title,
-            href: normalizedHref,
-          });
-          return;
-        }
-
-        const matchedInfo = extractConversationInfo(matchedRow);
+        let normalizedHref: string | undefined;
         const rawActivity = evaluateNotificationActivity(nativePayload);
-        const matchedActivity = matchedInfo
-          ? evaluateNotificationActivity({
-              title: matchedInfo.title,
-              body: matchedInfo.body,
-            })
-          : null;
-        const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
-          normalizedHref,
-          matchedInfo?.body || bodyStr,
-          matchedActivity?.suppressionClass ?? rawActivity.suppressionClass,
-        );
+        let matchedActivity: NotificationActivityEvaluation | null = null;
+        let wakeReplaySuppression: BoundarySnapshotRecord | null = null;
+
+        if (sidebar) {
+          const { rowByHref, conversationCandidates } =
+            collectSidebarConversationSnapshot(sidebar);
+
+          const match = policy.resolveNativeNotificationTarget(
+            nativePayload,
+            conversationCandidates,
+          );
+          log("Native notification match", match);
+
+          if (match.ambiguous) {
+            log("Native notification ambiguous - suppressing", {
+              title,
+              confidence: match.confidence,
+              reason: match.reason,
+            });
+            return;
+          }
+
+          if (match.muted) {
+            log("Native notification for muted conversation - skipping", {
+              title,
+              href: match.matchedHref,
+            });
+            return;
+          }
+
+          if (match.matchedHref) {
+            normalizedHref = normalizeConversationKey(match.matchedHref);
+            notificationHref = normalizedHref;
+            const matchedRow = rowByHref.get(normalizedHref);
+
+            if (matchedRow) {
+              const matchedInfo = extractConversationInfo(matchedRow);
+              matchedActivity = matchedInfo
+                ? evaluateNotificationActivity({
+                    title: matchedInfo.title,
+                    body: matchedInfo.body,
+                  })
+                : null;
+              wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
+                normalizedHref,
+                matchedInfo?.body || bodyDedupeValue,
+                matchedActivity?.suppressionClass ?? rawActivity.suppressionClass,
+              );
+
+              if (
+                matchedActivity?.suppressionClass === "call-history" ||
+                matchedActivity?.suppressionClass === "global-activity"
+              ) {
+                log(
+                  "Native notification suppressed - matched sidebar row is non-message activity",
+                  {
+                    title: matchedInfo?.title || title,
+                    body: matchedInfo?.body || body,
+                    href: normalizedHref,
+                    matched: summarizeNotificationActivity(matchedActivity),
+                  },
+                );
+                return;
+              }
+
+              const selfAuthoredNotification =
+                typeof policy.shouldSuppressSelfAuthoredNotification ===
+                "function"
+                  ? policy.shouldSuppressSelfAuthoredNotification([
+                      nativePayload,
+                      matchedInfo
+                        ? { title: matchedInfo.title, body: matchedInfo.body }
+                        : null,
+                    ])
+                  : Boolean(
+                      matchedInfo &&
+                        typeof policy.isLikelySelfAuthoredMessagePreview ===
+                          "function" &&
+                        policy.isLikelySelfAuthoredMessagePreview({
+                          title: matchedInfo.title,
+                          body: matchedInfo.body,
+                        }),
+                    );
+              if (selfAuthoredNotification) {
+                log("Native notification suppressed - self-authored preview", {
+                  title,
+                  href: normalizedHref,
+                  body: matchedInfo?.body,
+                });
+                return;
+              }
+
+              if (!isConversationUnread(matchedRow)) {
+                log("Native notification matched read conversation - suppressing", {
+                  title,
+                  href: normalizedHref,
+                });
+                return;
+              }
+            }
+          }
+        } else {
+          log("Native notification sidebar unavailable - mirroring Facebook payload without click target", {
+            title,
+          });
+        }
+
         log("Native notification candidate analysis", {
           source: "native",
           normalizedHref,
@@ -1471,119 +1605,65 @@
           boundarySnapshotReason: wakeReplaySuppression?.reason,
         });
 
-        if (
-          rawActivity.suppressionClass === "call-history" ||
-          matchedActivity?.suppressionClass === "call-history"
-        ) {
-          log("Native notification suppressed - call history/system activity", {
+        if (rawActivity.suppressionClass === "call-history") {
+          log("Native notification suppressed - call history activity", {
             title,
             href: normalizedHref,
             raw: summarizeNotificationActivity(rawActivity),
-            matched: matchedActivity
-              ? summarizeNotificationActivity(matchedActivity)
-              : null,
           });
           return;
         }
 
-        const matchedInfoLooksGlobalActivity = Boolean(
-          matchedActivity?.suppressionClass === "global-activity",
-        );
-        if (
-          rawActivity.suppressionClass === "global-activity" ||
-          matchedInfoLooksGlobalActivity
-        ) {
+        if (rawActivity.suppressionClass === "global-activity") {
           log(
-            "Native notification suppressed - matched sidebar row is non-message Facebook activity",
-            {
-              title: matchedInfo?.title || title,
-              body: matchedInfo?.body || body,
-              href: normalizedHref,
-              raw: summarizeNotificationActivity(rawActivity),
-              matched: matchedActivity
-                ? summarizeNotificationActivity(matchedActivity)
-                : null,
-            },
-          );
-          return;
-        }
-        const selfAuthoredNotification =
-          typeof policy.shouldSuppressSelfAuthoredNotification === "function"
-            ? policy.shouldSuppressSelfAuthoredNotification([
-                nativePayload,
-                matchedInfo
-                  ? { title: matchedInfo.title, body: matchedInfo.body }
-                  : null,
-              ])
-            : Boolean(
-                matchedInfo &&
-                typeof policy.isLikelySelfAuthoredMessagePreview ===
-                  "function" &&
-                policy.isLikelySelfAuthoredMessagePreview({
-                  title: matchedInfo.title,
-                  body: matchedInfo.body,
-                }),
-              );
-        if (selfAuthoredNotification) {
-          log("Native notification suppressed - self-authored preview", {
-            title,
-            href: normalizedHref,
-            body: matchedInfo?.body,
-          });
-          return;
-        }
-
-        if (!isConversationUnread(matchedRow)) {
-          log("Native notification matched read conversation - suppressing", {
-            title,
-            href: normalizedHref,
-          });
-          return;
-        }
-
-        if (!isMessageFresh(matchedRow)) {
-          log(
-            "Native notification for old message - skipping (has timestamp)",
+            "Native notification suppressed - non-message Facebook activity",
             {
               title,
+              body,
               href: normalizedHref,
+              raw: summarizeNotificationActivity(rawActivity),
             },
           );
           return;
         }
 
-        if (hasAlreadyNotified(normalizedHref, bodyStr)) {
+        const nativeDedupeKey =
+          normalizedHref ||
+          normalizeNativeNotificationDedupeKey(
+            nativePayload.title,
+            nativePayload.body,
+          );
+
+        if (hasAlreadyNotified(nativeDedupeKey, bodyStr)) {
           if (wakeReplaySuppression) {
             log("Native notification suppressed - pre-existing after wake boundary", {
-              href: normalizedHref,
+              href: nativeDedupeKey,
               boundaryReason: wakeReplaySuppression.reason,
               wakeGeneration: wakeReplaySuppression.wakeGeneration,
             });
           } else {
-            log("Native notification deduplicated", { href: normalizedHref });
+            log("Native notification deduplicated", { href: nativeDedupeKey });
           }
           return;
         }
 
-        if (conversationNotificationDeduper?.shouldSuppress(normalizedHref)) {
+        if (conversationNotificationDeduper?.shouldSuppress(nativeDedupeKey)) {
           log("Native notification suppressed by TTL deduper", {
             title,
             href: normalizedHref,
+            dedupeKey: nativeDedupeKey,
           });
           return;
         }
 
-        recordNotification(normalizedHref, bodyStr);
+        recordNotification(nativeDedupeKey, bodyStr);
+        rememberNativeMessageDelivery(notificationHref, bodyStr);
         sendNotification(
-          formatNotificationConversationTitle({
-            title: matchedInfo?.title || String(title),
-            href: normalizedHref,
-            alternateTitle: String(title),
-          }),
+          String(title),
           String(body),
           "NATIVE",
           options?.icon as string,
-          normalizedHref,
+          notificationHref,
         );
       }
 
@@ -1629,11 +1709,10 @@
   // ============================================================================
   // DETECTION METHOD 1: MutationObserver on sidebar
   // ============================================================================
-  // Re-enabled: on facebook.com/messages the native Notification constructor
-  // pipeline is often not invoked, so MutationObserver is required for
-  // notification delivery. Keep strict unread/mute/fresh checks to avoid
-  // false positives.
-  const ENABLE_MUTATION_OBSERVER_NOTIFICATIONS = true;
+  // Native Facebook notifications are the source of truth. The observer is only
+  // allowed to create a fallback when Facebook has not emitted a matching native
+  // notification and the sidebar row survives the strict checks below.
+  const ENABLE_MUTATION_OBSERVER_FALLBACK_NOTIFICATIONS = true;
 
   // Track whether we're in the initial settling period (no notifications during this time)
   // This applies to BOTH MutationObserver and native notification interception
@@ -1787,8 +1866,8 @@
     const processMutations = (mutationsList: MutationRecord[]) => {
       if (mutationsList.length === 0) return;
 
-      // Skip if MutationObserver notifications are disabled
-      if (!ENABLE_MUTATION_OBSERVER_NOTIFICATIONS) {
+      // Skip if MutationObserver fallback notifications are disabled
+      if (!ENABLE_MUTATION_OBSERVER_FALLBACK_NOTIFICATIONS) {
         return;
       }
 
@@ -2037,6 +2116,19 @@
           continue;
         }
 
+        if (
+          hasRecentNativeMessageDelivery(normalizedMatchedHref, matchedInfo.body)
+        ) {
+          log(
+            "Mutation notification suppressed - native Facebook notification already mirrored",
+            {
+              title: matchedInfo.title,
+              href: normalizedMatchedHref,
+            },
+          );
+          continue;
+        }
+
         recordNotification(normalizedMatchedHref, matchedInfo.body);
         log("Sending notification from MutationObserver", {
           title: matchedInfo.title,
@@ -2048,10 +2140,7 @@
         });
 
         sendNotification(
-          formatNotificationConversationTitle({
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          }),
+          matchedInfo.title,
           matchedInfo.body,
           "MUTATION",
           matchedInfo.icon,

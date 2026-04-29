@@ -199,22 +199,7 @@ function inspectNotificationDisplayTitle(
 function formatNotificationDisplayTitle(
   input: NotificationDisplayTitleInput,
 ): string {
-  const title = normalizeDisplayName(input.title);
-  if (!title) return "";
-
-  const alternates = uniqueAlternateNames(title, input.alternateNames || []);
-  if (alternates.length === 0) {
-    return title;
-  }
-
-  const maxAlternateNames = Math.max(
-    1,
-    Math.min(4, Math.round(input.maxAlternateNames || 2)),
-  );
-  const visibleAlternates = alternates.slice(0, maxAlternateNames);
-  const hiddenCount = alternates.length - visibleAlternates.length;
-  const suffix = hiddenCount > 0 ? ` +${hiddenCount}` : "";
-  return `${title} (${visibleAlternates.join(", ")}${suffix})`;
+  return normalizeDisplayName(input.title);
 }
 
 const notificationDisplayPolicy = {

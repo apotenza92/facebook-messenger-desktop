@@ -45,6 +45,8 @@ const loadNotificationActivityPolicy = () =>
   require(path.join(APP_ROOT, "src/shared/notification-activity-policy.ts"));
 const loadNotificationDisplayPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-display-policy.ts"));
+const loadNotificationTextPolicy = () =>
+  require(path.join(APP_ROOT, "src/preload/notification-text-policy.ts"));
 const loadNotificationHandler = () =>
   require(path.join(APP_ROOT, "src/main/notification-handler.ts"));
 const loadIncomingCallOverlayPolicy = () =>
@@ -1974,6 +1976,24 @@ const runMediaOverlayPolicyTests = () => {
     }),
     true,
     "#45 same-route viewers with navigation controls should still switch to media mode",
+  );
+  assertEqual(
+    evaluateMediaOverlayVisible({
+      path: "/messages/t/123",
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
+      downloadCount: 0,
+      hasShareAction: false,
+      shareCount: 0,
+      hasNavigationAction: true,
+      navigationCount: 1,
+      hasLargeMedia: false,
+    }),
+    false,
+    "#50 message-request top bars without large media should not put chat routes into media mode",
   );
 };
 
@@ -4174,11 +4194,17 @@ const runNotificationPolicyTests = () => {
 
 const runNotificationDisplayPolicyTests = () => {
   const notificationDisplayPolicy = loadNotificationDisplayPolicy();
+  const notificationTextPolicy = loadNotificationTextPolicy();
   const { resolveNotificationDisplayBoundary } = loadNotificationHandler();
   assert(
     typeof notificationDisplayPolicy.formatNotificationDisplayTitle ===
       "function",
     "notification display policy missing formatNotificationDisplayTitle",
+  );
+  assert(
+    typeof notificationTextPolicy.normalizeNotificationImageAltText ===
+      "function",
+    "notification text policy missing normalizeNotificationImageAltText",
   );
 
   assertEqual(
@@ -4186,8 +4212,8 @@ const runNotificationDisplayPolicyTests = () => {
       title: "Bub",
       alternateNames: ["Robert"],
     }),
-    "Bub (Robert)",
-    "#46 notification titles should show nickname + real name for direct chats",
+    "Bub",
+    "#50 notification titles should preserve Facebook's provided title without adding inferred names",
   );
 
   assertEqual(
@@ -4195,8 +4221,8 @@ const runNotificationDisplayPolicyTests = () => {
       title: "Weekend Plans",
       alternateNames: ["Alexander", "Taylor", "Casey"],
     }),
-    "Weekend Plans (Alexander, Taylor +1)",
-    "#46 notification titles should summarize multiple real names for groups",
+    "Weekend Plans",
+    "#50 group notification titles should not append inferred participant names",
   );
 
   assertEqual(
@@ -4204,8 +4230,8 @@ const runNotificationDisplayPolicyTests = () => {
       title: "Alex",
       alternateNames: ["Facebook User", "Alex", "Alexander"],
     }),
-    "Alex (Alexander)",
-    "#46 notification titles should filter generic and duplicate alternate names",
+    "Alex",
+    "#50 notification title pass-through should ignore alternate-name metadata",
   );
 
   assertEqual(
@@ -4214,7 +4240,7 @@ const runNotificationDisplayPolicyTests = () => {
       alternateNames: ["🤦🏻‍♀️"],
     }),
     "Alex",
-    "#49 notification titles should drop emoji-only alternate names",
+    "#50 notification title pass-through should ignore emoji-only alternate names",
   );
 
   assertEqual(
@@ -4222,8 +4248,8 @@ const runNotificationDisplayPolicyTests = () => {
       title: "Alex",
       alternateNames: ["✨", "Taylor", "🤦🏻‍♀️"],
     }),
-    "Alex (Taylor)",
-    "#49 notification titles should keep valid alternate names while dropping decorative symbol and emoji-only alternates",
+    "Alex",
+    "#50 notification title pass-through should ignore decorative and valid alternate names alike",
   );
 
   assertEqual(
@@ -4231,8 +4257,44 @@ const runNotificationDisplayPolicyTests = () => {
       title: "Alex",
       alternateNames: ["Profile picture", "Taylor"],
     }),
-    "Alex (Taylor)",
-    "#49 notification titles should drop placeholder avatar labels from alternate names",
+    "Alex",
+    "#50 notification title pass-through should ignore avatar-derived alternate names",
+  );
+
+  assertEqual(
+    notificationTextPolicy.normalizeNotificationImageAltText(
+      "Icon for this message",
+    ),
+    "",
+    "#50 notification bodies should drop generic Messenger message-icon alt text",
+  );
+  assertEqual(
+    notificationTextPolicy.normalizeNotificationImageAltText(
+      "(Icon for this message)",
+    ),
+    "",
+    "#50 notification bodies should drop parenthesised generic message-icon alt text",
+  );
+  assertEqual(
+    notificationTextPolicy.normalizeNotificationImageAltText("(Y)"),
+    "👍",
+    "#50 notification body alt cleanup should preserve Messenger thumbs-up emoji aliases",
+  );
+  assertEqual(
+    notificationTextPolicy.normalizeNotificationImageAltText("😂"),
+    "😂",
+    "#50 notification body alt cleanup should preserve real emoji alt text",
+  );
+
+  const iconArtefactBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Bub",
+      body: "Icon for this message",
+    });
+  assertEqual(
+    iconArtefactBoundary.normalizedData.body,
+    "",
+    "#50 display-boundary policy should drop generic Messenger message-icon body text",
   );
 
   assertEqual(
@@ -4291,6 +4353,28 @@ const runNotificationDisplayPolicyTests = () => {
     "#50 display-boundary policy should suppress connected-call history notifications",
   );
 
+  const groupAdminBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "New notification",
+      body: "3 people requested to participate for the first time in a group you're managing",
+    });
+  assertEqual(
+    groupAdminBoundary.suppress,
+    true,
+    "#50 display-boundary policy should suppress group-admin participation request notifications",
+  );
+
+  const personTitledGroupAdminBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Taylor",
+      body: "Taylor requested to join this group you're managing",
+    });
+  assertEqual(
+    personTitledGroupAdminBoundary.suppress,
+    true,
+    "#50 display-boundary policy should suppress person-titled group-admin request notifications",
+  );
+
   const callEndedBoundary =
     resolveNotificationDisplayBoundary({
       title: "Messenger",
@@ -4311,6 +4395,17 @@ const runNotificationDisplayPolicyTests = () => {
     incomingCallBoundary.suppress,
     false,
     "#50 display-boundary policy should keep genuine incoming-call notifications",
+  );
+
+  const notificationInjectSource = fs.readFileSync(
+    path.join(APP_ROOT, "src/preload/notifications-inject.ts"),
+    "utf8",
+  );
+  assert(
+    notificationInjectSource.includes(
+      'sendNotification(\n          String(title),\n          String(body),\n          "NATIVE"',
+    ),
+    "#50 native Facebook notifications should pass title/body through without sidebar-derived title rewriting",
   );
 };
 

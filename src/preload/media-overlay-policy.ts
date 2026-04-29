@@ -27,7 +27,9 @@ export function evaluateMediaOverlayVisible(
   }
 
   return (
-    (signals.hasDismissAction && signals.hasNavigationAction) ||
+    (signals.hasDismissAction &&
+      signals.hasNavigationAction &&
+      signals.hasLargeMedia) ||
     (signals.hasDownloadAction && signals.hasLargeMedia)
   );
 }
