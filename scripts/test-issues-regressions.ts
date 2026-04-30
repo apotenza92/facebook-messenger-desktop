@@ -1884,6 +1884,18 @@ const runWindowOpenRoutingTests = () => {
     "#45 chat popups should still reroute into the main Messenger surface",
   );
   assertEqual(
+    decideWindowOpenAction("https://www.facebook.com/messages/t/issue52-thread/"),
+    "reroute-main-view",
+    "#52 regular chat clicks opened through window.open should reroute into the app instead of the system browser",
+  );
+  assertEqual(
+    decideWindowOpenAction(
+      "https://www.facebook.com/messages/e2ee/t/issue52-thread/",
+    ),
+    "reroute-main-view",
+    "#52 E2EE chat clicks opened through window.open should reroute into the app instead of the system browser",
+  );
+  assertEqual(
     decideWindowOpenAction(
       "https://www.facebook.com/messenger_media?attachment_id=123",
     ),
@@ -1993,7 +2005,7 @@ const runMediaOverlayPolicyTests = () => {
       hasLargeMedia: false,
     }),
     false,
-    "#50 message-request top bars without large media should not put chat routes into media mode",
+    "#50/#52 message-request top bars without large media should not put chat routes into media mode",
   );
 };
 

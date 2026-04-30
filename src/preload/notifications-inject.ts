@@ -631,6 +631,8 @@
     getNotificationDecisionPolicy()?.createNotificationDeduper(4000) ?? null;
   const recentNativeMessageDeliveries = new Map<string, number>();
   const MUTATION_FALLBACK_NATIVE_GRACE_MS = 2500;
+  const MUTATION_MUTE_STATE_RECHECK_MS = 2500;
+  const pendingMutationMuteStateRechecks = new Map<string, number>();
 
   const normalizeConversationKey = (raw: string): string => {
     if (raw.startsWith("native:")) {
@@ -1863,6 +1865,260 @@
   const setupMutationObserver = () => {
     log("Setting up MutationObserver detection...");
 
+    const isGenericNewMessageBody = (body: string): boolean =>
+      /^new messages?[.!…]?$/i.test(body.replace(/\s+/g, " ").trim());
+
+    const looksLikeSenderMediaActionTitle = (title: string): boolean =>
+      /\bsent\s+(?:(?:an?|the)\s+|\d+\s+)?(?:photos?|videos?|attachments?|gifs?|stickers?|links?|files?|voice messages?|audio messages?|reels?)[.!…]?$/i.test(
+        title.replace(/\s+/g, " ").trim(),
+      );
+
+    const shouldRecheckMutationMuteState = (
+      observedInfo: { title: string; body: string },
+      matchedInfo: { title: string; body: string },
+    ): boolean =>
+      isGenericNewMessageBody(observedInfo.body) &&
+      looksLikeSenderMediaActionTitle(observedInfo.title) &&
+      isGenericNewMessageBody(matchedInfo.body) &&
+      looksLikeSenderMediaActionTitle(matchedInfo.title);
+
+    const runDelayedMutationMuteStateRecheck = (
+      normalizedHref: string,
+      observedHref: string,
+    ): void => {
+      pendingMutationMuteStateRechecks.delete(normalizedHref);
+
+      if (isSettling || !canSendNotification()) {
+        log("Delayed mutation notification suppressed - route settling", {
+          href: normalizedHref,
+          isSettling,
+        });
+        return;
+      }
+
+      const policy = getNotificationDecisionPolicy();
+      if (
+        !policy ||
+        typeof policy.resolveObservedSidebarNotificationTarget !== "function"
+      ) {
+        log("Delayed mutation notification suppressed - policy unavailable", {
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      const sidebar = currentSidebarElement || findSidebarElement();
+      if (!sidebar) {
+        log("Delayed mutation notification suppressed - sidebar unavailable", {
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      const { rowByHref, conversationCandidates } =
+        collectSidebarConversationSnapshot(sidebar);
+      const row = rowByHref.get(normalizedHref);
+      if (!row) {
+        log("Delayed mutation notification suppressed - row missing", {
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      const info = extractConversationInfo(row);
+      if (!info) {
+        log("Delayed mutation notification suppressed - row unreadable", {
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      if (!isConversationUnread(row)) {
+        log("Delayed mutation notification suppressed - row read", {
+          title: info.title,
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      if (isConversationMuted(row)) {
+        log("Delayed mutation notification suppressed - muted row settled", {
+          title: info.title,
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      if (!isMessageFresh(row)) {
+        log("Delayed mutation notification suppressed - message is no longer fresh", {
+          title: info.title,
+          href: normalizedHref,
+        });
+        return;
+      }
+
+      const decision = policy.resolveObservedSidebarNotificationTarget(
+        {
+          title: info.title,
+          body: info.body,
+        },
+        observedHref,
+        conversationCandidates,
+      );
+      log("Delayed mutation notification decision", decision.debug || {
+        observedTitle: info.title,
+        observedBody: info.body,
+        observedHref,
+        matchedHref: decision.matchedHref,
+        matchedObservedHref: decision.matchedObservedHref,
+        confidence: decision.confidence,
+        muted: decision.muted,
+        finalReason: decision.reason,
+      });
+
+      if (!decision.shouldNotify || !decision.matchedHref) {
+        log("Delayed mutation notification suppressed by policy", {
+          title: info.title,
+          href: normalizedHref,
+          matchedHref: decision.matchedHref,
+          matchedObservedHref: decision.matchedObservedHref,
+          confidence: decision.confidence,
+          muted: decision.muted,
+          reason: decision.reason,
+        });
+        return;
+      }
+
+      const normalizedMatchedHref = normalizeConversationKey(decision.matchedHref);
+      const matchedRow = rowByHref.get(normalizedMatchedHref);
+      if (!matchedRow) {
+        log("Delayed mutation notification suppressed - matched row missing", {
+          title: info.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      const matchedInfo = extractConversationInfo(matchedRow) || info;
+      const observedActivity = evaluateNotificationActivity({
+        title: info.title,
+        body: info.body,
+      });
+      const matchedActivity = evaluateNotificationActivity({
+        title: matchedInfo.title,
+        body: matchedInfo.body,
+      });
+
+      if (
+        observedActivity.suppressionClass === "call-history" ||
+        matchedActivity.suppressionClass === "call-history" ||
+        observedActivity.suppressionClass === "global-activity" ||
+        matchedActivity.suppressionClass === "global-activity"
+      ) {
+        log("Delayed mutation notification suppressed - non-message activity", {
+          title: matchedInfo.title,
+          body: matchedInfo.body,
+          href: normalizedMatchedHref,
+          raw: summarizeNotificationActivity(observedActivity),
+          matched: summarizeNotificationActivity(matchedActivity),
+        });
+        return;
+      }
+
+      const selfAuthoredNotification =
+        typeof policy.shouldSuppressSelfAuthoredNotification === "function"
+          ? policy.shouldSuppressSelfAuthoredNotification([
+              { title: info.title, body: info.body },
+              { title: matchedInfo.title, body: matchedInfo.body },
+            ])
+          : typeof policy.isLikelySelfAuthoredMessagePreview === "function" &&
+            policy.isLikelySelfAuthoredMessagePreview({
+              title: matchedInfo.title,
+              body: matchedInfo.body,
+            });
+
+      if (selfAuthoredNotification) {
+        log("Delayed mutation notification suppressed - self-authored preview", {
+          title: matchedInfo.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      if (!isConversationUnread(matchedRow)) {
+        log("Delayed mutation notification suppressed - matched row read", {
+          title: matchedInfo.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      if (isConversationMuted(matchedRow)) {
+        log("Delayed mutation notification suppressed - matched row muted", {
+          title: matchedInfo.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      if (!isMessageFresh(matchedRow)) {
+        log("Delayed mutation notification suppressed - matched message stale", {
+          title: matchedInfo.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      if (hasAlreadyNotified(normalizedMatchedHref, matchedInfo.body)) {
+        log("Delayed mutation notification suppressed - already notified", {
+          title: matchedInfo.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      if (
+        conversationNotificationDeduper?.shouldSuppress(normalizedMatchedHref)
+      ) {
+        log("Delayed mutation notification suppressed by TTL deduper", {
+          title: matchedInfo.title,
+          href: normalizedMatchedHref,
+        });
+        return;
+      }
+
+      if (
+        hasRecentNativeMessageDelivery(normalizedMatchedHref, matchedInfo.body)
+      ) {
+        log(
+          "Delayed mutation notification suppressed - native Facebook notification already mirrored",
+          {
+            title: matchedInfo.title,
+            href: normalizedMatchedHref,
+          },
+        );
+        return;
+      }
+
+      recordNotification(normalizedMatchedHref, matchedInfo.body);
+      log("Sending delayed notification from MutationObserver", {
+        title: matchedInfo.title,
+        body: matchedInfo.body.slice(0, 50),
+        href: normalizedMatchedHref,
+        observedHref,
+        confidence: decision.confidence,
+        reason: decision.reason,
+      });
+
+      sendNotification(
+        matchedInfo.title,
+        matchedInfo.body,
+        "MUTATION",
+        matchedInfo.icon,
+        normalizedMatchedHref,
+      );
+    };
+
     const processMutations = (mutationsList: MutationRecord[]) => {
       if (mutationsList.length === 0) return;
 
@@ -2090,6 +2346,37 @@
             title: matchedInfo.title,
             href: normalizedMatchedHref,
           });
+          continue;
+        }
+
+        if (pendingMutationMuteStateRechecks.has(normalizedMatchedHref)) {
+          log("Mutation notification suppressed - mute-state recheck pending", {
+            title: matchedInfo.title,
+            body: matchedInfo.body,
+            href: normalizedMatchedHref,
+          });
+          continue;
+        }
+
+        if (shouldRecheckMutationMuteState(info, matchedInfo)) {
+          if (!pendingMutationMuteStateRechecks.has(normalizedMatchedHref)) {
+            const timeoutId = window.setTimeout(() => {
+              runDelayedMutationMuteStateRecheck(
+                normalizedMatchedHref,
+                normalizedObservedHref,
+              );
+            }, MUTATION_MUTE_STATE_RECHECK_MS);
+            pendingMutationMuteStateRechecks.set(
+              normalizedMatchedHref,
+              timeoutId,
+            );
+            log("Mutation notification delayed for mute-state recheck", {
+              title: matchedInfo.title,
+              body: matchedInfo.body,
+              href: normalizedMatchedHref,
+              delayMs: MUTATION_MUTE_STATE_RECHECK_MS,
+            });
+          }
           continue;
         }
 

@@ -59,6 +59,14 @@ function run(): void {
 
   // Message thread links should stay in-app
   expectAction("https://www.facebook.com/messages/t/123", "reroute-main-view");
+  expectAction(
+    "https://www.facebook.com/messages/t/issue52-thread/",
+    "reroute-main-view",
+  );
+  expectAction(
+    "https://www.facebook.com/messages/e2ee/t/issue52-thread/",
+    "reroute-main-view",
+  );
 
   // Marketplace messaging surfaces should stay in-app.
   expectAction(

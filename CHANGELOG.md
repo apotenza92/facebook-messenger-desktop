@@ -1,15 +1,30 @@
 # Changelog
 
+## [1.3.1-beta.12] - 2026-04-30
+
+### Fixed
+
+- **Issue #50 follow-up: delay risky muted media fallback notifications** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Delay sidebar fallback notifications for sender-media previews with generic `New message` bodies so the row can settle before the app decides whether the conversation is muted.
+  - Suppress later mutations for the same conversation while the mute-state recheck is pending, preventing an intermediate unmuted-looking row from leaking a muted group notification.
+
+### Validation
+
+- `npm run test:window-open`
+- `npm run test:issues:deterministic`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.11] - 2026-04-29
 
 ### Fixed
 
-- **Issues #50/#51: simplify notification delivery and stop message-request header leaks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50), [#51](https://github.com/apotenza92/facebook-messenger-desktop/issues/51))
+- **Issues #50/#51/#52: simplify notification delivery and stop message-request header leaks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50), [#51](https://github.com/apotenza92/facebook-messenger-desktop/issues/51), [#52](https://github.com/apotenza92/facebook-messenger-desktop/issues/52))
   - Treat Facebook's own notification title/body as the source of truth instead of enriching notifications with sidebar-derived names.
   - Keep sidebar observation as a conservative fallback only, with native notifications taking precedence when both paths see the same message.
   - Suppress group/admin management notifications, global Facebook activity, and post-call history/status notifications at the final display boundary.
   - Drop generic Messenger image-alt artefacts such as `Icon for this message` while preserving real emoji aliases.
-  - Stop normal chat/message-request top bars from being misclassified as media overlays unless large media is actually present.
+  - Stop normal chat/message-request top bars from being misclassified as media overlays unless large media is actually present, preventing ordinary chat clicks from being diverted to the system browser.
 
 ### Validation
 
