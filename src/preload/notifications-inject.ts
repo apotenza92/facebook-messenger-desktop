@@ -84,6 +84,16 @@
       matchedPattern?: string;
     };
     shouldSnapshotFreshUnreadOnBoundary?: (reason: string) => boolean;
+    classifyMutationMuteStateRecheckReason?: (
+      observed: { title: string; body: string },
+      matched: { title: string; body: string },
+    ) => {
+      shouldRecheck: boolean;
+      reason:
+        | "sender-media-placeholder"
+        | "sender-preview-placeholder"
+        | "none";
+    };
   };
 
   type IncomingCallEvidenceApi = {
@@ -631,7 +641,7 @@
     getNotificationDecisionPolicy()?.createNotificationDeduper(4000) ?? null;
   const recentNativeMessageDeliveries = new Map<string, number>();
   const MUTATION_FALLBACK_NATIVE_GRACE_MS = 2500;
-  const MUTATION_MUTE_STATE_RECHECK_MS = 2500;
+  const MUTATION_MUTE_STATE_RECHECK_MS = 3500;
   const pendingMutationMuteStateRechecks = new Map<string, number>();
 
   const normalizeConversationKey = (raw: string): string => {
@@ -1865,22 +1875,29 @@
   const setupMutationObserver = () => {
     log("Setting up MutationObserver detection...");
 
-    const isGenericNewMessageBody = (body: string): boolean =>
-      /^new messages?[.!…]?$/i.test(body.replace(/\s+/g, " ").trim());
-
-    const looksLikeSenderMediaActionTitle = (title: string): boolean =>
-      /\bsent\s+(?:(?:an?|the)\s+|\d+\s+)?(?:photos?|videos?|attachments?|gifs?|stickers?|links?|files?|voice messages?|audio messages?|reels?)[.!…]?$/i.test(
-        title.replace(/\s+/g, " ").trim(),
-      );
-
-    const shouldRecheckMutationMuteState = (
+    const classifyMutationMuteStateRecheck = (
       observedInfo: { title: string; body: string },
       matchedInfo: { title: string; body: string },
-    ): boolean =>
-      isGenericNewMessageBody(observedInfo.body) &&
-      looksLikeSenderMediaActionTitle(observedInfo.title) &&
-      isGenericNewMessageBody(matchedInfo.body) &&
-      looksLikeSenderMediaActionTitle(matchedInfo.title);
+    ): {
+      shouldRecheck: boolean;
+      reason:
+        | "sender-media-placeholder"
+        | "sender-preview-placeholder"
+        | "none";
+    } => {
+      const policy = getNotificationDecisionPolicy();
+      if (
+        policy &&
+        typeof policy.classifyMutationMuteStateRecheckReason === "function"
+      ) {
+        return policy.classifyMutationMuteStateRecheckReason(
+          { title: observedInfo.title, body: observedInfo.body },
+          { title: matchedInfo.title, body: matchedInfo.body },
+        );
+      }
+
+      return { shouldRecheck: false, reason: "none" };
+    };
 
     const runDelayedMutationMuteStateRecheck = (
       normalizedHref: string,
@@ -2358,7 +2375,11 @@
           continue;
         }
 
-        if (shouldRecheckMutationMuteState(info, matchedInfo)) {
+        const recheckClassification = classifyMutationMuteStateRecheck(
+          info,
+          matchedInfo,
+        );
+        if (recheckClassification.shouldRecheck) {
           if (!pendingMutationMuteStateRechecks.has(normalizedMatchedHref)) {
             const timeoutId = window.setTimeout(() => {
               runDelayedMutationMuteStateRecheck(
@@ -2375,6 +2396,13 @@
               body: matchedInfo.body,
               href: normalizedMatchedHref,
               delayMs: MUTATION_MUTE_STATE_RECHECK_MS,
+              recheck: {
+                reason: recheckClassification.reason,
+                observedTitle: info.title,
+                observedBody: info.body,
+                matchedTitle: matchedInfo.title,
+                matchedBody: matchedInfo.body,
+              },
             });
           }
           continue;

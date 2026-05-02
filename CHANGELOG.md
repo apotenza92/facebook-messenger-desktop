@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.1-beta.13] - 2026-05-03
+
+### Fixed
+
+- **Issue #50 follow-up: delay generic placeholder-preview fallback notifications** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Delay sidebar fallback notifications when Messenger briefly reports a muted group row as a sender-preview title with a generic `New message` body, giving the mute state time to settle before any native notification is shown.
+  - Extend the delayed mute-state recheck from 2.5 seconds to 3.5 seconds and record the recheck reason in debug logs for future reports.
+  - Keep legitimate unmuted notifications deliverable after the delay when the row remains fresh, unread, unmuted, and route-consistent.
+
+### Validation
+
+- `npm run test:issues:deterministic`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.12] - 2026-04-30
 
 ### Fixed

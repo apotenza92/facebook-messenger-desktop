@@ -111,6 +111,16 @@ type NotificationDecisionPolicyApi = {
     matchedPattern?: string;
   };
   shouldSnapshotFreshUnreadOnBoundary: (reason: string) => boolean;
+  classifyMutationMuteStateRecheckReason?: (
+    observed: NotificationPayload,
+    matched: NotificationPayload,
+  ) => {
+    shouldRecheck: boolean;
+    reason:
+      | "sender-media-placeholder"
+      | "sender-preview-placeholder"
+      | "none";
+  };
 };
 
 const MIN_CONFIDENCE = 0.55;
@@ -1163,6 +1173,60 @@ function shouldSnapshotFreshUnreadOnBoundary(reason: string): boolean {
   );
 }
 
+function isGenericNewMessageBody(value: string): boolean {
+  return /^new messages?[.!…]?$/i.test(
+    String(value || "").replace(/\s+/g, " ").trim(),
+  );
+}
+
+function looksLikeSenderMediaActionTitle(value: string): boolean {
+  return /\bsent\s+(?:(?:an?|the)\s+|\d+\s+)?(?:photos?|videos?|attachments?|gifs?|stickers?|links?|files?|voice messages?|audio messages?|reels?)[.!…]?$/i.test(
+    String(value || "").replace(/\s+/g, " ").trim(),
+  );
+}
+
+function looksLikeTransientSenderPreviewTitle(value: string): boolean {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  const match = normalized.match(/^([^:]{1,80}):\s+(.{1,220})$/);
+  if (!match) return false;
+  const sender = normalizeText(match[1]);
+  const preview = normalizeText(match[2]);
+  if (!sender || !preview) return false;
+  if (preview === "new message" || preview === "new messages") return false;
+  return true;
+}
+
+function classifyMutationMuteStateRecheckReason(
+  observed: NotificationPayload,
+  matched: NotificationPayload,
+): {
+  shouldRecheck: boolean;
+  reason: "sender-media-placeholder" | "sender-preview-placeholder" | "none";
+} {
+  const observedBodyIsGeneric = isGenericNewMessageBody(observed.body);
+  const matchedBodyIsGeneric = isGenericNewMessageBody(matched.body);
+  if (!observedBodyIsGeneric || !matchedBodyIsGeneric) {
+    return { shouldRecheck: false, reason: "none" };
+  }
+
+  if (
+    looksLikeSenderMediaActionTitle(observed.title) &&
+    looksLikeSenderMediaActionTitle(matched.title)
+  ) {
+    return { shouldRecheck: true, reason: "sender-media-placeholder" };
+  }
+
+  if (
+    looksLikeTransientSenderPreviewTitle(observed.title) ||
+    looksLikeTransientSenderPreviewTitle(matched.title)
+  ) {
+    return { shouldRecheck: true, reason: "sender-preview-placeholder" };
+  }
+
+  return { shouldRecheck: false, reason: "none" };
+}
+
 function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
   const ttl = Math.max(100, Math.floor(ttlMs));
   const seenByConversation = new Map<string, number>();
@@ -1200,6 +1264,7 @@ const policyApi: NotificationDecisionPolicyApi = {
           )
       : undefined,
   shouldSnapshotFreshUnreadOnBoundary,
+  classifyMutationMuteStateRecheckReason,
 };
 
 (globalThis as any).__mdNotificationDecisionPolicy = policyApi;

@@ -2979,6 +2979,11 @@ const runNotificationPolicyTests = () => {
     "notification decision policy missing isLikelySelfAuthoredMessagePreview",
   );
   assert(
+    typeof notificationDecisionPolicy.classifyMutationMuteStateRecheckReason ===
+      "function",
+    "notification decision policy missing classifyMutationMuteStateRecheckReason",
+  );
+  assert(
     typeof notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification ===
       "function",
     "notification decision policy missing shouldSuppressSelfAuthoredNotification",
@@ -3385,6 +3390,156 @@ const runNotificationPolicyTests = () => {
     previewTitlePlaceholderBodyUnmutedAlternative.matchedHref,
     "/t/account-a-direct",
     "#49 sender-prefixed preview titles without muted overlap should still prefer the direct conversation match",
+  );
+
+  const facebookUserPreviewTitleBodyMutedConflict =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title:
+          "Facebook User: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+      [
+        {
+          href: "/t/user-a-direct",
+          title: "Facebook User",
+          body:
+            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: false,
+          unread: true,
+        },
+        {
+          href: "/t/group-muted-preview",
+          title: "Group Thread",
+          body:
+            "Facebook User: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          searchText:
+            "User B replied in Group Thread to User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    facebookUserPreviewTitleBodyMutedConflict.reason,
+    "muted-conflict",
+    "#50 Facebook User sender-preview titles with a generic New message body should fail closed with muted overlap",
+  );
+  assertEqual(
+    facebookUserPreviewTitleBodyMutedConflict.matchedHref,
+    undefined,
+    "#50 sender-preview + New message conflicts should not resolve to a concrete conversation",
+  );
+
+  const mutationPreviewRecheckFacebookUser =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title:
+          "Facebook User: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+      {
+        title: "User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckFacebookUser.shouldRecheck,
+    true,
+    "#50 mutation recheck helper should flag Facebook User sender-preview titles with New message",
+  );
+  assertEqual(
+    mutationPreviewRecheckFacebookUser.reason,
+    "sender-preview-placeholder",
+    "#50 Facebook User sender-preview rechecks should use the sender-preview-placeholder reason",
+  );
+
+  const mutationPreviewRecheckNormalSender =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        body: "New message",
+      },
+      {
+        title: "User A",
+        body: "New message",
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckNormalSender.shouldRecheck,
+    true,
+    "#50 mutation recheck helper should flag normal sender-preview + New message",
+  );
+  assertEqual(
+    mutationPreviewRecheckNormalSender.reason,
+    "sender-preview-placeholder",
+    "#50 normal sender-preview rechecks should use sender-preview-placeholder",
+  );
+
+  const mutationPreviewRecheckMediaTitle =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "User A sent a photo.",
+        body: "New message",
+      },
+      {
+        title: "User A sent a photo.",
+        body: "New message",
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckMediaTitle.shouldRecheck,
+    true,
+    "#50 mutation recheck helper should keep media-title + New message as a recheck candidate",
+  );
+  assertEqual(
+    mutationPreviewRecheckMediaTitle.reason,
+    "sender-media-placeholder",
+    "#50 media-title rechecks should use the sender-media-placeholder reason",
+  );
+
+  const mutationPreviewRecheckDirectMessage =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "User A",
+        body: "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+      },
+      {
+        title: "User A",
+        body: "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckDirectMessage.shouldRecheck,
+    false,
+    "#50 mutation recheck helper should skip normal direct messages with real bodies",
+  );
+  assertEqual(
+    mutationPreviewRecheckDirectMessage.reason,
+    "none",
+    "#50 normal direct messages should return none for mutation recheck",
+  );
+
+  const mutationPreviewRecheckGroupSenderBody =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "Group Thread",
+        body: "User A: I passed by three scrub areas tonight",
+      },
+      {
+        title: "User A",
+        body: "User A: I passed by three scrub areas tonight",
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckGroupSenderBody.shouldRecheck,
+    false,
+    "#50 mutation recheck helper should skip plain group titles with sender-style bodies",
+  );
+  assertEqual(
+    mutationPreviewRecheckGroupSenderBody.reason,
+    "none",
+    "#50 sender-style group-title payloads should return none",
   );
 
   const mutedGroupTitleMatch =
