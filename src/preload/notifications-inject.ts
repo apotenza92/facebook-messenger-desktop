@@ -83,6 +83,14 @@
       reason: string;
       matchedPattern?: string;
     };
+    shouldSuppressBrowserNotificationActivity?: (payload: {
+      title: string;
+      body: string;
+    }) => {
+      suppress: boolean;
+      reason: string;
+      matchedPattern?: string;
+    };
     shouldSnapshotFreshUnreadOnBoundary?: (reason: string) => boolean;
     classifyMutationMuteStateRecheckReason?: (
       observed: { title: string; body: string },
@@ -1480,12 +1488,21 @@
           return;
         }
 
-        if (policy.isLikelyGlobalFacebookNotification(nativePayload)) {
+        const browserActivitySuppression =
+          typeof policy.shouldSuppressBrowserNotificationActivity === "function"
+            ? policy.shouldSuppressBrowserNotificationActivity(nativePayload)
+            : {
+                suppress: policy.isLikelyGlobalFacebookNotification(nativePayload),
+                reason: "global-facebook-activity",
+              };
+        if (browserActivitySuppression.suppress) {
           log(
-            "Native notification suppressed - non-message Facebook activity",
+            "Native notification suppressed - non-message browser activity",
             {
               title,
               body,
+              reason: browserActivitySuppression.reason,
+              matchedPattern: browserActivitySuppression.matchedPattern,
             },
           );
           return;
@@ -2681,6 +2698,8 @@
           body: String(options?.body || ""),
         };
         const policy = getNotificationDecisionPolicy();
+        const suppression =
+          policy?.shouldSuppressBrowserNotificationActivity?.(payload) ?? null;
         log("Service worker notification candidate analysis", {
           source: "service-worker-registration",
           payload,
@@ -2690,8 +2709,18 @@
             policy?.classifyGroupManagementNotification?.(payload) ?? null,
           globalActivity:
             policy?.isLikelyGlobalFacebookNotification?.(payload) ?? null,
+          browserActivitySuppression: suppression,
           permission: Notification.permission,
         });
+        if (suppression?.suppress) {
+          log("Service worker notification suppressed - non-message browser activity", {
+            title: payload.title,
+            body: payload.body,
+            reason: suppression.reason,
+            matchedPattern: suppression.matchedPattern,
+          });
+          return Promise.resolve();
+        }
         return originalShowNotification.call(this, title, options);
       };
       log("Service worker notification diagnostics installed");

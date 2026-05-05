@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.1-beta.14] - 2026-05-05
+
+### Fixed
+
+- **Issue #50 follow-up: suppress browser-originated group/admin notifications** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Apply the shared notification activity policy to browser and service-worker notification candidates before they can display, closing a remaining group/admin leak path.
+  - Keep ordinary message notifications deliverable while continuing to suppress post-call history/status activity and global Facebook activity at the same boundary.
+  - Add deterministic coverage for browser-originated group/admin suppression, post-call suppression, and ordinary message pass-through.
+
+### Validation
+
+- `npm run test:issues:deterministic`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.13] - 2026-05-03
 
 ### Fixed

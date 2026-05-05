@@ -2989,6 +2989,11 @@ const runNotificationPolicyTests = () => {
     "notification decision policy missing shouldSuppressSelfAuthoredNotification",
   );
   assert(
+    typeof notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity ===
+      "function",
+    "notification decision policy missing shouldSuppressBrowserNotificationActivity",
+  );
+  assert(
     typeof notificationActivityPolicy.isLikelyGlobalFacebookNotification ===
       "function",
     "notification activity policy missing isLikelyGlobalFacebookNotification",
@@ -3872,6 +3877,49 @@ const runNotificationPolicyTests = () => {
     personTitleParticipationRequestSuppressed,
     true,
     "#49 the shared notification activity classifier should suppress participation-request activity even when the title looks like a person",
+  );
+
+  const browserGroupAdminSuppression =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "New notification",
+      body: "2 people requested membership in a group you're managing",
+    });
+  assertEqual(
+    browserGroupAdminSuppression.suppress,
+    true,
+    "#50 browser-originated group/admin notifications should be suppressed before service-worker display",
+  );
+  assertEqual(
+    browserGroupAdminSuppression.reason,
+    "group-management-activity",
+    "#50 browser-originated group/admin suppression should use the shared group-management classifier",
+  );
+
+  const browserCallHistorySuppression =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Messenger",
+      body: "You called account A",
+    });
+  assertEqual(
+    browserCallHistorySuppression.suppress,
+    true,
+    "#50 browser-originated post-call history notifications should stay suppressed",
+  );
+  assertEqual(
+    browserCallHistorySuppression.reason,
+    "call-history-activity",
+    "#50 browser-originated post-call history suppression should use the shared call classifier",
+  );
+
+  const browserMessageAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Account A",
+      body: "Can you review this?",
+    });
+  assertEqual(
+    browserMessageAllowed.suppress,
+    false,
+    "#50 ordinary browser-originated message notifications should remain deliverable",
   );
 
   const resumeBoundaryCapturesFreshUnread =

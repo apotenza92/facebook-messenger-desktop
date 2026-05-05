@@ -86,6 +86,16 @@ type NotificationActivityPolicyApi = {
   isLikelyGlobalFacebookNotification: (payload: NotificationPayload) => boolean;
 };
 
+type NotificationActivitySuppressionDecision = {
+  suppress: boolean;
+  reason:
+    | "call-history-activity"
+    | "group-management-activity"
+    | "global-facebook-activity"
+    | "message";
+  matchedPattern?: string;
+};
+
 type NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget: (
     payload: NotificationPayload,
@@ -110,6 +120,9 @@ type NotificationDecisionPolicyApi = {
     reason: string;
     matchedPattern?: string;
   };
+  shouldSuppressBrowserNotificationActivity?: (
+    payload: NotificationPayload,
+  ) => NotificationActivitySuppressionDecision;
   shouldSnapshotFreshUnreadOnBoundary: (reason: string) => boolean;
   classifyMutationMuteStateRecheckReason?: (
     observed: NotificationPayload,
@@ -1245,6 +1258,44 @@ function createNotificationDeduper(ttlMs = 4000): NotificationDeduper {
   };
 }
 
+function shouldSuppressBrowserNotificationActivity(
+  payload: NotificationPayload,
+): NotificationActivitySuppressionDecision {
+  const call = notificationActivityPolicy.classifyCallNotification(payload);
+  if (call.shouldSuppressNotification) {
+    return {
+      suppress: true,
+      reason: "call-history-activity",
+      matchedPattern: call.matchedPattern,
+    };
+  }
+
+  const groupManagement =
+    typeof notificationActivityPolicy.classifyGroupManagementNotification ===
+    "function"
+      ? notificationActivityPolicy.classifyGroupManagementNotification(payload)
+      : null;
+  if (groupManagement?.isGroupManagement) {
+    return {
+      suppress: true,
+      reason: "group-management-activity",
+      matchedPattern: groupManagement.matchedPattern,
+    };
+  }
+
+  if (notificationActivityPolicy.isLikelyGlobalFacebookNotification(payload)) {
+    return {
+      suppress: true,
+      reason: "global-facebook-activity",
+    };
+  }
+
+  return {
+    suppress: false,
+    reason: "message",
+  };
+}
+
 const policyApi: NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget,
   resolveObservedSidebarNotificationTarget,
@@ -1263,6 +1314,7 @@ const policyApi: NotificationDecisionPolicyApi = {
             payload,
           )
       : undefined,
+  shouldSuppressBrowserNotificationActivity,
   shouldSnapshotFreshUnreadOnBoundary,
   classifyMutationMuteStateRecheckReason,
 };
