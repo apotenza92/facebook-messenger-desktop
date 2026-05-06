@@ -80,6 +80,260 @@ const incomingCallJoinSelectors = [
   '[aria-label*="Join audio" i]',
 ];
 
+(function setupReloadAttributionDebugging() {
+  const RELOAD_DEBUG_CHANNEL = "reload-debug";
+  const RECENT_INTERACTION_MAX_AGE_MS = 15_000;
+  const PENDING_NAVIGATION_KEY = "md:last-navigation-intent";
+  let lastInteraction: Record<string, unknown> | null = null;
+  let lastUrl = window.location.href;
+
+  const safeStack = (): string | undefined => {
+    try {
+      return new Error().stack?.split("\n").slice(2, 10).join("\n");
+    } catch {
+      return undefined;
+    }
+  };
+
+  const sendReloadDebug = (
+    event: string,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    try {
+      ipcRenderer.send(RELOAD_DEBUG_CHANNEL, {
+        timestamp: Date.now(),
+        event,
+        url: window.location.href,
+        documentUrl: document.URL,
+        referrer: document.referrer || undefined,
+        visibilityState: document.visibilityState,
+        readyState: document.readyState,
+        lastInteraction,
+        ...extra,
+      });
+    } catch {
+      // Ignore debug logging failures.
+    }
+  };
+
+  const rememberNavigationIntent = (
+    kind: string,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    const intent = {
+      timestamp: Date.now(),
+      kind,
+      url: window.location.href,
+      lastInteraction,
+      ...extra,
+    };
+    try {
+      sessionStorage.setItem(PENDING_NAVIGATION_KEY, JSON.stringify(intent));
+    } catch {
+      // Ignore storage failures.
+    }
+    sendReloadDebug("preload-navigation-intent", intent);
+  };
+
+  const describeElement = (element: Element | null): Record<string, unknown> | null => {
+    if (!element) return null;
+    const text = (element.textContent || "").replace(/\s+/g, " ").trim();
+    return {
+      tagName: element.tagName.toLowerCase(),
+      id: element.id || undefined,
+      className:
+        typeof element.className === "string"
+          ? element.className.slice(0, 160)
+          : undefined,
+      role: element.getAttribute("role") || undefined,
+      ariaLabel: element.getAttribute("aria-label") || undefined,
+      title: element.getAttribute("title") || undefined,
+      href: element instanceof HTMLAnchorElement ? element.href : undefined,
+      text: text ? text.slice(0, 160) : undefined,
+    };
+  };
+
+  const captureInteraction = (event: Event): void => {
+    const target = event.target instanceof Element ? event.target : null;
+    const actionable = target?.closest(
+      'a[href], button, [role="button"], [role="link"], [role="menuitem"], input, textarea, select',
+    );
+    lastInteraction = {
+      timestamp: Date.now(),
+      type: event.type,
+      target: describeElement(actionable || target),
+      isTrusted: event.isTrusted,
+    };
+
+    if (event.type === "click" && actionable instanceof HTMLAnchorElement) {
+      rememberNavigationIntent("anchor-click", {
+        targetUrl: actionable.href,
+        target: describeElement(actionable),
+      });
+    }
+  };
+
+  document.addEventListener("click", captureInteraction, {
+    capture: true,
+    passive: true,
+  });
+  document.addEventListener("auxclick", captureInteraction, {
+    capture: true,
+    passive: true,
+  });
+  document.addEventListener("submit", (event) => {
+    captureInteraction(event);
+    rememberNavigationIntent("form-submit", {
+      target: describeElement(event.target instanceof Element ? event.target : null),
+    });
+  }, true);
+  window.addEventListener("keydown", captureInteraction, {
+    capture: true,
+    passive: true,
+  });
+
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  history.pushState = function (...args) {
+    const previousUrl = window.location.href;
+    const result = originalPushState.apply(history, args);
+    const nextUrl = window.location.href;
+    if (nextUrl !== previousUrl) {
+      sendReloadDebug("preload-history-pushstate", {
+        previousUrl,
+        nextUrl,
+        stateTitle: typeof args[1] === "string" ? args[1] : undefined,
+        requestedUrl: typeof args[2] === "string" ? args[2] : undefined,
+        stack: safeStack(),
+      });
+    }
+    return result;
+  };
+  history.replaceState = function (...args) {
+    const previousUrl = window.location.href;
+    const result = originalReplaceState.apply(history, args);
+    const nextUrl = window.location.href;
+    if (nextUrl !== previousUrl) {
+      sendReloadDebug("preload-history-replacestate", {
+        previousUrl,
+        nextUrl,
+        stateTitle: typeof args[1] === "string" ? args[1] : undefined,
+        requestedUrl: typeof args[2] === "string" ? args[2] : undefined,
+        stack: safeStack(),
+      });
+    }
+    return result;
+  };
+
+  const originalReload = window.location.reload.bind(window.location);
+  const originalAssign = window.location.assign.bind(window.location);
+  const originalReplace = window.location.replace.bind(window.location);
+  try {
+    Object.defineProperty(window.location, "reload", {
+      configurable: true,
+      value: () => {
+        rememberNavigationIntent("location.reload", { stack: safeStack() });
+        originalReload();
+      },
+    });
+    Object.defineProperty(window.location, "assign", {
+      configurable: true,
+      value: (url: string | URL) => {
+        rememberNavigationIntent("location.assign", {
+          targetUrl: String(url),
+          stack: safeStack(),
+        });
+        originalAssign(url);
+      },
+    });
+    Object.defineProperty(window.location, "replace", {
+      configurable: true,
+      value: (url: string | URL) => {
+        rememberNavigationIntent("location.replace", {
+          targetUrl: String(url),
+          stack: safeStack(),
+        });
+        originalReplace(url);
+      },
+    });
+  } catch {
+    // Some Chromium builds do not allow patching Location methods.
+  }
+
+  window.addEventListener("popstate", () => {
+    window.setTimeout(() => {
+      sendReloadDebug("preload-popstate", {
+        previousUrl: lastUrl,
+        nextUrl: window.location.href,
+      });
+      lastUrl = window.location.href;
+    }, 0);
+  });
+
+  window.addEventListener("beforeunload", () => {
+    rememberNavigationIntent("beforeunload", {
+      navigationType:
+        performance.getEntriesByType("navigation")[0] instanceof
+        PerformanceNavigationTiming
+          ? (
+              performance.getEntriesByType(
+                "navigation",
+              )[0] as PerformanceNavigationTiming
+            ).type
+          : undefined,
+    });
+  });
+
+  window.addEventListener("pagehide", (event) => {
+    sendReloadDebug("preload-pagehide", {
+      persisted: event.persisted,
+    });
+  });
+
+  window.addEventListener("pageshow", (event) => {
+    let previousIntent: unknown;
+    try {
+      const raw = sessionStorage.getItem(PENDING_NAVIGATION_KEY);
+      previousIntent = raw ? JSON.parse(raw) : undefined;
+      sessionStorage.removeItem(PENDING_NAVIGATION_KEY);
+    } catch {
+      previousIntent = undefined;
+    }
+    sendReloadDebug("preload-pageshow", {
+      force: true,
+      persisted: event.persisted,
+      previousIntent,
+      navigationType:
+        performance.getEntriesByType("navigation")[0] instanceof
+        PerformanceNavigationTiming
+          ? (
+              performance.getEntriesByType(
+                "navigation",
+              )[0] as PerformanceNavigationTiming
+            ).type
+          : undefined,
+    });
+  });
+
+  window.setInterval(() => {
+    const currentUrl = window.location.href;
+    if (currentUrl === lastUrl) return;
+    const previousUrl = lastUrl;
+    lastUrl = currentUrl;
+    sendReloadDebug("preload-url-poll-change", {
+      previousUrl,
+      nextUrl: currentUrl,
+      recentInteractionAgeMs:
+        typeof lastInteraction?.timestamp === "number"
+          ? Date.now() - lastInteraction.timestamp
+          : undefined,
+      hasRecentInteraction:
+        typeof lastInteraction?.timestamp === "number" &&
+        Date.now() - lastInteraction.timestamp <= RECENT_INTERACTION_MAX_AGE_MS,
+    });
+  }, 250);
+})();
+
 const incomingCallSoftSignalSelectors = [
   '[data-testid*="incoming"]',
   '[aria-label*="calling" i]',

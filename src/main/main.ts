@@ -303,6 +303,14 @@ const latestRendererDebugStateByWebContentsId = new Map<
   number,
   Record<string, unknown>
 >();
+const latestPreloadNavigationDebugByWebContentsId = new Map<
+  number,
+  Record<string, unknown>
+>();
+const latestMainNavigationInputByWebContentsId = new Map<
+  number,
+  Record<string, unknown>
+>();
 const incomingCallOverlayVisibleByWebContentsId = new Map<number, boolean>();
 const incomingCallOverlayLastHintAtByWebContentsId = new Map<number, number>();
 const incomingCallOverlayHintState: IncomingCallOverlayHintState = {
@@ -1661,10 +1669,37 @@ function loadWebContentsURLWithDebug(
   });
 }
 
+function getReloadNavigationContext(webContentsId: number): Record<string, unknown> {
+  return {
+    latestPreloadNavigationDebug:
+      latestPreloadNavigationDebugByWebContentsId.get(webContentsId),
+    latestMainNavigationInput:
+      latestMainNavigationInputByWebContentsId.get(webContentsId),
+    latestRendererDebugState:
+      latestRendererDebugStateByWebContentsId.get(webContentsId),
+    viewportState: messagesViewportStateByWebContentsId.get(webContentsId),
+  };
+}
+
 function attachWebContentsReloadDebugHandlers(
   webContents: WebContents,
   label: string,
 ): void {
+  webContents.on("before-input-event", (_event, input) => {
+    latestMainNavigationInputByWebContentsId.set(webContents.id, {
+      timestamp: Date.now(),
+      type: input.type,
+      key: input.key,
+      code: input.code,
+      modifiers: [
+        input.control ? "control" : null,
+        input.meta ? "meta" : null,
+        input.alt ? "alt" : null,
+        input.shift ? "shift" : null,
+      ].filter(Boolean),
+    });
+  });
+
   webContents.on("will-navigate", (_event, navigationUrl) => {
     pushReloadDebugEvent({
       timestamp: Date.now(),
@@ -1674,12 +1709,40 @@ function attachWebContentsReloadDebugHandlers(
       webContentsId: webContents.id,
       url: webContents.isDestroyed() ? navigationUrl : webContents.getURL(),
       nextUrl: navigationUrl,
+      ...getReloadNavigationContext(webContents.id),
     });
   });
 
+  (webContents as unknown as NodeJS.EventEmitter).on(
+    "will-frame-navigate",
+    (
+      _event: Electron.Event,
+      navigationUrl: string,
+      isInPlace: boolean,
+      isMainFrame: boolean,
+      frameProcessId: number,
+      frameRoutingId: number,
+    ) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "will-frame-navigate",
+        label,
+        webContentsId: webContents.id,
+        url: webContents.isDestroyed() ? navigationUrl : webContents.getURL(),
+        nextUrl: navigationUrl,
+        isInPlace,
+        isMainFrame,
+        frameProcessId,
+        frameRoutingId,
+        ...getReloadNavigationContext(webContents.id),
+      });
+    },
+  );
+
   webContents.on(
     "did-start-navigation",
-    (_event, navigationUrl, isInPlace, isMainFrame) => {
+    (_event, navigationUrl, isInPlace, isMainFrame, frameProcessId, frameRoutingId) => {
       pushReloadDebugEvent({
         timestamp: Date.now(),
         source: "main",
@@ -1690,6 +1753,9 @@ function attachWebContentsReloadDebugHandlers(
         nextUrl: navigationUrl,
         isInPlace,
         isMainFrame,
+        frameProcessId,
+        frameRoutingId,
+        ...getReloadNavigationContext(webContents.id),
       });
     },
   );
@@ -6400,6 +6466,8 @@ function createWindow(source: string = "unknown"): void {
     if (contentViewWebContentsId !== null) {
       messagesViewportStateByWebContentsId.delete(contentViewWebContentsId);
       latestRendererDebugStateByWebContentsId.delete(contentViewWebContentsId);
+      latestPreloadNavigationDebugByWebContentsId.delete(contentViewWebContentsId);
+      latestMainNavigationInputByWebContentsId.delete(contentViewWebContentsId);
       incomingCallOverlayVisibleByWebContentsId.delete(
         contentViewWebContentsId,
       );
@@ -6409,6 +6477,8 @@ function createWindow(source: string = "unknown"): void {
     }
     messagesViewportStateByWebContentsId.delete(mainWindowWebContentsId);
     latestRendererDebugStateByWebContentsId.delete(mainWindowWebContentsId);
+    latestPreloadNavigationDebugByWebContentsId.delete(mainWindowWebContentsId);
+    latestMainNavigationInputByWebContentsId.delete(mainWindowWebContentsId);
     incomingCallOverlayVisibleByWebContentsId.delete(mainWindowWebContentsId);
     incomingCallOverlayLastHintAtByWebContentsId.delete(
       mainWindowWebContentsId,
@@ -9076,6 +9146,32 @@ function setupIpcHandlers(): void {
       applyContentViewBoundsHandler?.();
     },
   );
+
+  ipcMain.on("reload-debug", (event, payload) => {
+    const now = Date.now();
+    const basePayload =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : {};
+    const debugEvent =
+      typeof basePayload.event === "string" ? basePayload.event : "preload-debug";
+
+    const normalized = {
+      timestamp:
+        typeof basePayload.timestamp === "number" ? basePayload.timestamp : now,
+      source: "preload" as const,
+      event: debugEvent,
+      webContentsId: event.sender.id,
+      url:
+        typeof basePayload.url === "string"
+          ? basePayload.url
+          : event.sender.getURL(),
+      ...basePayload,
+    };
+
+    latestPreloadNavigationDebugByWebContentsId.set(event.sender.id, normalized);
+    pushReloadDebugEvent(normalized);
+  });
 
   ipcMain.on("media-overlay-debug", (event, payload) => {
     const now = Date.now();
