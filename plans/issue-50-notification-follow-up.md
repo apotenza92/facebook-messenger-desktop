@@ -141,9 +141,12 @@ None; enough context was provided in the initial request and the issue/debug bun
 - 2026-05-06: Reviewer caught two issues during execution: overly broad non-shell phrase suppression and too-broad wake cleanup. Both were narrowed before validation.
 - 2026-05-06: Validation passed: `npm run test:issues`, `npm run test:notification`, and `npm run build`.
 - 2026-05-06: Prepared `1.3.1-beta.15` release metadata in `package.json`, `package-lock.json`, and `CHANGELOG.md`, then reran `npm run test:issues`, `npm run test:notification`, and `npm run build` successfully.
+- 2026-05-06: Committed and pushed `fix: harden notification activity leaks (#50)`, ran `./scripts/release.sh 1.3.1-beta.15`, and monitored the Build and Release workflow to success.
+- 2026-05-06: Manually ran the Snap Promotion Check workflow. It completed successfully; no promotion occurred because the Snap store edge channel still reported `1.3.1-beta.14` at check time, so the scheduled six-hour workflow should pick up `1.3.1-beta.15` after Snapcraft/Launchpad publishes it to edge.
+- 2026-05-06: Posted a concise Issue #50 follow-up comment noting that `1.3.1-beta.15` is built and asking for a fresh bundle if any group/admin or group activity notification leaks again.
 
 ## Final Status
-Implemented, locally validated, and prepared for `1.3.1-beta.15` beta release. Release execution/monitoring remains in progress.
+Implemented, locally validated, released as `1.3.1-beta.15`, and monitored to successful CI completion.
 
 ## Files Changed
 - `src/preload/notification-decision-policy.ts`
