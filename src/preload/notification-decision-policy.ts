@@ -1134,6 +1134,37 @@ function isLikelyGlobalFacebookNotification(
   return titleIsFacebookShell && hasSocialSignal;
 }
 
+const BROWSER_SOCIAL_ACTIVITY_SHELL_TITLE_PATTERNS: RegExp[] = [
+  /^activity$/i,
+  /^new activity$/i,
+  /^group activity$/i,
+  /^group notification$/i,
+  /^facebook group activity$/i,
+];
+
+const BROWSER_SOCIAL_ACTIVITY_BODY_PATTERNS: RegExp[] = [
+  /^someone liked your answer(?: to (?:their|a|the) question)?\b/i,
+  /^someone liked your (?:question|comment|reply|post)\b/i,
+];
+
+function isLikelyBrowserSocialActivityNotification(
+  payload: NotificationPayload,
+): boolean {
+  const title = normalizeText(payload.title);
+  const body = normalizeText(payload.body);
+  if (!body) return false;
+
+  const titleLooksLikeActivityShell =
+    BROWSER_SOCIAL_ACTIVITY_SHELL_TITLE_PATTERNS.some((pattern) =>
+      pattern.test(title),
+    );
+  if (!titleLooksLikeActivityShell) return false;
+
+  return BROWSER_SOCIAL_ACTIVITY_BODY_PATTERNS.some((pattern) =>
+    pattern.test(body),
+  );
+}
+
 const notificationActivityPolicy = resolveSharedNotificationActivityPolicy({
   classifyCallNotification,
   isLikelyGlobalFacebookNotification,
@@ -1283,7 +1314,10 @@ function shouldSuppressBrowserNotificationActivity(
     };
   }
 
-  if (notificationActivityPolicy.isLikelyGlobalFacebookNotification(payload)) {
+  if (
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification(payload) ||
+    isLikelyBrowserSocialActivityNotification(payload)
+  ) {
     return {
       suppress: true,
       reason: "global-facebook-activity",

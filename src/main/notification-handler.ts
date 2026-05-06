@@ -30,6 +30,19 @@ export interface NotificationDisplayBoundaryDecision {
   normalizedData: NotificationData;
 }
 
+export interface NotificationCleanupSummary {
+  reason: string;
+  activeBefore: number;
+  closedCount: number;
+  activeAfter: number;
+  closed: Array<{
+    key: string;
+    title: string;
+    href?: string;
+    ageMs: number;
+  }>;
+}
+
 export type NotificationSoundDecisionResolver = (
   data: NotificationData,
 ) => NotificationSoundDecision | null | undefined;
@@ -110,8 +123,18 @@ export function resolveNotificationDisplayBoundary(
   };
 }
 
+type ActiveNotificationRecord = {
+  notification: Notification;
+  key: string;
+  title: string;
+  body: string;
+  href?: string;
+  createdAt: number;
+  isIncomingCall: boolean;
+};
+
 export class NotificationHandler {
-  private activeNotifications: Map<string, Notification> = new Map();
+  private activeNotifications: Map<string, ActiveNotificationRecord> = new Map();
   private getMainWindow: () => BrowserWindow | null;
   private appDisplayName: string;
   private createNotification: (options: Electron.NotificationConstructorOptions) => Notification;
@@ -209,9 +232,44 @@ export class NotificationHandler {
 
     const notification = this.createNotification(notificationOptions);
     const notificationKey = data.tag || `untagged-${Date.now()}-${Math.random()}`;
+    const createdAt = Date.now();
+    const activeRecord: ActiveNotificationRecord = {
+      notification,
+      key: notificationKey,
+      title: normalizedData.title,
+      body: normalizedData.body,
+      href: normalizedData.href,
+      createdAt,
+      isIncomingCall: classifyCallNotification({
+        title: normalizedData.title,
+        body: normalizedData.body,
+      }).isIncomingCall,
+    };
+
+    notification.on('show', () => {
+      console.log('[NotificationHandler] Notification shown', {
+        key: notificationKey,
+        title: normalizedData.title,
+        href: normalizedData.href,
+      });
+    });
+    notification.on('failed', (_event: unknown, error: string) => {
+      console.warn('[NotificationHandler] Notification failed', {
+        key: notificationKey,
+        title: normalizedData.title,
+        href: normalizedData.href,
+        error,
+      });
+      this.activeNotifications.delete(notificationKey);
+    });
 
     // Handle notification click - navigate to the conversation
     notification.on('click', () => {
+      console.log('[NotificationHandler] Notification clicked', {
+        key: notificationKey,
+        title: normalizedData.title,
+        href: normalizedData.href,
+      });
       const mainWindow = this.getMainWindow();
       const targetWindow = mainWindow || BrowserWindow.getAllWindows()[0];
 
@@ -307,20 +365,30 @@ export class NotificationHandler {
       }
     });
     notification.on('action', () => {
+      console.log('[NotificationHandler] Notification action invoked', {
+        key: notificationKey,
+        title: normalizedData.title,
+        href: normalizedData.href,
+      });
       notification.emit('click');
     });
 
     // Handle notification close
     notification.on('close', () => {
+      console.log('[NotificationHandler] Notification closed', {
+        key: notificationKey,
+        title: normalizedData.title,
+        href: normalizedData.href,
+      });
       this.activeNotifications.delete(notificationKey);
     });
+
+    this.activeNotifications.set(notificationKey, activeRecord);
 
     // Show the notification
     notification.show();
     this.recordTestNotification(normalizedData);
 
-    // Store notification if it has a tag
-    this.activeNotifications.set(notificationKey, notification);
     return true;
   }
 
@@ -339,17 +407,62 @@ export class NotificationHandler {
   }
 
   closeNotification(tag: string): void {
-    const notification = this.activeNotifications.get(tag);
-    if (notification) {
-      notification.close();
+    const record = this.activeNotifications.get(tag);
+    if (record) {
+      record.notification.close();
       this.activeNotifications.delete(tag);
     }
   }
 
-  closeAllNotifications(): void {
-    this.activeNotifications.forEach((notification) => {
-      notification.close();
+  closeActiveNotifications(
+    reason = 'manual-cleanup',
+    options: { includeIncomingCalls?: boolean; minAgeMs?: number } = {},
+  ): NotificationCleanupSummary {
+    const now = Date.now();
+    const activeBefore = this.activeNotifications.size;
+    const closed: NotificationCleanupSummary['closed'] = [];
+    const includeIncomingCalls = options.includeIncomingCalls === true;
+    const minAgeMs = Math.max(0, Math.floor(options.minAgeMs ?? 0));
+
+    this.activeNotifications.forEach((record, key) => {
+      const ageMs = Math.max(0, now - record.createdAt);
+      if (record.isIncomingCall && !includeIncomingCalls) {
+        return;
+      }
+      if (minAgeMs > 0 && ageMs < minAgeMs) {
+        return;
+      }
+      try {
+        record.notification.close();
+      } catch (error) {
+        console.warn('[NotificationHandler] Failed to close active notification', {
+          key,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      closed.push({
+        key,
+        title: record.title,
+        href: record.href,
+        ageMs,
+      });
+      this.activeNotifications.delete(key);
     });
-    this.activeNotifications.clear();
+
+    const summary: NotificationCleanupSummary = {
+      reason,
+      activeBefore,
+      closedCount: closed.length,
+      activeAfter: this.activeNotifications.size,
+      closed,
+    };
+
+    console.log('[NotificationHandler] Closed active notifications', summary);
+    return summary;
+  }
+
+  closeAllNotifications(): void {
+    this.closeActiveNotifications('close-all', { includeIncomingCalls: true });
   }
 }

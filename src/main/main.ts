@@ -4657,6 +4657,11 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
+    logServiceWorkerNotificationInstrumentationAvailability(
+      contentView.webContents.session,
+      "content-view",
+    );
+
     // Set up screen sharing handler for getDisplayMedia() calls
     // This is required for the "Share Screen" button to work during calls
     contentView.webContents.session.setDisplayMediaRequestHandler(
@@ -8849,6 +8854,35 @@ function getMessengerWebContents(): Electron.WebContents | undefined {
   return contentView ? contentView.webContents : mainWindow?.webContents;
 }
 
+const POWER_NOTIFICATION_CLEANUP_MIN_AGE_MS = 30_000;
+
+function cleanupActiveNotificationsForPowerState(state: PowerStateEvent): void {
+  if (state !== "resume" && state !== "unlock-screen") return;
+
+  if (!notificationHandler) {
+    pushNotificationDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "active-notifications-cleanup-skipped",
+      payload: {
+        reason: state,
+        skippedReason: "notification-handler-unavailable",
+      },
+    });
+    return;
+  }
+
+  const summary = notificationHandler.closeActiveNotifications(`power-${state}`, {
+    minAgeMs: POWER_NOTIFICATION_CLEANUP_MIN_AGE_MS,
+  });
+  pushNotificationDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "active-notifications-cleaned",
+    payload: summary,
+  });
+}
+
 function sendPowerStateToRenderer(state: PowerStateEvent): void {
   const target = getMessengerWebContents();
   if (!target) {
@@ -8862,6 +8896,50 @@ function sendPowerStateToRenderer(state: PowerStateEvent): void {
   target.send("power-state", {
     state,
     timestamp: Date.now(),
+  });
+}
+
+function logServiceWorkerNotificationInstrumentationAvailability(
+  ses: Electron.Session | undefined,
+  label: string,
+): void {
+  const serviceWorkers = ses?.serviceWorkers;
+  pushNotificationDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "browser-notification-instrumentation-availability",
+    payload: {
+      label,
+      serviceWorkersAvailable: Boolean(serviceWorkers),
+      notificationPresentationHookAvailable: false,
+      activeHooks: [
+        "permission-request-handler",
+        "permission-check-handler",
+        "preload-notification-constructor-wrapper",
+        "preload-service-worker-show-notification-wrapper",
+      ],
+    },
+  });
+
+  if (!serviceWorkers) return;
+
+  const marker = "__mdNotificationDiagnosticsInstalled";
+  const workersWithMarker = serviceWorkers as typeof serviceWorkers & {
+    [marker]?: boolean;
+  };
+  if (workersWithMarker[marker]) return;
+  workersWithMarker[marker] = true;
+  serviceWorkers.on("running-status-changed", (details) => {
+    pushNotificationDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "service-worker-running-status-changed",
+      payload: {
+        label,
+        versionId: details.versionId,
+        runningStatus: details.runningStatus,
+      },
+    });
   });
 }
 
@@ -8881,6 +8959,7 @@ function setupPowerMonitor(): void {
   powerMonitor.on("resume", () => {
     console.log("[PowerMonitor] System resume detected");
     isSystemSuspendedOrLocked = false;
+    cleanupActiveNotificationsForPowerState("resume");
     sendPowerStateToRenderer("resume");
   });
 
@@ -8893,6 +8972,7 @@ function setupPowerMonitor(): void {
   powerMonitor.on("unlock-screen", () => {
     console.log("[PowerMonitor] Screen unlocked");
     isSystemSuspendedOrLocked = false;
+    cleanupActiveNotificationsForPowerState("unlock-screen");
     sendPowerStateToRenderer("unlock-screen");
   });
 }

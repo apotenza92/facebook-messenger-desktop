@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.15] - 2026-05-06
+
+### Fixed
+
+- **Issue #50 follow-up: suppress answer-like group activity leaks and harden wake diagnostics** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Suppress browser-originated Facebook/group activity notifications such as `Someone liked your answer to their question` when they arrive with notification/activity-style titles.
+  - Keep ordinary sender-titled chat messages deliverable, including messages whose text happens to mention the same answer-like phrase.
+  - Close stale app-created message notifications after wake/unlock while preserving fresh message notifications and active incoming-call notifications.
+  - Add notification lifecycle and service-worker instrumentation diagnostics so any remaining leak can be tied to stale app notifications, browser/service-worker availability, or an uncontrolled OS/browser path.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.14] - 2026-05-05
 
 ### Fixed

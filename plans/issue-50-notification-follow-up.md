@@ -1,110 +1,173 @@
-# Issue #50 Follow-up Plan
+# Issue #50 Notification Follow-up Plan
 
-## Summary
-Implement issue #50 in two stages inside one tracked workstream:
-1. fix the two proven call-notification regressions now;
-2. harden diagnostics and wake-boundary suppression for the remaining group-management leak before broadening that classifier.
+## Goal
+Resolve the remaining Issue #50 notification leaks reported from `1.3.1-beta.14`, based on the 2026-05-06 issue comment and attached debug bundle.
 
-No user-facing API changes are required. Internal changes should introduce:
-- one shared caller-extraction/normalisation path used by preload and main;
-- one internal pure helper for “same call session, better caller arrived” notification upgrades;
-- one richer internal call-activity classification result that can distinguish:
-  - active incoming call;
-  - suppressible call history/system activity;
-  - non-call activity.
+The specific reported failure is two back-to-back notifications after the reporter had been away from the computer:
+1. a group admin/management notification leak; and
+2. a Facebook social activity notification, `someone liked your answer to their question`, associated with the same group.
 
-## Implementation Changes
-### 1. Incoming-call caller-name regression
-- Remove the bespoke preload caller parsing in `src/preload/notifications-inject.ts` and route caller extraction through the same normalisation rules used by `src/shared/incoming-call-evidence.ts`.
-- The extractor must reject accessibility/chrome junk such as `callProfile pictureIncoming`, including camelCase variants and mixed generic tokens.
-- Keep the existing placeholder-echo suppression in main, but add an explicit “same session, same key, improved caller/body” path in the incoming-call IPC policy so a generic first toast is immediately upgraded when the real caller arrives.
-- Re-display the notification only when the new caller is non-null and the body improves; do not create duplicate extra toasts for unchanged bodies or later placeholder echoes.
+## Current Understanding
+- Issue #50 has already gone through several beta fixes:
+  - incoming-call first-toast and duplicate-reminder fixes;
+  - post-call history suppression;
+  - muted-group placeholder/race suppression;
+  - service-worker/browser-originated notification suppression for group/admin, global activity, and call history payloads.
+- The new debug bundle is from `1.3.1-beta.14` on macOS with notification debug logging enabled.
+- Local analysis copy: `/tmp/issue50-logs/2026-05-06/extracted/messenger-debug-logs-2026-05-06T03-29-00-741Z/`.
+- The bundle shows:
+  - app version `1.3.1-beta.14`;
+  - notification permission checks for Facebook notifications denied with `browser-notifications-disabled`;
+  - only three app-displayed notifications in `notification-debug.ndjson`, all ordinary direct-message bridge notifications from an unmuted direct thread;
+  - no `show-notification-request`, `show-notification-classified`, `show-notification-displayed`, `Native notification ...`, or `Service worker notification candidate analysis` events matching the two reported leaks near the wake/export window;
+  - a wake/unlock sequence at about `2026-05-06T03:23Z`, followed by settling suppression and badge recount events, but no captured leaked notification payload;
+  - the current route at export remained an E2EE direct message thread, not the affected group thread.
+- Therefore, the latest bundle does **not** prove a normal bridge/native/service-worker display-boundary miss. It points to one of these remaining possibilities:
+  1. a notification source still not instrumented by the app;
+  2. macOS re-presenting already-delivered notifications after wake/unlock;
+  3. a Chromium/Electron notification path outside the page-level `Notification` constructor and the page-level `ServiceWorkerRegistration.showNotification` wrapper;
+  4. a policy false-negative if the actual payload title/body was group-scoped rather than Facebook-shell-scoped.
 
-### 2. Post-call history notification suppression
-- Extend the shared call classifier to mark call-history/system rows as suppressible, not merely “non-incoming”.
-- Suppress at least these bodies:
-  - `X called you`
-  - `You called X`
-  - `Call ended`
-  - `Missed video/audio call`
-  - `Call cancelled`
-  - `Answered elsewhere` / `Answered on another device`
-  - `Joined the video/audio call`
-  - `Video/audio call has started`
-- Preserve current allowed incoming-call behaviour for genuine ringing payloads such as `X is calling you`, `Incoming video call`, and `X wants to call`.
-- Apply the suppression result in all notification decision points:
-  - preload native-notification interception;
-  - preload mutation/sidebar path;
-  - main-process display boundary.
-- Evaluate both the raw payload and the matched sidebar row, because one source may be generic while the other contains the call-history wording.
+## Clarifying Questions and Answers
+None; enough context was provided in the initial request and the issue/debug bundle are available for read-only review.
 
-### 3. Remaining group-management/admin leak
-- Do not ship a broad phrase-table expansion blind. First add structured classifier logging so the next leak bundle shows exactly which branch failed.
-- For every candidate notification, log:
-  - source (`native`, `observed-row`, `matched-row`);
-  - normalised href;
-  - classifier result for raw payload and matched row;
-  - suppression reason;
-  - wake generation / settling state;
-  - whether a wake-boundary snapshot existed.
-- Make wake-boundary snapshots classification-aware: store href plus activity classification, not only href plus body, so post-wake replays are suppressed even when Messenger rewrites the body text for the same admin event.
-- After instrumentation, broaden the shared group-management classifier to cover the missing moderation/membership phrasing family the next bundle proves, then run that classifier against both raw payload and matched row text.
-
-## Test Plan
-- Extend `scripts/test-issues-regressions.ts` with:
-  - caller normalisation cases that reject `callProfile pictureIncoming` and similar junk;
-  - extractor cases that still accept real caller names;
-  - incoming-call session-upgrade cases:
-    - generic active body + same-key named caller => immediate update;
-    - named active body + placeholder echo => no update;
-    - same-key named caller + unchanged body => no extra display;
-  - call-history suppression cases for `Amanda called you`, `You called Amanda`, `Call ended`, and one allowed incoming-call control;
-  - main-process display-boundary cases proving suppressible call activity is blocked and genuine incoming calls still show.
-- Add wake-replay regression coverage for admin/global activity where the snapshot and replay bodies differ but the href is the same.
-- Keep `npm run test:issues` as the deterministic release gate.
-- Manual validation:
-  - incoming call first toast shows the real caller on the first notification, not on the reminder;
-  - no duplicate toasts during the same ring;
-  - completed call does not emit `X called you`;
-  - fresh direct messages still notify;
-  - if a group/admin leak is reproduced again, the exported bundle identifies whether it was a phrase gap, row-matching gap, or wake-replay miss.
+## Constraints and Non-Goals
+- Do not implement until this plan is approved.
+- Preserve ordinary message notifications, including unmuted direct and group messages.
+- Avoid broad text suppression that could drop real message bodies containing words like `liked your answer` in normal conversation.
+- Do not rely on people's real names in public-facing notes, changelog entries, or release notes.
+- Keep changes conservative and evidence-driven; this is a beta follow-up for a rare leak after previous notification-policy fixes.
+- Stable release actions are out of scope for this plan.
 
 ## Assumptions
-- Persistent plan location: `plans/`, per user choice.
-- Delivery shape: staged implementation, per user choice.
-- The group-management fix should not broaden suppression beyond proven admin/moderation activity until the richer logs capture the escaping phrase.
-- Existing live validation remains the repo checklist flow in `docs/call-testing.md` plus the call GUI harness already used for call-related fixes.
+- The reported group/admin leak and the `liked your answer` leak occurred close to the export time, after a wake/unlock or away-from-computer interval.
+- The reporter was running `1.3.1-beta.14` for this bundle.
+- If the app had created the leaked notifications through the current bridge/native display boundary, `notification-debug.ndjson` should contain display or suppression events for them.
+- The `liked your answer to their question` activity is a non-message Facebook/group social activity and should be suppressed for this desktop Messenger wrapper.
+- macOS delivered-notification re-presentation is plausible enough to guard against because the bundle shows no app display event for the leak.
 
-## 2026-04-21 Beta.9 Reporter Follow-up Review
+## Likely Files / Areas
+- `src/main/main.ts`
+  - notification permission handlers;
+  - power/wake/unlock handling;
+  - notification debug export and logging;
+  - any session-level notification/service-worker instrumentation available in Electron 28.
+- `src/main/notification-handler.ts`
+  - active notification tracking;
+  - macOS notification `id`/`groupId` use;
+  - close/cleanup behavior on wake/focus/export paths.
+- `src/shared/notification-activity-policy.ts`
+  - group-management and global/social activity classifiers.
+- `src/preload/notification-decision-policy.ts`
+  - browser/native activity suppression decisions;
+  - source-aware suppression helper behavior.
+- `src/preload/notifications-inject.ts`
+  - page-level `Notification` interception;
+  - service-worker diagnostics wrapper;
+  - wake-boundary/settling diagnostic logging.
+- `scripts/test-issues-regressions.ts`
+  - deterministic regression coverage for the new social/group activity phrases and notification cleanup behavior.
+- `scripts/test-notification*.ts` / notification test scripts if present and relevant.
 
-### Uploaded Bundle
-- Bundle: `messenger-debug-logs-2026-04-21T01-50-09-160Z.zip`.
-- App version: `1.3.1-beta.9`.
-- Local analysis path: `/tmp/issue50-logs/2026-04-21/extracted/messenger-debug-logs-2026-04-21T01-50-09-160Z/`.
-- The bundle confirms the post-call history fix: the reporter no longer sees `X called you` after ending a call.
-- The notification log does not contain the leaked group-admin candidate. There are no `=== NATIVE NOTIFICATION INTERCEPTED ===`, `show-notification-request`, `show-notification-classified`, `show-notification-displayed`, or preload candidate-analysis rows for the leak window.
-- Wake-boundary rows in this bundle recorded `0` existing unread conversations, so this export cannot prove a phrase-table miss or wake-replay miss. The leak either occurred outside the exported in-memory/file window, or came through a notification source that bypasses the current page `Notification` constructor and renderer bridge logging.
+## Implementation Strategy
+1. Reproduce the log conclusion in a small internal analysis note or comments for the implementation pass:
+   - app-displayed notification count is ordinary direct-message-only;
+   - no captured leaked payload near wake/export;
+   - browser notification permission is denied;
+   - wake/unlock path occurs shortly before export.
+2. Add a conservative group/social activity classifier extension:
+   - classify `liked your answer to their question` and close variants as suppressible Facebook/group social activity;
+   - prefer source-aware suppression so ordinary message text is not blocked merely because a human wrote similar words;
+   - keep final display-boundary suppression conservative unless the payload clearly looks like Facebook activity rather than a chat message.
+3. Harden notification lifecycle cleanup around away/wake scenarios:
+   - assign stable macOS notification identifiers/group identifiers for app-created notifications where useful;
+   - close tracked non-call notifications on wake/unlock/focus when they are no longer fresh, especially while starting a wake-settling window;
+   - ensure cleanup is logged so a future bundle can distinguish app cleanup from non-app OS re-presentation.
+4. Broaden instrumentation for currently invisible paths:
+   - add explicit logs when wake/unlock cleanup runs and how many active notifications are closed;
+   - log notification `show`, `failed`, `close`, `click`, and `action` events from `NotificationHandler` with redacted/minimal payload metadata;
+   - investigate Electron 28 session/service-worker APIs for any main-process notification presentation hooks or service-worker lifecycle events that can prove whether Chromium is displaying notifications outside the page wrappers;
+   - if no hook exists, record that explicitly in debug logs at startup.
+5. Add regression coverage before changing behavior:
+   - classifier tests for group admin and `liked your answer to their question` style activity;
+   - false-positive tests showing ordinary direct/group message notifications still pass;
+   - wake cleanup tests around active notification tracking;
+   - debug logging tests where feasible.
+6. Run deterministic validation and then prepare a beta release if the user asks to proceed through release steps after implementation.
 
-### New Regressions Reported
-- First incoming-call toast still falls back to `Someone is calling you on Messenger`.
-- After pickup, two named incoming-call notifications appear.
-- Completed-call history notifications remain suppressed.
-- Group-admin leaks are rarer but still possible.
+## Subagent Handoff Plan
+- `scout` / `context-builder`:
+  - verify the exact Issue #50 timeline and inspect the 2026-05-06 bundle;
+  - identify Electron 28 APIs available for session/service-worker notification instrumentation and notification lifecycle cleanup.
+- `worker` slice 1:
+  - implement source-aware classifier changes for group/social activity suppression with tests.
+- `worker` slice 2:
+  - implement notification lifecycle cleanup/logging around wake/unlock/focus and `NotificationHandler` events.
+- `worker` slice 3, only if supported by Electron 28:
+  - add main-process session/service-worker notification instrumentation not covered by page wrappers.
+- `reviewer`:
+  - review the diff for false positives that would suppress real chat messages;
+  - run relevant tests and inspect logs emitted by synthetic notification paths.
+- `oracle`, if needed:
+  - decide between aggressive suppression and diagnostics-only behavior if Electron/macOS does not expose the invisible notification source.
 
-### Root-cause Hypotheses
-- The first toast is still generic because beta.9 shows immediately when the first qualifying incoming-call evidence has no normalised caller. The later “improved caller arrived” path upgrades the active notification, but it cannot make the first displayed toast named.
-- The duplicate named notifications after pickup likely come from the main-process incoming-call reminder timer. It refreshes every 12 seconds for up to 120 seconds and only stops when preload emits `incoming-call-ended`; pickup/connected states may remove the incoming controls too late, or leave enough stale state for reminders after the call has been answered.
-- The group-admin leak is probably not yet a classifier phrase miss. The beta.9 classifier logging that should identify raw payload, matched row, href, wake generation, and suppression reason was not present for the leaked notification at all.
+## Acceptance Criteria
+- The reported `someone liked your answer to their question` activity is classified/suppressed when it appears as Facebook/group activity.
+- Group admin/management notifications remain suppressed at every app-controlled notification boundary.
+- Ordinary direct messages and unmuted group messages still notify.
+- Muted group placeholder/race suppression remains intact.
+- Post-call history/status suppression remains intact.
+- Wake/unlock/focus cleanup prevents app-tracked stale notifications from being re-shown where Electron supports it.
+- A future debug bundle will clearly show one of:
+  - the leaked notification was suppressed;
+  - the app closed/cleaned an old delivered notification;
+  - the notification came from a still-uncontrolled OS/browser path, with enough diagnostics to identify that gap.
 
-### Next Fix Order
-1. Add a short pending-first-toast grace path for callerless incoming-call evidence. If a named same-session signal arrives during the grace window, show only the named toast; otherwise flush the generic toast after the timeout.
-2. Stop and close active incoming-call reminders when the call UI transitions away from a ringing state, not only after the delayed `incoming-call-ended` controls-disappeared path. Add coverage for “generic first signal, named second signal, answered before reminder” so pickup cannot emit duplicate named reminders.
-3. Extend notification diagnostics to catch notification sources that do not pass through the page `Notification` constructor or `show-notification` IPC. Log permission-granted notification paths and any Electron/session-level notification events available for service-worker style notifications.
-4. Increase or harden the exported notification evidence window so a freshly reported leak cannot fall out of the bundle before export.
-5. Only after the next bundle contains the actual leaked payload, broaden the group-management classifier for the proven moderation/membership wording and run that classifier against both raw payload and matched row text.
+## Verification Checklist
+- [x] Run `npm run test:issues`.
+- [x] Run `npm run test:notification` if present/available.
+- [x] Run `npm run build`.
+- [x] Manually inspect the new tests for false-positive coverage around real chat messages.
+- [x] If implementing wake cleanup, run or add a focused smoke test proving tracked stale notifications are closed on wake/unlock cleanup while fresh message and incoming-call notifications are preserved.
+- [x] Before any beta release, update `CHANGELOG.md` and `package.json` for the target beta version.
+- [x] For a beta release, confirm the release notes avoid real names and summarize the 2026-05-06 bundle finding without exposing private thread/message content.
 
-### Additional Test Coverage Needed
-- First callerless incoming-call signal is held briefly and replaced by a named same-session signal without displaying a generic toast.
-- Callerless first signal still displays after the grace timeout when no better caller arrives.
-- Incoming-call reminder stops when the ringing state is answered/connected and does not show named duplicate reminders after pickup.
-- Debug export includes a synthetic service-worker-style or non-constructor notification source with the same classifier payload fields as native and bridge notifications.
+## Progress Log
+- 2026-05-06: Read Issue #50 comments via `gh issue view` and downloaded/extracted `messenger-debug-logs-2026-05-06T03-29-00-741Z.zip`.
+- 2026-05-06: Reviewed `debug-summary.json` and `notification-debug.ndjson`. Found no app-controlled display event for the two reported leaks; only ordinary direct-message bridge notifications were displayed in the captured notification log.
+- 2026-05-06: Updated this durable plan with the new root-cause direction: combine conservative social/group classifier coverage with wake notification cleanup and broader invisible-path diagnostics.
+- 2026-05-06: Implemented source/title-scoped browser activity suppression for `Someone liked your answer to their question` style Facebook/group activity, with explicit false-positive tests for sender-titled chat text.
+- 2026-05-06: Implemented app-created notification lifecycle tracking, stale wake/unlock cleanup, notification lifecycle logging, and service-worker/browser notification instrumentation availability diagnostics.
+- 2026-05-06: Reviewer caught two issues during execution: overly broad non-shell phrase suppression and too-broad wake cleanup. Both were narrowed before validation.
+- 2026-05-06: Validation passed: `npm run test:issues`, `npm run test:notification`, and `npm run build`.
+- 2026-05-06: Prepared `1.3.1-beta.15` release metadata in `package.json`, `package-lock.json`, and `CHANGELOG.md`, then reran `npm run test:issues`, `npm run test:notification`, and `npm run build` successfully.
+
+## Final Status
+Implemented, locally validated, and prepared for `1.3.1-beta.15` beta release. Release execution/monitoring remains in progress.
+
+## Files Changed
+- `src/preload/notification-decision-policy.ts`
+- `src/main/notification-handler.ts`
+- `src/main/main.ts`
+- `scripts/test-issues-regressions.ts`
+- `CHANGELOG.md`
+- `package.json`
+- `package-lock.json`
+- `plans/issue-50-notification-follow-up.md`
+
+## Tests Run
+- `npm run test:issues` — passed.
+- `npm run test:notification` — passed.
+- `npm run build` — passed.
+
+## Remaining Risks
+- The beta.14 bundle still did not capture an app-controlled display event for the reported leaks, so the fix combines conservative suppression for the proven activity phrase with diagnostics/cleanup for possible invisible OS/browser paths.
+- Electron 28 does not expose a main-process service-worker notification presentation payload hook; diagnostics record available hooks and service-worker running-status changes, but payload capture still depends on permission/page-wrapper paths.
+- Stale-notification cleanup can only close notifications still tracked by this app process.
+
+## Follow-up Recommendations
+- If preparing a beta, update `CHANGELOG.md` and `package.json`, then release a beta only after confirming release notes avoid real names/private thread content.
+- Ask the reporter for a fresh beta bundle if any group/admin or answer-like activity notification leaks again; the new diagnostics should make the remaining path clearer.
+
+## Open Decisions
+- Whether to ship the next fix as another beta immediately after release prep or first ask the reporter for one more diagnostics-only bundle. Current implementation is ready for beta validation if desired.

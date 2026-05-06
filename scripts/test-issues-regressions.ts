@@ -4,6 +4,7 @@ type DeterministicCaseName = "all" | "muted-conflict";
 
 const fs = require("fs");
 const path = require("path");
+const { EventEmitter } = require("events");
 
 const APP_ROOT = process.env.MESSENGER_APP_ROOT
   ? path.resolve(process.env.MESSENGER_APP_ROOT)
@@ -3922,6 +3923,66 @@ const runNotificationPolicyTests = () => {
     "#50 ordinary browser-originated message notifications should remain deliverable",
   );
 
+  const socialAnswerActivitySuppressed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "New notification",
+      body: "Someone liked your answer to their question",
+    });
+  assertEqual(
+    socialAnswerActivitySuppressed.suppress,
+    true,
+    "#50 browser-originated answer-like social activity should be suppressed",
+  );
+  assertEqual(
+    socialAnswerActivitySuppressed.reason,
+    "global-facebook-activity",
+    "#50 answer-like social activity suppression should be classified as global Facebook activity",
+  );
+
+  const nonShellSocialAnswerActivitySuppressed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Group activity",
+      body: "Someone liked your answer to their question",
+    });
+  assertEqual(
+    nonShellSocialAnswerActivitySuppressed.suppress,
+    true,
+    "#50 generic someone-liked answer activity should be suppressed even when Facebook uses a group-like title",
+  );
+
+  const ordinarySomeoneAnswerChatAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Account A",
+      body: "Someone liked your answer to their question",
+    });
+  assertEqual(
+    ordinarySomeoneAnswerChatAllowed.suppress,
+    false,
+    "#50 sender-titled ordinary chat text matching the answer-like social activity phrase should not be suppressed",
+  );
+
+  const ordinaryAnswerChatAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Account A",
+      body: "I liked your answer to their question",
+    });
+  assertEqual(
+    ordinaryAnswerChatAllowed.suppress,
+    false,
+    "#50 ordinary chat text that mentions liking an answer should not be suppressed",
+  );
+
+  const quotedAnswerChatAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Group chat",
+      body: "Someone said: liked your answer to their question",
+    });
+  assertEqual(
+    quotedAnswerChatAllowed.suppress,
+    false,
+    "#50 quoted group chat text resembling social activity should remain deliverable",
+  );
+
   const resumeBoundaryCapturesFreshUnread =
     typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
       "function" &&
@@ -4410,7 +4471,7 @@ const runNotificationPolicyTests = () => {
 const runNotificationDisplayPolicyTests = () => {
   const notificationDisplayPolicy = loadNotificationDisplayPolicy();
   const notificationTextPolicy = loadNotificationTextPolicy();
-  const { resolveNotificationDisplayBoundary } = loadNotificationHandler();
+  const { resolveNotificationDisplayBoundary, NotificationHandler } = loadNotificationHandler();
   assert(
     typeof notificationDisplayPolicy.formatNotificationDisplayTitle ===
       "function",
@@ -4512,6 +4573,39 @@ const runNotificationDisplayPolicyTests = () => {
     "#50 display-boundary policy should drop generic Messenger message-icon body text",
   );
 
+  const chatLikeSomeoneAnswerBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Account A",
+      body: "Someone liked your answer to their question",
+    });
+  assertEqual(
+    chatLikeSomeoneAnswerBoundary.suppress,
+    false,
+    "#50 display boundary should not suppress sender-titled chat text matching answer-like social activity",
+  );
+
+  const chatLikeAnswerBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Account A",
+      body: "I liked your answer to their question",
+    });
+  assertEqual(
+    chatLikeAnswerBoundary.suppress,
+    false,
+    "#50 display boundary should not suppress ordinary chat text resembling answer-like social activity",
+  );
+
+  const shellAnswerActivityBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "New notification",
+      body: "Someone liked your answer to their question",
+    });
+  assertEqual(
+    shellAnswerActivityBoundary.suppress,
+    true,
+    "#50 display boundary should suppress shell-titled answer-like Facebook activity",
+  );
+
   assertEqual(
     JSON.stringify(
       notificationDisplayPolicy.sanitizeNotificationNameCache(
@@ -4555,6 +4649,84 @@ const runNotificationDisplayPolicyTests = () => {
       },
     }),
     "#49 notification name-cache cleanup should migrate legacy single-name entries and supply fallback timestamps",
+  );
+
+  const fakeNotifications: any[] = [];
+  class FakeNotification extends EventEmitter {
+    options: Record<string, unknown>;
+    closeCount = 0;
+    showCount = 0;
+    constructor(options: Record<string, unknown>) {
+      super();
+      this.options = options;
+      fakeNotifications.push(this);
+    }
+    show() {
+      this.showCount += 1;
+      this.emit("show");
+    }
+    close() {
+      this.closeCount += 1;
+      this.emit("close");
+    }
+  }
+  const handler = new NotificationHandler(
+    () => null,
+    "Messenger",
+    (options: Record<string, unknown>) => new FakeNotification(options) as any,
+  );
+  const firstFake = new FakeNotification({ title: "Account A" });
+  const secondFake = new FakeNotification({ title: "Account B" });
+  (handler as any).activeNotifications.set("first", {
+    notification: firstFake,
+    key: "first",
+    title: "Account A",
+    body: "First message",
+    href: "/t/1",
+    createdAt: Date.now() - 60_000,
+    isIncomingCall: false,
+  });
+  const incomingFake = new FakeNotification({ title: "Messenger" });
+  (handler as any).activeNotifications.set("second", {
+    notification: secondFake,
+    key: "second",
+    title: "Account B",
+    body: "Second message",
+    href: "/t/2",
+    createdAt: Date.now() - 500,
+    isIncomingCall: false,
+  });
+  (handler as any).activeNotifications.set("incoming-call", {
+    notification: incomingFake,
+    key: "incoming-call",
+    title: "Messenger",
+    body: "Account C is calling you on Messenger",
+    href: undefined,
+    createdAt: Date.now() - 100,
+    isIncomingCall: true,
+  });
+  const cleanupSummary = handler.closeActiveNotifications("test-wake", {
+    minAgeMs: 30_000,
+  });
+  assertEqual(
+    cleanupSummary.activeBefore,
+    3,
+    "#50 wake notification cleanup should report active notifications before closing",
+  );
+  assertEqual(
+    cleanupSummary.closedCount,
+    1,
+    "#50 wake notification cleanup should close only stale app-created active notifications",
+  );
+  assertEqual(
+    cleanupSummary.activeAfter,
+    2,
+    "#50 wake notification cleanup should preserve fresh and incoming-call notification records",
+  );
+  assertEqual(
+    firstFake.closeCount === 1 && secondFake.closeCount === 0 && incomingFake.closeCount === 0,
+    true,
+    "#50 wake notification cleanup should close stale non-call notifications while preserving fresh messages and incoming calls",
   );
 
   const calledYouBoundary =
