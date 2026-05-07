@@ -41,7 +41,7 @@ jobs:
       - name: Build snap
         run: |
           set -euo pipefail
-          snapcraft --destructive-mode --build-for arm64
+          sudo --preserve-env=FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 snapcraft --destructive-mode --build-for arm64
 
       - name: Inspect snap
         id: snap
