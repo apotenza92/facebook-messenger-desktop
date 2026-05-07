@@ -26,93 +26,17 @@ jobs:
         run: sudo snap install snapcraft --classic
 
       - name: Check snap status
-        id: status
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           echo "Current Snap store status:"
           snapcraft status facebook-messenger-desktop || exit 1
-          
-          # Parse versions from snapcraft status output
-          # Format: Track  Arch  Channel  Version  Revision  Progress
-          # We look for lines containing the channel name and extract the version (4th column)
-          EDGE_VERSION=$(snapcraft status facebook-messenger-desktop 2>/dev/null | awk '$3 == "edge" {print $4; exit}')
-          BETA_VERSION=$(snapcraft status facebook-messenger-desktop 2>/dev/null | awk '$3 == "beta" {print $4; exit}')
-          STABLE_VERSION=$(snapcraft status facebook-messenger-desktop 2>/dev/null | awk '$3 == "stable" {print $4; exit}')
-          
-          echo "edge_version=$EDGE_VERSION" >> $GITHUB_OUTPUT
-          echo "beta_version=$BETA_VERSION" >> $GITHUB_OUTPUT
-          echo "stable_version=$STABLE_VERSION" >> $GITHUB_OUTPUT
-          
-          echo ""
-          echo "Detected versions:"
-          echo "  Edge:   $EDGE_VERSION"
-          echo "  Beta:   $BETA_VERSION"
-          echo "  Stable: $STABLE_VERSION"
 
       - name: Determine promotions needed
         id: promote
-        run: |
-          EDGE="${{ steps.status.outputs.edge_version }}"
-          BETA="${{ steps.status.outputs.beta_version }}"
-          STABLE="${{ steps.status.outputs.stable_version }}"
-          
-          PROMOTE_BETA=false
-          PROMOTE_STABLE=false
-          PROMOTE_STABLE_FROM_BETA=false
-          
-          # Helper function to check if version is a prerelease
-          is_prerelease() {
-            [[ "$1" == *"alpha"* ]] || [[ "$1" == *"beta"* ]] || [[ "$1" == *"rc"* ]]
-          }
-          
-          # Helper function to check if version has a git tag
-          has_tag() {
-            git rev-parse "v$1" >/dev/null 2>&1
-          }
-          
-          # Check edge channel for promotions
-          if [ -n "$EDGE" ] && [ "$EDGE" != "-" ] && has_tag "$EDGE"; then
-            echo "Edge version $EDGE has git tag"
-            
-            if is_prerelease "$EDGE"; then
-              # Prereleases go to beta only
-              if [ "$EDGE" != "$BETA" ]; then
-                PROMOTE_BETA=true
-                echo "Will promote $EDGE from edge to beta (prerelease)"
-              fi
-            else
-              # Stable releases go to both beta and stable
-              if [ "$EDGE" != "$BETA" ]; then
-                PROMOTE_BETA=true
-                echo "Will promote $EDGE from edge to beta (stable release)"
-              fi
-              if [ "$EDGE" != "$STABLE" ]; then
-                PROMOTE_STABLE=true
-                echo "Will promote $EDGE from edge to stable"
-              fi
-            fi
-          else
-            echo "Edge version '$EDGE' has no git tag or is empty, checking beta channel..."
-          fi
-          
-          # Also check if beta has a stable release that should be promoted to stable
-          # This handles the case where beta was updated but stable wasn't
-          if [ "$PROMOTE_STABLE" = false ] && [ -n "$BETA" ] && [ "$BETA" != "-" ] && [ "$BETA" != "$STABLE" ]; then
-            if has_tag "$BETA" && ! is_prerelease "$BETA"; then
-              PROMOTE_STABLE_FROM_BETA=true
-              echo "Will promote $BETA from beta to stable (stable release in beta channel)"
-            fi
-          fi
-          
-          echo "promote_beta=$PROMOTE_BETA" >> $GITHUB_OUTPUT
-          echo "promote_stable=$PROMOTE_STABLE" >> $GITHUB_OUTPUT
-          echo "promote_stable_from_beta=$PROMOTE_STABLE_FROM_BETA" >> $GITHUB_OUTPUT
-          echo "beta_version=$BETA" >> $GITHUB_OUTPUT
-          
-          if [ "$PROMOTE_BETA" = false ] && [ "$PROMOTE_STABLE" = false ] && [ "$PROMOTE_STABLE_FROM_BETA" = false ]; then
-            echo "All channels are up to date!"
-          fi
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: scripts/snap-promotion-decision.sh
 
       - name: Promote to beta
         if: steps.promote.outputs.promote_beta == 'true'
