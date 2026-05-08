@@ -39,6 +39,12 @@ channel_arch_versions() {
   channel_rows "$channel" | awk '$2 != "-" && $2 != "↑" {print $1 "=" $2}' | paste -sd "," -
 }
 
+channel_arch_version() {
+  local channel="$1"
+  local arch="$2"
+  channel_rows "$channel" | awk -v arch="$arch" '$1 == arch && $2 != "-" && $2 != "↑" {print $2; exit}'
+}
+
 single_channel_version() {
   local channel="$1"
   local versions count
@@ -64,11 +70,15 @@ all_channel_arches_match_version() {
 PROMOTE_BETA=false
 PROMOTE_STABLE=false
 PROMOTE_STABLE_FROM_BETA=false
+RESCUE_ARM64_EDGE=false
 BETA_VERSION=""
+RESCUE_VERSION=""
 
 EDGE_VERSION="$(single_channel_version edge || true)"
 BETA_VERSION="$(single_channel_version beta || true)"
 STABLE_VERSION="$(single_channel_version stable || true)"
+EDGE_AMD64_VERSION="$(channel_arch_version edge amd64)"
+EDGE_ARM64_VERSION="$(channel_arch_version edge arm64)"
 
 echo "Detected architecture versions:"
 echo "  Edge:   $(channel_arch_versions edge)"
@@ -104,13 +114,28 @@ if [ "$PROMOTE_STABLE" = false ] && [ -n "$BETA_VERSION" ] && has_tag "$BETA_VER
   fi
 fi
 
+if [ "$PROMOTE_BETA" = false ] &&
+  [ "$PROMOTE_STABLE" = false ] &&
+  [ "$PROMOTE_STABLE_FROM_BETA" = false ] &&
+  [ -z "$EDGE_VERSION" ] &&
+  [ -n "$EDGE_AMD64_VERSION" ] &&
+  [ "$EDGE_ARM64_VERSION" != "$EDGE_AMD64_VERSION" ] &&
+  has_tag "$EDGE_AMD64_VERSION" &&
+  is_prerelease "$EDGE_AMD64_VERSION"; then
+  RESCUE_ARM64_EDGE=true
+  RESCUE_VERSION="$EDGE_AMD64_VERSION"
+  echo "Will rescue arm64 edge by building $RESCUE_VERSION on GitHub ARM64"
+fi
+
 {
   echo "promote_beta=$PROMOTE_BETA"
   echo "promote_stable=$PROMOTE_STABLE"
   echo "promote_stable_from_beta=$PROMOTE_STABLE_FROM_BETA"
+  echo "rescue_arm64_edge=$RESCUE_ARM64_EDGE"
   echo "edge_version=$EDGE_VERSION"
   echo "beta_version=$BETA_VERSION"
   echo "stable_version=$STABLE_VERSION"
+  echo "rescue_version=$RESCUE_VERSION"
 } >>"${GITHUB_OUTPUT:-/dev/stdout}"
 
 if [ "$PROMOTE_BETA" = false ] && [ "$PROMOTE_STABLE" = false ] && [ "$PROMOTE_STABLE_FROM_BETA" = false ]; then

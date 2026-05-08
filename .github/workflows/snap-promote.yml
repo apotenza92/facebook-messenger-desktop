@@ -11,10 +11,17 @@ on:
     - cron: "0 */6 * * *" # Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
   workflow_dispatch: # Allow manual triggering
 
+concurrency:
+  group: snap-promotion-check
+  cancel-in-progress: false
+
 jobs:
-  check-and-promote:
+  check_and_promote:
     name: Check and Promote Snap
     runs-on: ubuntu-latest
+    outputs:
+      rescue_arm64_edge: ${{ steps.promote.outputs.rescue_arm64_edge }}
+      rescue_version: ${{ steps.promote.outputs.rescue_version }}
 
     steps:
       - name: Checkout code
@@ -31,6 +38,125 @@ jobs:
         run: |
           echo "Current Snap store status:"
           snapcraft status facebook-messenger-desktop || exit 1
+
+      - name: Determine promotions needed
+        id: promote
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: scripts/snap-promotion-decision.sh
+
+      - name: Promote to beta
+        if: steps.promote.outputs.promote_beta == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAPCRAFT_HAS_TTY: "true"
+        run: |
+          echo "Promoting from edge to beta..."
+          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta
+          echo "✅ Promoted to beta"
+
+      - name: Promote to stable from edge
+        if: steps.promote.outputs.promote_stable == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAPCRAFT_HAS_TTY: "true"
+        run: |
+          echo "Promoting from edge to stable..."
+          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable
+          echo "✅ Promoted to stable from edge"
+
+      - name: Promote to stable from beta
+        if: steps.promote.outputs.promote_stable_from_beta == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAPCRAFT_HAS_TTY: "true"
+        run: |
+          echo "Promoting ${{ steps.promote.outputs.beta_version }} from beta to stable..."
+          yes | snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable
+          echo "✅ Promoted to stable from beta"
+
+      - name: Final status
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          echo ""
+          echo "Final Snap store status:"
+          snapcraft status facebook-messenger-desktop || true
+
+  rescue_arm64_edge:
+    name: Rescue ARM64 edge snap
+    runs-on: ubuntu-24.04-arm
+    needs: check_and_promote
+    if: needs.check_and_promote.outputs.rescue_arm64_edge == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Verify runner and version
+        run: |
+          set -euo pipefail
+          test "$(dpkg --print-architecture)" = "arm64"
+          version="$(node -p "require('./package.json').version")"
+          test "$version" = "${{ needs.check_and_promote.outputs.rescue_version }}"
+
+      - name: Install build tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools
+          sudo snap install snapcraft --classic --channel=7.x/stable
+
+      - name: Build snap
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 snapcraft --destructive-mode --build-for arm64
+
+      - name: Inspect snap
+        id: snap
+        run: |
+          set -euo pipefail
+          snap_file="$(ls facebook-messenger-desktop_*_arm64.snap | head -n 1)"
+          test -n "$snap_file"
+          unsquashfs -cat "$snap_file" meta/snap.yaml > /tmp/snap-meta.yaml
+          grep -Fx "name: facebook-messenger-desktop" /tmp/snap-meta.yaml
+          grep -Ex "version: '?${{ needs.check_and_promote.outputs.rescue_version }}'?" /tmp/snap-meta.yaml
+          echo "snap_file=$snap_file" >> "$GITHUB_OUTPUT"
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: facebook-messenger-desktop-${{ needs.check_and_promote.outputs.rescue_version }}-arm64-rescue-snap
+          path: ${{ steps.snap.outputs.snap_file }}
+
+      - name: Upload and release snap to edge
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          snapcraft upload "${{ steps.snap.outputs.snap_file }}" --release edge
+
+      - name: Final Snap status
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: snapcraft status facebook-messenger-desktop
+
+  promote_after_arm64_rescue:
+    name: Promote after ARM64 rescue
+    runs-on: ubuntu-latest
+    needs:
+      - check_and_promote
+      - rescue_arm64_edge
+    if: needs.rescue_arm64_edge.result == 'success'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
 
       - name: Determine promotions needed
         id: promote

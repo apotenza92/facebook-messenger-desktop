@@ -57,7 +57,9 @@ out="$(run_case mixed-edge "$mixed_edge")"
 assert_output "$out" promote_beta false
 assert_output "$out" promote_stable false
 assert_output "$out" promote_stable_from_beta false
+assert_output "$out" rescue_arm64_edge true
 assert_output "$out" edge_version ""
+assert_output "$out" rescue_version "1.3.1-beta.15"
 
 synced_prerelease="$TMP_DIR/synced-prerelease.status"
 write_status "$synced_prerelease" \
@@ -73,7 +75,9 @@ out="$(run_case synced-prerelease "$synced_prerelease")"
 assert_output "$out" promote_beta true
 assert_output "$out" promote_stable false
 assert_output "$out" promote_stable_from_beta false
+assert_output "$out" rescue_arm64_edge false
 assert_output "$out" edge_version "1.3.1-beta.15"
+assert_output "$out" rescue_version ""
 
 synced_stable="$TMP_DIR/synced-stable.status"
 write_status "$synced_stable" \
@@ -89,7 +93,9 @@ out="$(run_case synced-stable "$synced_stable")"
 assert_output "$out" promote_beta true
 assert_output "$out" promote_stable true
 assert_output "$out" promote_stable_from_beta false
+assert_output "$out" rescue_arm64_edge false
 assert_output "$out" edge_version "1.3.1"
+assert_output "$out" rescue_version ""
 
 stable_from_beta="$TMP_DIR/stable-from-beta.status"
 write_status "$stable_from_beta" \
@@ -105,6 +111,8 @@ out="$(run_case stable-from-beta "$stable_from_beta")"
 assert_output "$out" promote_beta false
 assert_output "$out" promote_stable false
 assert_output "$out" promote_stable_from_beta true
+assert_output "$out" rescue_arm64_edge false
 assert_output "$out" beta_version "1.3.1"
+assert_output "$out" rescue_version ""
 
 echo "snap promotion decision tests passed"
