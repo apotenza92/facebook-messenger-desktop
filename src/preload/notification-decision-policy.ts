@@ -1232,12 +1232,13 @@ function looksLikeSenderMediaActionTitle(value: string): boolean {
 function looksLikeTransientSenderPreviewTitle(value: string): boolean {
   const normalized = String(value || "").replace(/\s+/g, " ").trim();
   if (!normalized) return false;
-  const match = normalized.match(/^([^:]{1,80}):\s+(.{1,220})$/);
+  const match = normalized.match(/^([^:]{1,80}):\s+(.{1,800})$/);
   if (!match) return false;
   const sender = normalizeText(match[1]);
   const preview = normalizeText(match[2]);
   if (!sender || !preview) return false;
   if (preview === "new message" || preview === "new messages") return false;
+  if (preview.length > 220 && !/\s/.test(preview)) return false;
   return true;
 }
 

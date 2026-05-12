@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.1-beta.16] - 2026-05-12
+
+### Fixed
+
+- **Issue #50 follow-up: delay long sender-preview muted-group fallbacks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Treat long sender-prefixed preview titles with generic `New message` bodies as mute-state recheck candidates, covering a Messenger sidebar race where muted group rows can briefly look like unmuted fallback notifications.
+  - Suppress the delayed notification when the same row settles muted, while keeping real unmuted group messages deliverable after the short recheck.
+  - Add deterministic coverage for long preview placeholders, settled muted rows, settled unmuted rows, and normal direct messages with real bodies.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:reload-policy`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.1-beta.15] - 2026-05-06
 
 ### Fixed

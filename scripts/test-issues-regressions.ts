@@ -3482,6 +3482,116 @@ const runNotificationPolicyTests = () => {
     "#50 normal sender-preview rechecks should use sender-preview-placeholder",
   );
 
+  const longSenderPreviewText =
+    "This is a longer fallback preview captured while Messenger is still settling a muted group row. " +
+    "It keeps appending enough message text that the title grows beyond the older short-preview limit, " +
+    "but it is still shaped like a sender-prefixed message preview rather than a real group title.";
+  const longSenderPreviewTitle = `User A: ${longSenderPreviewText}`;
+  assert(
+    longSenderPreviewTitle.length > 220,
+    "#50 long sender-preview fixture should exercise the extended title length path",
+  );
+
+  const mutationPreviewRecheckLongSender =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: longSenderPreviewTitle,
+        body: "New message",
+      },
+      {
+        title: longSenderPreviewTitle,
+        body: "New message",
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckLongSender.shouldRecheck,
+    true,
+    "#50 long sender-prefixed preview titles with New message should trigger mute-state recheck",
+  );
+  assertEqual(
+    mutationPreviewRecheckLongSender.reason,
+    "sender-preview-placeholder",
+    "#50 long sender-prefixed preview titles should use sender-preview-placeholder",
+  );
+
+  const longPreviewSettledMuted =
+    notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+      {
+        title: "Project Group",
+        body: `User A: ${longSenderPreviewText}`,
+      },
+      "/t/group-long-preview",
+      [
+        {
+          href: "/t/group-long-preview",
+          title: "Project Group",
+          body: `User A: ${longSenderPreviewText}`,
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    longPreviewSettledMuted.shouldNotify,
+    false,
+    "#50 long sender-preview fallback should suppress when the same row settles muted",
+  );
+  assertEqual(
+    longPreviewSettledMuted.muted,
+    true,
+    "#50 long sender-preview fallback should preserve muted settled-row state",
+  );
+
+  const longPreviewSettledUnmuted =
+    notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+      {
+        title: "Project Group",
+        body: `User A: ${longSenderPreviewText}`,
+      },
+      "/t/group-long-preview-unmuted",
+      [
+        {
+          href: "/t/group-long-preview-unmuted",
+          title: "Project Group",
+          body: `User A: ${longSenderPreviewText}`,
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    longPreviewSettledUnmuted.shouldNotify,
+    true,
+    "#50 ordinary unmuted group messages should remain deliverable after the recheck delay",
+  );
+  assertEqual(
+    longPreviewSettledUnmuted.matchedHref,
+    "/t/group-long-preview-unmuted",
+    "#50 unmuted group recheck should still target the observed conversation",
+  );
+
+  const mutationPreviewRecheckLongRealBody =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: longSenderPreviewTitle,
+        body: longSenderPreviewText,
+      },
+      {
+        title: "User A",
+        body: longSenderPreviewText,
+      },
+    );
+  assertEqual(
+    mutationPreviewRecheckLongRealBody.shouldRecheck,
+    false,
+    "#50 normal direct messages with real bodies should not be delayed even when the title is long",
+  );
+  assertEqual(
+    mutationPreviewRecheckLongRealBody.reason,
+    "none",
+    "#50 long-title direct messages with real bodies should return none for mutation recheck",
+  );
+
   const mutationPreviewRecheckMediaTitle =
     notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
       {
