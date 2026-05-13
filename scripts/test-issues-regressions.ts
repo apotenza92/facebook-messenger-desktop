@@ -3636,6 +3636,136 @@ const runNotificationPolicyTests = () => {
     "#50 normal direct messages should return none for mutation recheck",
   );
 
+  const mutationRecheckGroupSenderBody =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "Project Group",
+        body: "User A: Can you review this when you get a minute?",
+      },
+      {
+        title: "Project Group",
+        body: "User A: Can you review this when you get a minute?",
+      },
+      {
+        observedSearchText: "Group chat: Project Group",
+        matchedSearchText: "Group chat: Project Group",
+      },
+    );
+  assertEqual(
+    mutationRecheckGroupSenderBody.shouldRecheck,
+    true,
+    "#50 group-title notifications with sender-prefixed bodies should trigger mute-state recheck",
+  );
+  assertEqual(
+    mutationRecheckGroupSenderBody.reason,
+    "group-sender-preview",
+    "#50 group-title sender-body rechecks should use group-sender-preview",
+  );
+
+  const mutationRecheckCapturedGroupShape =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "Group Thread",
+        body: "User B: And how was the night?",
+      },
+      {
+        title: "Group Thread",
+        body: "User B: And how was the night?",
+      },
+      {
+        observedSearchText: "Group chat: Group Thread",
+        matchedSearchText: "Group chat: Group Thread",
+      },
+    );
+  assertEqual(
+    mutationRecheckCapturedGroupShape.shouldRecheck,
+    true,
+    "#50 captured group-title sender-body shape should trigger mute-state recheck",
+  );
+  assertEqual(
+    mutationRecheckCapturedGroupShape.reason,
+    "group-sender-preview",
+    "#50 captured group-title sender-body shape should use group-sender-preview",
+  );
+
+  const groupSenderBodySettledMuted =
+    notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+      {
+        title: "Project Group",
+        body: "User A: Can you review this when you get a minute?",
+      },
+      "/t/group-sender-body",
+      [
+        {
+          href: "/t/group-sender-body",
+          title: "Project Group",
+          body: "User A: Can you review this when you get a minute?",
+          muted: true,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    groupSenderBodySettledMuted.shouldNotify,
+    false,
+    "#50 group-title sender-body recheck should suppress when the same row settles muted",
+  );
+  assertEqual(
+    groupSenderBodySettledMuted.muted,
+    true,
+    "#50 group-title sender-body recheck should preserve muted settled-row state",
+  );
+
+  const groupSenderBodySettledUnmuted =
+    notificationDecisionPolicy.resolveObservedSidebarNotificationTarget(
+      {
+        title: "Project Group",
+        body: "User A: Can you review this when you get a minute?",
+      },
+      "/t/group-sender-body-unmuted",
+      [
+        {
+          href: "/t/group-sender-body-unmuted",
+          title: "Project Group",
+          body: "User A: Can you review this when you get a minute?",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    groupSenderBodySettledUnmuted.shouldNotify,
+    true,
+    "#50 unmuted group-title sender-body messages should remain deliverable after recheck",
+  );
+  assertEqual(
+    groupSenderBodySettledUnmuted.matchedHref,
+    "/t/group-sender-body-unmuted",
+    "#50 unmuted group-title sender-body recheck should still target the observed conversation",
+  );
+
+  const mutationRecheckDirectColonBody =
+    notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
+      {
+        title: "User A",
+        body: "Plan: can you review this when you get a minute?",
+      },
+      {
+        title: "User A",
+        body: "Plan: can you review this when you get a minute?",
+      },
+    );
+  assertEqual(
+    mutationRecheckDirectColonBody.shouldRecheck,
+    false,
+    "#50 direct messages with colon-prefixed real bodies should not be delayed",
+  );
+  assertEqual(
+    mutationRecheckDirectColonBody.reason,
+    "none",
+    "#50 direct messages with colon-prefixed real bodies should return none for mutation recheck",
+  );
+
   const mutationPreviewRecheckGroupSenderBody =
     notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
       {
@@ -3650,12 +3780,12 @@ const runNotificationPolicyTests = () => {
   assertEqual(
     mutationPreviewRecheckGroupSenderBody.shouldRecheck,
     false,
-    "#50 mutation recheck helper should skip plain group titles with sender-style bodies",
+    "#50 mutation recheck helper should skip group sender bodies when the matched row is a direct conversation",
   );
   assertEqual(
     mutationPreviewRecheckGroupSenderBody.reason,
     "none",
-    "#50 sender-style group-title payloads should return none",
+    "#50 mismatched group-title/direct sender-body payloads should return none",
   );
 
   const mutedGroupTitleMatch =

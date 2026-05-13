@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.1-beta.17] - 2026-05-13
+
+### Fixed
+
+- **Issue #50 follow-up: recheck group sender-body mute races** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Delay mutation fallback notifications for group-chat rows whose body is a sender-prefixed message preview, covering a race where Messenger can expose a muted group as unmuted for one mutation tick before the mute marker appears.
+  - Require Messenger's group-chat row metadata for this new recheck path so direct messages with normal colon-prefixed bodies are not delayed.
+  - Suppress the delayed notification if the row settles muted, while keeping ordinary unmuted group messages deliverable after the short recheck.
+  - Add deterministic coverage for captured group-title sender-body shapes, settled muted rows, settled unmuted rows, and direct messages with colon-prefixed real bodies.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:reload-policy`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.1-beta.16] - 2026-05-12
 
 ### Fixed

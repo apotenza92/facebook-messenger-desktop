@@ -3,6 +3,11 @@ type NotificationPayload = {
   body: string;
 };
 
+type MutationMuteStateRecheckContext = {
+  observedSearchText?: string;
+  matchedSearchText?: string;
+};
+
 type NotificationCandidate = {
   href: string;
   title: string;
@@ -127,11 +132,13 @@ type NotificationDecisionPolicyApi = {
   classifyMutationMuteStateRecheckReason?: (
     observed: NotificationPayload,
     matched: NotificationPayload,
+    context?: MutationMuteStateRecheckContext,
   ) => {
     shouldRecheck: boolean;
     reason:
       | "sender-media-placeholder"
       | "sender-preview-placeholder"
+      | "group-sender-preview"
       | "none";
   };
 };
@@ -1242,31 +1249,70 @@ function looksLikeTransientSenderPreviewTitle(value: string): boolean {
   return true;
 }
 
+function looksLikeGroupSenderPreviewPayload(payload: NotificationPayload): boolean {
+  const title = String(payload.title || "").replace(/\s+/g, " ").trim();
+  const body = String(payload.body || "").replace(/\s+/g, " ").trim();
+  if (!title || !body || title.includes(":")) return false;
+
+  const match = body.match(/^([^:]{1,80}):\s+(.{1,800})$/);
+  if (!match) return false;
+
+  const groupTitle = normalizeText(title);
+  const sender = normalizeText(match[1]);
+  const preview = normalizeText(match[2]);
+  if (!groupTitle || !sender || !preview) return false;
+  if (groupTitle === sender) return false;
+  if (preview === "new message" || preview === "new messages") return false;
+  if (preview.length > 220 && !/\s/.test(preview)) return false;
+  return true;
+}
+
+function hasGroupConversationMetadata(value: string | undefined): boolean {
+  return /\bgroup\s+(?:chat|conversation)\b/i.test(
+    String(value || "").replace(/\s+/g, " ").trim(),
+  );
+}
+
 function classifyMutationMuteStateRecheckReason(
   observed: NotificationPayload,
   matched: NotificationPayload,
+  context: MutationMuteStateRecheckContext = {},
 ): {
   shouldRecheck: boolean;
-  reason: "sender-media-placeholder" | "sender-preview-placeholder" | "none";
+  reason:
+    | "sender-media-placeholder"
+    | "sender-preview-placeholder"
+    | "group-sender-preview"
+    | "none";
 } {
   const observedBodyIsGeneric = isGenericNewMessageBody(observed.body);
   const matchedBodyIsGeneric = isGenericNewMessageBody(matched.body);
-  if (!observedBodyIsGeneric || !matchedBodyIsGeneric) {
-    return { shouldRecheck: false, reason: "none" };
+
+  if (observedBodyIsGeneric && matchedBodyIsGeneric) {
+    if (
+      looksLikeSenderMediaActionTitle(observed.title) &&
+      looksLikeSenderMediaActionTitle(matched.title)
+    ) {
+      return { shouldRecheck: true, reason: "sender-media-placeholder" };
+    }
+
+    if (
+      looksLikeTransientSenderPreviewTitle(observed.title) ||
+      looksLikeTransientSenderPreviewTitle(matched.title)
+    ) {
+      return { shouldRecheck: true, reason: "sender-preview-placeholder" };
+    }
   }
 
   if (
-    looksLikeSenderMediaActionTitle(observed.title) &&
-    looksLikeSenderMediaActionTitle(matched.title)
+    (hasGroupConversationMetadata(context.observedSearchText) ||
+      hasGroupConversationMetadata(context.matchedSearchText)) &&
+    looksLikeGroupSenderPreviewPayload(observed) &&
+    looksLikeGroupSenderPreviewPayload(matched) &&
+    normalizeText(observed.title) === normalizeText(matched.title) &&
+    normalizeText(observed.body) === normalizeText(matched.body)
   ) {
-    return { shouldRecheck: true, reason: "sender-media-placeholder" };
-  }
-
-  if (
-    looksLikeTransientSenderPreviewTitle(observed.title) ||
-    looksLikeTransientSenderPreviewTitle(matched.title)
-  ) {
-    return { shouldRecheck: true, reason: "sender-preview-placeholder" };
+    return { shouldRecheck: true, reason: "group-sender-preview" };
   }
 
   return { shouldRecheck: false, reason: "none" };

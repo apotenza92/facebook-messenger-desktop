@@ -95,11 +95,13 @@
     classifyMutationMuteStateRecheckReason?: (
       observed: { title: string; body: string },
       matched: { title: string; body: string },
+      context?: { observedSearchText?: string; matchedSearchText?: string },
     ) => {
       shouldRecheck: boolean;
       reason:
         | "sender-media-placeholder"
         | "sender-preview-placeholder"
+        | "group-sender-preview"
         | "none";
     };
   };
@@ -1893,13 +1895,14 @@
     log("Setting up MutationObserver detection...");
 
     const classifyMutationMuteStateRecheck = (
-      observedInfo: { title: string; body: string },
-      matchedInfo: { title: string; body: string },
+      observedInfo: { title: string; body: string; searchText?: string },
+      matchedInfo: { title: string; body: string; searchText?: string },
     ): {
       shouldRecheck: boolean;
       reason:
         | "sender-media-placeholder"
         | "sender-preview-placeholder"
+        | "group-sender-preview"
         | "none";
     } => {
       const policy = getNotificationDecisionPolicy();
@@ -1910,6 +1913,10 @@
         return policy.classifyMutationMuteStateRecheckReason(
           { title: observedInfo.title, body: observedInfo.body },
           { title: matchedInfo.title, body: matchedInfo.body },
+          {
+            observedSearchText: observedInfo.searchText,
+            matchedSearchText: matchedInfo.searchText,
+          },
         );
       }
 
@@ -2392,9 +2399,14 @@
           continue;
         }
 
+        const observedSearchText = extractConversationSearchText(conversationRow);
+        const matchedSearchText =
+          matchedRow === conversationRow
+            ? observedSearchText
+            : extractConversationSearchText(matchedRow);
         const recheckClassification = classifyMutationMuteStateRecheck(
-          info,
-          matchedInfo,
+          { ...info, searchText: observedSearchText },
+          { ...matchedInfo, searchText: matchedSearchText },
         );
         if (recheckClassification.shouldRecheck) {
           if (!pendingMutationMuteStateRechecks.has(normalizedMatchedHref)) {
