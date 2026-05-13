@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.1-beta.18] - 2026-05-13
+
+### Fixed
+
+- **Issue #50 follow-up: suppress Facebook group activity notification leaks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Correct the beta 17 follow-up scope: the referenced report was a Facebook/group notification-looking leak, not just a muted group chat message leak.
+  - Suppress browser-originated group feed activity shapes when Facebook uses a group/page title with bodies like third-person posts or comments in a group, while keeping first-person chat text deliverable.
+  - Clear Facebook/Messenger service-worker registrations on startup and log the cleanup result, reducing stale browser notification paths outside the app bridge.
+  - Add deterministic coverage for group-name titled feed activity suppression and first-person chat pass-through.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:reload-policy`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.1-beta.17] - 2026-05-13
 
 ### Fixed

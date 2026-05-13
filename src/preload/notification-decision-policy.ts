@@ -1154,6 +1154,12 @@ const BROWSER_SOCIAL_ACTIVITY_BODY_PATTERNS: RegExp[] = [
   /^someone liked your (?:question|comment|reply|post)\b/i,
 ];
 
+const BROWSER_GROUP_FEED_ACTIVITY_BODY_PATTERNS: RegExp[] = [
+  /^(?:someone|[\p{L}\p{M}'’.-]+(?:\s+[\p{L}\p{M}'’.-]+){0,5})\s+(?:posted|commented|replied|shared|mentioned|tagged|invited)\b.*\b(?:in|on|to)\b/iu,
+  /^new posts? in\b/i,
+  /^\d+\s+new posts? in\b/i,
+];
+
 function isLikelyBrowserSocialActivityNotification(
   payload: NotificationPayload,
 ): boolean {
@@ -1168,6 +1174,18 @@ function isLikelyBrowserSocialActivityNotification(
   if (!titleLooksLikeActivityShell) return false;
 
   return BROWSER_SOCIAL_ACTIVITY_BODY_PATTERNS.some((pattern) =>
+    pattern.test(body),
+  );
+}
+
+function isLikelyBrowserGroupFeedActivityNotification(
+  payload: NotificationPayload,
+): boolean {
+  const body = String(payload.body || "").replace(/\s+/g, " ").trim();
+  if (!body || body.includes(":")) return false;
+  if (/^(?:i|we|you)\s+/i.test(body)) return false;
+
+  return BROWSER_GROUP_FEED_ACTIVITY_BODY_PATTERNS.some((pattern) =>
     pattern.test(body),
   );
 }
@@ -1363,7 +1381,8 @@ function shouldSuppressBrowserNotificationActivity(
 
   if (
     notificationActivityPolicy.isLikelyGlobalFacebookNotification(payload) ||
-    isLikelyBrowserSocialActivityNotification(payload)
+    isLikelyBrowserSocialActivityNotification(payload) ||
+    isLikelyBrowserGroupFeedActivityNotification(payload)
   ) {
     return {
       suppress: true,

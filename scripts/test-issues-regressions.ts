@@ -4223,6 +4223,44 @@ const runNotificationPolicyTests = () => {
     "#50 quoted group chat text resembling social activity should remain deliverable",
   );
 
+  const browserGroupPostActivitySuppressed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Community Group",
+      body: "User A posted in Community Group",
+    });
+  assertEqual(
+    browserGroupPostActivitySuppressed.suppress,
+    true,
+    "#50 browser-originated group feed posts should be suppressed even when Facebook uses the group name as the title",
+  );
+  assertEqual(
+    browserGroupPostActivitySuppressed.reason,
+    "global-facebook-activity",
+    "#50 browser-originated group feed post suppression should be classified as global Facebook activity",
+  );
+
+  const browserGroupCommentActivitySuppressed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Community Group",
+      body: "User B commented on a post in Community Group",
+    });
+  assertEqual(
+    browserGroupCommentActivitySuppressed.suppress,
+    true,
+    "#50 browser-originated group feed comments should be suppressed with group-name titles",
+  );
+
+  const ordinaryPostedInChatAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Account A",
+      body: "I posted in the group chat earlier",
+    });
+  assertEqual(
+    ordinaryPostedInChatAllowed.suppress,
+    false,
+    "#50 first-person chat text mentioning posted in should remain deliverable",
+  );
+
   const resumeBoundaryCapturesFreshUnread =
     typeof notificationDecisionPolicy.shouldSnapshotFreshUnreadOnBoundary ===
       "function" &&

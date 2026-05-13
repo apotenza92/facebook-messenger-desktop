@@ -4661,6 +4661,10 @@ function createWindow(source: string = "unknown"): void {
       contentView.webContents.session,
       "content-view",
     );
+    void clearFacebookNotificationServiceWorkers(
+      contentView.webContents.session,
+      "content-view",
+    );
 
     // Set up screen sharing handler for getDisplayMedia() calls
     // This is required for the "Share Screen" button to work during calls
@@ -8941,6 +8945,43 @@ function logServiceWorkerNotificationInstrumentationAvailability(
       },
     });
   });
+}
+
+async function clearFacebookNotificationServiceWorkers(
+  ses: Electron.Session | undefined,
+  label: string,
+): Promise<void> {
+  if (!ses) return;
+
+  const origins = ["https://www.facebook.com", "https://www.messenger.com"];
+  for (const origin of origins) {
+    try {
+      await ses.clearStorageData({
+        origin,
+        storages: ["serviceworkers"],
+      });
+      pushNotificationDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "browser-notification-service-workers-cleared",
+        payload: {
+          label,
+          origin,
+        },
+      });
+    } catch (error) {
+      pushNotificationDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "browser-notification-service-worker-clear-failed",
+        payload: {
+          label,
+          origin,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
 }
 
 function setupPowerMonitor(): void {
