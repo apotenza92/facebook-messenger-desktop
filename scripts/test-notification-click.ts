@@ -136,6 +136,9 @@ const runTest = () => {
     title: 'Test Notification',
     body: 'Navigate to chat',
     href: TARGET_PATH,
+    sourceKind: 'messenger-message',
+    sourceLabel: 'notification-click-test',
+    provenanceReason: 'test-thread-proof',
   });
 
   assert(executedOn.includes('content'), 'Expected navigation to run in content webContents');

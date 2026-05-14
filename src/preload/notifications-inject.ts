@@ -25,6 +25,11 @@
     title: string;
     body: string;
   };
+  type NotificationSourceKind =
+    | "facebook"
+    | "messenger-message"
+    | "incoming-call"
+    | "app-owned";
   type NotificationMatchResult = {
     matchedHref?: string;
     confidence: number;
@@ -619,6 +624,75 @@
   const normalizeNativeConversationDeliveryKey = (href: string): string =>
     `native:conversation:${normalizeConversationKey(href)}`;
 
+  const isMessengerThreadHref = (raw: unknown): boolean => {
+    const value = String(raw || "").trim();
+    if (!value) return false;
+    const normalized = normalizeConversationKey(value).toLowerCase();
+    return /^\/t\/[^/]+/.test(normalized);
+  };
+
+  const findMessengerThreadHrefInValue = (
+    value: unknown,
+    depth = 0,
+  ): string | undefined => {
+    if (depth > 3 || value === null || value === undefined) return undefined;
+
+    if (typeof value === "string") {
+      const candidates = [
+        value,
+        ...(value.match(
+          /https?:\/\/[^\s"'<>]+|\/(?:messages\/(?:e2ee\/)?t|e2ee\/t|t)\/[^\s"'<>]+/gi,
+        ) ?? []),
+      ];
+      for (const candidate of candidates) {
+        if (isMessengerThreadHref(candidate)) {
+          return normalizeConversationKey(candidate);
+        }
+      }
+      return undefined;
+    }
+
+    if (Array.isArray(value)) {
+      for (const entry of value.slice(0, 20)) {
+        const result = findMessengerThreadHrefInValue(entry, depth + 1);
+        if (result) return result;
+      }
+      return undefined;
+    }
+
+    if (typeof value === "object") {
+      for (const entry of Object.values(value as Record<string, unknown>).slice(
+        0,
+        30,
+      )) {
+        const result = findMessengerThreadHrefInValue(entry, depth + 1);
+        if (result) return result;
+      }
+    }
+
+    return undefined;
+  };
+
+  const findMessengerThreadHrefInNotificationOptions = (
+    options?: NotificationOptions,
+  ): string | undefined => {
+    const extendedOptions = options as
+      | (NotificationOptions & {
+          data?: unknown;
+          actions?: unknown;
+          image?: string;
+        })
+      | undefined;
+    return findMessengerThreadHrefInValue({
+      tag: options?.tag,
+      data: extendedOptions?.data,
+      actions: extendedOptions?.actions,
+      icon: options?.icon,
+      badge: options?.badge,
+      image: extendedOptions?.image,
+    });
+  };
+
   // ============================================================================
   // SHARED STATE - used by both MutationObserver and Title-based detection
   // ============================================================================
@@ -895,11 +969,24 @@
     source: string,
     icon?: string,
     href?: string,
+    sourceKind: NotificationSourceKind = "messenger-message",
+    provenanceReason = "sidebar-thread-proof",
   ) => {
+    if (sourceKind === "messenger-message" && !isMessengerThreadHref(href)) {
+      log("Notification suppressed - missing Messenger thread proof", {
+        source,
+        title,
+        href,
+      });
+      return;
+    }
+
     log(`=== SENDING NOTIFICATION [${source}] ===`, {
       title,
       body: body.slice(0, 50),
       href,
+      sourceKind,
+      provenanceReason,
     });
 
     const notificationData = {
@@ -909,6 +996,9 @@
       icon,
       silent: false,
       href, // Include conversation URL for click-to-navigate
+      sourceKind,
+      sourceLabel: source,
+      provenanceReason,
     };
 
     if ((window as any).__electronNotificationBridge) {
@@ -1618,13 +1708,27 @@
             }
           }
         } else {
-          log("Native notification sidebar unavailable - mirroring Facebook payload without click target", {
+          log("Native notification suppressed - sidebar unavailable for Messenger proof", {
             title,
+            sourceKind: "facebook",
+            provenanceReason: "missing-sidebar-thread-proof",
           });
+          return;
+        }
+
+        if (!isMessengerThreadHref(notificationHref)) {
+          log("Native notification suppressed - no Messenger thread proof", {
+            title,
+            sourceKind: "facebook",
+            provenanceReason: "missing-thread-href",
+          });
+          return;
         }
 
         log("Native notification candidate analysis", {
           source: "native",
+          sourceKind: "messenger-message",
+          provenanceReason: "native-sidebar-thread-proof",
           normalizedHref,
           raw: summarizeNotificationActivity(rawActivity),
           matched: matchedActivity
@@ -1695,6 +1799,8 @@
           "NATIVE",
           options?.icon as string,
           notificationHref,
+          "messenger-message",
+          "native-sidebar-thread-proof",
         );
       }
 
@@ -2710,20 +2816,80 @@
           body: String(options?.body || ""),
         };
         const policy = getNotificationDecisionPolicy();
+        const metadataThreadHref =
+          findMessengerThreadHrefInNotificationOptions(options);
         const suppression =
           policy?.shouldSuppressBrowserNotificationActivity?.(payload) ?? null;
+        const callClassification =
+          policy?.classifyCallNotification?.(payload) ?? null;
+        let provenHref: string | undefined;
+        let provenanceReason: string | undefined;
+        let matchDecision: NotificationMatchResult | null = null;
+
+        if (policy && !suppression?.suppress && !callClassification?.isIncomingCall) {
+          const sidebar = findSidebarElement();
+          if (sidebar) {
+            const { rowByHref, conversationCandidates } =
+              collectSidebarConversationSnapshot(sidebar);
+            matchDecision = policy.resolveNativeNotificationTarget(
+              payload,
+              conversationCandidates,
+            );
+            if (
+              !matchDecision.ambiguous &&
+              !matchDecision.muted &&
+              isMessengerThreadHref(matchDecision.matchedHref)
+            ) {
+              const normalizedHref = normalizeConversationKey(
+                matchDecision.matchedHref!,
+              );
+              const row = rowByHref.get(normalizedHref);
+              if (row && isConversationUnread(row) && !isConversationMuted(row)) {
+                provenHref = normalizedHref;
+                provenanceReason = "service-worker-sidebar-thread-proof";
+              }
+            }
+
+            if (!provenHref && isMessengerThreadHref(metadataThreadHref)) {
+              const normalizedHref = normalizeConversationKey(metadataThreadHref!);
+              const row = rowByHref.get(normalizedHref);
+              if (row && isConversationUnread(row) && !isConversationMuted(row)) {
+                provenHref = normalizedHref;
+                provenanceReason = "service-worker-metadata-thread-proof";
+              }
+            }
+          }
+        }
+
         log("Service worker notification candidate analysis", {
           source: "service-worker-registration",
+          sourceKind: provenHref ? "messenger-message" : "facebook",
           payload,
-          callClassification:
-            policy?.classifyCallNotification?.(payload) ?? null,
+          callClassification,
           groupManagementClassification:
             policy?.classifyGroupManagementNotification?.(payload) ?? null,
           globalActivity:
             policy?.isLikelyGlobalFacebookNotification?.(payload) ?? null,
           browserActivitySuppression: suppression,
+          metadataThreadHref,
+          provenanceReason: provenanceReason ?? "unproven-facebook-source",
+          matchDecision: matchDecision?.debug ?? matchDecision,
           permission: Notification.permission,
         });
+        if (!policy) {
+          log("Service worker notification suppressed - policy unavailable", {
+            title: payload.title,
+            sourceKind: "facebook",
+          });
+          return Promise.resolve();
+        }
+        if (callClassification?.isIncomingCall) {
+          log("Service worker notification suppressed - incoming calls require explicit call path", {
+            title: payload.title,
+            body: payload.body,
+          });
+          return Promise.resolve();
+        }
         if (suppression?.suppress) {
           log("Service worker notification suppressed - non-message browser activity", {
             title: payload.title,
@@ -2733,7 +2899,26 @@
           });
           return Promise.resolve();
         }
-        return originalShowNotification.call(this, title, options);
+        if (!provenHref || !provenanceReason) {
+          log("Service worker notification suppressed - no Messenger proof", {
+            title: payload.title,
+            body: payload.body,
+            metadataThreadHref,
+            matchReason: matchDecision?.reason,
+          });
+          return Promise.resolve();
+        }
+
+        sendNotification(
+          payload.title,
+          payload.body,
+          "SERVICE_WORKER",
+          options?.icon as string | undefined,
+          provenHref,
+          "messenger-message",
+          provenanceReason,
+        );
+        return Promise.resolve();
       };
       log("Service worker notification diagnostics installed");
     }

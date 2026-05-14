@@ -394,6 +394,9 @@ function flushPendingIncomingCallNotification(reason: string): void {
       tag: pending.notificationTag,
       silent: false,
       requireInteraction: true,
+      sourceKind: "incoming-call",
+      sourceLabel: "incoming-call-pending-flush",
+      provenanceReason: reason,
     },
     displaySource: "incoming-call",
     webContentsId: pending.webContentsId,
@@ -552,6 +555,9 @@ function showNativeNotification(input: {
         body: input.data.body,
         href: input.data.href,
         tag: input.data.tag,
+        sourceKind: input.data.sourceKind,
+        sourceLabel: input.data.sourceLabel,
+        provenanceReason: input.data.provenanceReason,
       },
       mainProcessSuppressionReason: null,
       displayBoundarySuppressionReason: displayBoundary.reason,
@@ -585,6 +591,39 @@ function showNativeNotification(input: {
     reason: input.reason,
     payload: displayBoundary.normalizedData,
   });
+}
+
+function showAppOwnedNotification(input: {
+  sourceLabel: string;
+  provenanceReason: string;
+  options: Electron.NotificationConstructorOptions;
+  onClick?: () => void;
+}): Notification | null {
+  if (!Notification.isSupported()) {
+    return null;
+  }
+
+  pushNotificationDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: "app-owned-notification-displayed",
+    displaySource: "app-owned",
+    sourceKind: "app-owned",
+    sourceLabel: input.sourceLabel,
+    provenanceReason: input.provenanceReason,
+    payload: {
+      title: input.options.title,
+      body: input.options.body,
+      silent: input.options.silent === true,
+    },
+  });
+
+  const notification = new Notification(input.options);
+  if (input.onClick) {
+    notification.on("click", input.onClick);
+  }
+  notification.show();
+  return notification;
 }
 
 function refreshIncomingCallNotificationReminder(
@@ -626,6 +665,9 @@ function refreshIncomingCallNotificationReminder(
         tag: activeIncomingCallNotificationTag,
         silent: false,
         requireInteraction: true,
+        sourceKind: "incoming-call",
+        sourceLabel: "incoming-call-reminder",
+        provenanceReason: "active-incoming-call-session",
       },
       displaySource: "incoming-call-reminder",
     });
@@ -780,9 +822,73 @@ type NotificationDebugEvent = {
   [key: string]: unknown;
 };
 
+const NOTIFICATION_SOURCE_KINDS = new Set([
+  "facebook",
+  "messenger-message",
+  "incoming-call",
+  "app-owned",
+]);
+
+function isMessengerThreadHref(value: unknown): boolean {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+
+  try {
+    const url =
+      raw.startsWith("http://") || raw.startsWith("https://")
+        ? new URL(raw)
+        : new URL(raw, "https://www.facebook.com");
+    const path = url.pathname.toLowerCase().replace(/\/+$/, "");
+    return (
+      /^\/t\/[^/]+/.test(path) ||
+      /^\/e2ee\/t\/[^/]+/.test(path) ||
+      /^\/messages\/t\/[^/]+/.test(path) ||
+      /^\/messages\/e2ee\/t\/[^/]+/.test(path)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function shouldSuppressMainProcessNotification(
   data: Partial<NotificationData> | null | undefined,
 ): { suppress: boolean; reason?: string } {
+  const sourceKind = String(data?.sourceKind || "");
+  const sourceLabel = String(data?.sourceLabel || "").trim();
+  if (!NOTIFICATION_SOURCE_KINDS.has(sourceKind)) {
+    return {
+      suppress: true,
+      reason: "main-process-missing-source-kind",
+    };
+  }
+  if (!sourceLabel) {
+    return {
+      suppress: true,
+      reason: "main-process-missing-source-label",
+    };
+  }
+
+  if (sourceKind === "app-owned" || sourceKind === "incoming-call") {
+    return { suppress: false };
+  }
+
+  if (sourceKind === "facebook") {
+    return {
+      suppress: true,
+      reason: "main-process-unproven-facebook-source",
+    };
+  }
+
+  if (
+    sourceKind === "messenger-message" &&
+    !isMessengerThreadHref(data?.href)
+  ) {
+    return {
+      suppress: true,
+      reason: "main-process-messenger-message-missing-thread-proof",
+    };
+  }
+
   const title = String(data?.title || "")
     .replace(/\s+/g, " ")
     .trim();
@@ -4798,16 +4904,17 @@ function createWindow(source: string = "unknown"): void {
         item.once("done", (event, state) => {
           if (state === "completed") {
             console.log("[Download] Completed:", savePath);
-            // Show native notification
-            const notification = new Notification({
-              title: "Download Complete",
-              body: `Saved to Downloads: ${suggestedFilename}`,
+            showAppOwnedNotification({
+              sourceLabel: "content-view-download-complete",
+              provenanceReason: "electron-will-download-completed",
+              options: {
+                title: "Download Complete",
+                body: `Saved to Downloads: ${suggestedFilename}`,
+              },
+              onClick: () => {
+                shell.showItemInFolder(savePath);
+              },
             });
-            notification.on("click", () => {
-              // Open the Downloads folder and select the file
-              shell.showItemInFolder(savePath);
-            });
-            notification.show();
           } else if (state === "cancelled") {
             console.log("[Download] Cancelled");
           } else {
@@ -5713,16 +5820,17 @@ function createWindow(source: string = "unknown"): void {
         item.once("done", (event, state) => {
           if (state === "completed") {
             console.log("[Download] Completed:", savePath);
-            // Show native notification
-            const notification = new Notification({
-              title: "Download Complete",
-              body: `Saved to Downloads: ${suggestedFilename}`,
+            showAppOwnedNotification({
+              sourceLabel: "main-window-download-complete",
+              provenanceReason: "electron-will-download-completed",
+              options: {
+                title: "Download Complete",
+                body: `Saved to Downloads: ${suggestedFilename}`,
+              },
+              onClick: () => {
+                shell.showItemInFolder(savePath);
+              },
             });
-            notification.on("click", () => {
-              // Open the Downloads folder and select the file
-              shell.showItemInFolder(savePath);
-            });
-            notification.show();
           } else if (state === "cancelled") {
             console.log("[Download] Cancelled");
           } else {
@@ -9051,6 +9159,9 @@ function setupIpcHandlers(): void {
             body: data?.body,
             href: data?.href,
             tag: data?.tag,
+            sourceKind: data?.sourceKind,
+            sourceLabel: data?.sourceLabel,
+            provenanceReason: data?.provenanceReason,
           },
           mainProcessSuppressionReason: suppression.reason,
           displayBoundarySuppressionReason: null,
@@ -9641,6 +9752,9 @@ function setupIpcHandlers(): void {
             tag: notificationTag,
             silent: false,
             requireInteraction: true,
+            sourceKind: "incoming-call",
+            sourceLabel: "incoming-call-upgrade",
+            provenanceReason: `${decision.callKey ?? "no-key"}:upgraded-caller`,
           },
           displaySource: "incoming-call",
           webContentsId: event.sender.id,
@@ -9724,6 +9838,9 @@ function setupIpcHandlers(): void {
         tag: notificationTag,
         silent: false,
         requireInteraction: true,
+        sourceKind: "incoming-call",
+        sourceLabel: "incoming-call-ipc",
+        provenanceReason: decision.reason,
       },
       displaySource: "incoming-call",
       webContentsId: event.sender.id,
@@ -9834,6 +9951,9 @@ function testNotification(): void {
       body: "This is a test notification from Messenger Desktop! Click to focus the app.",
       tag: "test-notification",
       silent: false,
+      sourceKind: "app-owned",
+      sourceLabel: "test-notification",
+      provenanceReason: "explicit-test-notification",
     },
     displaySource: "test",
   });
@@ -10188,17 +10308,18 @@ async function requestNotificationPermission(): Promise<void> {
     });
 
     // On macOS, showing a notification triggers the system permission prompt
-    if (Notification.isSupported()) {
-      const notification = new Notification({
+    showAppOwnedNotification({
+      sourceLabel: "notification-permission-first-launch",
+      provenanceReason: "macos-permission-prompt-trigger",
+      options: {
         title: "Welcome to Messenger",
         body: "You'll receive notifications here when you get new messages.",
         silent: true,
-      });
-      notification.show();
-      console.log(
-        "[Notification Permission] Welcome notification shown to trigger permission prompt",
-      );
-    }
+      },
+    });
+    console.log(
+      "[Notification Permission] Welcome notification shown to trigger permission prompt",
+    );
   } else if (isPostUpdate) {
     console.log(
       "[Notification Permission] Post-update - checking authorization status",
@@ -10264,14 +10385,15 @@ async function requestNotificationPermission(): Promise<void> {
         console.log(
           "[Notification Permission] Permission not determined - triggering prompt",
         );
-        if (Notification.isSupported()) {
-          const notification = new Notification({
+        showAppOwnedNotification({
+          sourceLabel: "notification-permission-post-update",
+          provenanceReason: "macos-permission-prompt-trigger",
+          options: {
             title: "Messenger Updated",
             body: "You'll receive notifications here when you get new messages.",
             silent: true,
-          });
-          notification.show();
-        }
+          },
+        });
       }
     }, 3000);
   }
@@ -10430,19 +10552,19 @@ function showDownloadProgress(): void {
   }
 
   // Show native notification that download is starting
-  if (Notification.isSupported()) {
-    const appLabel = isBetaOptedIn() ? "Messenger Beta" : "Messenger";
-    const notification = new Notification({
+  const appLabel = isBetaOptedIn() ? "Messenger Beta" : "Messenger";
+  showAppOwnedNotification({
+    sourceLabel: "update-download-started",
+    provenanceReason: "auto-updater-download-progress",
+    options: {
       title: "Downloading Update",
       body: `${appLabel} is downloading an update in the background...`,
       silent: true,
-    });
-    notification.show();
-  }
+    },
+  });
 
   // Update tray tooltip
   if (tray) {
-    const appLabel = isBetaOptedIn() ? "Messenger Beta" : "Messenger";
     tray.setToolTip(`${appLabel} - Downloading update...`);
   }
 }

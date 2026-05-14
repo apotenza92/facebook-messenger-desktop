@@ -4844,6 +4844,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Bub",
       body: "Icon for this message",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     iconArtefactBoundary.normalizedData.body,
@@ -4855,6 +4859,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Account A",
       body: "Someone liked your answer to their question",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     chatLikeSomeoneAnswerBoundary.suppress,
@@ -4866,6 +4874,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Account A",
       body: "I liked your answer to their question",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     chatLikeAnswerBoundary.suppress,
@@ -4877,6 +4889,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "New notification",
       body: "Someone liked your answer to their question",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     shellAnswerActivityBoundary.suppress,
@@ -5011,6 +5027,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Amanda",
       body: "Amanda called you",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     calledYouBoundary.suppress,
@@ -5022,6 +5042,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "New notification",
       body: "3 people requested to participate for the first time in a group you're managing",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     groupAdminBoundary.suppress,
@@ -5033,6 +5057,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Taylor",
       body: "Taylor requested to join this group you're managing",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     personTitledGroupAdminBoundary.suppress,
@@ -5044,6 +5072,10 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Messenger",
       body: "Call ended",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
     });
   assertEqual(
     callEndedBoundary.suppress,
@@ -5055,11 +5087,76 @@ const runNotificationDisplayPolicyTests = () => {
     resolveNotificationDisplayBoundary({
       title: "Incoming call",
       body: "Amanda Goodwin is calling you on Messenger",
+      sourceKind: "incoming-call",
+      sourceLabel: "test-incoming-call",
+      provenanceReason: "test-call-proof",
     });
   assertEqual(
     incomingCallBoundary.suppress,
     false,
     "#50 display-boundary policy should keep genuine incoming-call notifications",
+  );
+
+  const untypedBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Account A",
+      body: "New message",
+      href: "/t/test",
+    } as any);
+  assertEqual(
+    untypedBoundary.suppress,
+    true,
+    "provenance contract should suppress untyped notification display paths",
+  );
+  assertEqual(
+    untypedBoundary.reason,
+    "display-boundary-missing-source-kind",
+    "provenance contract should report missing source kind",
+  );
+
+  const unprovenFacebookBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Account A",
+      body: "New message",
+      sourceKind: "facebook",
+      sourceLabel: "test-unproven-facebook",
+      provenanceReason: "raw-facebook-notification",
+      href: "/t/test",
+    });
+  assertEqual(
+    unprovenFacebookBoundary.suppress,
+    true,
+    "raw Facebook notification sources should fail closed without Messenger proof",
+  );
+
+  const appOwnedBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Download Complete",
+      body: "Saved to Downloads: file.jpg",
+      sourceKind: "app-owned",
+      sourceLabel: "test-download-complete",
+      provenanceReason: "test-app-owned",
+      silent: true,
+    });
+  assertEqual(
+    appOwnedBoundary.suppress,
+    false,
+    "app-owned notifications should bypass Facebook provenance suppression",
+  );
+
+  const messengerMessageBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Account A",
+      body: "New message",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
+    });
+  assertEqual(
+    messengerMessageBoundary.suppress,
+    false,
+    "proven Messenger message notifications should remain displayable",
   );
 
   const notificationInjectSource = fs.readFileSync(

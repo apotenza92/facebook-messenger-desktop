@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.1-beta.19] - 2026-05-14
+
+### Fixed
+
+- **Issue #50 follow-up: require explicit Messenger notification provenance** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Switch Facebook-originated desktop notifications to fail closed unless the app can prove they are a Messenger thread message or a genuine incoming call.
+  - Add an explicit notification source contract so app-owned notifications, incoming calls, and proven Messenger messages must identify their source before display.
+  - Require Messenger thread proof from sidebar matching, notification metadata, or a verified unread unmuted row before mirroring native/browser/service-worker notification candidates.
+  - Keep app-owned test, tray, download, update, and macOS permission-prompt notifications on explicit app-owned paths so they are not blocked by Facebook provenance filtering.
+  - Preserve incoming-call notification/reminder paths and click routing for proven Messenger message notifications.
+  - Add richer diagnostics that log source kind, source label, provenance reason, thread proof, old activity suppression classifiers, service-worker metadata, and display decisions.
+
+### Notes
+
+- This beta intentionally uses a stricter notification boundary. It should be smarter over time because unproven Facebook activity is suppressed by default, but it may expose new edge cases where a legitimate Messenger notification is missing the proof the app now requires.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:reload-policy`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.1-beta.18] - 2026-05-13
 
 ### Fixed

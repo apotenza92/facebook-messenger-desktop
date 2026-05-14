@@ -17,7 +17,23 @@ export interface NotificationData {
   silent?: boolean;
   requireInteraction?: boolean;
   href?: string; // Conversation URL for click-to-navigate
+  sourceKind: NotificationSourceKind;
+  sourceLabel: string;
+  provenanceReason?: string;
 }
+
+export type NotificationSourceKind =
+  | "facebook"
+  | "messenger-message"
+  | "incoming-call"
+  | "app-owned";
+
+const NOTIFICATION_SOURCE_KINDS = new Set<NotificationSourceKind>([
+  "facebook",
+  "messenger-message",
+  "incoming-call",
+  "app-owned",
+]);
 
 export interface NotificationSoundDecision {
   silent: boolean;
@@ -71,6 +87,60 @@ export function resolveNotificationDisplayBoundary(
     title: normalizedTitle,
     body: normalizedBody,
   };
+  if (!NOTIFICATION_SOURCE_KINDS.has(data.sourceKind)) {
+    return {
+      suppress: true,
+      reason: "display-boundary-missing-source-kind",
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: activityPayload.body,
+      },
+    };
+  }
+
+  if (!String(data.sourceLabel || "").trim()) {
+    return {
+      suppress: true,
+      reason: "display-boundary-missing-source-label",
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: activityPayload.body,
+      },
+    };
+  }
+
+  if (data.sourceKind === "facebook") {
+    return {
+      suppress: true,
+      reason: "display-boundary-unproven-facebook-source",
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: activityPayload.body,
+      },
+    };
+  }
+
+  if (
+    data.sourceKind === "app-owned" ||
+    data.sourceKind === "incoming-call"
+  ) {
+    const callClassification = classifyCallNotification(activityPayload);
+    return {
+      suppress: false,
+      reason: null,
+      normalizedData: {
+        ...data,
+        title: normalizedTitle,
+        body: callClassification.isIncomingCall
+          ? buildIncomingCallNotificationBody({ body: normalizedBody })
+          : activityPayload.body,
+      },
+    };
+  }
+
   const callClassification = classifyCallNotification(activityPayload);
   if (callClassification.shouldSuppressNotification) {
     return {
@@ -160,6 +230,9 @@ export class NotificationHandler {
       href: normalizedData.href,
       silent: normalizedData.silent === true,
       requireInteraction: normalizedData.requireInteraction === true,
+      sourceKind: normalizedData.sourceKind,
+      sourceLabel: normalizedData.sourceLabel,
+      provenanceReason: normalizedData.provenanceReason,
     });
   }
 
@@ -182,7 +255,14 @@ export class NotificationHandler {
       return false;
     }
 
-    console.log('[NotificationHandler] Showing notification:', { title: data.title, body: data.body, href: data.href });
+    console.log('[NotificationHandler] Showing notification:', {
+      title: data.title,
+      body: data.body,
+      href: data.href,
+      sourceKind: data.sourceKind,
+      sourceLabel: data.sourceLabel,
+      provenanceReason: data.provenanceReason,
+    });
 
     const displayBoundary = resolveNotificationDisplayBoundary(data);
     if (displayBoundary.suppress) {
@@ -393,17 +473,14 @@ export class NotificationHandler {
   }
 
   showTrayNotification(): void {
-    if (!Notification.isSupported()) {
-      return;
-    }
-
-    const notification = new Notification({
+    this.showNotification({
       title: this.appDisplayName,
       body: `${this.appDisplayName} is running in the background. Click the tray icon to open.`,
       silent: true,
+      sourceKind: "app-owned",
+      sourceLabel: "tray-background-notification",
+      provenanceReason: "tray-background-state",
     });
-
-    notification.show();
   }
 
   closeNotification(tag: string): void {

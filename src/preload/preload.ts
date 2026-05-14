@@ -522,6 +522,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     icon?: string;
     tag?: string;
     silent?: boolean;
+    sourceKind?: string;
+    sourceLabel?: string;
+    provenanceReason?: string;
+    href?: string;
   }) => {
     ipcRenderer.send("show-notification", data);
   },
@@ -4162,6 +4166,9 @@ ipcRenderer.on(
                 silent: data.silent,
                 id: data.id,
                 href: data.href, // Pass conversation URL for click navigation
+                sourceKind: data.sourceKind,
+                sourceLabel: data.sourceLabel,
+                provenanceReason: data.provenanceReason,
               });
               try {
                 console.log(
@@ -4183,6 +4190,9 @@ ipcRenderer.on(
               silent: data.silent,
               id: data.id,
               href: data.href, // Pass conversation URL for click navigation
+              sourceKind: data.sourceKind,
+              sourceLabel: data.sourceLabel,
+              provenanceReason: data.provenanceReason,
             });
             try {
               console.warn(
@@ -4204,6 +4214,9 @@ ipcRenderer.on(
             silent: data.silent,
             id: data.id,
             href: data.href, // Pass conversation URL for click navigation
+            sourceKind: data.sourceKind,
+            sourceLabel: data.sourceLabel,
+            provenanceReason: data.provenanceReason,
           });
           try {
             console.log(
