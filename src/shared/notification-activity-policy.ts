@@ -27,6 +27,8 @@ const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
   /replied to a comment/i,
   /reacted to your/i,
   /liked your/i,
+  /^someone liked your answer(?: to (?:their|a|the) question)?\b/i,
+  /^someone liked your (?:question|comment|reply|post)\b/i,
   /shared your/i,
   /mentioned you in/i,
   /tagged you/i,
@@ -51,6 +53,20 @@ const GLOBAL_SOCIAL_BODY_PATTERNS: RegExp[] = [
   /membership request/i,
   /new notification/i,
   /new notifications/i,
+];
+
+const GLOBAL_SOCIAL_TITLE_PATTERNS: RegExp[] = [
+  /^activity$/i,
+  /^new activity$/i,
+  /^group activity$/i,
+  /^group notification$/i,
+  /^facebook group activity$/i,
+];
+
+const GROUP_FEED_ACTIVITY_BODY_PATTERNS: RegExp[] = [
+  /^(?:someone|[\p{L}\p{M}'’.-]+(?:\s+[\p{L}\p{M}'’.-]+){0,5})\s+(?:posted|commented|replied|shared|mentioned|tagged|invited)\b.*\b(?:in|on|to)\b/iu,
+  /^new posts? in\b/i,
+  /^\d+\s+new posts? in\b/i,
 ];
 
 const GROUP_MANAGEMENT_BODY_PATTERNS: RegExp[] = [
@@ -239,13 +255,18 @@ export function isLikelyGlobalFacebookNotification(
     title === "new notifications" ||
     title === "new message" ||
     title === "new messages" ||
-    /^\d+\s+new messages?$/.test(title);
+    /^\d+\s+new messages?$/.test(title) ||
+    GLOBAL_SOCIAL_TITLE_PATTERNS.some((pattern) => pattern.test(title));
 
   const hasSocialSignal = GLOBAL_SOCIAL_BODY_PATTERNS.some((pattern) =>
     pattern.test(body),
   );
+  const hasGroupFeedSignal =
+    !body.includes(":") &&
+    !/^(?:i|we|you)\s+/i.test(body) &&
+    GROUP_FEED_ACTIVITY_BODY_PATTERNS.some((pattern) => pattern.test(body));
 
-  return titleIsFacebookShell && hasSocialSignal;
+  return titleIsFacebookShell && (hasSocialSignal || hasGroupFeedSignal);
 }
 
 const notificationActivityPolicyApi = {

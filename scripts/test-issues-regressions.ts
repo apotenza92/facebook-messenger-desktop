@@ -4900,6 +4900,51 @@ const runNotificationDisplayPolicyTests = () => {
     "#50 display boundary should suppress shell-titled answer-like Facebook activity",
   );
 
+  const groupActivityCommentBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Group activity",
+      body: "Someone liked your comment",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
+    });
+  assertEqual(
+    groupActivityCommentBoundary.suppress,
+    true,
+    "#50 display boundary should suppress group activity comment-like notifications even with thread-shaped hrefs",
+  );
+
+  const facebookGroupFeedBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Facebook group activity",
+      body: "Someone posted in a group",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
+    });
+  assertEqual(
+    facebookGroupFeedBoundary.suppress,
+    true,
+    "#50 display boundary should suppress Facebook group feed activity after reconnect or wake replay",
+  );
+
+  const directChatCommentBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "Account A",
+      body: "Someone liked your comment",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
+    });
+  assertEqual(
+    directChatCommentBoundary.suppress,
+    false,
+    "#50 display boundary should keep person-titled direct chats that mention comment-like text",
+  );
+
   assertEqual(
     JSON.stringify(
       notificationDisplayPolicy.sanitizeNotificationNameCache(

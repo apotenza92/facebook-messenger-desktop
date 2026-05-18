@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.1-beta.20] - 2026-05-18
+
+### Fixed
+
+- **Issue #50 follow-up: suppress reconnect Facebook/group activity leaks** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Move the remaining Facebook/group activity suppression patterns into the shared main-process notification boundary, covering candidates that arrive after reconnect or wake with a thread-shaped route but still contain Facebook activity text such as `Someone liked your comment`.
+  - Keep person-titled direct chat messages deliverable when their text happens to mention comment-like activity.
+  - Add deterministic coverage for group activity, Facebook group feed activity, and direct chat pass-through cases.
+
+- **Issue #53: repair Linux Snap/AppImage startup paths** ([#53](https://github.com/apotenza92/facebook-messenger-desktop/issues/53))
+  - Stage Electron runtime shared libraries in the Snap package, including NSS/NSPR libraries required by Electron on Ubuntu.
+  - Set the Snap launcher library path so the bundled Electron binary can resolve staged runtime libraries.
+  - Disable Chromium's sandbox for AppImage launches to avoid the root-owned SUID sandbox requirement inside transient AppImage mount paths.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:release`
+
 ## [1.3.1-beta.19] - 2026-05-14
 
 ### Fixed

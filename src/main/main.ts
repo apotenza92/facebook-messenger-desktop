@@ -200,6 +200,11 @@ console.log(
 app.commandLine.appendSwitch("disable-features", "FontationsFontBackend");
 console.log("[Chromium] Disabled feature: FontationsFontBackend");
 
+if (process.platform === "linux" && process.env.APPIMAGE) {
+  app.commandLine.appendSwitch("no-sandbox");
+  console.log("[Chromium] Disabled sandbox for AppImage launch");
+}
+
 // In dev mode, kill any existing production Messenger instances to avoid conflicts
 if (isDev) {
   try {
