@@ -180,6 +180,7 @@ const stableConfig = {
   },
   appImage: {
     artifactName: 'facebook-messenger-desktop-${arch}.${ext}',
+    executableArgs: ['--no-sandbox'],
   },
   deb: {
     packageName: 'facebook-messenger-desktop',
@@ -237,6 +238,7 @@ const betaConfig = {
   },
   appImage: {
     artifactName: 'facebook-messenger-desktop-beta-${arch}.${ext}',
+    executableArgs: ['--no-sandbox'],
   },
   deb: {
     packageName: 'facebook-messenger-desktop-beta',

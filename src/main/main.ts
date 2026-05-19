@@ -77,6 +77,7 @@ import {
   isLikelyGlobalFacebookNotification,
   type NotificationPayload,
 } from "../shared/notification-activity-policy";
+import { withLinuxNoSandboxArg } from "./linux-sandbox-policy";
 import { autoUpdater } from "electron-updater";
 
 // On Linux AppImage: fork and detach from terminal so the command returns immediately
@@ -86,11 +87,15 @@ if (
   process.env.APPIMAGE &&
   !process.env.MESSENGER_FORKED
 ) {
-  const child = spawn(process.argv[0], process.argv.slice(1), {
-    detached: true,
-    stdio: "ignore",
-    env: { ...process.env, MESSENGER_FORKED: "1" },
-  });
+  const child = spawn(
+    process.argv[0],
+    withLinuxNoSandboxArg(process.argv.slice(1)),
+    {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, MESSENGER_FORKED: "1" },
+    },
+  );
   child.unref();
   process.exit(0);
 }

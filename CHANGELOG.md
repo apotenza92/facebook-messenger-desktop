@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.1-beta.21] - 2026-05-19
+
+### Fixed
+
+- **Issue #53 follow-up: pass Chromium's no-sandbox flag through Linux package launchers** ([#53](https://github.com/apotenza92/facebook-messenger-desktop/issues/53))
+  - Start the Snap-bundled Electron binary with `--no-sandbox`, covering strict confinement where Chromium's sandbox setup fails with `credentials.cc:131` permission errors.
+  - Explicitly declare `--no-sandbox` in both stable and beta AppImage desktop metadata.
+  - Preserve `--no-sandbox` when a directly launched AppImage detaches from the terminal and restarts the child process, covering direct `./AppImage` launches that bypass the desktop `Exec=` line.
+  - Add release-test coverage for the Snap launcher, AppImage packaging metadata, and direct AppImage restart argument handling.
+
+### Validation
+
+- `npm run test:linux-sandbox`
+- `npm run build`
+- `npm run test:release`
+- `npm run test:issues`
+- Ubuntu 26.04 Docker comparison: reproduced the unflagged AppImage SUID sandbox failure, then confirmed the same unpacked Linux build starts with `--no-sandbox` without `chrome-sandbox`, SUID sandbox, or `credentials.cc:131` errors.
+
 ## [1.3.1-beta.20] - 2026-05-18
 
 ### Fixed

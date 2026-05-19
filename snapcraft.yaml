@@ -127,7 +127,7 @@ parts:
           export LD_LIBRARY_PATH="$lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         fi
       done
-      exec ./electron/electron dist/main/main.js "$@"
+      exec ./electron/electron --no-sandbox dist/main/main.js "$@"
       EOF
       # Remove leading spaces from launcher script
       sed -i 's/^      //' $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop
