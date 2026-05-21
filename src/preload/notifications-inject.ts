@@ -54,6 +54,14 @@
     matchedPattern?: string;
     usedTitleOnly?: boolean;
   };
+  type MessengerMessageProofDecision = {
+    allow: boolean;
+    reason:
+      | "direct-or-unknown-thread-row"
+      | "group-sender-body"
+      | "group-sender-action"
+      | "group-row-non-message-shape";
+  };
   type NotificationDecisionPolicyApi = {
     resolveNativeNotificationTarget: (
       payload: { title: string; body: string },
@@ -96,6 +104,10 @@
       reason: string;
       matchedPattern?: string;
     };
+    evaluateMessengerMessageProof?: (
+      payload: { title: string; body: string },
+      candidate: NotificationCandidate,
+    ) => MessengerMessageProofDecision;
     shouldSnapshotFreshUnreadOnBoundary?: (reason: string) => boolean;
     classifyMutationMuteStateRecheckReason?: (
       observed: { title: string; body: string },
@@ -1327,6 +1339,33 @@
     };
   };
 
+  const findConversationCandidateByHref = (
+    candidates: NotificationCandidate[],
+    href: string,
+  ): NotificationCandidate | undefined => {
+    const normalizedHref = normalizeConversationKey(href);
+    return candidates.find(
+      (candidate) => normalizeConversationKey(candidate.href) === normalizedHref,
+    );
+  };
+
+  const evaluateMessengerMessageProof = (
+    policy: NotificationDecisionPolicyApi,
+    payload: NotificationPayload,
+    candidate: NotificationCandidate | undefined,
+  ): MessengerMessageProofDecision => {
+    if (!candidate) {
+      return { allow: false, reason: "group-row-non-message-shape" };
+    }
+
+    return (
+      policy.evaluateMessengerMessageProof?.(payload, candidate) ?? {
+        allow: true,
+        reason: "direct-or-unknown-thread-row",
+      }
+    );
+  };
+
   // Find sidebar or chat grid element
   const findSidebarElement = (): Element | null => {
     // Try primary selector
@@ -1640,6 +1679,28 @@
             normalizedHref = normalizeConversationKey(match.matchedHref);
             notificationHref = normalizedHref;
             const matchedRow = rowByHref.get(normalizedHref);
+            const matchedCandidate = findConversationCandidateByHref(
+              conversationCandidates,
+              normalizedHref,
+            );
+            const messageProof = evaluateMessengerMessageProof(
+              policy,
+              nativePayload,
+              matchedCandidate,
+            );
+            if (!messageProof.allow) {
+              log(
+                "Native notification suppressed - matched row lacks chat-message proof",
+                {
+                  title,
+                  body,
+                  href: normalizedHref,
+                  reason: messageProof.reason,
+                  matchedCandidate,
+                },
+              );
+              return;
+            }
 
             if (matchedRow) {
               const matchedInfo = extractConversationInfo(matchedRow);
@@ -2147,6 +2208,26 @@
       }
 
       const matchedInfo = extractConversationInfo(matchedRow) || info;
+      const matchedCandidate = findConversationCandidateByHref(
+        conversationCandidates,
+        normalizedMatchedHref,
+      );
+      const messageProof = evaluateMessengerMessageProof(
+        policy,
+        { title: matchedInfo.title, body: matchedInfo.body },
+        matchedCandidate,
+      );
+      if (!messageProof.allow) {
+        log("Delayed mutation notification suppressed - matched row lacks chat-message proof", {
+          title: matchedInfo.title,
+          body: matchedInfo.body,
+          href: normalizedMatchedHref,
+          reason: messageProof.reason,
+          matchedCandidate,
+        });
+        return;
+      }
+
       const observedActivity = evaluateNotificationActivity({
         title: info.title,
         body: info.body,
@@ -2392,6 +2473,26 @@
         }
 
         const matchedInfo = extractConversationInfo(matchedRow) || info;
+        const matchedCandidate = findConversationCandidateByHref(
+          conversationCandidates,
+          normalizedMatchedHref,
+        );
+        const messageProof = evaluateMessengerMessageProof(
+          policy,
+          { title: matchedInfo.title, body: matchedInfo.body },
+          matchedCandidate,
+        );
+        if (!messageProof.allow) {
+          log("Mutation notification suppressed - matched row lacks chat-message proof", {
+            title: matchedInfo.title,
+            body: matchedInfo.body,
+            href: normalizedMatchedHref,
+            reason: messageProof.reason,
+            matchedCandidate,
+          });
+          continue;
+        }
+
         const observedActivity = evaluateNotificationActivity({
           title: info.title,
           body: info.body,
@@ -2844,18 +2945,62 @@
                 matchDecision.matchedHref!,
               );
               const row = rowByHref.get(normalizedHref);
-              if (row && isConversationUnread(row) && !isConversationMuted(row)) {
+              const candidate = findConversationCandidateByHref(
+                conversationCandidates,
+                normalizedHref,
+              );
+              const messageProof = evaluateMessengerMessageProof(
+                policy,
+                payload,
+                candidate,
+              );
+              if (
+                row &&
+                isConversationUnread(row) &&
+                !isConversationMuted(row) &&
+                messageProof.allow
+              ) {
                 provenHref = normalizedHref;
                 provenanceReason = "service-worker-sidebar-thread-proof";
+              } else if (row && !messageProof.allow) {
+                log("Service worker sidebar proof rejected - non-message row shape", {
+                  title: payload.title,
+                  body: payload.body,
+                  href: normalizedHref,
+                  reason: messageProof.reason,
+                  candidate,
+                });
               }
             }
 
             if (!provenHref && isMessengerThreadHref(metadataThreadHref)) {
               const normalizedHref = normalizeConversationKey(metadataThreadHref!);
               const row = rowByHref.get(normalizedHref);
-              if (row && isConversationUnread(row) && !isConversationMuted(row)) {
+              const candidate = findConversationCandidateByHref(
+                conversationCandidates,
+                normalizedHref,
+              );
+              const messageProof = evaluateMessengerMessageProof(
+                policy,
+                payload,
+                candidate,
+              );
+              if (
+                row &&
+                isConversationUnread(row) &&
+                !isConversationMuted(row) &&
+                messageProof.allow
+              ) {
                 provenHref = normalizedHref;
                 provenanceReason = "service-worker-metadata-thread-proof";
+              } else if (row && !messageProof.allow) {
+                log("Service worker metadata proof rejected - non-message row shape", {
+                  title: payload.title,
+                  body: payload.body,
+                  href: normalizedHref,
+                  reason: messageProof.reason,
+                  candidate,
+                });
               }
             }
           }

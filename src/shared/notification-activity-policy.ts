@@ -75,6 +75,7 @@ const GROUP_MANAGEMENT_BODY_PATTERNS: RegExp[] = [
   /requested membership/i,
   /membership request/i,
   /requested to participate for the first time/i,
+  /\bwants to post for the first time\b(?:[^.]{0,240}(?:\breview (?:their|the) (?:post|submission|request)\b|\bin\b[^.]{0,160}))?/i,
   /group you(?:'|’)re managing/i,
   /group you are managing/i,
 ];

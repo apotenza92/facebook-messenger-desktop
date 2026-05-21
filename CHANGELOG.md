@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.22] - 2026-05-21
+
+### Fixed
+
+- **Issue #50 follow-up: harden Facebook group/admin notification filtering** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Suppress first-time-post group admin review notifications that can otherwise look like proven Messenger thread notifications.
+  - Add a structural Messenger-message proof check for group rows, so a valid thread route is no longer enough on its own; group notifications must also look like an actual sender message before they can display.
+  - Keep ordinary direct messages, sender-prefixed group messages, and recognised group sender-action previews deliverable.
+  - Expand notification debug logs with source kind, source label, thread proof, call classification, group-management classification, global activity classification, and display-boundary decisions.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.21] - 2026-05-19
 
 ### Fixed

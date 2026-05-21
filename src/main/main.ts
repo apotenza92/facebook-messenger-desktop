@@ -73,6 +73,7 @@ import {
   type IncomingCallEvidence,
 } from "../shared/incoming-call-evidence";
 import {
+  classifyCallNotification,
   classifyGroupManagementNotification,
   isLikelyGlobalFacebookNotification,
   type NotificationPayload,
@@ -550,6 +551,8 @@ function showNativeNotification(input: {
 }): void {
   const { handler, created } = ensureNotificationHandler();
   const displayBoundary = resolveNotificationDisplayBoundary(input.data);
+  const mainProcessClassification =
+    buildMainProcessNotificationClassification(input.data);
   pushNotificationDebugEvent({
     timestamp: Date.now(),
     source: "main",
@@ -560,17 +563,14 @@ function showNativeNotification(input: {
     displayPath: created ? "main-fallback" : "main",
     reason: input.reason,
     payload: {
-      raw: {
-        title: input.data.title,
-        body: input.data.body,
-        href: input.data.href,
-        tag: input.data.tag,
-        sourceKind: input.data.sourceKind,
-        sourceLabel: input.data.sourceLabel,
-        provenanceReason: input.data.provenanceReason,
-      },
+      raw: summarizeNotificationDataForDebug(input.data),
+      mainProcessClassification,
       mainProcessSuppressionReason: null,
       displayBoundarySuppressionReason: displayBoundary.reason,
+      displayBoundary: {
+        suppress: displayBoundary.suppress,
+        reason: displayBoundary.reason,
+      },
       normalized: displayBoundary.normalizedData,
       shown: !displayBoundary.suppress,
     },
@@ -586,7 +586,15 @@ function showNativeNotification(input: {
       displaySource: input.displaySource,
       displayPath: created ? "main-fallback" : "main",
       reason: input.reason ?? displayBoundary.reason ?? "display-boundary-policy",
-      payload: displayBoundary.normalizedData,
+      payload: {
+        raw: summarizeNotificationDataForDebug(input.data),
+        mainProcessClassification,
+        displayBoundary: {
+          suppress: displayBoundary.suppress,
+          reason: displayBoundary.reason,
+        },
+        normalized: displayBoundary.normalizedData,
+      },
     });
     return;
   }
@@ -599,7 +607,15 @@ function showNativeNotification(input: {
     displaySource: input.displaySource,
     displayPath: created ? "main-fallback" : "main",
     reason: input.reason,
-    payload: displayBoundary.normalizedData,
+    payload: {
+      raw: summarizeNotificationDataForDebug(input.data),
+      mainProcessClassification,
+      displayBoundary: {
+        suppress: displayBoundary.suppress,
+        reason: displayBoundary.reason,
+      },
+      normalized: displayBoundary.normalizedData,
+    },
   });
 }
 
@@ -860,6 +876,56 @@ function isMessengerThreadHref(value: unknown): boolean {
   }
 }
 
+function summarizeNotificationDataForDebug(
+  data: Partial<NotificationData> | null | undefined,
+): Record<string, unknown> {
+  return {
+    title: data?.title,
+    body: data?.body,
+    href: data?.href,
+    tag: data?.tag,
+    sourceKind: data?.sourceKind,
+    sourceLabel: data?.sourceLabel,
+    provenanceReason: data?.provenanceReason,
+  };
+}
+
+function buildMainProcessNotificationClassification(
+  data: Partial<NotificationData> | null | undefined,
+): Record<string, unknown> {
+  const sourceKind = String(data?.sourceKind || "");
+  const sourceLabel = String(data?.sourceLabel || "").trim();
+  const title = String(data?.title || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const body = String(data?.body || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const payload: NotificationPayload = { title, body };
+  const call = classifyCallNotification(payload);
+  const groupManagement = classifyGroupManagementNotification(payload);
+  const globalFacebookActivity = isLikelyGlobalFacebookNotification(payload);
+
+  return {
+    payload,
+    source: {
+      sourceKind,
+      knownSourceKind: NOTIFICATION_SOURCE_KINDS.has(sourceKind),
+      sourceLabelPresent: sourceLabel.length > 0,
+      provenanceReason: data?.provenanceReason,
+    },
+    threadProof: {
+      href: data?.href,
+      isMessengerThreadHref: isMessengerThreadHref(data?.href),
+    },
+    activity: {
+      call,
+      groupManagement,
+      globalFacebookActivity,
+    },
+  };
+}
+
 function shouldSuppressMainProcessNotification(
   data: Partial<NotificationData> | null | undefined,
 ): { suppress: boolean; reason?: string } {
@@ -899,16 +965,10 @@ function shouldSuppressMainProcessNotification(
     };
   }
 
-  const title = String(data?.title || "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const body = String(data?.body || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const title = String(data?.title || "").replace(/\s+/g, " ").trim();
+  const body = String(data?.body || "").replace(/\s+/g, " ").trim();
   const payload: NotificationPayload = { title, body };
-
-  const groupManagement =
-    classifyGroupManagementNotification(payload);
+  const groupManagement = classifyGroupManagementNotification(payload);
   if (groupManagement.isGroupManagement) {
     return {
       suppress: true,
@@ -9140,6 +9200,10 @@ function setupIpcHandlers(): void {
   // Handle notification requests from renderer
   ipcMain.on("show-notification", (event, data) => {
     console.log("[Main Process] Received notification request:", data);
+    const mainProcessClassification =
+      buildMainProcessNotificationClassification(
+        data as Partial<NotificationData>,
+      );
 
     pushNotificationDebugEvent({
       timestamp: Date.now(),
@@ -9147,7 +9211,12 @@ function setupIpcHandlers(): void {
       event: "show-notification-request",
       webContentsId: event.sender.id,
       url: event.sender.getURL(),
-      payload: data,
+      payload: {
+        raw: summarizeNotificationDataForDebug(
+          data as Partial<NotificationData>,
+        ),
+        mainProcessClassification,
+      },
     });
 
     const suppression = shouldSuppressMainProcessNotification(
@@ -9164,15 +9233,10 @@ function setupIpcHandlers(): void {
         displayPath: "main",
         reason: suppression.reason,
         payload: {
-          raw: {
-            title: data?.title,
-            body: data?.body,
-            href: data?.href,
-            tag: data?.tag,
-            sourceKind: data?.sourceKind,
-            sourceLabel: data?.sourceLabel,
-            provenanceReason: data?.provenanceReason,
-          },
+          raw: summarizeNotificationDataForDebug(
+            data as Partial<NotificationData>,
+          ),
+          mainProcessClassification,
           mainProcessSuppressionReason: suppression.reason,
           displayBoundarySuppressionReason: null,
           normalized: data,
@@ -9186,7 +9250,13 @@ function setupIpcHandlers(): void {
         webContentsId: event.sender.id,
         url: event.sender.getURL(),
         reason: suppression.reason,
-        payload: data,
+        payload: {
+          raw: summarizeNotificationDataForDebug(
+            data as Partial<NotificationData>,
+          ),
+          mainProcessClassification,
+          normalized: data,
+        },
       });
       console.log("[Main Process] Suppressed non-message notification", {
         reason: suppression.reason,

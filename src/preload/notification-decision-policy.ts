@@ -101,6 +101,15 @@ type NotificationActivitySuppressionDecision = {
   matchedPattern?: string;
 };
 
+type MessengerMessageProofDecision = {
+  allow: boolean;
+  reason:
+    | "direct-or-unknown-thread-row"
+    | "group-sender-body"
+    | "group-sender-action"
+    | "group-row-non-message-shape";
+};
+
 type NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget: (
     payload: NotificationPayload,
@@ -128,6 +137,10 @@ type NotificationDecisionPolicyApi = {
   shouldSuppressBrowserNotificationActivity?: (
     payload: NotificationPayload,
   ) => NotificationActivitySuppressionDecision;
+  evaluateMessengerMessageProof?: (
+    payload: NotificationPayload,
+    candidate: NotificationCandidate,
+  ) => MessengerMessageProofDecision;
   shouldSnapshotFreshUnreadOnBoundary: (reason: string) => boolean;
   classifyMutationMuteStateRecheckReason?: (
     observed: NotificationPayload,
@@ -1291,6 +1304,39 @@ function hasGroupConversationMetadata(value: string | undefined): boolean {
   );
 }
 
+function evaluateMessengerMessageProof(
+  payload: NotificationPayload,
+  candidate: NotificationCandidate,
+): MessengerMessageProofDecision {
+  if (!hasGroupConversationMetadata(candidate.searchText)) {
+    return { allow: true, reason: "direct-or-unknown-thread-row" };
+  }
+
+  if (
+    looksLikeGroupSenderPreviewPayload({
+      title: candidate.title,
+      body: candidate.body,
+    })
+  ) {
+    return { allow: true, reason: "group-sender-body" };
+  }
+
+  const candidateSenderActor = extractSenderStyleActor(candidate.body);
+  const candidateSenderBody = normalizeSenderStyleBody(candidate.body);
+  const payloadSenderBody = normalizeSenderStyleBody(payload.body);
+  if (
+    candidateSenderActor &&
+    candidateSenderBody &&
+    payloadSenderBody &&
+    candidateSenderBody === payloadSenderBody &&
+    areLikelySamePersonName(payload.title, candidateSenderActor)
+  ) {
+    return { allow: true, reason: "group-sender-action" };
+  }
+
+  return { allow: false, reason: "group-row-non-message-shape" };
+}
+
 function classifyMutationMuteStateRecheckReason(
   observed: NotificationPayload,
   matched: NotificationPayload,
@@ -1415,6 +1461,7 @@ const policyApi: NotificationDecisionPolicyApi = {
           )
       : undefined,
   shouldSuppressBrowserNotificationActivity,
+  evaluateMessengerMessageProof,
   shouldSnapshotFreshUnreadOnBoundary,
   classifyMutationMuteStateRecheckReason,
 };

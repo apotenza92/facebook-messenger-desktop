@@ -2995,6 +2995,11 @@ const runNotificationPolicyTests = () => {
     "notification decision policy missing shouldSuppressBrowserNotificationActivity",
   );
   assert(
+    typeof notificationDecisionPolicy.evaluateMessengerMessageProof ===
+      "function",
+    "notification decision policy missing evaluateMessengerMessageProof",
+  );
+  assert(
     typeof notificationActivityPolicy.isLikelyGlobalFacebookNotification ===
       "function",
     "notification activity policy missing isLikelyGlobalFacebookNotification",
@@ -4120,6 +4125,129 @@ const runNotificationPolicyTests = () => {
     "#49 the shared notification activity classifier should suppress participation-request activity even when the title looks like a person",
   );
 
+  const firstTimePostAdminActivitySuppressed =
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification({
+      title: "User A",
+      body: "User A wants to post for the first time in Example Group. Review their post.",
+    });
+  assertEqual(
+    firstTimePostAdminActivitySuppressed,
+    true,
+    "#50 the shared notification activity classifier should suppress first-time-post admin review notifications",
+  );
+
+  const firstTimePostAdminMatch =
+    notificationDecisionPolicy.resolveNativeNotificationTarget(
+      {
+        title: "User A",
+        body: "User A wants to post for the first time in Example Group. Review their post.",
+      },
+      [
+        {
+          href: "/t/example-group-admin-queue",
+          title: "Example Group",
+          body: "User A wants to post for the first time in Example Group. Review their post.",
+          searchText:
+            "Group conversation Example Group User A wants to post for the first time in Example Group. Review their post.",
+          muted: false,
+          unread: true,
+        },
+      ],
+    );
+  assertEqual(
+    firstTimePostAdminMatch.ambiguous,
+    false,
+    "#50 first-time-post admin review payload can still earn Messenger thread proof",
+  );
+  assertEqual(
+    firstTimePostAdminMatch.matchedHref,
+    "/t/example-group-admin-queue",
+    "#50 first-time-post admin review payload should demonstrate the proven-thread leak path",
+  );
+  assert(
+    firstTimePostAdminMatch.confidence > 0.55,
+    "#50 first-time-post admin review payload should match the sidebar row strongly enough to require activity-policy suppression",
+  );
+
+  const firstTimePostAdminProof =
+    notificationDecisionPolicy.evaluateMessengerMessageProof(
+      {
+        title: "User A",
+        body: "User A wants to post for the first time in Example Group. Review their post.",
+      },
+      {
+        href: "/t/example-group-admin-queue",
+        title: "Example Group",
+        body: "User A wants to post for the first time in Example Group. Review their post.",
+        searchText:
+          "Group conversation Example Group User A wants to post for the first time in Example Group. Review their post.",
+        muted: false,
+        unread: true,
+      },
+    );
+  assertEqual(
+    firstTimePostAdminProof.allow,
+    false,
+    "#50 group-thread proof should not promote admin review rows that lack chat-message structure",
+  );
+  assertEqual(
+    firstTimePostAdminProof.reason,
+    "group-row-non-message-shape",
+    "#50 rejected group-thread proof should explain the non-message row shape",
+  );
+
+  const groupSenderBodyProof =
+    notificationDecisionPolicy.evaluateMessengerMessageProof(
+      {
+        title: "Project Group",
+        body: "User A: Can you review this when you get a minute?",
+      },
+      {
+        href: "/t/group-sender-body",
+        title: "Project Group",
+        body: "User A: Can you review this when you get a minute?",
+        searchText: "Group conversation Project Group",
+        muted: false,
+        unread: true,
+      },
+    );
+  assertEqual(
+    groupSenderBodyProof.allow,
+    true,
+    "#50 group-thread proof should still allow sender-prefixed chat bodies",
+  );
+  assertEqual(
+    groupSenderBodyProof.reason,
+    "group-sender-body",
+    "#50 sender-prefixed group chat bodies should record structural proof",
+  );
+
+  const groupSenderActionProof =
+    notificationDecisionPolicy.evaluateMessengerMessageProof(
+      {
+        title: "User A",
+        body: "sent a message",
+      },
+      {
+        href: "/t/group-sender-action",
+        title: "Project Group",
+        body: "User A sent a message",
+        searchText: "Group conversation Project Group User A sent a message",
+        muted: false,
+        unread: true,
+      },
+    );
+  assertEqual(
+    groupSenderActionProof.allow,
+    true,
+    "#50 group-thread proof should still allow sender-action message previews",
+  );
+  assertEqual(
+    groupSenderActionProof.reason,
+    "group-sender-action",
+    "#50 sender-action group previews should record structural proof",
+  );
+
   const browserGroupAdminSuppression =
     notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
       title: "New notification",
@@ -4134,6 +4262,22 @@ const runNotificationPolicyTests = () => {
     browserGroupAdminSuppression.reason,
     "group-management-activity",
     "#50 browser-originated group/admin suppression should use the shared group-management classifier",
+  );
+
+  const browserFirstTimePostAdminSuppression =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "User A",
+      body: "User A wants to post for the first time in Example Group. Review their post.",
+    });
+  assertEqual(
+    browserFirstTimePostAdminSuppression.suppress,
+    true,
+    "#50 browser-originated first-time-post admin notifications should be suppressed before service-worker display",
+  );
+  assertEqual(
+    browserFirstTimePostAdminSuppression.reason,
+    "group-management-activity",
+    "#50 first-time-post admin suppression should use the shared group-management classifier",
   );
 
   const browserCallHistorySuppression =
@@ -4161,6 +4305,17 @@ const runNotificationPolicyTests = () => {
     browserMessageAllowed.suppress,
     false,
     "#50 ordinary browser-originated message notifications should remain deliverable",
+  );
+
+  const ordinaryPostIntentChatAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "Account A",
+      body: "I want to post this later after you review it.",
+    });
+  assertEqual(
+    ordinaryPostIntentChatAllowed.suppress,
+    false,
+    "#50 ordinary direct chat text about posting should remain deliverable without first-time admin review wording",
   );
 
   const socialAnswerActivitySuppressed =
@@ -5096,6 +5251,21 @@ const runNotificationDisplayPolicyTests = () => {
     groupAdminBoundary.suppress,
     true,
     "#50 display-boundary policy should suppress group-admin participation request notifications",
+  );
+
+  const firstTimePostAdminBoundary =
+    resolveNotificationDisplayBoundary({
+      title: "User A",
+      body: "User A wants to post for the first time in Example Group. Review their post.",
+      sourceKind: "messenger-message",
+      sourceLabel: "test-message",
+      provenanceReason: "test-thread-proof",
+      href: "/t/test",
+    });
+  assertEqual(
+    firstTimePostAdminBoundary.suppress,
+    true,
+    "#50 display-boundary policy should suppress first-time-post admin review notifications even after Messenger thread proof",
   );
 
   const personTitledGroupAdminBoundary =
