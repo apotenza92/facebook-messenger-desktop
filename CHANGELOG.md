@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.1-beta.23] - 2026-05-28
+
+### Fixed
+
+- **Issue #50 follow-up: suppress wake/reconnect call-preview false positives** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Reject message-preview text such as `messaged you`, `new message`, and social-activity phrases as incoming-call caller names.
+  - Require soft DOM and periodic-scan incoming-call evidence to include visible call controls before it can raise an incoming-call notification.
+  - Add deterministic and GUI coverage for wake top-bar call-ish text that should stay diagnostic-only.
+
+- **Issue #53 follow-up: prove Linux no-sandbox packaging at runtime** ([#53](https://github.com/apotenza92/facebook-messenger-desktop/issues/53))
+  - Wrap Linux Electron executables so direct AppImage launches always run the real binary with `--no-sandbox`.
+  - Install production runtime dependencies inside the Snap package so `electron-updater` is available at startup.
+  - Add AppImage/Snap artifact inspection and a hosted x86_64 Ubuntu AppImage launch smoke gate before release uploads.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:release`
+- `npm run test:linux-sandbox`
+- `npm run test:linux-artifacts`
+- `CALL_TEST_MODE=wake-top-bar node scripts/test-call-flows-gui.js --timeout-ms 6000`
+- GitHub Actions x86_64 Ubuntu smoke: build x64 AppImage, inspect artifact, launch under Xvfb.
+
 ## [1.3.1-beta.22] - 2026-05-21
 
 ### Fixed
