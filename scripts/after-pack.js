@@ -11,8 +11,14 @@ const isBeta = version.includes('-beta') || version.includes('-alpha') || versio
  * electron-builder afterPack hook
  * - Adds an instructional text file alongside the .app bundle for macOS
  * - Compiles and bundles the notification-helper Swift binary
+ * - Wraps Linux executables so AppImage direct launches always pass --no-sandbox
  */
 exports.default = async function afterPack(context) {
+  if (context.electronPlatformName === 'linux') {
+    wrapLinuxExecutable(context);
+    return;
+  }
+
   if (context.electronPlatformName !== 'darwin') {
     return;
   }
@@ -41,6 +47,49 @@ Auto-updates and macOS integration require the app to be in Applications.
   // Compile and bundle notification-helper for macOS
   await compileNotificationHelper(context);
 };
+
+function resolveLinuxExecutableName(context) {
+  if (context.packager && context.packager.executableName) {
+    return context.packager.executableName;
+  }
+
+  return isBeta
+    ? 'facebook-messenger-desktop-beta'
+    : 'facebook-messenger-desktop';
+}
+
+function wrapLinuxExecutable(context) {
+  const executableName = resolveLinuxExecutableName(context);
+  const executablePath = path.join(context.appOutDir, executableName);
+  const wrappedExecutablePath = `${executablePath}.bin`;
+
+  if (!fs.existsSync(executablePath)) {
+    console.log(`⚠ Linux executable not found at ${executablePath}, skipping wrapper`);
+    return;
+  }
+
+  if (!fs.existsSync(wrappedExecutablePath)) {
+    fs.renameSync(executablePath, wrappedExecutablePath);
+  }
+
+  const wrapper = `#!/bin/sh
+set -eu
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+for arg in "$@"; do
+  if [ "$arg" = "--no-sandbox" ]; then
+    exec "$DIR/${executableName}.bin" "$@"
+  fi
+done
+
+exec "$DIR/${executableName}.bin" --no-sandbox "$@"
+`;
+
+  fs.writeFileSync(executablePath, wrapper, { encoding: 'utf8', mode: 0o755 });
+  fs.chmodSync(executablePath, 0o755);
+  fs.chmodSync(wrappedExecutablePath, 0o755);
+  console.log(`✓ Wrapped Linux executable with --no-sandbox launcher: ${executableName}`);
+}
 
 /**
  * Compile the Swift notification-helper as a mini app bundle
@@ -132,4 +181,3 @@ async function compileNotificationHelper(context) {
     console.log('  Notification permission checking will not be available');
   }
 }
-

@@ -1,0 +1,172 @@
+name: Issue 53 Linux x64 Smoke
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_snap:
+        description: "Also build/install/launch the x64 Snap. Slower and depends on snapd working on the hosted runner."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  appimage-x64:
+    name: x64 AppImage runtime smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Verify hosted runner architecture
+        run: |
+          set -euo pipefail
+          uname -a
+          test "$(uname -m)" = "x86_64"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Install Linux launch dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            squashfs-tools \
+            xvfb \
+            xauth \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxkbcommon0 \
+            libxrandr2 \
+            libxss1
+          sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
+          sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
+
+      - name: Generate icons
+        run: npm run generate-icons
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build x64 AppImage
+        run: npx electron-builder --config electron-builder.config.js --linux AppImage --x64 --publish=never
+        timeout-minutes: 20
+
+      - name: Inspect x64 AppImage artifact
+        run: npm run test:linux-artifacts -- release/*x86_64.AppImage
+
+      - name: Launch x64 AppImage under Xvfb
+        run: |
+          set -euo pipefail
+          mkdir -p issue53-smoke-logs
+          for appimage in release/*x86_64.AppImage; do
+            ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
+              ./scripts/test-issue53-linux-vm-smoke.sh appimage "$appimage"
+          done
+
+      - name: Upload x64 AppImage and smoke logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue53-x64-appimage-smoke
+          path: |
+            release/*x86_64.AppImage
+            release/*linux*.yml
+            issue53-smoke-logs/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  snap-x64:
+    name: x64 Snap runtime smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    if: ${{ inputs.include_snap }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Verify hosted runner architecture
+        run: |
+          set -euo pipefail
+          uname -a
+          test "$(uname -m)" = "x86_64"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Install Snap and launch dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            squashfs-tools \
+            xvfb \
+            xauth
+          sudo snap install snapcraft --classic
+
+      - name: Generate icons
+        run: npm run generate-icons
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build x64 Snap
+        run: ./scripts/test-issue53-linux-vm-smoke.sh build-snap "$PWD" "$PWD/release"
+        timeout-minutes: 60
+        env:
+          SNAP_BUILD_FOR: amd64
+
+      - name: Inspect x64 Snap artifact
+        run: npm run test:linux-artifacts -- --require-snap release/*.snap
+
+      - name: Install x64 Snap
+        run: sudo ./scripts/test-issue53-linux-vm-smoke.sh install-snap release/*.snap
+
+      - name: Launch x64 Snap under Xvfb
+        run: |
+          set -euo pipefail
+          mkdir -p issue53-smoke-logs
+          ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
+            ./scripts/test-issue53-linux-vm-smoke.sh snap-launch
+
+      - name: Upload x64 Snap and smoke logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue53-x64-snap-smoke
+          path: |
+            release/*.snap
+            issue53-smoke-logs/**
+          if-no-files-found: ignore
+          retention-days: 14

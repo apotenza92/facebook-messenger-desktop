@@ -1,5 +1,5 @@
 name: facebook-messenger-desktop
-base: core22
+base: core24
 adopt-info: messenger-app
 summary: Unofficial desktop client for Facebook Messenger
 description: |
@@ -9,10 +9,12 @@ description: |
 grade: stable
 confinement: strict
 
-architectures:
-  - build-on: amd64
+platforms:
+  amd64:
+    build-on: [amd64]
     build-for: [amd64]
-  - build-on: arm64
+  arm64:
+    build-on: [arm64]
     build-for: [arm64]
 
 apps:
@@ -116,6 +118,13 @@ parts:
       cp -r dist $SNAPCRAFT_PART_INSTALL/opt/Messenger/
       cp -r assets $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
       cp package.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
+      cp package-lock.json $SNAPCRAFT_PART_INSTALL/opt/Messenger/ || true
+      
+      # Install runtime dependencies needed by dist/main/main.js
+      (
+        cd $SNAPCRAFT_PART_INSTALL/opt/Messenger
+        ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --omit=dev --ignore-scripts
+      )
       
       # Create launcher script
       cat > $SNAPCRAFT_PART_INSTALL/opt/Messenger/facebook-messenger-desktop << 'EOF'

@@ -18,6 +18,87 @@ jobs:
   # PHASE 1: Build all platforms
   # ============================================
 
+  issue53-x64-smoke:
+    name: Issue #53 x64 AppImage Smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Verify hosted runner architecture
+        run: |
+          set -euo pipefail
+          uname -a
+          test "$(uname -m)" = "x86_64"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Install Linux launch dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            squashfs-tools \
+            xvfb \
+            xauth \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxkbcommon0 \
+            libxrandr2 \
+            libxss1
+          sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
+          sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
+
+      - name: Generate icons
+        run: npm run generate-icons
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build x64 AppImage
+        run: npx electron-builder --config electron-builder.config.js --linux AppImage --x64 --publish=never
+        timeout-minutes: 20
+
+      - name: Inspect x64 AppImage artifact
+        run: npm run test:linux-artifacts -- release/*x86_64.AppImage
+
+      - name: Launch x64 AppImage under Xvfb
+        run: |
+          set -euo pipefail
+          mkdir -p issue53-smoke-logs
+          for appimage in release/*x86_64.AppImage; do
+            ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
+              ./scripts/test-issue53-linux-vm-smoke.sh appimage "$appimage"
+          done
+
+      - name: Upload x64 smoke logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue53-x64-release-smoke
+          path: |
+            release/*x86_64.AppImage
+            release/*linux*.yml
+            issue53-smoke-logs/**
+          retention-days: 14
+          if-no-files-found: ignore
+
   build-macos:
     name: Build macOS
     runs-on: macos-latest
@@ -179,7 +260,25 @@ jobs:
       - name: Install Flatpak tools and runtimes
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
+          sudo apt-get install -y \
+            flatpak \
+            flatpak-builder \
+            squashfs-tools \
+            xvfb \
+            xauth \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxkbcommon0 \
+            libxrandr2 \
+            libxss1
+          sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
+          sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
           # Add Flathub for runtimes (needed by electron-builder)
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           # Install required runtimes for Flatpak build
@@ -254,6 +353,27 @@ jobs:
           echo "YML files in release folder:"
           ls -la release/*.yml
 
+      - name: Inspect Linux artifacts
+        run: npm run test:linux-artifacts
+
+      - name: Smoke x64 AppImage launch
+        run: |
+          set -euo pipefail
+          mkdir -p issue53-smoke-logs
+          for appimage in release/*x86_64.AppImage; do
+            ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
+              ./scripts/test-issue53-linux-vm-smoke.sh appimage "$appimage"
+          done
+
+      - name: Upload Linux smoke logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-smoke-logs
+          path: issue53-smoke-logs/**
+          retention-days: 30
+          if-no-files-found: ignore
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
@@ -278,7 +398,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-macos, build-windows, build-linux]
+    needs: [issue53-x64-smoke, build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 

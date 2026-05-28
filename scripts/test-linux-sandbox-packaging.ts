@@ -15,8 +15,28 @@ function run(): void {
   const snapcraft = readRootFile('snapcraft.yaml');
   assert.match(
     snapcraft,
+    /^base: core24$/m,
+    'Snap base must match the Ubuntu 24 staged runtime libraries used by local and CI builds',
+  );
+  assert.match(
+    snapcraft,
+    /^platforms:$/m,
+    'core24 Snap builds must use platforms instead of architectures',
+  );
+  assert.doesNotMatch(
+    snapcraft,
+    /^architectures:$/m,
+    'core24 Snap builds must not use the core22 architectures key',
+  );
+  assert.match(
+    snapcraft,
     /exec \.\/electron\/electron --no-sandbox dist\/main\/main\.js "\$@"/,
     'Snap launcher must pass --no-sandbox before the app entrypoint',
+  );
+  assert.match(
+    snapcraft,
+    /ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --omit=dev --ignore-scripts/,
+    'Snap install tree must include production runtime node_modules',
   );
 
   const electronBuilderConfig = readRootFile('electron-builder.config.js');
@@ -27,6 +47,57 @@ function run(): void {
     appImageSandboxArgs?.length,
     2,
     'Stable and beta AppImage config must both set executableArgs to --no-sandbox',
+  );
+
+  const afterPack = readRootFile('scripts/after-pack.js');
+  assert.match(
+    afterPack,
+    /function wrapLinuxExecutable/,
+    'afterPack must wrap Linux executables before AppImage packaging',
+  );
+  assert.match(
+    afterPack,
+    /fs\.renameSync\(executablePath, wrappedExecutablePath\)/,
+    'Linux wrapper must rename the real Electron binary behind the launcher',
+  );
+  assert.match(
+    afterPack,
+    /exec "\$DIR\/\$\{executableName\}\.bin" --no-sandbox "\$@"/,
+    'Linux wrapper must pass --no-sandbox before user arguments',
+  );
+
+  const releaseWorkflow = readRootFile('.github/workflows/release.yml');
+  assert.match(
+    releaseWorkflow,
+    /issue53-x64-smoke:/,
+    'Release workflow must include an independent Issue #53 x64 smoke job',
+  );
+  assert.match(
+    releaseWorkflow,
+    /test-issue53-linux-vm-smoke\.sh appimage "\$appimage"/,
+    'Release workflow must smoke-launch x64 AppImages before upload',
+  );
+
+  const x64SmokeWorkflow = readRootFile('.github/workflows/issue53-linux-x64-smoke.yml');
+  assert.match(
+    x64SmokeWorkflow,
+    /runs-on: ubuntu-24\.04/,
+    'Issue #53 x64 smoke workflow must run on hosted Ubuntu x64',
+  );
+  assert.match(
+    x64SmokeWorkflow,
+    /test "\$\(uname -m\)" = "x86_64"/,
+    'Issue #53 x64 smoke workflow must assert the hosted runner architecture',
+  );
+  assert.match(
+    x64SmokeWorkflow,
+    /electron-builder --config electron-builder\.config\.js --linux AppImage --x64 --publish=never/,
+    'Issue #53 x64 smoke workflow must build the x64 AppImage locally on the x64 runner',
+  );
+  assert.match(
+    x64SmokeWorkflow,
+    /test-issue53-linux-vm-smoke\.sh appimage "\$appimage"/,
+    'Issue #53 x64 smoke workflow must launch the x64 AppImage under Xvfb',
   );
 
   assert.deepEqual(

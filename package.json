@@ -29,6 +29,7 @@
     "test:window-open": "node -r ./scripts/register-ts.js scripts/test-window-open-policy.ts",
     "test:reload-policy": "node -r ./scripts/register-ts.js scripts/test-reload-policy.ts",
     "test:linux-sandbox": "node -r ./scripts/register-ts.js scripts/test-linux-sandbox-packaging.ts",
+    "test:linux-artifacts": "node -r ./scripts/register-ts.js scripts/test-linux-artifacts.ts",
     "test:window-open:gui": "node scripts/test-window-open-gui.js",
     "test:emoji:gui": "node scripts/test-emoji-composer-gui.js",
     "test:media:modern:gui": "node scripts/test-media-click-route-gui.js --source chat --click-mode os",
