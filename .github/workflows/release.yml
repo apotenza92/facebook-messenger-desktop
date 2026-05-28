@@ -163,6 +163,7 @@ jobs:
           ls -la release/*.yml
 
       - name: Upload artifacts
+        timeout-minutes: 10
         uses: actions/upload-artifact@v6
         with:
           name: macos-build
@@ -170,6 +171,7 @@ jobs:
             release/*.zip
             release/*.yml
             release/*.blockmap
+          compression-level: 0
           retention-days: 30
           if-no-files-found: error
 
@@ -228,6 +230,7 @@ jobs:
           Get-ChildItem release/*.yml
 
       - name: Upload artifacts
+        timeout-minutes: 10
         uses: actions/upload-artifact@v6
         with:
           name: windows-build
@@ -235,6 +238,7 @@ jobs:
             release/*.exe
             release/*.yml
             release/*.blockmap
+          compression-level: 0
           retention-days: 30
           if-no-files-found: error
 
@@ -374,6 +378,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload artifacts
+        timeout-minutes: 10
         uses: actions/upload-artifact@v6
         with:
           name: linux-build
@@ -383,6 +388,7 @@ jobs:
             release/*.rpm
             release/*.flatpak
             release/*.yml
+          compression-level: 0
           retention-days: 30
           if-no-files-found: error
 
