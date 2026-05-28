@@ -374,7 +374,7 @@
   let lastCorroboratedIncomingCallEvidence: IncomingCallEvidence | null = null;
 
   const isIncomingCallRecoveryActive = (now = Date.now()): boolean =>
-    now < incomingCallRecoveryUntil;
+    now < incomingCallRecoveryUntil || isSettling;
 
   const startIncomingCallRecoveryWindow = (
     reason: string,
@@ -457,6 +457,17 @@
       return { shouldPromote: false, reason: "recovery-requires-explicit-dom" };
     }
 
+    if (
+      (evidence.source === "dom-soft" ||
+        evidence.source === "periodic-scan") &&
+      !evidence.hasVisibleControls
+    ) {
+      return {
+        shouldPromote: false,
+        reason: "soft-evidence-requires-visible-controls",
+      };
+    }
+
     if (evidence.confidence === "low") {
       return { shouldPromote: false, reason: "low-confidence-evidence" };
     }
@@ -468,6 +479,13 @@
     evidence: IncomingCallEvidence,
   ): void => {
     if (evidence.confidence === "low") {
+      return;
+    }
+    if (
+      (evidence.source === "dom-soft" ||
+        evidence.source === "periodic-scan") &&
+      !evidence.hasVisibleControls
+    ) {
       return;
     }
 
@@ -3372,6 +3390,32 @@
       };
     };
 
+    const shouldPromoteIncomingCallPayload = (
+      payload: IncomingCallSignalPayload,
+      context: string,
+    ): boolean => {
+      const promotion = shouldPromoteIncomingCallEvidence(
+        payload.evidence as IncomingCallEvidence,
+      );
+      if (promotion.shouldPromote) {
+        return true;
+      }
+
+      emitIncomingCallDebug("incoming-call-soft-signal-suppressed", {
+        context,
+        reason: promotion.reason,
+        source: payload.source,
+        caller: payload.caller,
+        dedupeKey: payload.dedupeKey,
+        confidence: payload.evidence?.confidence,
+        hasVisibleControls: payload.evidence?.hasVisibleControls,
+        matchedPattern: payload.evidence?.matchedPattern,
+        recoveryActive: payload.recoveryActive === true,
+        url: window.location.href,
+      });
+      return false;
+    };
+
     const normalizeSignaledCaller = (caller?: string): string | null => {
       if (typeof caller !== "string" || !caller.trim()) {
         return null;
@@ -3560,14 +3604,17 @@
           if (!shouldSignalIncomingCallState(now, uiState.caller)) {
             continue;
           }
-          log("Call popup detected in DOM - bringing window to foreground");
-          markIncomingCallUiVisible(now);
           const payload = buildIncomingCallPayload(uiState.source, {
             caller: uiState.caller,
             matchedPattern: uiState.matchedPattern,
             hasVisibleControls: uiState.hasVisibleControls,
             capturedAt: now,
           });
+          if (!shouldPromoteIncomingCallPayload(payload, "child-list")) {
+            continue;
+          }
+          log("Call popup detected in DOM - bringing window to foreground");
+          markIncomingCallUiVisible(now);
           rememberIncomingCallSignal(now, payload.evidence?.caller);
           rememberIncomingCallEvidence(
             payload.evidence as IncomingCallEvidence,
@@ -3598,16 +3645,19 @@
             if (!shouldSignalIncomingCallState(now, uiState.caller)) {
               continue;
             }
-            log(
-              "Call popup detected in descendant - bringing window to foreground",
-            );
-            markIncomingCallUiVisible(now);
             const payload = buildIncomingCallPayload(uiState.source, {
               caller: uiState.caller,
               matchedPattern: uiState.matchedPattern,
               hasVisibleControls: uiState.hasVisibleControls,
               capturedAt: now,
             });
+            if (!shouldPromoteIncomingCallPayload(payload, "descendant")) {
+              continue;
+            }
+            log(
+              "Call popup detected in descendant - bringing window to foreground",
+            );
+            markIncomingCallUiVisible(now);
             rememberIncomingCallSignal(now, payload.evidence?.caller);
             rememberIncomingCallEvidence(
               payload.evidence as IncomingCallEvidence,
@@ -3675,14 +3725,17 @@
             if (!shouldSignalIncomingCallState(now, uiState.caller)) {
               continue;
             }
-            log("Call popup detected via attribute change");
-            markIncomingCallUiVisible(now);
             const payload = buildIncomingCallPayload(uiState.source, {
               caller: uiState.caller,
               matchedPattern: uiState.matchedPattern,
               hasVisibleControls: uiState.hasVisibleControls,
               capturedAt: now,
             });
+            if (!shouldPromoteIncomingCallPayload(payload, "attribute")) {
+              continue;
+            }
+            log("Call popup detected via attribute change");
+            markIncomingCallUiVisible(now);
             rememberIncomingCallSignal(now, payload.evidence?.caller);
             rememberIncomingCallEvidence(
               payload.evidence as IncomingCallEvidence,
@@ -3710,8 +3763,6 @@
         const now = Date.now();
         const uiState = getVisibleIncomingCallUiState();
         if (uiState.source) {
-          markIncomingCallUiVisible(now);
-
           if (
             shouldSignalIncomingCallState(now, uiState.caller) &&
             !isWindowFocused()
@@ -3731,6 +3782,18 @@
               payload.evidence as IncomingCallEvidence,
             );
             if (!promotion.shouldPromote) {
+              emitIncomingCallDebug("incoming-call-soft-signal-suppressed", {
+                context: "periodic-scan",
+                reason: promotion.reason,
+                source: payload.source,
+                caller: payload.caller,
+                dedupeKey: payload.dedupeKey,
+                confidence: payload.evidence?.confidence,
+                hasVisibleControls: payload.evidence?.hasVisibleControls,
+                matchedPattern: payload.evidence?.matchedPattern,
+                recoveryActive: payload.recoveryActive === true,
+                url: window.location.href,
+              });
               emitIncomingCallDebug("incoming-call-periodic-scan-suppressed", {
                 reason: promotion.reason,
                 confidence: payload.evidence?.confidence,
@@ -3739,6 +3802,7 @@
               });
               return;
             }
+            markIncomingCallUiVisible(now);
             log("Periodic scan: incoming call UI detected");
             rememberIncomingCallSignal(now, payload.evidence?.caller);
             rememberIncomingCallEvidence(

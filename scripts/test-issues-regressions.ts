@@ -2518,6 +2518,66 @@ const runIncomingCallIpcPolicyTests = () => {
     "#47 periodic-scan call signals without a caller should not arm incoming-call reminder state",
   );
 
+  const periodicScanWithoutControlsEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "periodic-scan",
+        caller: "Account A",
+        confidence: "medium",
+        hasVisibleControls: false,
+      }),
+    });
+  assertEqual(
+    periodicScanWithoutControlsEscalation.shouldEscalate,
+    false,
+    "#50 periodic-scan call evidence without visible controls should not arm incoming-call reminder state",
+  );
+  assertEqual(
+    periodicScanWithoutControlsEscalation.reason,
+    "soft-evidence-requires-visible-controls",
+    "#50 periodic-scan call evidence without visible controls should report the no-controls suppression reason",
+  );
+
+  const domSoftWithoutControlsEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "dom-soft",
+        caller: "Account A",
+        confidence: "medium",
+        hasVisibleControls: false,
+      }),
+    });
+  assertEqual(
+    domSoftWithoutControlsEscalation.shouldEscalate,
+    false,
+    "#50 dom-soft call evidence without visible controls should stay diagnostic-only",
+  );
+  assertEqual(
+    domSoftWithoutControlsEscalation.reason,
+    "soft-evidence-requires-visible-controls",
+    "#50 dom-soft call evidence without visible controls should report the no-controls suppression reason",
+  );
+
+  const syntheticWakeTopBarEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "dom-soft",
+        caller: incomingCallEvidence.extractIncomingCallCallerName(
+          "Incoming call Account A messaged you",
+        ).caller ?? undefined,
+        confidence: "medium",
+        hasVisibleControls: false,
+        matchedPattern: "incoming (video |audio )?call",
+        recoveryActive: true,
+      }),
+      recoveryActive: true,
+    });
+  assertEqual(
+    syntheticWakeTopBarEscalation.shouldEscalate,
+    false,
+    "#50 synthetic wake top-bar with call-ish text but no controls should not notify",
+  );
+
   const domSignalEscalation =
     incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
       source: "dom-node",
@@ -2526,6 +2586,21 @@ const runIncomingCallIpcPolicyTests = () => {
     domSignalEscalation.shouldEscalate,
     true,
     "#47 explicit DOM call signals should still arm incoming-call reminder state",
+  );
+
+  const explicitControlsEscalation =
+    incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
+      evidence: incomingCallEvidence.buildIncomingCallEvidence({
+        source: "dom-explicit",
+        caller: "Account A",
+        confidence: "high",
+        hasVisibleControls: true,
+      }),
+    });
+  assertEqual(
+    explicitControlsEscalation.shouldEscalate,
+    true,
+    "#50 explicit DOM call evidence with visible controls should still notify",
   );
 
   const lowConfidenceEvidenceEscalation =
@@ -2845,6 +2920,26 @@ const runIncomingCallIpcPolicyTests = () => {
     ).caller,
     null,
     "#50 incoming-call caller extraction should fail closed for placeholder junk",
+  );
+  assertEqual(
+    incomingCallEvidence.normalizeIncomingCallCaller("Account A messaged you"),
+    null,
+    "#50 incoming-call caller normalisation should reject message-preview snippets",
+  );
+  assertEqual(
+    incomingCallEvidence.extractIncomingCallCallerName(
+      "Incoming call Account A messaged you",
+    ).caller,
+    null,
+    "#50 incoming-call caller extraction should reject wake replay message-preview snippets",
+  );
+  assertEqual(
+    incomingCallEvidence.buildIncomingCallNotificationBody({
+      caller: "Account A messaged you",
+      fallbackCaller: "Account B",
+    }),
+    "Account B is calling you on Messenger",
+    "#50 incoming-call notification bodies should not upgrade from message-preview snippets",
   );
   assertEqual(
     incomingCallEvidence.extractIncomingCallCallerName(

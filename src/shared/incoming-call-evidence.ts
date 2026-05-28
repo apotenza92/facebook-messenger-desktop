@@ -36,7 +36,8 @@ export type IncomingCallEscalationDecision = {
   reason:
     | "escalate"
     | "low-confidence-evidence"
-    | "recovery-requires-explicit-dom";
+    | "recovery-requires-explicit-dom"
+    | "soft-evidence-requires-visible-controls";
   evidence: IncomingCallEvidence;
 };
 
@@ -87,6 +88,20 @@ const INCOMING_CALL_CALLER_PATTERNS: RegExp[] = [
   /\b([^\n]{1,120}?)\s+wants to\s+(?:video\s+)?call\b/i,
 ];
 
+const MESSAGE_PREVIEW_CALLER_PATTERNS: RegExp[] = [
+  /\bmessaged you\b/i,
+  /\bsent you\b/i,
+  /\bsent (?:a|an) (?:message|photo|video|attachment|gif|sticker|link|file|voice message|audio message|reel)\b/i,
+  /\bnew message\b/i,
+  /\breacted to\b/i,
+  /\bliked your\b/i,
+  /\bcommented on\b/i,
+  /\breplied to\b/i,
+  /\bshared your\b/i,
+  /\bmentioned you\b/i,
+  /\btagged you\b/i,
+];
+
 function normalizeText(value: string): string {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -124,6 +139,13 @@ function dedupeRepeatedIncomingCallWords(input: string): string {
   return compact.join(" ");
 }
 
+function isLikelyMessagePreviewCaller(raw: unknown): boolean {
+  const normalized = normalizeIncomingCallExtractionText(raw).toLowerCase();
+  return MESSAGE_PREVIEW_CALLER_PATTERNS.some((pattern) =>
+    pattern.test(normalized),
+  );
+}
+
 export function isGenericIncomingCallLabel(raw: unknown): boolean {
   const normalized = String(raw || "")
     .toLowerCase()
@@ -146,6 +168,7 @@ export function isGenericIncomingCallLabel(raw: unknown): boolean {
 
 export function normalizeIncomingCallCaller(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
+  if (isLikelyMessagePreviewCaller(raw)) return null;
 
   let cleaned = raw
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -179,7 +202,11 @@ export function normalizeIncomingCallCaller(raw: unknown): string | null {
   const deduped = dedupeRepeatedIncomingCallWords(cleaned)
     .replace(/\s+/g, " ")
     .trim();
-  if (!deduped || isGenericIncomingCallLabel(deduped)) {
+  if (
+    !deduped ||
+    isGenericIncomingCallLabel(deduped) ||
+    isLikelyMessagePreviewCaller(deduped)
+  ) {
     return null;
   }
 
@@ -206,6 +233,12 @@ export function extractIncomingCallCallerName(
 ): IncomingCallExtractionResult {
   const normalized = normalizeIncomingCallExtractionText(raw);
   if (!normalized) {
+    return {
+      caller: null,
+      usedFallback: false,
+    };
+  }
+  if (isLikelyMessagePreviewCaller(normalized)) {
     return {
       caller: null,
       usedFallback: false,
@@ -379,6 +412,17 @@ export function shouldEscalateIncomingCallEvidence(params: {
     return {
       shouldEscalate: false,
       reason: "recovery-requires-explicit-dom",
+      evidence,
+    };
+  }
+
+  if (
+    (evidence.source === "dom-soft" || evidence.source === "periodic-scan") &&
+    !evidence.hasVisibleControls
+  ) {
+    return {
+      shouldEscalate: false,
+      reason: "soft-evidence-requires-visible-controls",
       evidence,
     };
   }

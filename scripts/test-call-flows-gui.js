@@ -2190,6 +2190,58 @@ async function runSyntheticGhostCallScenario({
   console.log(`[${label}] No incoming-call notification was captured.`);
 }
 
+async function runSyntheticWakeTopBarScenario({ electronApp, timeoutMs }) {
+  console.log(
+    "\n[WakeTopBar] Dispatching synthetic wake top bar with call-ish text but no call controls...",
+  );
+
+  await clearCapturedNotifications(electronApp);
+
+  await evaluateInElectronPage(
+    electronApp,
+    `(() => {
+      const existing = document.querySelector('[data-md-test="wake-top-bar-callish"]');
+      if (existing) existing.remove();
+
+      const banner = document.createElement('div');
+      banner.setAttribute('data-md-test', 'wake-top-bar-callish');
+      banner.setAttribute('role', 'banner');
+      banner.setAttribute('aria-label', 'Incoming call notification preview');
+      banner.textContent = 'Incoming call Account A messaged you';
+      Object.assign(banner.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        width: '320px',
+        height: '56px',
+        zIndex: '2147483647',
+        background: '#fff',
+        color: '#111',
+        opacity: '1',
+        pointerEvents: 'auto',
+      });
+      document.body.appendChild(banner);
+      window.setTimeout(() => banner.remove(), 3000);
+      return true;
+    })();`,
+  );
+
+  await wait(Math.min(timeoutMs, 4500));
+  const notifications = await readCapturedNotifications(electronApp);
+  const incomingCallNotification = notifications.find(
+    (entry) =>
+      /incoming call/i.test(String(entry.title || "")) ||
+      /calling you on messenger/i.test(String(entry.body || "")),
+  );
+  if (incomingCallNotification) {
+    throw new Error(
+      `Wake top-bar scenario produced a ghost incoming-call notification: ${JSON.stringify(incomingCallNotification)}`,
+    );
+  }
+
+  console.log("[WakeTopBar] No incoming-call notification was captured.");
+}
+
 async function run() {
   const appEntry = path.join(__dirname, "../dist/main/main.js");
   if (!fs.existsSync(appEntry)) {
@@ -2258,7 +2310,8 @@ async function run() {
           value === "outgoing" ||
           value === "message" ||
           value === "ghost" ||
-          value === "recovery"
+          value === "recovery" ||
+          value === "wake-top-bar"
         );
       }
       return false;
@@ -2416,6 +2469,13 @@ async function run() {
         electronApp,
         timeoutMs,
         recovery: true,
+      });
+    }
+
+    if (hasMode("wake-top-bar")) {
+      await runSyntheticWakeTopBarScenario({
+        electronApp,
+        timeoutMs,
       });
     }
 
