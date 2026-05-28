@@ -93,7 +93,6 @@ jobs:
         with:
           name: issue53-x64-release-smoke
           path: |
-            release/*x86_64.AppImage
             release/*linux*.yml
             issue53-smoke-logs/**
           retention-days: 14
