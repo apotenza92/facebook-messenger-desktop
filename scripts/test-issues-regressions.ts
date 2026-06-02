@@ -36,6 +36,16 @@ const {
 const {
   evaluateMediaOverlayVisible,
 } = require(path.join(APP_ROOT, "src/preload/media-overlay-policy.ts"));
+const {
+  collectMessengerThreadSubviewHintSignals,
+  doesMessengerThreadSubviewFreshHeaderPairMatch,
+  hasMessengerThreadSubviewHeaderSignal,
+  isMessengerThreadSubviewHeaderHint,
+  isMessengerThreadSubviewBackHint,
+  isOrdinaryThreadControlHint,
+  resolveMessengerThreadSubviewHeaderKind,
+  resolveMessengerThreadSubviewKind,
+} = require(path.join(APP_ROOT, "src/preload/thread-subview-policy.ts"));
 const loadIncomingCallHintPolicy = () =>
   require(
     path.join(APP_ROOT, "src/preload/incoming-call-overlay-hint-policy.ts"),
@@ -384,6 +394,28 @@ const runViewportPolicyTests = () => {
     "#49 reduced Marketplace crop height should be carried through the viewport payload",
   );
 
+  const archivedChatsBackHeaderViewportState = resolveMessagesViewportState({
+    url: "https://www.facebook.com/messages/",
+    urlPath: "/messages/",
+    headerHeight: 56,
+    cropHeight: null,
+  });
+  assertEqual(
+    archivedChatsBackHeaderViewportState.routeKind,
+    "chat",
+    "#50 archived chats should stay on the chat route",
+  );
+  assertEqual(
+    archivedChatsBackHeaderViewportState.shouldCrop,
+    true,
+    "#50 archived chats should stay on the normal Messenger crop policy",
+  );
+  assertEqual(
+    archivedChatsBackHeaderViewportState.cropHeight,
+    null,
+    "#50 Messenger list subviews should not move Facebook Home into the native titlebar",
+  );
+
   // Transition sequence reproducing "first chat works, subsequent chats break"
   const sequence: Array<{
     path: string;
@@ -409,6 +441,104 @@ const runViewportPolicyTests = () => {
       `#45 sequence stale crop state at step ${index + 1}`,
     );
   });
+};
+
+const runMessengerThreadSubviewPolicyTests = () => {
+  assertEqual(
+    JSON.stringify(
+      collectMessengerThreadSubviewHintSignals("Back Archived chats"),
+    ),
+    JSON.stringify(["back", "list-subview-header"]),
+    "#50 archived chats hint classification should stay structured",
+  );
+  assertEqual(
+    isMessengerThreadSubviewBackHint("Go back"),
+    true,
+    "#50 archived chats back controls should be recognized",
+  );
+  assertEqual(
+    isMessengerThreadSubviewHeaderHint("Archived chats"),
+    true,
+    "#50 archived chats headers should be recognized",
+  );
+  assertEqual(
+    resolveMessengerThreadSubviewHeaderKind("Message requests"),
+    "message-requests",
+    "#50 message requests headers should be recognized",
+  );
+  assertEqual(
+    resolveMessengerThreadSubviewHeaderKind("Requests"),
+    "message-requests",
+    "#50 requests headers should be recognized",
+  );
+  assertEqual(
+    resolveMessengerThreadSubviewHeaderKind("Restricted accounts"),
+    "restricted-accounts",
+    "#50 restricted account headers should be recognized",
+  );
+  assertEqual(
+    hasMessengerThreadSubviewHeaderSignal(["Back", "Archived chats"]),
+    true,
+    "#50 Back + Archived chats header should disable the full Messenger crop",
+  );
+  assertEqual(
+    hasMessengerThreadSubviewHeaderSignal(["Back", "Message requests"]),
+    true,
+    "#50 Back + Message requests header should disable the full Messenger crop",
+  );
+  assertEqual(
+    hasMessengerThreadSubviewHeaderSignal(["Back", "Chat info"]),
+    false,
+    "#50 generic chat back controls should not disable the full Messenger crop",
+  );
+  assertEqual(
+    isOrdinaryThreadControlHint("Search in conversation"),
+    true,
+    "#50 ordinary thread controls should still be recognized",
+  );
+  assertEqual(
+    resolveMessengerThreadSubviewKind({
+      headerBackDetected: false,
+      headerKind: "archived-chats",
+      ordinaryThreadControlDetected: false,
+    }),
+    null,
+    "#50 stale Archived chats titles without Back should not keep the subview crop active",
+  );
+  assertEqual(
+    resolveMessengerThreadSubviewKind({
+      headerBackDetected: true,
+      headerKind: "message-requests",
+      ordinaryThreadControlDetected: false,
+    }),
+    "message-requests",
+    "#50 Message requests should confirm a list subview",
+  );
+  assertEqual(
+    resolveMessengerThreadSubviewKind({
+      headerBackDetected: true,
+      headerKind: "archived-chats",
+      ordinaryThreadControlDetected: true,
+    }),
+    null,
+    "#50 ordinary conversation controls should block archived-chats confirmation",
+  );
+  assertEqual(
+    doesMessengerThreadSubviewFreshHeaderPairMatch({
+      candidateBackBand: { top: 80, bottom: 116, left: 16, right: 52 },
+      candidateHeaderBand: { top: 82, bottom: 114, left: 56, right: 220 },
+    }),
+    true,
+    "#50 adjacent archived chats Back + header controls should match",
+  );
+  assertEqual(
+    doesMessengerThreadSubviewFreshHeaderPairMatch({
+      candidateBackBand: { top: 80, bottom: 116, left: 16, right: 52 },
+      candidateHeaderBand: { top: 220, bottom: 250, left: 320, right: 520 },
+    }),
+    false,
+    "#50 distant Back + Archived chats text should not match",
+  );
 };
 
 const runMarketplaceThreadPolicyTests = () => {
@@ -5518,6 +5648,7 @@ const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
 
   runViewportPolicyTests();
   runMarketplaceThreadPolicyTests();
+  runMessengerThreadSubviewPolicyTests();
   runWindowOpenRoutingTests();
   runMediaOverlayPolicyTests();
   runHeaderSuppressionPolicyTests();

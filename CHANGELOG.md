@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.1-beta.24] - 2026-06-03
+
+### Fixed
+
+- **Issue #50 follow-up: keep Messenger list-subview back buttons working** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Detect Messenger list subviews such as Archived chats, Message requests, and Restricted accounts without applying the media/thread titlebar crop that can hide their Back controls.
+  - Let Facebook handle the native subview Back click before refreshing app viewport/header state, preventing the Back arrow from disappearing while the subview remains open.
+  - Keep generic handling for Messenger list-subview pages so similar views get the same protection instead of a one-off Archived chats fix.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues:deterministic`
+- Real Electron GUI screenshot validation: Message requests opens from the three-dot menu, visible Back returns to the main Chats list.
+
 ## [1.3.1-beta.23] - 2026-05-28
 
 ### Fixed

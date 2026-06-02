@@ -59,6 +59,15 @@ import {
   type MarketplaceVisualSessionState,
   type MarketplaceWeakBootstrapState,
 } from "./marketplace-thread-policy";
+import {
+  doesMessengerThreadSubviewFreshHeaderPairMatch,
+  resolveMessengerThreadSubviewHeaderKind,
+  isMessengerThreadSubviewBackHint,
+  isOrdinaryThreadControlHint,
+  resolveMessengerThreadSubviewKind,
+  type MessengerThreadSubviewHeaderBand,
+  type MessengerThreadSubviewKind,
+} from "./thread-subview-policy";
 
 const incomingCallAnswerSelectors = [
   '[aria-label*="Answer" i]',
@@ -608,6 +617,7 @@ ipcRenderer.on(
   const MARKETPLACE_POST_CONFIRM_GRACE_MS = 1_500;
   const MARKETPLACE_ORDINARY_CLEAR_MIN_AGE_MS = 2_500;
   const MARKETPLACE_ORDINARY_CLEAR_REQUIRED_PASSES = 3;
+  const MESSENGER_THREAD_SUBVIEW_DOM_GRACE_MS = 1_800;
 
   const INCOMING_CALL_HINT_MIN_STICKY_MS = 4_000;
   const INCOMING_CALL_HINT_MISSING_CLEAR_MS = 2_000;
@@ -642,6 +652,10 @@ ipcRenderer.on(
   type MarketplaceThreadDebugState = {
     routeEligible: boolean;
     marketplaceThreadVisible: boolean;
+    messengerThreadSubviewVisible: boolean;
+    messengerThreadSubviewKind: MessengerThreadSubviewKind | null;
+    messengerThreadSubviewHeaderDetected: boolean;
+    messengerThreadSubviewBackHeaderDetected: boolean;
     rightPaneMarketplaceSignalDetected: boolean;
     rightPaneItemLinkDetected: boolean;
     headerMarketplaceDetected: boolean;
@@ -702,6 +716,12 @@ ipcRenderer.on(
     stablePasses: number;
     lastSeenAt: number;
   };
+  type MessengerThreadSubviewVisualSessionState = {
+    routeKey: string;
+    kind: MessengerThreadSubviewKind;
+    visualCropHeight: number;
+    lastMatchedAt: number;
+  };
   type MediaHeaderOverlayKind =
     | "menu"
     | "messenger"
@@ -732,11 +752,16 @@ ipcRenderer.on(
   let lastAppliedHeaderSuppressionSnapshot: HeaderSuppressionSnapshot | null =
     null;
   let lastHeaderSuppressionDetectedAt = 0;
+  let forcedHeaderSuppressionUntil = 0;
   let marketplaceVisualSession: MarketplaceVisualSessionState | null = null;
   let marketplaceRecentContinuitySession: MarketplaceVisualSessionState | null =
     null;
   let marketplaceWeakBootstrapState: MarketplaceWeakBootstrapState | null = null;
   let marketplaceOrdinaryClearState: MarketplaceOrdinaryClearState | null = null;
+  let messengerThreadSubviewVisualSession:
+    | MessengerThreadSubviewVisualSessionState
+    | null = null;
+  let lastMessengerThreadSubviewVisible = false;
   let lastInterceptedExternalNavigation:
     | {
         url: string;
@@ -1240,6 +1265,37 @@ ipcRenderer.on(
       const anchorLabel = extractInteractiveLabel(event.target);
 
       if (
+        event.type === "click" &&
+        isFacebookHomeUrl(href) &&
+        collectMarketplaceThreadDebugState().messengerThreadSubviewVisible
+      ) {
+        const backControl = Array.from(
+          document.querySelectorAll("button, [role='button'], a[href]"),
+        ).find((candidate): candidate is HTMLElement => {
+          if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
+            return false;
+          }
+
+          const rect = candidate.getBoundingClientRect();
+          return (
+            rect.left <= 140 &&
+            rect.top <= 180 &&
+            isMessengerThreadSubviewBackHint(getInteractiveNodeHint(candidate))
+          );
+        });
+
+        if (backControl) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+          armForcedHeaderSuppressionRecovery();
+          scheduleViewportRecovery("messenger-thread-subview-home");
+          backControl.click();
+          return;
+        }
+      }
+
+      if (
         shouldAllowMarketplaceActionInApp({
           url: href,
           label: anchorLabel,
@@ -1641,6 +1697,10 @@ ipcRenderer.on(
     (): MarketplaceThreadDebugState => ({
       routeEligible: false,
       marketplaceThreadVisible: false,
+      messengerThreadSubviewVisible: false,
+      messengerThreadSubviewKind: null,
+      messengerThreadSubviewHeaderDetected: false,
+      messengerThreadSubviewBackHeaderDetected: false,
       rightPaneMarketplaceSignalDetected: false,
       rightPaneItemLinkDetected: false,
       headerMarketplaceDetected: false,
@@ -1732,6 +1792,9 @@ ipcRenderer.on(
     /\b(search in conversation|audio call|video call|start (?:an? )?(?:audio |video )?call|open conversation information|conversation information|chat info|details|info)\b/i;
 
   const getCurrentMarketplaceRouteKey = (): string =>
+    `${window.location.pathname}${window.location.search}`;
+
+  const getCurrentMessagesSubviewRouteKey = (): string =>
     `${window.location.pathname}${window.location.search}`;
 
   const isMarketplaceWeakBootstrapSettled = (): boolean =>
@@ -1856,16 +1919,147 @@ ipcRenderer.on(
     );
   };
 
-  const shouldUseMarketplaceVisualCropHeuristic = (
+  const shouldUseThreadSubviewVisualCropHeuristic = (
     state?: MarketplaceThreadDebugState | null,
   ): boolean =>
+    state?.messengerThreadSubviewVisible !== true &&
     typeof state?.visualCropHeight === "number" &&
     state.visualCropHeight > 0;
+
+  const applyMessengerThreadSubviewState = (
+    state: MarketplaceThreadDebugState,
+    matchedSignals: Set<string>,
+    now: number,
+    routeKey: string,
+  ): void => {
+    const headerCandidates = document.querySelectorAll(
+      "button, [role='button'], a[href], [aria-label], [title], h1, h2, h3, [role='heading']",
+    );
+    let backControlBand: MessengerThreadSubviewHeaderBand | null = null;
+    let subviewHeaderBand: MessengerThreadSubviewHeaderBand | null = null;
+    let subviewHeaderKind: MessengerThreadSubviewKind | null = null;
+    let ordinaryThreadControlDetected = false;
+
+    for (const candidate of Array.from(headerCandidates)) {
+      if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
+        continue;
+      }
+
+      const rect = candidate.getBoundingClientRect();
+      if (
+        rect.bottom < 0 ||
+        rect.top > MARKETPLACE_THREAD_HEADER_MAX_TOP ||
+        rect.left > MARKETPLACE_THREAD_HEADER_MAX_LEFT
+      ) {
+        continue;
+      }
+
+      const hint = getInteractiveNodeHint(candidate);
+      if (!hint) {
+        continue;
+      }
+
+      if (isMessengerThreadSubviewBackHint(hint) && rect.left <= 120) {
+        state.headerBackDetected = true;
+        matchedSignals.add("header-back");
+        if (!backControlBand) {
+          backControlBand = toMarketplaceThreadHeaderBand(rect);
+        }
+      }
+
+      const candidateSubviewHeaderKind =
+        resolveMessengerThreadSubviewHeaderKind(hint);
+      if (candidateSubviewHeaderKind && rect.left <= 260) {
+        state.messengerThreadSubviewHeaderDetected = true;
+        matchedSignals.add(`header-${candidateSubviewHeaderKind}`);
+        if (!subviewHeaderBand) {
+          subviewHeaderBand = toMarketplaceThreadHeaderBand(rect);
+          subviewHeaderKind = candidateSubviewHeaderKind;
+        }
+      }
+
+      if (
+        !candidateSubviewHeaderKind &&
+        rect.top <= MARKETPLACE_THREAD_HEADER_MAX_TOP &&
+        isOrdinaryThreadControlHint(hint)
+      ) {
+        ordinaryThreadControlDetected = true;
+      }
+    }
+
+    const freshSubviewPairMatched =
+      backControlBand !== null &&
+      subviewHeaderBand !== null &&
+      doesMessengerThreadSubviewFreshHeaderPairMatch({
+        candidateHeaderBand: subviewHeaderBand,
+        candidateBackBand: backControlBand,
+      });
+    const subviewKind = resolveMessengerThreadSubviewKind({
+      headerBackDetected: freshSubviewPairMatched,
+      headerKind: subviewHeaderKind,
+      ordinaryThreadControlDetected,
+    });
+
+    if (subviewKind) {
+      state.messengerThreadSubviewBackHeaderDetected = freshSubviewPairMatched;
+      state.messengerThreadSubviewVisible = true;
+      state.messengerThreadSubviewKind = subviewKind;
+      state.visualCropHeight = freshSubviewPairMatched
+        ? normalizeMarketplaceVisualCropHeight(
+            Math.min(
+              backControlBand?.top ?? MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+              subviewHeaderBand?.top ?? MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+            ) - MARKETPLACE_VISUAL_CROP_TOP_PADDING,
+          )
+        : normalizeMarketplaceVisualCropHeight(
+            MARKETPLACE_VISUAL_CROP_FALLBACK_HEIGHT,
+          );
+      messengerThreadSubviewVisualSession = {
+        routeKey,
+        kind: subviewKind,
+        visualCropHeight: state.visualCropHeight,
+        lastMatchedAt: now,
+      };
+      matchedSignals.add(
+        freshSubviewPairMatched
+          ? `header-back+${subviewKind}`
+          : `header-title+${subviewKind}`,
+      );
+      return;
+    }
+
+    if (
+      messengerThreadSubviewVisualSession &&
+      messengerThreadSubviewVisualSession.routeKey === routeKey &&
+      now - messengerThreadSubviewVisualSession.lastMatchedAt <=
+        MESSENGER_THREAD_SUBVIEW_DOM_GRACE_MS
+    ) {
+      state.messengerThreadSubviewVisible = true;
+      state.messengerThreadSubviewKind = messengerThreadSubviewVisualSession.kind;
+      state.visualCropHeight =
+        messengerThreadSubviewVisualSession.visualCropHeight;
+      matchedSignals.add(
+        `thread-subview-dom-grace:${messengerThreadSubviewVisualSession.kind}`,
+      );
+      return;
+    }
+
+    messengerThreadSubviewVisualSession = null;
+  };
+
+  const shouldUseMarketplaceVisualCropHeuristic =
+    shouldUseThreadSubviewVisualCropHeuristic;
 
   const collectMarketplaceThreadDebugState =
     (): MarketplaceThreadDebugState => {
       const state = createDefaultMarketplaceThreadDebugState();
-      if (!/^\/messages\/(?:e2ee\/)?t\//i.test(window.location.pathname)) {
+      const messagesRouteEligible = /^\/messages(?:\/|$)/i.test(
+        window.location.pathname,
+      );
+      const threadRouteEligible = /^\/messages\/(?:e2ee\/)?t\//i.test(
+        window.location.pathname,
+      );
+      if (!messagesRouteEligible) {
         if (marketplaceVisualSession) {
           state.marketplaceSessionRouteKey = marketplaceVisualSession.routeKey;
           state.marketplaceSessionActive = false;
@@ -1880,12 +2074,45 @@ ipcRenderer.on(
         marketplaceVisualSession = null;
         marketplaceWeakBootstrapState = null;
         marketplaceOrdinaryClearState = null;
+        messengerThreadSubviewVisualSession = null;
+        return state;
+      }
+
+      const now = Date.now();
+      const routeKey = getCurrentMarketplaceRouteKey();
+      const matchedSignals = new Set<string>();
+      applyMessengerThreadSubviewState(
+        state,
+        matchedSignals,
+        now,
+        getCurrentMessagesSubviewRouteKey(),
+      );
+      if (state.messengerThreadSubviewVisible) {
+        marketplaceVisualSession = null;
+        marketplaceWeakBootstrapState = null;
+        marketplaceOrdinaryClearState = null;
+        state.matchedSignals = Array.from(matchedSignals);
+        return state;
+      }
+      if (!threadRouteEligible) {
+        if (marketplaceVisualSession) {
+          state.marketplaceSessionRouteKey = marketplaceVisualSession.routeKey;
+          state.marketplaceSessionActive = false;
+          state.marketplaceSessionSignalSource =
+            marketplaceVisualSession.signalSource;
+          state.marketplaceSessionLifecycleReason = "thread-destroyed";
+          state.marketplaceSessionTransition = "cleared";
+          state.marketplaceSessionHeaderBand = marketplaceVisualSession.headerBand;
+          state.matchedSignals = ["session:thread-destroyed"];
+        }
+        marketplaceVisualSession = null;
+        marketplaceWeakBootstrapState = null;
+        marketplaceOrdinaryClearState = null;
+        state.matchedSignals = Array.from(matchedSignals);
         return state;
       }
 
       state.routeEligible = true;
-      const now = Date.now();
-      const routeKey = getCurrentMarketplaceRouteKey();
       if (
         marketplaceWeakBootstrapState &&
         marketplaceWeakBootstrapState.routeKey !== routeKey
@@ -1917,7 +2144,6 @@ ipcRenderer.on(
         marketplaceRecentContinuitySession.routeKey !== routeKey
           ? marketplaceRecentContinuitySession
           : null;
-      const matchedSignals = new Set<string>();
       const weakBootstrapSettled = isMarketplaceWeakBootstrapSettled();
       state.weakBootstrapSettled = weakBootstrapSettled;
       if (previousMarketplaceSession) {
@@ -2976,6 +3202,53 @@ ipcRenderer.on(
     );
   };
 
+  const isForcedHeaderSuppressionActive = (now = Date.now()): boolean =>
+    forcedHeaderSuppressionUntil > now;
+
+  const armForcedHeaderSuppressionRecovery = (
+    durationMs = 2_500,
+  ): void => {
+    forcedHeaderSuppressionUntil = Math.max(
+      forcedHeaderSuppressionUntil,
+      Date.now() + Math.max(250, Math.round(durationMs)),
+    );
+  };
+
+  const buildForcedHeaderSuppressionSnapshot = (
+    snapshot: HeaderSuppressionSnapshot,
+  ): HeaderSuppressionSnapshot => {
+    const topChromeNodes = collectVisibleTopChromeNodes();
+    const topChromeBottom = topChromeNodes.reduce((maxBottom, node) => {
+      return Math.max(maxBottom, node.getBoundingClientRect().bottom);
+    }, 0);
+    const collapseHeight = Math.max(
+      snapshot.collapseHeight,
+      DEFAULT_MESSAGES_HEADER_HEIGHT,
+      topChromeBottom > 0 ? topChromeBottom - 20 : 0,
+    );
+
+    return {
+      ...snapshot,
+      active: true,
+      shouldCollapse: false,
+      hiddenChromeCount: Math.max(
+        snapshot.hiddenChromeCount,
+        topChromeNodes.length,
+      ),
+      mode:
+        snapshot.mode === "off"
+          ? "hide-facebook-nav-descendants"
+          : snapshot.mode,
+      hasFacebookNavSignal:
+        snapshot.hasFacebookNavSignal || topChromeNodes.length > 0,
+      collapseHeight,
+      hiddenChromeTargets:
+        snapshot.hiddenChromeTargets.length > 0
+          ? snapshot.hiddenChromeTargets
+          : topChromeNodes,
+    };
+  };
+
   const getStickyHeaderSuppressionSnapshot = (
     snapshot: HeaderSuppressionSnapshot | null,
   ): HeaderSuppressionSnapshot | null => {
@@ -3137,21 +3410,7 @@ ipcRenderer.on(
       collapseHeight = Math.max(collapseHeight, 48);
     }
 
-    const shouldCollapseMessagesSurface =
-      hiddenBannerCount > 0 ||
-      (hiddenChromeCount > 0 &&
-        /^\/messages\/(?:e2ee\/)?t\//i.test(window.location.pathname));
-
     const active = hiddenBannerCount > 0 || hiddenChromeCount > 0;
-    if (hiddenBannerCount === 0 && shouldCollapseMessagesSurface) {
-      const topChromeBottom = topChromeNodes.reduce((maxBottom, node) => {
-        return Math.max(maxBottom, node.getBoundingClientRect().bottom);
-      }, 0);
-      collapseHeight = Math.max(
-        collapseHeight,
-        Math.max(32, topChromeBottom - 20),
-      );
-    }
 
     const snapshot: HeaderSuppressionSnapshot = {
       active,
@@ -3194,6 +3453,38 @@ ipcRenderer.on(
       lastHeaderSuppressionDetectedAt = 0;
       setInactiveHeaderSuppressionState({
         incomingCallOverlayHintActive,
+      });
+      maybeSendHeaderSuppressionDebug("header-suppression-state");
+      return;
+    }
+
+    if (isForcedHeaderSuppressionActive()) {
+      const forcedSnapshot = buildForcedHeaderSuppressionSnapshot(
+        buildHeaderSuppressionSnapshot(),
+      );
+      applyHeaderSuppressionSnapshot(forcedSnapshot);
+      lastAppliedHeaderSuppressionSnapshot = forcedSnapshot;
+      lastHeaderSuppressionDetectedAt = Date.now();
+      setHeaderSuppressionStateFromSnapshot(forcedSnapshot, {
+        forcedRecovery: true,
+        forcedRecoveryRemainingMs: Math.max(
+          0,
+          forcedHeaderSuppressionUntil - Date.now(),
+        ),
+      });
+      maybeSendHeaderSuppressionDebug("header-suppression-state");
+      return;
+    }
+
+    if (currentMarketplaceThreadState.messengerThreadSubviewVisible) {
+      lastAppliedHeaderSuppressionSnapshot = null;
+      lastHeaderSuppressionDetectedAt = 0;
+      document.documentElement.classList.remove(ACTIVE_CLASS);
+      setInactiveHeaderSuppressionState({
+        incomingCallOverlayHintActive,
+        messengerThreadSubviewVisible: true,
+        messengerThreadSubviewKind:
+          currentMarketplaceThreadState.messengerThreadSubviewKind,
       });
       maybeSendHeaderSuppressionDebug("header-suppression-state");
       return;
@@ -3427,14 +3718,75 @@ ipcRenderer.on(
     return { callWindowOpen, isMuted };
   };
 
+  const findMessengerThreadSubviewBackControl = (): HTMLElement | null => {
+    for (const candidate of Array.from(
+      document.querySelectorAll("button, [role='button'], a[href]"),
+    )) {
+      if (!(candidate instanceof HTMLElement) || !isAriaVisible(candidate)) {
+        continue;
+      }
+
+      const rect = candidate.getBoundingClientRect();
+      if (
+        rect.left <= 140 &&
+        rect.top <= 180 &&
+        isMessengerThreadSubviewBackHint(getInteractiveNodeHint(candidate))
+      ) {
+        return candidate;
+      }
+    }
+
+    return null;
+  };
+
   const handleRendererInteractionEvent = (event: Event): void => {
     const label = extractInteractiveLabel(event.target);
+    const subviewStateForInteraction = collectMarketplaceThreadDebugState();
+    const topLeftSubviewBackClick =
+      event instanceof MouseEvent &&
+      event.clientX <= 96 &&
+      event.clientY <= 140 &&
+      subviewStateForInteraction.messengerThreadSubviewVisible === true;
+    if (topLeftSubviewBackClick) {
+      const eventTargetIsBackControl =
+        event.target instanceof Element &&
+        isMessengerThreadSubviewBackHint(getInteractiveNodeHint(event.target));
+      const backControl = eventTargetIsBackControl
+        ? null
+        : findMessengerThreadSubviewBackControl();
+
+      if (backControl && event.type === "click") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+        backControl.click();
+        window.setTimeout(() => {
+          scheduleViewportRecovery("messenger-thread-subview-back");
+        }, 0);
+        return;
+      }
+
+      if (eventTargetIsBackControl && event.type === "click") {
+        window.setTimeout(() => {
+          scheduleViewportRecovery("messenger-thread-subview-back");
+        }, 0);
+      }
+    }
     const emojiInteraction =
       /\bemoji\b/i.test(label) || isComposerOverlayInteractionTarget(event.target);
     if (emojiInteraction) {
       armComposerInteractionPause();
     }
     if (!label) return;
+
+    const backFromMessengerSubview =
+      /\b(back|go back|back to previous page)\b/i.test(label) &&
+      subviewStateForInteraction.messengerThreadSubviewVisible === true;
+    if (backFromMessengerSubview && event.type === "click") {
+      window.setTimeout(() => {
+        scheduleViewportRecovery("messenger-thread-subview-back");
+      }, 0);
+    }
 
     let interactionKind: "call-mute-toggle" | null = null;
     if (/\b(?:mute|unmute)\b/i.test(label)) {
@@ -3476,7 +3828,9 @@ ipcRenderer.on(
     const marketplaceVisualCropHeight = shouldUseMarketplaceVisualCropHeuristic(
       currentMarketplaceThreadState,
     )
-      ? currentMarketplaceThreadState.visualCropHeight
+      ? isForcedHeaderSuppressionActive()
+        ? null
+        : currentMarketplaceThreadState.visualCropHeight
       : null;
     const effectiveMediaOverlayVisible =
       mediaOverlayVisible || detectMediaOverlayVisible();
@@ -3598,6 +3952,16 @@ ipcRenderer.on(
     }
 
     const marketplaceThreadState = collectMarketplaceThreadDebugState();
+    const messengerThreadSubviewVisible =
+      marketplaceThreadState.messengerThreadSubviewVisible === true;
+    const messengerThreadSubviewJustExited =
+      lastMessengerThreadSubviewVisible && !messengerThreadSubviewVisible;
+    lastMessengerThreadSubviewVisible = messengerThreadSubviewVisible;
+    if (messengerThreadSubviewJustExited) {
+      armForcedHeaderSuppressionRecovery();
+      scheduleViewportStateSend(true);
+      scheduleViewportRecovery("messenger-thread-subview-exit");
+    }
     const marketplaceThreadDebugSignature = JSON.stringify(
       marketplaceThreadState,
     );
