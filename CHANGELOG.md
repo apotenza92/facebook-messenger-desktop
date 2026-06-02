@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- **Download page: Homebrew install command now taps the project cask first**
+  - Show macOS stable and beta Homebrew installs as one-line `brew tap apotenza92/tap && brew install --cask ...` commands so fresh Homebrew users get the project tap before install.
+
 - **Issue #50 follow-up: keep Messenger list-subview back buttons working** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
   - Detect Messenger list subviews such as Archived chats, Message requests, and Restricted accounts without applying the media/thread titlebar crop that can hide their Back controls.
   - Let Facebook handle the native subview Back click before refreshing app viewport/header state, preventing the Back arrow from disappearing while the subview remains open.
