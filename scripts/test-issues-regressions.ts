@@ -520,8 +520,8 @@ const runMessengerThreadSubviewPolicyTests = () => {
       headerKind: "archived-chats",
       ordinaryThreadControlDetected: true,
     }),
-    null,
-    "#50 ordinary conversation controls should block archived-chats confirmation",
+    "archived-chats",
+    "#50 a fresh Archived chats Back + header pair should survive stale ordinary conversation controls",
   );
   assertEqual(
     doesMessengerThreadSubviewFreshHeaderPairMatch({
@@ -2044,6 +2044,30 @@ const runWindowOpenRoutingTests = () => {
     decideWindowOpenAction("https://www.facebook.com/messages/media_viewer.123"),
     "reroute-main-view",
     "#45 media_viewer routes should stay in the main Messenger surface",
+  );
+  assertEqual(
+    decideWindowOpenAction("https://www.facebook.com/checkpoint/1501092823525282/"),
+    "reroute-auth-flow",
+    "#54 Facebook checkpoint popups should reroute into the app login flow instead of the system browser",
+  );
+  assertEqual(
+    decideWindowOpenAction(
+      "https://www.facebook.com/login/device-based/regular/login/",
+    ),
+    "reroute-auth-flow",
+    "#54 Facebook login verification popups should stay attached to the app",
+  );
+  assertEqual(
+    decideWindowOpenAction(
+      "https://www.facebook.com/remember_browser/?next=https%3A%2F%2Fwww.facebook.com%2Fmessages%2F",
+    ),
+    "reroute-auth-flow",
+    "#54 post-verification remember-browser routes should stay attached to the app",
+  );
+  assertEqual(
+    decideWindowOpenAction("https://accounts.google.com/signin/v2/challenge/pwd"),
+    "open-external-browser",
+    "#54 non-Facebook verification pages should still open in the system browser",
   );
 };
 
@@ -4261,6 +4285,11 @@ const runNotificationPolicyTests = () => {
     mainSource.includes("const DEBUG_LOG_SUMMARY_TAIL_LINES = 8000;"),
     "#49 debug summary export should keep the larger 8000-line tail",
   );
+  assert(
+    mainSource.includes("classifyGroupManagementNotification(payload)") &&
+      mainSource.includes("main-process-group-management-activity"),
+    "#50 main-process display boundary should keep suppressing shared group-management classifications",
+  );
 
   const globalSocialSuppressed =
     notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
@@ -4359,6 +4388,44 @@ const runNotificationPolicyTests = () => {
     firstTimePostAdminActivitySuppressed,
     true,
     "#50 the shared notification activity classifier should suppress first-time-post admin review notifications",
+  );
+
+  const adminMediaPlaceholderSuppressed =
+    notificationActivityPolicy.isLikelyGlobalFacebookNotification({
+      title: "User A (Admin) sent a photo.",
+      body: "New message",
+    });
+  assertEqual(
+    adminMediaPlaceholderSuppressed,
+    true,
+    "#50 the shared notification activity classifier should suppress admin media placeholders from group activity replays",
+  );
+
+  const moderatorMediaPlaceholderSuppressed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "User A (Moderator) sent a video.",
+      body: "New message",
+    });
+  assertEqual(
+    moderatorMediaPlaceholderSuppressed.suppress,
+    true,
+    "#50 browser-originated moderator media placeholders should be suppressed before display",
+  );
+  assertEqual(
+    moderatorMediaPlaceholderSuppressed.reason,
+    "group-management-activity",
+    "#50 admin/moderator media placeholders should use the shared group-management classifier",
+  );
+
+  const adminMediaRealBodyAllowed =
+    notificationDecisionPolicy.shouldSuppressBrowserNotificationActivity({
+      title: "User A (Admin)",
+      body: "Here's the photo from rehearsal",
+    });
+  assertEqual(
+    adminMediaRealBodyAllowed.suppress,
+    false,
+    "#50 ordinary chats from an admin-titled sender with a real body should remain deliverable",
   );
 
   const firstTimePostAdminMatch =

@@ -5075,7 +5075,10 @@ function createWindow(source: string = "unknown"): void {
 
         const windowAction = decideWindowOpenAction(url);
 
-        if (windowAction === "reroute-main-view") {
+        if (
+          windowAction === "reroute-main-view" ||
+          windowAction === "reroute-auth-flow"
+        ) {
           loadUrlIntoMessengerTarget(
             {
               parentWindow: mainWindow!,
@@ -5204,7 +5207,10 @@ function createWindow(source: string = "unknown"): void {
 
         event.preventDefault();
 
-        if (navigationAction === "reroute-main-view") {
+        if (
+          navigationAction === "reroute-main-view" ||
+          navigationAction === "reroute-auth-flow"
+        ) {
           loadUrlIntoMessengerTarget(
             {
               parentWindow: mainWindow!,
@@ -5991,7 +5997,10 @@ function createWindow(source: string = "unknown"): void {
 
         const windowAction = decideWindowOpenAction(url);
 
-        if (windowAction === "reroute-main-view") {
+        if (
+          windowAction === "reroute-main-view" ||
+          windowAction === "reroute-auth-flow"
+        ) {
           loadUrlIntoMessengerTarget(
             {
               parentWindow: mainWindow!,
@@ -6120,7 +6129,10 @@ function createWindow(source: string = "unknown"): void {
 
         event.preventDefault();
 
-        if (navigationAction === "reroute-main-view") {
+        if (
+          navigationAction === "reroute-main-view" ||
+          navigationAction === "reroute-auth-flow"
+        ) {
           loadUrlIntoMessengerTarget(
             {
               parentWindow: mainWindow!,

@@ -255,6 +255,7 @@ export function isFacebookBlobUrl(input: string): boolean {
 
 export type WindowOpenAction =
   | "allow-child-window"
+  | "reroute-auth-flow"
   | "reroute-main-view"
   | "download-media"
   | "open-external-browser";
@@ -327,6 +328,13 @@ export function decideWindowOpenAction(input: string): WindowOpenAction {
 
   if (isMarketplaceUrl(resolvedInput)) {
     return "open-external-browser";
+  }
+
+  if (
+    isAuthOrCheckpointRoute(resolvedInput) ||
+    isFacebookHomePage(resolvedInput)
+  ) {
+    return "reroute-auth-flow";
   }
 
   const shouldAllowChildWindow =

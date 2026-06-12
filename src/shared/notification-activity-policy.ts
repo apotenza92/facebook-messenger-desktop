@@ -80,6 +80,11 @@ const GROUP_MANAGEMENT_BODY_PATTERNS: RegExp[] = [
   /group you are managing/i,
 ];
 
+const GROUP_ADMIN_MEDIA_PLACEHOLDER_TITLE_PATTERN =
+  /\((?:admin|moderator)\)\s+sent\s+(?:(?:an?|the)\s+|\d+\s+)?(?:photos?|videos?|attachments?|gifs?|stickers?|links?|files?|voice messages?|audio messages?|reels?)[.!…]?$/i;
+const GENERIC_MESSAGE_PLACEHOLDER_BODY_PATTERN =
+  /^(?:new messages?|notification|notifications?|sent (?:you )?a message)[.!…]?$/i;
+
 const CALL_BODY_PATTERNS: RegExp[] = [
   /calling you/i,
   /incoming (video |audio )?call/i,
@@ -197,6 +202,17 @@ export function classifyGroupManagementNotification(
       isGroupManagement: true,
       reason: "group-management-pattern",
       matchedPattern: bodyPattern.source,
+    };
+  }
+
+  if (
+    GROUP_ADMIN_MEDIA_PLACEHOLDER_TITLE_PATTERN.test(payload.title || "") &&
+    GENERIC_MESSAGE_PLACEHOLDER_BODY_PATTERN.test(payload.body || "")
+  ) {
+    return {
+      isGroupManagement: true,
+      reason: "group-management-pattern",
+      matchedPattern: GROUP_ADMIN_MEDIA_PLACEHOLDER_TITLE_PATTERN.source,
     };
   }
 

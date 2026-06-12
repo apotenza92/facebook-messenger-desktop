@@ -181,11 +181,7 @@ export function resolveMessengerThreadSubviewKind(input: {
   headerKind?: MessengerThreadSubviewKind | null;
   ordinaryThreadControlDetected?: boolean;
 }): MessengerThreadSubviewKind | null {
-  if (
-    input.headerBackDetected === true &&
-    input.headerKind &&
-    input.ordinaryThreadControlDetected !== true
-  ) {
+  if (input.headerBackDetected === true && input.headerKind) {
     return input.headerKind;
   }
 

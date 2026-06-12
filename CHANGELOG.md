@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.1-beta.25] - 2026-06-12
+
+### Fixed
+
+- **Issue #50 follow-up: harden wake/reconnect Facebook activity suppression** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Suppress admin/moderator media placeholder notifications such as sender-role titles paired with generic `New message` bodies at the shared notification boundary.
+  - Keep ordinary person-titled direct messages deliverable when the body contains real message text.
+  - Add a final-boundary regression check so shared group-management classifiers continue to run before display.
+
+- **Issue #50 follow-up: keep list-subview Back controls visible with stale chat chrome present** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Let a fresh Messenger subview Back/header pair win over stale ordinary-thread controls that can remain in the DOM.
+  - Keep Archived chats, Message requests, Restricted accounts, and similar Messenger list subviews classified as list subviews while their Back controls are visible.
+
+- **Issue #54: keep Facebook verification/login popups attached to the app** ([#54](https://github.com/apotenza92/facebook-messenger-desktop/issues/54))
+  - Route Facebook checkpoint, device login, remember-browser, and post-verification home routes back into the app instead of the system browser.
+  - Preserve external-browser behavior for non-Facebook verification pages, profile links, Marketplace listing links, and unrelated external URLs.
+  - Apply the same auth reroute behavior to call/bootstrap child windows so verification hops cannot leave the app stuck behind a completed browser login.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:window-open`
+- `npm run test:notification`
+- `npm run test:release`
+- `npm run build`
+
 ## [1.3.1-beta.24] - 2026-06-03
 
 ### Fixed

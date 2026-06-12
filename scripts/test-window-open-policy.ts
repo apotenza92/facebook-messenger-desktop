@@ -68,6 +68,21 @@ function run(): void {
     "reroute-main-view",
   );
 
+  // Facebook auth/checkpoint windows should return to the app login flow.
+  expectAction(
+    "https://www.facebook.com/checkpoint/1501092823525282/",
+    "reroute-auth-flow",
+  );
+  expectAction(
+    "https://www.facebook.com/login/device-based/regular/login/",
+    "reroute-auth-flow",
+  );
+  expectAction(
+    "https://www.facebook.com/remember_browser/?next=https%3A%2F%2Fwww.facebook.com%2Fmessages%2F",
+    "reroute-auth-flow",
+  );
+  expectAction("https://www.facebook.com/", "reroute-auth-flow");
+
   // Marketplace messaging surfaces should stay in-app.
   expectAction(
     "https://www.facebook.com/marketplace/inbox/",
@@ -173,6 +188,10 @@ function run(): void {
 
   // Non-messages links should open externally in system browser
   expectAction("https://www.messenger.com/t/123", "open-external-browser");
+  expectAction(
+    "https://accounts.google.com/signin/v2/challenge/pwd",
+    "open-external-browser",
+  );
   expectAction(
     "https://www.facebook.com/groups/some-group",
     "open-external-browser",
