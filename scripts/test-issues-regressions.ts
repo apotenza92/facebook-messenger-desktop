@@ -4,6 +4,8 @@ type DeterministicCaseName = "all" | "muted-conflict";
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const zlib = require("zlib");
 const { EventEmitter } = require("events");
 
 const APP_ROOT = process.env.MESSENGER_APP_ROOT
@@ -147,6 +149,117 @@ const writeJsonOutput = (
 const loadFixtureJson = <T>(relativePath: string): T => {
   const absolutePath = path.join(APP_ROOT, relativePath);
   return JSON.parse(fs.readFileSync(absolutePath, "utf8")) as T;
+};
+
+const readLocalZipEntries = (zipPath: string): Map<string, string> => {
+  const archive = fs.readFileSync(zipPath);
+  const entries = new Map<string, string>();
+  let offset = 0;
+
+  while (offset + 4 <= archive.length) {
+    const signature = archive.readUInt32LE(offset);
+    if (signature === 0x02014b50 || signature === 0x06054b50) {
+      break;
+    }
+    assertEqual(
+      signature,
+      0x04034b50,
+      "debug zip should contain valid local file headers",
+    );
+
+    const compressionMethod = archive.readUInt16LE(offset + 8);
+    const compressedSize = archive.readUInt32LE(offset + 18);
+    const uncompressedSize = archive.readUInt32LE(offset + 22);
+    const fileNameLength = archive.readUInt16LE(offset + 26);
+    const extraLength = archive.readUInt16LE(offset + 28);
+    const fileNameStart = offset + 30;
+    const fileNameEnd = fileNameStart + fileNameLength;
+    const dataStart = fileNameEnd + extraLength;
+    const dataEnd = dataStart + compressedSize;
+
+    assert(
+      dataEnd <= archive.length,
+      "debug zip entry should not read beyond archive bounds",
+    );
+
+    const fileName = archive
+      .subarray(fileNameStart, fileNameEnd)
+      .toString("utf8");
+    const compressed = archive.subarray(dataStart, dataEnd);
+    let content: Buffer;
+    if (compressionMethod === 8) {
+      content = zlib.inflateRawSync(compressed);
+    } else if (compressionMethod === 0) {
+      content = compressed;
+    } else {
+      throw new Error(
+        `Unsupported test zip compression method: ${compressionMethod}`,
+      );
+    }
+
+    assertEqual(
+      content.length,
+      uncompressedSize,
+      `debug zip entry ${fileName} should inflate to its declared size`,
+    );
+    entries.set(fileName, content.toString("utf8"));
+    offset = dataEnd;
+  }
+
+  return entries;
+};
+
+const runDebugZipExportTests = () => {
+  const { writeZipArchive } = require(path.join(
+    APP_ROOT,
+    "src/main/zip-archive.ts",
+  ));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "messenger-zip-test-"));
+
+  try {
+    const firstPath = path.join(tempRoot, "debug-summary.json");
+    const secondPath = path.join(tempRoot, "reload-debug.ndjson");
+    const zipPath = path.join(tempRoot, "messenger-debug-logs-test.zip");
+    fs.writeFileSync(firstPath, '{"ok":true}\n', "utf8");
+    fs.writeFileSync(secondPath, '{"event":"auth"}\n', "utf8");
+
+    writeZipArchive(zipPath, [
+      {
+        filePath: firstPath,
+        archivePath: path.join(
+          "messenger-debug-logs-test",
+          "debug-summary.json",
+        ),
+      },
+      {
+        filePath: secondPath,
+        archivePath: path.join(
+          "messenger-debug-logs-test",
+          "reload-debug.ndjson",
+        ),
+      },
+    ]);
+
+    const entries = readLocalZipEntries(zipPath);
+    assertEqual(
+      entries.get("messenger-debug-logs-test/debug-summary.json"),
+      '{"ok":true}\n',
+      "#54 debug zip should contain the JSON summary",
+    );
+    assertEqual(
+      entries.get("messenger-debug-logs-test/reload-debug.ndjson"),
+      '{"event":"auth"}\n',
+      "#54 debug zip should contain reload/auth debug events",
+    );
+    assert(
+      Array.from(entries.keys()).every(
+        (entryPath) => !path.isAbsolute(entryPath) && !entryPath.includes("\\"),
+      ),
+      "#54 debug zip should use portable relative entry paths",
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 };
 
 const buildMutedConflictEvidence = () => {
@@ -2138,6 +2251,13 @@ const runWindowOpenRoutingTests = () => {
       mainSource.includes("safeUrl") &&
       mainSource.includes("navigation-completes-login"),
     "#54 auth flow should write privacy-safer debug events for future login-loop reports",
+  );
+  assert(
+    mainSource.includes("function exportDebugLogsZipToDirectory(") &&
+      mainSource.includes("writeZipArchive(zipPath, archiveFiles)") &&
+      mainSource.includes("shell.showItemInFolder(exported.zipPath)") &&
+      mainSource.includes("Debug logs zip exported successfully."),
+    "#54 debug export should produce a zip and automatically reveal that zip for attachment",
   );
   assert(
     completionIndex >= 0 &&
@@ -5793,6 +5913,7 @@ const run = (caseName: DeterministicCaseName, jsonOutput?: string) => {
   runMarketplaceThreadPolicyTests();
   runMessengerThreadSubviewPolicyTests();
   runWindowOpenRoutingTests();
+  runDebugZipExportTests();
   runMediaOverlayPolicyTests();
   runHeaderSuppressionPolicyTests();
   runIncomingCallOverlayLifecycleTests();

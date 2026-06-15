@@ -23,6 +23,7 @@ import * as https from "https";
 const execAsync = promisify(exec);
 import * as path from "path";
 import * as fs from "fs";
+import { writeZipArchive } from "./zip-archive";
 import {
   NotificationHandler,
   type NotificationData,
@@ -1595,9 +1596,45 @@ function exportDebugArtifactsToDirectory(dir: string): {
   };
 }
 
+function exportDebugLogsZipToDirectory(dir: string): {
+  zipPath: string;
+  fileName: string;
+  copiedCount: number;
+} {
+  const tempRoot = fs.mkdtempSync(
+    path.join(app.getPath("temp"), "messenger-debug-export-"),
+  );
+
+  try {
+    const exported = exportDebugArtifactsToDirectory(tempRoot);
+    const zipBaseName = path.basename(exported.bundleDir);
+    const zipPath = path.join(dir, `${zipBaseName}.zip`);
+    const archiveFiles = [exported.summaryPath, ...exported.copiedPaths].map(
+      (filePath) => ({
+        filePath,
+        archivePath: path.join(zipBaseName, path.basename(filePath)),
+      }),
+    );
+
+    writeZipArchive(zipPath, archiveFiles);
+
+    return {
+      zipPath,
+      fileName: path.basename(zipPath),
+      copiedCount: archiveFiles.length,
+    };
+  } finally {
+    try {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup failures; the user-facing artifact is the zip.
+    }
+  }
+}
+
 async function exportDebugLogs(): Promise<void> {
   const openDialogOptions: Electron.OpenDialogOptions = {
-    title: "Export Debug Logs",
+    title: "Export Debug Logs Zip",
     buttonLabel: "Export Here",
     defaultPath: app.getPath("desktop"),
     properties: ["openDirectory", "createDirectory"],
@@ -1617,14 +1654,14 @@ async function exportDebugLogs(): Promise<void> {
 
     let exported:
       | {
-          bundleDir: string;
-          summaryPath: string;
-          copiedPaths: string[];
+          zipPath: string;
+          fileName: string;
+          copiedCount: number;
         }
       | undefined;
 
     try {
-      exported = exportDebugArtifactsToDirectory(selection.filePaths[0]);
+      exported = exportDebugLogsZipToDirectory(selection.filePaths[0]);
     } catch (error) {
       const errorDialogOptions: Electron.MessageBoxOptions = {
         type: "error",
@@ -1640,21 +1677,28 @@ async function exportDebugLogs(): Promise<void> {
       return;
     }
 
+    shell.showItemInFolder(exported.zipPath);
+
     const doneDialogOptions: Electron.MessageBoxOptions = {
       type: "info",
       title: "Debug Logs Exported",
-      message: "Debug logs exported successfully.",
-      detail: exported.bundleDir,
-      buttons: ["Show in Folder", "OK"],
+      message: "Debug logs zip exported successfully.",
+      detail: `${exported.fileName} is selected in your file browser.`,
+      buttons: ["OK"],
       defaultId: 0,
-      cancelId: 1,
+      cancelId: 0,
     };
-    const done = mainWindow
-      ? await dialog.showMessageBox(mainWindow, doneDialogOptions)
-      : await dialog.showMessageBox(doneDialogOptions);
+    if (mainWindow) {
+      await dialog.showMessageBox(mainWindow, doneDialogOptions);
+    } else {
+      await dialog.showMessageBox(doneDialogOptions);
+    }
 
-    if (done.response === 0) {
-      shell.showItemInFolder(exported.summaryPath);
+    if (!fs.existsSync(exported.zipPath)) {
+      console.warn(
+        "[Debug Export] Zip was exported but could not be found afterward",
+        exported.zipPath,
+      );
     }
   } finally {
     debugLogExportUiActive = false;

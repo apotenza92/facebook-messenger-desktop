@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.1-beta.27] - 2026-06-15
+
+### Fixed
+
+- **Debug logs: export a ready-to-attach zip**
+  - `Help -> Export Debug Logs...` now creates a single `messenger-debug-logs-*.zip` file instead of leaving users to zip an exported folder manually.
+  - After export, the app opens the file browser with the generated zip selected so it can be attached directly to a GitHub issue.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:release`
+
 ## [1.3.1-beta.26] - 2026-06-15
 
 ### Fixed
