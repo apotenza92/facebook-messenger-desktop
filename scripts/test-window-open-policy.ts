@@ -1,6 +1,9 @@
 import {
   decideWindowOpenAction,
+  decideWindowOpenActionForContext,
+  isExternalAuthProviderRoute,
   isMarketplaceMessagingRoute,
+  isMessagesSurfaceRoute,
   shouldAllowMarketplaceActionInApp,
   shouldReloadToMessagesHome,
   type WindowOpenAction,
@@ -66,6 +69,15 @@ function run(): void {
   expectAction(
     "https://www.facebook.com/messages/e2ee/t/issue52-thread/",
     "reroute-main-view",
+  );
+  expectAction(
+    "https://www.facebook.com/messages/?checkpoint_src=any",
+    "reroute-main-view",
+  );
+  assertEqual(
+    isMessagesSurfaceRoute("https://www.facebook.com/messages/?checkpoint_src=any"),
+    true,
+    "Post-checkpoint Messenger landing should be recognized as an in-app messaging surface",
   );
 
   // Facebook auth/checkpoint windows should return to the app login flow.
@@ -191,6 +203,36 @@ function run(): void {
   expectAction(
     "https://accounts.google.com/signin/v2/challenge/pwd",
     "open-external-browser",
+  );
+  assertEqual(
+    isExternalAuthProviderRoute(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+    ),
+    true,
+    "Google account verification should be recognized as an external auth provider route",
+  );
+  assertEqual(
+    decideWindowOpenActionForContext(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+      { facebookAuthFlowActive: true },
+    ),
+    "allow-auth-child-window",
+    "Google account verification should stay in an app auth window during Facebook auth",
+  );
+  assertEqual(
+    decideWindowOpenActionForContext(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+      { facebookAuthFlowActive: false },
+    ),
+    "open-external-browser",
+    "Google account links should stay external outside Facebook auth",
+  );
+  assertEqual(
+    decideWindowOpenActionForContext("https://www.google.com/search?q=messenger", {
+      facebookAuthFlowActive: true,
+    }),
+    "open-external-browser",
+    "Only recognized account-provider verification routes should stay in app during Facebook auth",
   );
   expectAction(
     "https://www.facebook.com/groups/some-group",

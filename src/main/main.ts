@@ -36,12 +36,15 @@ import {
   isFacebookHomePage,
   isFacebookHost,
   isFacebookOrMessengerUrl,
+  isExternalAuthProviderRoute,
   isMessagesMediaViewerRoute,
   isMessagesRoute,
   isMessagesSurfaceRoute,
   shouldReloadToMessagesHome,
   shouldOpenInApp,
   decideWindowOpenAction,
+  decideWindowOpenActionForContext,
+  type WindowOpenAction,
 } from "./url-policy";
 import { decideMessengerReload } from "./reload-policy";
 import {
@@ -1192,6 +1195,73 @@ function pushReloadDebugEvent(event: ReloadDebugEvent): void {
   }
 }
 
+function buildAuthFlowRouteDebug(url: string): Record<string, unknown> {
+  try {
+    const parsed = new URL(url);
+    const searchKeys = Array.from(parsed.searchParams.keys()).sort();
+
+    return {
+      valid: true,
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      pathname: parsed.pathname,
+      searchKeys,
+      safeUrl:
+        `${parsed.origin}${parsed.pathname}` +
+        (searchKeys.length > 0 ? `?${searchKeys.join("&")}` : ""),
+      isExternalAuthProviderRoute: isExternalAuthProviderRoute(url),
+      isAuthOrCheckpointRoute: isAuthOrCheckpointRoute(url),
+      isFacebookHomePage: isFacebookHomePage(url),
+      isMessagesSurfaceRoute: isMessagesSurfaceRoute(url),
+    };
+  } catch {
+    return {
+      valid: false,
+      rawKind: url === "about:blank" ? "about:blank" : "unparseable-url",
+      isExternalAuthProviderRoute: isExternalAuthProviderRoute(url),
+      isAuthOrCheckpointRoute: isAuthOrCheckpointRoute(url),
+      isFacebookHomePage: isFacebookHomePage(url),
+      isMessagesSurfaceRoute: isMessagesSurfaceRoute(url),
+    };
+  }
+}
+
+function getAuthFlowSafeUrl(url: string): string {
+  const debug = buildAuthFlowRouteDebug(url);
+  return String(debug.safeUrl || debug.rawKind || "unparseable-url");
+}
+
+function pushAuthFlowDebugEvent(input: {
+  event: string;
+  target?: MessengerSurfaceTarget;
+  authWindow?: BrowserWindow;
+  url?: string;
+  source?: string;
+  reason?: string;
+  action?: WindowOpenAction;
+  extra?: Record<string, unknown>;
+}): void {
+  pushReloadDebugEvent({
+    timestamp: Date.now(),
+    source: "main",
+    event: `auth-flow-${input.event}`,
+    webContentsId:
+      input.target?.targetWebContents.id ?? input.authWindow?.webContents.id,
+    url: input.url ? getAuthFlowSafeUrl(input.url) : undefined,
+    label: input.target?.label,
+    requestSource: input.source,
+    reason: input.reason,
+    action: input.action,
+    loginFlowActive,
+    authFlowAwaitingCompletion,
+    activeAuthWindowPresent:
+      activeAuthWindow !== null && !activeAuthWindow.isDestroyed(),
+    authWindowDestroyed: input.authWindow?.isDestroyed(),
+    route: input.url ? buildAuthFlowRouteDebug(input.url) : undefined,
+    ...input.extra,
+  });
+}
+
 type Issue45TestExportConfig = {
   dir: string;
   label: string;
@@ -1631,6 +1701,8 @@ function syncWindowTitleFromCurrentPage(): void {
 // Once user starts login, we don't redirect back to custom login page until they explicitly log out
 // or the app is restarted without valid session cookies
 let loginFlowActive = false; // True once user clicks "Login with Facebook"
+let authFlowAwaitingCompletion = false;
+let activeAuthWindow: BrowserWindow | null = null;
 let _hasTriedMessagesOnce = false; // True after first messages backend load attempt
 
 type WindowState = {
@@ -2871,6 +2943,342 @@ function loadUrlIntoMessengerTarget(
   });
 }
 
+function getAuthVerificationWindowOptions(
+  parentWindow: BrowserWindow,
+  session: Electron.Session,
+): Electron.BrowserWindowConstructorOptions {
+  const { bounds } = screen.getDisplayMatching(parentWindow.getBounds());
+  const authWidth = Math.round(bounds.width * 0.65);
+  const authHeight = Math.round(bounds.height * 0.9);
+
+  return {
+    x: bounds.x + Math.round((bounds.width - authWidth) / 2),
+    y: bounds.y + Math.round((bounds.height - authHeight) / 2),
+    width: authWidth,
+    height: authHeight,
+    minWidth: Math.min(640, authWidth),
+    minHeight: Math.min(520, authHeight),
+    title: `${APP_DISPLAY_NAME} Verification`,
+    icon: isDev ? undefined : getIconPath(),
+    webPreferences: {
+      session,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: true,
+      spellcheck: true,
+    },
+  };
+}
+
+function decideWindowOpenActionForCurrentLoginFlow(
+  url: string,
+): ReturnType<typeof decideWindowOpenAction> {
+  return decideWindowOpenActionForContext(url, {
+    facebookAuthFlowActive: loginFlowActive,
+  });
+}
+
+function shouldOpenAuthProviderInApp(url: string): boolean {
+  return (
+    loginFlowActive &&
+    decideWindowOpenActionForCurrentLoginFlow(url) === "allow-auth-child-window"
+  );
+}
+
+function showWaitingForLoginInTarget(
+  target: MessengerSurfaceTarget,
+  source: string,
+): void {
+  pushAuthFlowDebugEvent({
+    event: "waiting-screen-shown",
+    target,
+    source,
+  });
+
+  void loadWebContentsURLWithDebug(
+    target.targetWebContents,
+    getWaitingForLoginPageURL(),
+    {
+      label: target.label,
+      trigger: "auth-flow-waiting",
+      source,
+    },
+  );
+}
+
+function finishAuthFlowInTarget(
+  target: MessengerSurfaceTarget,
+  url: string,
+  source: string,
+): void {
+  const targetUrl = isFacebookHomePage(url) ? MESSAGES_HOME_URL : url;
+
+  console.log(
+    `[AuthFlow] Login completed (${source}), loading ${target.label}:`,
+    getAuthFlowSafeUrl(targetUrl),
+  );
+  pushAuthFlowDebugEvent({
+    event: "completed",
+    target,
+    url,
+    source,
+    extra: {
+      targetUrl: getAuthFlowSafeUrl(targetUrl),
+      targetRoute: buildAuthFlowRouteDebug(targetUrl),
+    },
+  });
+  authFlowAwaitingCompletion = false;
+  loginFlowActive = true;
+  loadUrlIntoMessengerTarget(target, targetUrl, source);
+
+  if (activeAuthWindow && !activeAuthWindow.isDestroyed()) {
+    activeAuthWindow.close();
+  }
+  activeAuthWindow = null;
+}
+
+function handleAuthWindowNavigation(
+  target: MessengerSurfaceTarget,
+  authWindow: BrowserWindow,
+  url: string,
+  source: string,
+): boolean {
+  if (!url || url === "about:blank") {
+    return false;
+  }
+
+  if (isFacebookHomePage(url) || isMessagesSurfaceRoute(url)) {
+    pushAuthFlowDebugEvent({
+      event: "navigation-completes-login",
+      target,
+      authWindow,
+      url,
+      source,
+    });
+    finishAuthFlowInTarget(target, url, source);
+    return true;
+  }
+
+  if (isExternalAuthProviderRoute(url) || isAuthOrCheckpointRoute(url)) {
+    console.log(
+      "[AuthFlow] Allowing auth navigation in auth window:",
+      getAuthFlowSafeUrl(url),
+    );
+    pushAuthFlowDebugEvent({
+      event: "navigation-allowed-in-auth-window",
+      target,
+      authWindow,
+      url,
+      source,
+    });
+    return false;
+  }
+
+  const action = decideWindowOpenActionForCurrentLoginFlow(url);
+  pushAuthFlowDebugEvent({
+    event: "navigation-policy-decision",
+    target,
+    authWindow,
+    url,
+    source,
+    action,
+  });
+
+  if (action === "reroute-main-view") {
+    loadUrlIntoMessengerTarget(target, url, source);
+    authFlowAwaitingCompletion = false;
+    authWindow.close();
+    return true;
+  }
+
+  if (action === "download-media") {
+    console.log(
+      "[AuthFlow] Download requested from auth window:",
+      getAuthFlowSafeUrl(url),
+    );
+    target.targetWebContents.downloadURL(url);
+    return true;
+  }
+
+  console.log(
+    "[AuthFlow] Opening auth-window external URL in browser:",
+    getAuthFlowSafeUrl(url),
+  );
+  shell.openExternal(url).catch((err) => {
+    console.error(
+      "[External Link] Failed to open auth-window URL:",
+      getAuthFlowSafeUrl(url),
+      err,
+    );
+  });
+  return true;
+}
+
+function openAuthWindow(
+  target: MessengerSurfaceTarget,
+  url: string,
+  source: string,
+): void {
+  console.log(
+    `[AuthFlow] Opening auth window (${source}):`,
+    getAuthFlowSafeUrl(url),
+  );
+
+  loginFlowActive = true;
+  authFlowAwaitingCompletion = true;
+  pushAuthFlowDebugEvent({
+    event: "open-requested",
+    target,
+    url,
+    source,
+  });
+  showWaitingForLoginInTarget(target, source);
+
+  if (activeAuthWindow && !activeAuthWindow.isDestroyed()) {
+    activeAuthWindow.focus();
+    pushAuthFlowDebugEvent({
+      event: "reuse-existing-window",
+      target,
+      authWindow: activeAuthWindow,
+      url,
+      source,
+    });
+    activeAuthWindow.webContents.loadURL(url).catch((error) => {
+      pushAuthFlowDebugEvent({
+        event: "reuse-existing-window-failed",
+        target,
+        authWindow: activeAuthWindow ?? undefined,
+        url,
+        source,
+        reason: String((error as Error)?.message || error),
+      });
+      console.error(
+        "[AuthFlow] Failed to reuse auth window:",
+        getAuthFlowSafeUrl(url),
+        error,
+      );
+    });
+    return;
+  }
+
+  const authWindow = new BrowserWindow({
+    parent: target.parentWindow,
+    ...getAuthVerificationWindowOptions(
+      target.parentWindow,
+      target.targetWebContents.session,
+    ),
+  });
+  activeAuthWindow = authWindow;
+  pushAuthFlowDebugEvent({
+    event: "window-created",
+    target,
+    authWindow,
+    url,
+    source,
+    extra: {
+      bounds: authWindow.getBounds(),
+    },
+  });
+
+  attachWebContentsFailureHandlers(
+    authWindow.webContents,
+    "Messenger auth window",
+    authWindow,
+  );
+  attachWebContentsReloadDebugHandlers(
+    authWindow.webContents,
+    "Messenger auth window",
+  );
+  setupContextMenu(authWindow.webContents);
+
+  authWindow.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+    console.log(
+      "[AuthFlow] Auth window popup request:",
+      getAuthFlowSafeUrl(popupUrl),
+    );
+    pushAuthFlowDebugEvent({
+      event: "popup-requested",
+      target,
+      authWindow,
+      url: popupUrl,
+      source: "auth-window-popup",
+    });
+
+    if (
+      handleAuthWindowNavigation(
+        target,
+        authWindow,
+        popupUrl,
+        "auth-window-popup",
+      )
+    ) {
+      return { action: "deny" };
+    }
+
+    void authWindow.webContents.loadURL(popupUrl);
+    return { action: "deny" };
+  });
+
+  authWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+    if (
+      handleAuthWindowNavigation(
+        target,
+        authWindow,
+        navigationUrl,
+        "auth-window-navigation",
+      )
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  authWindow.on("closed", () => {
+    if (activeAuthWindow === authWindow) {
+      activeAuthWindow = null;
+    }
+
+    if (authFlowAwaitingCompletion) {
+      console.log("[AuthFlow] Auth window closed before login completed");
+      pushAuthFlowDebugEvent({
+        event: "closed-before-completion",
+        target,
+        authWindow,
+        source: "auth-window-closed",
+      });
+      authFlowAwaitingCompletion = false;
+      loginFlowActive = false;
+      void loadWebContentsURLWithDebug(
+        target.targetWebContents,
+        getCustomLoginPageURL(),
+        {
+          label: target.label,
+          trigger: "auth-window-closed-before-complete",
+          source,
+        },
+      );
+    }
+  });
+
+  authWindow.webContents
+    .loadURL(url)
+    .catch((error) => {
+      pushAuthFlowDebugEvent({
+        event: "initial-load-failed",
+        target,
+        authWindow,
+        url,
+        source,
+        reason: String((error as Error)?.message || error),
+      });
+      console.error(
+        "[AuthFlow] Failed to load auth window:",
+        getAuthFlowSafeUrl(url),
+        error,
+      );
+    });
+}
+
 function clearIncomingCallOverlayStateForWebContents(
   webContents: Electron.WebContents,
   reason: string,
@@ -2954,8 +3362,78 @@ function stopIncomingCallOverlayWatchdog(): void {
   incomingCallOverlayWatchdogTimer = null;
 }
 
-// Generate custom login page that opens Facebook in system browser
-// This allows password managers and passkeys to work natively
+function getWaitingForLoginPageURL(): string {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Messenger Desktop</title>
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          background: linear-gradient(135deg, #0088ff 0%, #0066dd 100%);
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+        }
+        .container {
+          text-align: center;
+          padding: 40px;
+          max-width: 420px;
+        }
+        .icon {
+          width: 72px;
+          height: 72px;
+          margin-bottom: 24px;
+          filter: drop-shadow(0 4px 12px rgba(0,0,0,0.15));
+        }
+        h1 {
+          font-size: 26px;
+          font-weight: 600;
+          margin-bottom: 12px;
+        }
+        .subtitle {
+          font-size: 15px;
+          opacity: 0.9;
+          line-height: 1.5;
+        }
+        .spinner {
+          width: 28px;
+          height: 28px;
+          border: 3px solid rgba(255,255,255,0.3);
+          border-top-color: white;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+          margin: 28px auto 0;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <img class="icon" src="${APP_ICON_SVG}" alt="Messenger Desktop">
+        <h1>Waiting for login</h1>
+        <p class="subtitle">Finish signing in from the verification window. Messenger will open here automatically.</p>
+        <div class="spinner" aria-hidden="true"></div>
+      </div>
+    </body>
+    </html>
+  `;
+  return "data:text/html;charset=utf-8," + encodeURIComponent(html);
+}
+
+// Generate custom login page that opens Facebook in a dedicated app auth window.
 function getCustomLoginPageURL(): string {
   const html = `
     <!DOCTYPE html>
@@ -3089,7 +3567,7 @@ function getCustomLoginPageURL(): string {
 
       <script>
         document.getElementById('loginBtn').addEventListener('click', () => {
-          // Navigate to Facebook login within the app
+          // Main-process navigation handling opens this URL in a dedicated auth window.
           window.location.href = 'https://www.facebook.com/login?next=https%3A%2F%2Fwww.facebook.com%2Fmessages%2F';
         });
       </script>
@@ -5073,7 +5551,23 @@ function createWindow(source: string = "unknown"): void {
           disposition,
         });
 
-        const windowAction = decideWindowOpenAction(url);
+        const windowAction = decideWindowOpenActionForCurrentLoginFlow(url);
+
+        if (
+          windowAction === "allow-auth-child-window" ||
+          (windowAction === "reroute-auth-flow" && isAuthOrCheckpointRoute(url))
+        ) {
+          openAuthWindow(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: contentView!.webContents,
+              label: "Messenger content view",
+            },
+            url,
+            "content-view-window-open-auth",
+          );
+          return { action: "deny" };
+        }
 
         if (
           windowAction === "reroute-main-view" ||
@@ -5171,7 +5665,31 @@ function createWindow(source: string = "unknown"): void {
           return;
         }
 
-        const navigationAction = decideWindowOpenAction(navigationUrl);
+        const navigationAction =
+          decideWindowOpenActionForCurrentLoginFlow(navigationUrl);
+
+        if (
+          navigationAction === "allow-auth-child-window" ||
+          (navigationAction === "reroute-auth-flow" &&
+            isAuthOrCheckpointRoute(navigationUrl))
+        ) {
+          console.log(
+            "[AuthFlow] Moving child auth navigation to auth window:",
+            navigationUrl,
+          );
+          event.preventDefault();
+          openAuthWindow(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: contentView!.webContents,
+              label: "Messenger content view",
+            },
+            navigationUrl,
+            "content-view-child-auth-navigation",
+          );
+          childWindow.close();
+          return;
+        }
 
         if (childOpenedAsAboutBlank) {
           const bootstrapDecision =
@@ -5572,6 +6090,24 @@ function createWindow(source: string = "unknown"): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     contentView.webContents.on("will-navigate", (event, url) => {
       console.log("[ContentView] will-navigate:", url);
+      if (shouldOpenAuthProviderInApp(url) || isAuthOrCheckpointRoute(url)) {
+        console.log(
+          "[ContentView] Opening auth navigation in auth window:",
+          url,
+        );
+        event.preventDefault();
+        openAuthWindow(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          url,
+          "content-view-auth-provider-navigation",
+        );
+        return;
+      }
+
       const allowed = shouldAllowInternalNavigation(url);
       console.log("[ContentView] Navigation allowed:", allowed, "URL:", url);
       if (!allowed) {
@@ -5995,7 +6531,23 @@ function createWindow(source: string = "unknown"): void {
           disposition,
         });
 
-        const windowAction = decideWindowOpenAction(url);
+        const windowAction = decideWindowOpenActionForCurrentLoginFlow(url);
+
+        if (
+          windowAction === "allow-auth-child-window" ||
+          (windowAction === "reroute-auth-flow" && isAuthOrCheckpointRoute(url))
+        ) {
+          openAuthWindow(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: mainWindow!.webContents,
+              label: "Main window",
+            },
+            url,
+            "main-window-window-open-auth",
+          );
+          return { action: "deny" };
+        }
 
         if (
           windowAction === "reroute-main-view" ||
@@ -6093,7 +6645,31 @@ function createWindow(source: string = "unknown"): void {
           return;
         }
 
-        const navigationAction = decideWindowOpenAction(navigationUrl);
+        const navigationAction =
+          decideWindowOpenActionForCurrentLoginFlow(navigationUrl);
+
+        if (
+          navigationAction === "allow-auth-child-window" ||
+          (navigationAction === "reroute-auth-flow" &&
+            isAuthOrCheckpointRoute(navigationUrl))
+        ) {
+          console.log(
+            "[AuthFlow] Moving child auth navigation to auth window:",
+            navigationUrl,
+          );
+          event.preventDefault();
+          openAuthWindow(
+            {
+              parentWindow: mainWindow!,
+              targetWebContents: mainWindow!.webContents,
+              label: "Main window",
+            },
+            navigationUrl,
+            "main-window-child-auth-navigation",
+          );
+          childWindow.close();
+          return;
+        }
 
         if (childOpenedAsAboutBlank) {
           const bootstrapDecision =
@@ -6561,6 +7137,24 @@ function createWindow(source: string = "unknown"): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     mainWindow.webContents.on("will-navigate", (event, url) => {
       console.log("[MainWindow] will-navigate:", url);
+      if (shouldOpenAuthProviderInApp(url) || isAuthOrCheckpointRoute(url)) {
+        console.log(
+          "[MainWindow] Opening auth navigation in auth window:",
+          url,
+        );
+        event.preventDefault();
+        openAuthWindow(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: mainWindow!.webContents,
+            label: "Main window",
+          },
+          url,
+          "main-window-auth-provider-navigation",
+        );
+        return;
+      }
+
       if (!shouldAllowInternalNavigation(url)) {
         console.log("[MainWindow] Opening external URL in browser:", url);
         event.preventDefault();

@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.1-beta.26] - 2026-06-15
+
+### Fixed
+
+- **Issue #54 follow-up: keep third-party verification inside the app auth flow** ([#54](https://github.com/apotenza92/facebook-messenger-desktop/issues/54))
+  - Open Facebook login, checkpoint, two-factor, remember-device, and Google account verification steps in a larger temporary auth window that shares the app session instead of sending verification cookies to the system browser.
+  - Show a waiting-for-login screen in the main Messenger window while the temporary auth window is active.
+  - Close the temporary auth window and load Messenger in the main app window after Facebook lands on Messenger, including post-checkpoint routes such as `/messages/?checkpoint_src=...`.
+  - Add privacy-safer auth-flow debug events to the exported debug-log bundle so any remaining login-loop reports can show route classification and handoff state without including sensitive checkpoint query values.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+- Fresh dev-profile login validation through Facebook two-factor and remember-device handoff.
+
 ## [1.3.1-beta.25] - 2026-06-12
 
 ### Fixed

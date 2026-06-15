@@ -7,6 +7,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const electron = require('electron');
+const electronPath = typeof electron === 'string' ? electron.trim() : electron;
 
 // Set environment variables to help with app identification
 process.env.ELECTRON_APP_NAME = 'Messenger';
@@ -16,7 +17,7 @@ process.env.ELECTRON_APP_PATH = path.join(__dirname, '..');
 const extraArgs = process.argv.slice(2);
 
 // Spawn Electron with our app and any extra arguments
-const electronProcess = spawn(electron, [path.join(__dirname, '..'), ...extraArgs], {
+const electronProcess = spawn(electronPath, [path.join(__dirname, '..'), ...extraArgs], {
   stdio: 'inherit',
   env: {
     ...process.env,
@@ -28,4 +29,3 @@ const electronProcess = spawn(electron, [path.join(__dirname, '..'), ...extraArg
 electronProcess.on('close', (code) => {
   process.exit(code);
 });
-

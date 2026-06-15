@@ -254,11 +254,16 @@ export function isFacebookBlobUrl(input: string): boolean {
 }
 
 export type WindowOpenAction =
+  | "allow-auth-child-window"
   | "allow-child-window"
   | "reroute-auth-flow"
   | "reroute-main-view"
   | "download-media"
   | "open-external-browser";
+
+export type WindowOpenContext = {
+  facebookAuthFlowActive?: boolean;
+};
 
 export function isMessagesSurfaceRoute(input: string): boolean {
   return isMessagesRoute(input) || isMessagesMediaViewerRoute(input);
@@ -291,6 +296,19 @@ export function isAuthOrCheckpointRoute(input: string): boolean {
   );
 }
 
+export function isExternalAuthProviderRoute(input: string): boolean {
+  const parsed = parseUrl(input);
+  if (!parsed) return false;
+
+  const protocol = parsed.protocol.toLowerCase();
+  if (protocol !== "https:" && protocol !== "http:") {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  return hostname === "accounts.google.com";
+}
+
 function resolveAppNavigationTarget(input: string): string {
   return resolveWrappedNavigationTarget(input) ?? input;
 }
@@ -319,8 +337,22 @@ export function shouldOpenInApp(input: string): boolean {
 }
 
 export function decideWindowOpenAction(input: string): WindowOpenAction {
+  return decideWindowOpenActionForContext(input);
+}
+
+export function decideWindowOpenActionForContext(
+  input: string,
+  context: WindowOpenContext = {},
+): WindowOpenAction {
   const resolvedInput = resolveAppNavigationTarget(input);
   const isMessengerUrl = isFacebookOrMessengerUrl(resolvedInput);
+
+  if (
+    context.facebookAuthFlowActive === true &&
+    isExternalAuthProviderRoute(resolvedInput)
+  ) {
+    return "allow-auth-child-window";
+  }
 
   if (isMarketplaceMessagingRoute(resolvedInput)) {
     return "reroute-main-view";
@@ -328,6 +360,13 @@ export function decideWindowOpenAction(input: string): WindowOpenAction {
 
   if (isMarketplaceUrl(resolvedInput)) {
     return "open-external-browser";
+  }
+
+  if (
+    isMessengerUrl &&
+    (isMessagesRoute(resolvedInput) || isMessagesMediaViewerRoute(resolvedInput))
+  ) {
+    return "reroute-main-view";
   }
 
   if (
@@ -342,13 +381,6 @@ export function decideWindowOpenAction(input: string): WindowOpenAction {
     (isMessengerUrl && isLikelyCallPopupUrl(resolvedInput));
   if (shouldAllowChildWindow) {
     return "allow-child-window";
-  }
-
-  if (
-    isMessengerUrl &&
-    (isMessagesRoute(resolvedInput) || isMessagesMediaViewerRoute(resolvedInput))
-  ) {
-    return "reroute-main-view";
   }
 
   if (isFacebookBlobUrl(resolvedInput)) {

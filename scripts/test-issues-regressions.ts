@@ -72,6 +72,8 @@ const loadFacebookHeaderSuppressionPolicy = () =>
   );
 const {
   decideWindowOpenAction,
+  decideWindowOpenActionForContext,
+  isExternalAuthProviderRoute,
   isMessagesSurfaceRoute,
 } = require(
   path.join(APP_ROOT, "src/main/url-policy"),
@@ -2068,6 +2070,80 @@ const runWindowOpenRoutingTests = () => {
     decideWindowOpenAction("https://accounts.google.com/signin/v2/challenge/pwd"),
     "open-external-browser",
     "#54 non-Facebook verification pages should still open in the system browser",
+  );
+  assertEqual(
+    isExternalAuthProviderRoute(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+    ),
+    true,
+    "#54 Google account verification should be recognized as an external auth provider route",
+  );
+  assertEqual(
+    decideWindowOpenActionForContext(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+      { facebookAuthFlowActive: true },
+    ),
+    "allow-auth-child-window",
+    "#54 Google verification should stay in an app auth window during an active Facebook auth flow",
+  );
+  assertEqual(
+    decideWindowOpenActionForContext(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+      { facebookAuthFlowActive: false },
+    ),
+    "open-external-browser",
+    "#54 Google verification links should remain external outside a Facebook auth flow",
+  );
+  assertEqual(
+    decideWindowOpenActionForContext(
+      "https://www.google.com/search?q=messenger",
+      { facebookAuthFlowActive: true },
+    ),
+    "open-external-browser",
+    "#54 generic Google pages should not be pulled into the app auth window",
+  );
+  assertEqual(
+    isMessagesSurfaceRoute("https://www.facebook.com/messages/?checkpoint_src=any"),
+    true,
+    "#54 post-checkpoint Messenger landing should be recognized as a Messenger surface",
+  );
+  assertEqual(
+    decideWindowOpenAction(
+      "https://www.facebook.com/messages/?checkpoint_src=any",
+    ),
+    "reroute-main-view",
+    "#54 post-checkpoint Messenger landing should hand off to the main window",
+  );
+
+  const mainSource = fs.readFileSync(
+    path.join(APP_ROOT, "src/main/main.ts"),
+    "utf8",
+  );
+  const completionIndex = mainSource.indexOf(
+    "isFacebookHomePage(url) || isMessagesSurfaceRoute(url)",
+  );
+  const allowAuthIndex = mainSource.indexOf(
+    "isExternalAuthProviderRoute(url) || isAuthOrCheckpointRoute(url)",
+  );
+  assert(
+    mainSource.includes("function openAuthWindow(") &&
+      mainSource.includes("getWaitingForLoginPageURL()") &&
+      mainSource.includes("finishAuthFlowInTarget(") &&
+      mainSource.includes("pushAuthFlowDebugEvent(") &&
+      mainSource.includes("buildAuthFlowRouteDebug("),
+    "#54 main process should keep auth/checkpoint/provider verification in a dedicated auth window and return to Messenger after completion",
+  );
+  assert(
+    mainSource.includes("searchKeys") &&
+      mainSource.includes("safeUrl") &&
+      mainSource.includes("navigation-completes-login"),
+    "#54 auth flow should write privacy-safer debug events for future login-loop reports",
+  );
+  assert(
+    completionIndex >= 0 &&
+      allowAuthIndex >= 0 &&
+      completionIndex < allowAuthIndex,
+    "#54 auth window should treat Messenger landing as completion before allowing checkpoint/auth routes to continue",
   );
 };
 
