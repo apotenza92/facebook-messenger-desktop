@@ -2196,8 +2196,8 @@ const runWindowOpenRoutingTests = () => {
       "https://accounts.google.com/signin/v2/challenge/pwd",
       { facebookAuthFlowActive: true },
     ),
-    "allow-auth-child-window",
-    "#54 Google verification should stay in an app auth window during an active Facebook auth flow",
+    "open-auth-provider-browser",
+    "#54 Google verification should fall back to the system browser during an active Facebook auth flow",
   );
   assertEqual(
     decideWindowOpenActionForContext(
@@ -2235,16 +2235,26 @@ const runWindowOpenRoutingTests = () => {
   const completionIndex = mainSource.indexOf(
     "isFacebookHomePage(url) || isMessagesSurfaceRoute(url)",
   );
+  const browserFallbackIndex = mainSource.indexOf(
+    "if (isExternalAuthProviderRoute(url))",
+    completionIndex,
+  );
   const allowAuthIndex = mainSource.indexOf(
-    "isExternalAuthProviderRoute(url) || isAuthOrCheckpointRoute(url)",
+    "if (isAuthOrCheckpointRoute(url))",
+    browserFallbackIndex,
   );
   assert(
     mainSource.includes("function openAuthWindow(") &&
       mainSource.includes("getWaitingForLoginPageURL()") &&
+      mainSource.includes("getExternalAuthProviderFallbackPageURL()") &&
       mainSource.includes("finishAuthFlowInTarget(") &&
+      mainSource.includes("openExternalAuthProviderBrowserFallback(") &&
+      mainSource.includes("external-provider-browser-opened") &&
+      mainSource.includes("external-provider-browser-resume-requested") &&
+      mainSource.includes("EXTERNAL_AUTH_PROVIDER_RESUME_MARKER") &&
       mainSource.includes("pushAuthFlowDebugEvent(") &&
       mainSource.includes("buildAuthFlowRouteDebug("),
-    "#54 main process should keep auth/checkpoint/provider verification in a dedicated auth window and return to Messenger after completion",
+    "#54 main process should keep Facebook auth in a dedicated auth window, use browser fallback for external providers, and return to Messenger after completion",
   );
   assert(
     mainSource.includes("searchKeys") &&
@@ -2261,9 +2271,15 @@ const runWindowOpenRoutingTests = () => {
   );
   assert(
     completionIndex >= 0 &&
+      browserFallbackIndex >= 0 &&
       allowAuthIndex >= 0 &&
       completionIndex < allowAuthIndex,
     "#54 auth window should treat Messenger landing as completion before allowing checkpoint/auth routes to continue",
+  );
+  assert(
+    completionIndex < browserFallbackIndex &&
+      browserFallbackIndex < allowAuthIndex,
+    "#54 auth window should hand external providers to the browser before allowing Facebook checkpoint routes to continue in-app",
   );
 };
 

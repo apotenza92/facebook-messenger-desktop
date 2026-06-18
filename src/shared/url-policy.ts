@@ -254,8 +254,8 @@ export function isFacebookBlobUrl(input: string): boolean {
 }
 
 export type WindowOpenAction =
-  | "allow-auth-child-window"
   | "allow-child-window"
+  | "open-auth-provider-browser"
   | "reroute-auth-flow"
   | "reroute-main-view"
   | "download-media"
@@ -351,7 +351,7 @@ export function decideWindowOpenActionForContext(
     context.facebookAuthFlowActive === true &&
     isExternalAuthProviderRoute(resolvedInput)
   ) {
-    return "allow-auth-child-window";
+    return "open-auth-provider-browser";
   }
 
   if (isMarketplaceMessagingRoute(resolvedInput)) {

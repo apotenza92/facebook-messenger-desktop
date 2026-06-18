@@ -216,8 +216,8 @@ function run(): void {
       "https://accounts.google.com/signin/v2/challenge/pwd",
       { facebookAuthFlowActive: true },
     ),
-    "allow-auth-child-window",
-    "Google account verification should stay in an app auth window during Facebook auth",
+    "open-auth-provider-browser",
+    "Google account verification should fall back to the system browser during Facebook auth",
   );
   assertEqual(
     decideWindowOpenActionForContext(

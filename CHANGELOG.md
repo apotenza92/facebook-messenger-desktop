@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.1-beta.28] - 2026-06-18
+
+### Fixed
+
+- **Issue #54 follow-up: use the system browser for Google verification** ([#54](https://github.com/apotenza92/facebook-messenger-desktop/issues/54))
+  - Keep Facebook login, checkpoint, two-factor, and remember-device steps in the app auth window so the final Facebook session can still land in Messenger Desktop.
+  - When Facebook sends the login flow to Google account verification, open that external-provider step in the system browser instead of Electron so Google does not reject the embedded app browser.
+  - Show a `Continue in Messenger` recovery screen after handing off to the browser; returning from that screen resumes the Facebook login flow inside the app.
+  - Add privacy-safer debug events for browser fallback start, browser open success/failure, user resume, and resumed auth completion/closure so future logs show exactly where the fallback stops.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+- `npm run test:release`
+
 ## [1.3.1-beta.27] - 2026-06-15
 
 ### Fixed
