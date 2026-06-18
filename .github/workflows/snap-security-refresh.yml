@@ -8,6 +8,8 @@ permissions:
   contents: read
 
 on:
+  schedule:
+    - cron: "30 */2 * * *" # Every 2 hours, offset from the normal Snap promotion check
   workflow_dispatch:
     inputs:
       expected_version:
@@ -15,12 +17,12 @@ on:
         required: false
         type: string
       minimum_amd64_revision:
-        description: "Wait until latest/edge amd64 is newer than this affected revision."
-        required: true
+        description: "Wait until latest/edge amd64 is newer than this affected revision. Leave empty to compare against latest/beta."
+        required: false
         type: string
       minimum_arm64_revision:
-        description: "Wait until latest/edge arm64 is newer than this affected revision."
-        required: true
+        description: "Wait until latest/edge arm64 is newer than this affected revision. Leave empty to compare against latest/beta."
+        required: false
         type: string
       wait_attempts:
         description: "Number of status polls while waiting for rebuilt edge revisions."
@@ -50,11 +52,12 @@ jobs:
       - name: Resolve and validate inputs
         id: inputs
         env:
-          EXPECTED_VERSION_INPUT: ${{ inputs.expected_version }}
-          MINIMUM_AMD64_REVISION_INPUT: ${{ inputs.minimum_amd64_revision }}
-          MINIMUM_ARM64_REVISION_INPUT: ${{ inputs.minimum_arm64_revision }}
-          WAIT_ATTEMPTS_INPUT: ${{ inputs.wait_attempts }}
-          WAIT_SECONDS_INPUT: ${{ inputs.wait_seconds }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_VERSION_INPUT: ${{ github.event.inputs.expected_version }}
+          MINIMUM_AMD64_REVISION_INPUT: ${{ github.event.inputs.minimum_amd64_revision }}
+          MINIMUM_ARM64_REVISION_INPUT: ${{ github.event.inputs.minimum_arm64_revision }}
+          WAIT_ATTEMPTS_INPUT: ${{ github.event.inputs.wait_attempts }}
+          WAIT_SECONDS_INPUT: ${{ github.event.inputs.wait_seconds }}
         run: |
           set -euo pipefail
 
@@ -69,7 +72,19 @@ jobs:
             expected_version="$package_version"
           fi
 
-          for value_name in minimum_amd64_revision minimum_arm64_revision wait_attempts wait_seconds; do
+          if [ -z "$wait_attempts" ]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              wait_attempts="48"
+            else
+              wait_attempts="1"
+            fi
+          fi
+
+          if [ -z "$wait_seconds" ]; then
+            wait_seconds="150"
+          fi
+
+          for value_name in wait_attempts wait_seconds; do
             value="${!value_name}"
             if ! [[ "$value" =~ ^[0-9]+$ ]]; then
               echo "Input $value_name must be a non-negative integer; got '$value'." >&2
@@ -96,10 +111,18 @@ jobs:
           } >>"$GITHUB_OUTPUT"
 
           echo "Refreshing Snap version $expected_version"
-          echo "Waiting for edge revisions newer than amd64 r$minimum_amd64_revision and arm64 r$minimum_arm64_revision"
-
-      - name: Install Snapcraft
-        run: sudo snap install snapcraft --classic
+          if [ -n "$minimum_amd64_revision" ] || [ -n "$minimum_arm64_revision" ]; then
+            for value_name in minimum_amd64_revision minimum_arm64_revision; do
+              value="${!value_name}"
+              if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+                echo "Input $value_name must be a non-negative integer when provided; got '$value'." >&2
+                exit 1
+              fi
+            done
+            echo "Waiting for edge revisions newer than amd64 r$minimum_amd64_revision and arm64 r$minimum_arm64_revision"
+          else
+            echo "No revision floor provided; automatic mode will compare latest/edge against latest/beta."
+          fi
 
       - name: Wait for rebuilt edge revisions
         id: edge
@@ -113,37 +136,91 @@ jobs:
           set -euo pipefail
 
           snap_info_url="https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}"
+          explicit_revision_floor=false
+
+          if [ -n "$MINIMUM_AMD64_REVISION" ] || [ -n "$MINIMUM_ARM64_REVISION" ]; then
+            explicit_revision_floor=true
+          fi
 
           for attempt in $(seq 1 "$WAIT_ATTEMPTS"); do
             info="$(curl -fsSL -H "Snap-Device-Series: 16" "$snap_info_url")"
 
-            edge_amd64_revision="$(jq -r '.["channel-map"][] | select(.channel.risk == "edge" and .channel.architecture == "amd64") | .revision' <<<"$info")"
-            edge_arm64_revision="$(jq -r '.["channel-map"][] | select(.channel.risk == "edge" and .channel.architecture == "arm64") | .revision' <<<"$info")"
-            edge_amd64_version="$(jq -r '.["channel-map"][] | select(.channel.risk == "edge" and .channel.architecture == "amd64") | .version' <<<"$info")"
-            edge_arm64_version="$(jq -r '.["channel-map"][] | select(.channel.risk == "edge" and .channel.architecture == "arm64") | .version' <<<"$info")"
+            edge_amd64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "edge" and .channel.architecture == "amd64") | .revision' <<<"$info")"
+            edge_arm64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "edge" and .channel.architecture == "arm64") | .revision' <<<"$info")"
+            edge_amd64_version="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "edge" and .channel.architecture == "amd64") | .version' <<<"$info")"
+            edge_arm64_version="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "edge" and .channel.architecture == "arm64") | .version' <<<"$info")"
+            beta_amd64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "amd64") | .revision' <<<"$info")"
+            beta_arm64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "arm64") | .revision' <<<"$info")"
+            beta_amd64_version="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "amd64") | .version' <<<"$info")"
+            beta_arm64_version="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "arm64") | .version' <<<"$info")"
+            minimum_amd64_revision="$MINIMUM_AMD64_REVISION"
+            minimum_arm64_revision="$MINIMUM_ARM64_REVISION"
 
             echo "Attempt ${attempt}/${WAIT_ATTEMPTS}: edge amd64=${edge_amd64_version} r${edge_amd64_revision}, arm64=${edge_arm64_version} r${edge_arm64_revision}"
+            echo "Attempt ${attempt}/${WAIT_ATTEMPTS}: beta amd64=${beta_amd64_version} r${beta_amd64_revision}, arm64=${beta_arm64_version} r${beta_arm64_revision}"
+
+            if [ "$explicit_revision_floor" = false ]; then
+              if [ "$beta_amd64_version" != "$EXPECTED_VERSION" ] || [ "$beta_arm64_version" != "$EXPECTED_VERSION" ]; then
+                echo "latest/beta is not $EXPECTED_VERSION for both architectures; normal Snap promotion should handle version promotion first."
+                {
+                  echo "refresh_needed=false"
+                  echo "skip_reason=beta-version-mismatch"
+                } >>"$GITHUB_OUTPUT"
+                exit 0
+              fi
+
+              minimum_amd64_revision="$beta_amd64_revision"
+              minimum_arm64_revision="$beta_arm64_revision"
+            fi
+
+            if ! [[ "$minimum_amd64_revision" =~ ^[0-9]+$ ]] || ! [[ "$minimum_arm64_revision" =~ ^[0-9]+$ ]]; then
+              echo "Cannot determine numeric revision floor for both architectures." >&2
+              if [ "$explicit_revision_floor" = true ]; then
+                exit 1
+              fi
+              {
+                echo "refresh_needed=false"
+                echo "skip_reason=missing-beta-revision"
+              } >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
 
             if [[ "$edge_amd64_revision" =~ ^[0-9]+$ ]] &&
               [[ "$edge_arm64_revision" =~ ^[0-9]+$ ]] &&
               [ "$edge_amd64_version" = "$EXPECTED_VERSION" ] &&
               [ "$edge_arm64_version" = "$EXPECTED_VERSION" ] &&
-              [ "$edge_amd64_revision" -gt "$MINIMUM_AMD64_REVISION" ] &&
-              [ "$edge_arm64_revision" -gt "$MINIMUM_ARM64_REVISION" ]; then
+              [ "$edge_amd64_revision" -gt "$minimum_amd64_revision" ] &&
+              [ "$edge_arm64_revision" -gt "$minimum_arm64_revision" ]; then
               {
+                echo "refresh_needed=true"
                 echo "amd64_revision=$edge_amd64_revision"
                 echo "arm64_revision=$edge_arm64_revision"
               } >>"$GITHUB_OUTPUT"
               exit 0
             fi
 
-            sleep "$WAIT_SECONDS"
+            if [ "$attempt" -lt "$WAIT_ATTEMPTS" ]; then
+              sleep "$WAIT_SECONDS"
+            fi
           done
 
-          echo "Timed out waiting for rebuilt edge revisions for $EXPECTED_VERSION." >&2
-          exit 1
+          if [ "$explicit_revision_floor" = true ]; then
+            echo "Timed out waiting for rebuilt edge revisions for $EXPECTED_VERSION." >&2
+            exit 1
+          fi
+
+          echo "No rebuilt latest/edge revisions are ready to refresh latest/beta."
+          {
+            echo "refresh_needed=false"
+            echo "skip_reason=edge-not-newer"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Install Snapcraft
+        if: steps.edge.outputs.refresh_needed == 'true'
+        run: sudo snap install snapcraft --classic
 
       - name: Release exact rebuilt revisions to beta
+        if: steps.edge.outputs.refresh_needed == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
           SNAPCRAFT_HAS_TTY: "true"
@@ -159,6 +236,7 @@ jobs:
           yes | snapcraft release "$SNAP_NAME" "$ARM64_REVISION" beta
 
       - name: Verify beta points at rebuilt revisions
+        if: steps.edge.outputs.refresh_needed == 'true'
         env:
           EXPECTED_VERSION: ${{ steps.inputs.outputs.expected_version }}
           AMD64_REVISION: ${{ steps.edge.outputs.amd64_revision }}
@@ -169,10 +247,10 @@ jobs:
           snap_info_url="https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}"
           info="$(curl -fsSL -H "Snap-Device-Series: 16" "$snap_info_url")"
 
-          beta_amd64_revision="$(jq -r '.["channel-map"][] | select(.channel.risk == "beta" and .channel.architecture == "amd64") | .revision' <<<"$info")"
-          beta_arm64_revision="$(jq -r '.["channel-map"][] | select(.channel.risk == "beta" and .channel.architecture == "arm64") | .revision' <<<"$info")"
-          beta_amd64_version="$(jq -r '.["channel-map"][] | select(.channel.risk == "beta" and .channel.architecture == "amd64") | .version' <<<"$info")"
-          beta_arm64_version="$(jq -r '.["channel-map"][] | select(.channel.risk == "beta" and .channel.architecture == "arm64") | .version' <<<"$info")"
+          beta_amd64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "amd64") | .revision' <<<"$info")"
+          beta_arm64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "arm64") | .revision' <<<"$info")"
+          beta_amd64_version="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "amd64") | .version' <<<"$info")"
+          beta_arm64_version="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "beta" and .channel.architecture == "arm64") | .version' <<<"$info")"
 
           echo "Beta amd64=${beta_amd64_version} r${beta_amd64_revision}"
           echo "Beta arm64=${beta_arm64_version} r${beta_arm64_revision}"
