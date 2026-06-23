@@ -390,6 +390,12 @@ async function main() {
         summary.states.targetThread.back,
         `${options.targetLabel} thread Back control`,
       );
+      summary.states.afterBack = await waitForState(
+        app,
+        options.targetLabel,
+        (state) => Boolean(state.targetSubview && state.back),
+        `return to ${options.targetLabel} list after thread Back`,
+      );
     } else {
       summary.states.targetThread = null;
       await clickPointIfPresent(
@@ -397,16 +403,16 @@ async function main() {
         summary.states.targetList.back,
         `${options.targetLabel} list Back control`,
       );
+      summary.states.afterBack = await waitForState(
+        app,
+        options.targetLabel,
+        (state) =>
+          !state.targetSubview &&
+          state.headerSuppressionActive &&
+          state.clickableLabels.some((label) => /^chats$/i.test(label)),
+        "return to normal Chats with Facebook top bar hidden after list Back",
+      );
     }
-    summary.states.afterBack = await waitForState(
-      app,
-      options.targetLabel,
-      (state) =>
-        !state.targetSubview &&
-        state.headerSuppressionActive &&
-        state.clickableLabels.some((label) => /^chats$/i.test(label)),
-      "return to normal Chats with Facebook top bar hidden after Back",
-    );
     summary.screenshots.afterBack = await screenshot(
       app,
       options.outputDir,

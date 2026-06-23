@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.1-beta.29] - 2026-06-23
+
+### Fixed
+
+- **Issue #54 follow-up: preserve the app auth transaction across Google browser verification** ([#54](https://github.com/apotenza92/facebook-messenger-desktop/issues/54))
+  - Keep the dedicated Facebook auth window alive when Google verification is handed to the system browser instead of closing the in-app transaction.
+  - Make `Continue in Messenger` resume the preserved auth window and last safe Facebook checkpoint/login route rather than starting a fresh generic login attempt.
+  - Add privacy-safer debug events for preserved auth URLs, fallback generations, resume attempts, reused auth windows, repeated provider fallback, and completion/closure outcomes.
+
+- **Issue #50 follow-up: keep Archived chats Back visible after opening an archived thread** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Carry a recent confirmed Archived chats subview state into the selected archived thread while Facebook's top-left Back control remains visible.
+  - Clear the carry-over state when the Back control disappears, the route exits the subview flow, or the short grace window expires, so ordinary chats and Message requests keep their existing behavior.
+  - Strengthen the Archived chats GUI regression to verify list -> thread -> Back returns to the Archived chats list.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:window-open`
+- `npm run test:notification`
+- `npm run test:release`
+- `npm run test:archived-back:gui`
+- `npm run test:requests-back:gui`
+
 ## [1.3.1-beta.28] - 2026-06-18
 
 ### Fixed

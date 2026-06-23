@@ -1,0 +1,28 @@
+{
+  "source": "sanitized-beta-28-debug-sequence",
+  "issue": 54,
+  "events": [
+    "auth-flow-open-requested",
+    "auth-flow-window-created",
+    "auth-flow-navigation-allowed-in-auth-window",
+    "auth-flow-external-provider-browser-fallback-started",
+    "auth-flow-external-provider-browser-fallback-shown",
+    "auth-flow-external-provider-browser-opened",
+    "auth-flow-external-provider-browser-resume-requested",
+    "auth-flow-open-requested",
+    "auth-flow-window-created",
+    "auth-flow-navigation-allowed-in-auth-window",
+    "auth-flow-external-provider-browser-fallback-started",
+    "auth-flow-external-provider-browser-fallback-shown",
+    "auth-flow-external-provider-browser-opened",
+    "auth-flow-external-provider-browser-resume-requested",
+    "auth-flow-open-requested",
+    "auth-flow-window-created",
+    "auth-flow-closed-before-completion"
+  ],
+  "expectedFixShape": {
+    "preserveAuthWindowAcrossProviderFallback": true,
+    "resumeReusesPreservedAuthWindow": true,
+    "doNotStartFreshLoginOnResumeMarker": true
+  }
+}

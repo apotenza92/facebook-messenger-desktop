@@ -65,6 +65,7 @@ import {
   isMessengerThreadSubviewBackHint,
   isOrdinaryThreadControlHint,
   resolveMessengerThreadSubviewKind,
+  shouldCarryMessengerThreadSubviewSession,
   type MessengerThreadSubviewHeaderBand,
   type MessengerThreadSubviewKind,
 } from "./thread-subview-policy";
@@ -721,6 +722,7 @@ ipcRenderer.on(
     kind: MessengerThreadSubviewKind;
     visualCropHeight: number;
     lastMatchedAt: number;
+    source: "fresh-header" | "route-carryover" | "dom-grace";
   };
   type MediaHeaderOverlayKind =
     | "menu"
@@ -2019,11 +2021,40 @@ ipcRenderer.on(
         kind: subviewKind,
         visualCropHeight: state.visualCropHeight,
         lastMatchedAt: now,
+        source: "fresh-header",
       };
       matchedSignals.add(
         freshSubviewPairMatched
           ? `header-back+${subviewKind}`
           : `header-title+${subviewKind}`,
+      );
+      return;
+    }
+
+    if (
+      messengerThreadSubviewVisualSession &&
+      shouldCarryMessengerThreadSubviewSession({
+        kind: messengerThreadSubviewVisualSession.kind,
+        previousRouteKey: messengerThreadSubviewVisualSession.routeKey,
+        currentRouteKey: routeKey,
+        lastMatchedAgeMs: now - messengerThreadSubviewVisualSession.lastMatchedAt,
+        candidateBackBand: backControlBand,
+      })
+    ) {
+      state.messengerThreadSubviewBackHeaderDetected = false;
+      state.messengerThreadSubviewVisible = true;
+      state.messengerThreadSubviewKind = messengerThreadSubviewVisualSession.kind;
+      state.visualCropHeight =
+        messengerThreadSubviewVisualSession.visualCropHeight;
+      messengerThreadSubviewVisualSession = {
+        routeKey,
+        kind: messengerThreadSubviewVisualSession.kind,
+        visualCropHeight: messengerThreadSubviewVisualSession.visualCropHeight,
+        lastMatchedAt: now,
+        source: "route-carryover",
+      };
+      matchedSignals.add(
+        `thread-subview-route-carryover:${messengerThreadSubviewVisualSession.kind}`,
       );
       return;
     }
@@ -2038,6 +2069,10 @@ ipcRenderer.on(
       state.messengerThreadSubviewKind = messengerThreadSubviewVisualSession.kind;
       state.visualCropHeight =
         messengerThreadSubviewVisualSession.visualCropHeight;
+      messengerThreadSubviewVisualSession = {
+        ...messengerThreadSubviewVisualSession,
+        source: "dom-grace",
+      };
       matchedSignals.add(
         `thread-subview-dom-grace:${messengerThreadSubviewVisualSession.kind}`,
       );
@@ -3739,6 +3774,14 @@ ipcRenderer.on(
     return null;
   };
 
+  const scheduleMessengerThreadSubviewBackRecovery = (): void => {
+    [0, 250, 1_000].forEach((delay) => {
+      window.setTimeout(() => {
+        scheduleViewportRecovery("messenger-thread-subview-back");
+      }, delay);
+    });
+  };
+
   const handleRendererInteractionEvent = (event: Event): void => {
     const label = extractInteractiveLabel(event.target);
     const subviewStateForInteraction = collectMarketplaceThreadDebugState();
@@ -3760,16 +3803,12 @@ ipcRenderer.on(
         event.stopImmediatePropagation();
         event.stopPropagation();
         backControl.click();
-        window.setTimeout(() => {
-          scheduleViewportRecovery("messenger-thread-subview-back");
-        }, 0);
+        scheduleMessengerThreadSubviewBackRecovery();
         return;
       }
 
       if (eventTargetIsBackControl && event.type === "click") {
-        window.setTimeout(() => {
-          scheduleViewportRecovery("messenger-thread-subview-back");
-        }, 0);
+        scheduleMessengerThreadSubviewBackRecovery();
       }
     }
     const emojiInteraction =
@@ -3783,9 +3822,7 @@ ipcRenderer.on(
       /\b(back|go back|back to previous page)\b/i.test(label) &&
       subviewStateForInteraction.messengerThreadSubviewVisible === true;
     if (backFromMessengerSubview && event.type === "click") {
-      window.setTimeout(() => {
-        scheduleViewportRecovery("messenger-thread-subview-back");
-      }, 0);
+      scheduleMessengerThreadSubviewBackRecovery();
     }
 
     let interactionKind: "call-mute-toggle" | null = null;

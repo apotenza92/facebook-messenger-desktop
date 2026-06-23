@@ -47,6 +47,7 @@ const {
   isOrdinaryThreadControlHint,
   resolveMessengerThreadSubviewHeaderKind,
   resolveMessengerThreadSubviewKind,
+  shouldCarryMessengerThreadSubviewSession,
 } = require(path.join(APP_ROOT, "src/preload/thread-subview-policy.ts"));
 const loadIncomingCallHintPolicy = () =>
   require(
@@ -653,6 +654,50 @@ const runMessengerThreadSubviewPolicyTests = () => {
     }),
     false,
     "#50 distant Back + Archived chats text should not match",
+  );
+  assertEqual(
+    shouldCarryMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      previousRouteKey: "/messages/",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 1_200,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+    }),
+    true,
+    "#50 archived chats should carry the back-safe subview crop into a selected archived thread",
+  );
+  assertEqual(
+    shouldCarryMessengerThreadSubviewSession({
+      kind: "message-requests",
+      previousRouteKey: "/messages/",
+      currentRouteKey: "/messages/t/request-thread",
+      lastMatchedAgeMs: 1_200,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+    }),
+    false,
+    "#50 message requests should not use the archived-only route carryover",
+  );
+  assertEqual(
+    shouldCarryMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      previousRouteKey: "/messages/",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 9_000,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+    }),
+    false,
+    "#50 archived chats route carryover should expire instead of becoming sticky",
+  );
+  assertEqual(
+    shouldCarryMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      previousRouteKey: "/messages/",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 1_200,
+      candidateBackBand: null,
+    }),
+    false,
+    "#50 archived chats route carryover should clear when the top-left Back control is gone",
   );
 };
 
@@ -2249,12 +2294,29 @@ const runWindowOpenRoutingTests = () => {
       mainSource.includes("getExternalAuthProviderFallbackPageURL()") &&
       mainSource.includes("finishAuthFlowInTarget(") &&
       mainSource.includes("openExternalAuthProviderBrowserFallback(") &&
+      mainSource.includes("resumeExternalAuthProviderFallback(") &&
+      mainSource.includes("activeExternalAuthProviderFallback") &&
+      mainSource.includes("facebook-auth-url-preserved") &&
       mainSource.includes("external-provider-browser-opened") &&
       mainSource.includes("external-provider-browser-resume-requested") &&
+      mainSource.includes(
+        "external-provider-browser-resume-reusing-auth-window",
+      ) &&
       mainSource.includes("EXTERNAL_AUTH_PROVIDER_RESUME_MARKER") &&
       mainSource.includes("pushAuthFlowDebugEvent(") &&
       mainSource.includes("buildAuthFlowRouteDebug("),
-    "#54 main process should keep Facebook auth in a dedicated auth window, use browser fallback for external providers, and return to Messenger after completion",
+    "#54 main process should keep Facebook auth in a dedicated auth window, preserve/reuse it across browser fallback, and return to Messenger after completion",
+  );
+  const fallbackFunctionBody =
+    mainSource.slice(
+      mainSource.indexOf("function openExternalAuthProviderBrowserFallback("),
+      mainSource.indexOf("function handleAuthWindowNavigation("),
+    ) || "";
+  assert(
+    fallbackFunctionBody.includes("authFlowAwaitingCompletion = true") &&
+      fallbackFunctionBody.includes("authWindow.blur()") &&
+      !fallbackFunctionBody.includes("authWindow.close()"),
+    "#54 external-provider browser fallback should preserve the auth window instead of closing the transaction",
   );
   assert(
     mainSource.includes("searchKeys") &&
@@ -2280,6 +2342,43 @@ const runWindowOpenRoutingTests = () => {
     completionIndex < browserFallbackIndex &&
       browserFallbackIndex < allowAuthIndex,
     "#54 auth window should hand external providers to the browser before allowing Facebook checkpoint routes to continue in-app",
+  );
+
+  const beta28LoopFixture = JSON.parse(
+    fs.readFileSync(
+      path.join(
+        APP_ROOT,
+        "scripts/fixtures/issue54-beta28-auth-loop-sequence.json",
+      ),
+      "utf8",
+    ),
+  );
+  const loopEvents = beta28LoopFixture.events;
+  assertEqual(
+    loopEvents.filter(
+      (event: string) =>
+        event === "auth-flow-external-provider-browser-fallback-started",
+    ).length,
+    2,
+    "#54 beta 28 fixture should capture repeated Google browser fallback attempts",
+  );
+  assertEqual(
+    loopEvents.filter(
+      (event: string) =>
+        event === "auth-flow-external-provider-browser-resume-requested",
+    ).length,
+    2,
+    "#54 beta 28 fixture should capture repeated app resume attempts",
+  );
+  assertEqual(
+    loopEvents.includes("auth-flow-closed-before-completion"),
+    true,
+    "#54 beta 28 fixture should capture the auth transaction closing before Messenger completion",
+  );
+  assertEqual(
+    beta28LoopFixture.expectedFixShape.resumeReusesPreservedAuthWindow,
+    true,
+    "#54 fixture should document that resume must reuse the preserved auth window",
   );
 };
 
