@@ -66,6 +66,7 @@ import {
   isOrdinaryThreadControlHint,
   resolveMessengerThreadSubviewKind,
   shouldCarryMessengerThreadSubviewSession,
+  shouldContinueMessengerThreadSubviewSession,
   type MessengerThreadSubviewHeaderBand,
   type MessengerThreadSubviewKind,
 } from "./thread-subview-policy";
@@ -722,7 +723,11 @@ ipcRenderer.on(
     kind: MessengerThreadSubviewKind;
     visualCropHeight: number;
     lastMatchedAt: number;
-    source: "fresh-header" | "route-carryover" | "dom-grace";
+    source:
+      | "fresh-header"
+      | "route-carryover"
+      | "header-continuation"
+      | "dom-grace";
   };
   type MediaHeaderOverlayKind =
     | "menu"
@@ -2055,6 +2060,33 @@ ipcRenderer.on(
       };
       matchedSignals.add(
         `thread-subview-route-carryover:${messengerThreadSubviewVisualSession.kind}`,
+      );
+      return;
+    }
+
+    if (
+      messengerThreadSubviewVisualSession &&
+      shouldContinueMessengerThreadSubviewSession({
+        kind: messengerThreadSubviewVisualSession.kind,
+        headerKind: subviewHeaderKind,
+        previousRouteKey: messengerThreadSubviewVisualSession.routeKey,
+        currentRouteKey: routeKey,
+        lastMatchedAgeMs: now - messengerThreadSubviewVisualSession.lastMatchedAt,
+        candidateBackBand: backControlBand,
+      })
+    ) {
+      state.messengerThreadSubviewBackHeaderDetected = false;
+      state.messengerThreadSubviewVisible = true;
+      state.messengerThreadSubviewKind = messengerThreadSubviewVisualSession.kind;
+      state.visualCropHeight =
+        messengerThreadSubviewVisualSession.visualCropHeight;
+      messengerThreadSubviewVisualSession = {
+        ...messengerThreadSubviewVisualSession,
+        lastMatchedAt: now,
+        source: "header-continuation",
+      };
+      matchedSignals.add(
+        `thread-subview-header-continuation:${messengerThreadSubviewVisualSession.kind}`,
       );
       return;
     }

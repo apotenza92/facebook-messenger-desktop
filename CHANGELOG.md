@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.1-beta.30] - 2026-06-30
+
+### Fixed
+
+- **Issue #50 follow-up: keep Archived chats Back visible after Facebook mixes subview and chat controls** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Continue a recent Archived chats visual session on the same route while the matching Archived chats header and top-left Back control remain visible.
+  - Prevent stale ordinary chat controls in Facebook's DOM from immediately re-enabling the thread/media crop over the Archived chats Back button.
+
+- **Issue #50 follow-up: shrink exported debug-log bundles** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Export only recent debug-log tails and cap embedded in-memory debug arrays so future bundles stay small enough to attach.
+  - Include the debug-log tail limits in the exported summary for easier troubleshooting.
+
+- **App icon: replace the connected-dot mark with a clean thunderbolt**
+  - Updated the stable and beta icon source SVGs and regenerated platform icon assets.
+
+### Validation
+
+- `npm run generate-icons -- --force`
+- `npm run test:issues`
+- `npm run build`
+
 ## [1.3.1-beta.29] - 2026-06-23
 
 ### Fixed

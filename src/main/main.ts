@@ -733,7 +733,10 @@ const MAX_MEDIA_OVERLAY_DEBUG_EVENTS = 3000;
 const MAX_INCOMING_CALL_DEBUG_EVENTS = 3000;
 const MAX_NOTIFICATION_DEBUG_EVENTS = 12000;
 const MAX_RELOAD_DEBUG_EVENTS = 6000;
-const DEBUG_LOG_SUMMARY_TAIL_LINES = 8000;
+const DEBUG_LOG_SUMMARY_TAIL_LINES = 250;
+const DEBUG_LOG_EXPORT_TAIL_LINES = 1500;
+const DEBUG_LOG_SUMMARY_IN_MEMORY_EVENTS = 500;
+const DEBUG_LOG_SUMMARY_NOTIFICATION_EVENTS = 1000;
 const mediaOverlayDebugEvents: MediaOverlayDebugEvent[] = [];
 const incomingCallDebugEvents: IncomingCallDebugEvent[] = [];
 const notificationDebugEvents: NotificationDebugEvent[] = [];
@@ -838,6 +841,14 @@ function readTailLinesFromFile(filePath: string, maxLines: number): string[] {
   } catch {
     return [];
   }
+}
+
+function tailDebugEvents<T>(events: T[], maxEvents: number): T[] {
+  if (events.length <= maxEvents) {
+    return events;
+  }
+
+  return events.slice(events.length - maxEvents);
 }
 
 type IncomingCallDebugEvent = {
@@ -1487,7 +1498,12 @@ function copyDebugLogFile(destinationPath: string, sourcePath: string): void {
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 
   if (fs.existsSync(sourcePath)) {
-    fs.copyFileSync(sourcePath, destinationPath);
+    const tailLines = readTailLinesFromFile(sourcePath, DEBUG_LOG_EXPORT_TAIL_LINES);
+    fs.writeFileSync(
+      destinationPath,
+      tailLines.length > 0 ? `${tailLines.join("\n")}\n` : "",
+      "utf8",
+    );
     return;
   }
 
@@ -1512,6 +1528,8 @@ function buildDebugLogsReport(): Record<string, unknown> {
       incomingCallEnabled: shouldWriteIncomingCallDebugLog(),
       notificationEnabled: shouldWriteNotificationDebugLog(),
       reloadEnabled: shouldWriteReloadDebugLog(),
+      exportTailLines: DEBUG_LOG_EXPORT_TAIL_LINES,
+      summaryTailLines: DEBUG_LOG_SUMMARY_TAIL_LINES,
     },
     paths: {
       userData: app.getPath("userData"),
@@ -1536,10 +1554,19 @@ function buildDebugLogsReport(): Record<string, unknown> {
         typeof mainWindow?.isFocused === "function" ? mainWindow.isFocused() : null,
     },
     inMemoryEvents: {
-      mediaOverlay: mediaOverlayDebugEvents,
-      incomingCall: incomingCallDebugEvents,
-      notification: notificationDebugEvents,
-      reload: reloadDebugEvents,
+      mediaOverlay: tailDebugEvents(
+        mediaOverlayDebugEvents,
+        DEBUG_LOG_SUMMARY_IN_MEMORY_EVENTS,
+      ),
+      incomingCall: tailDebugEvents(
+        incomingCallDebugEvents,
+        DEBUG_LOG_SUMMARY_IN_MEMORY_EVENTS,
+      ),
+      notification: tailDebugEvents(
+        notificationDebugEvents,
+        DEBUG_LOG_SUMMARY_NOTIFICATION_EVENTS,
+      ),
+      reload: tailDebugEvents(reloadDebugEvents, DEBUG_LOG_SUMMARY_IN_MEMORY_EVENTS),
     },
     logFiles: {
       mediaOverlay: buildDebugLogFileSummary(

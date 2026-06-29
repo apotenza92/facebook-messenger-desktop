@@ -48,6 +48,7 @@ const {
   resolveMessengerThreadSubviewHeaderKind,
   resolveMessengerThreadSubviewKind,
   shouldCarryMessengerThreadSubviewSession,
+  shouldContinueMessengerThreadSubviewSession,
 } = require(path.join(APP_ROOT, "src/preload/thread-subview-policy.ts"));
 const loadIncomingCallHintPolicy = () =>
   require(
@@ -698,6 +699,42 @@ const runMessengerThreadSubviewPolicyTests = () => {
     }),
     false,
     "#50 archived chats route carryover should clear when the top-left Back control is gone",
+  );
+  assertEqual(
+    shouldContinueMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      headerKind: "archived-chats",
+      previousRouteKey: "/messages/t/archived-thread",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 1_400,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+    }),
+    true,
+    "#50 archived chats should keep subview state while Back and header remain on the same route",
+  );
+  assertEqual(
+    shouldContinueMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      headerKind: "archived-chats",
+      previousRouteKey: "/messages/t/archived-thread",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 1_400,
+      candidateBackBand: null,
+    }),
+    false,
+    "#50 archived chats header continuation should clear when Back disappears",
+  );
+  assertEqual(
+    shouldContinueMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      headerKind: "message-requests",
+      previousRouteKey: "/messages/t/archived-thread",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 1_400,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+    }),
+    false,
+    "#50 archived chats header continuation should not bridge to another subview header",
   );
 };
 
@@ -4593,8 +4630,9 @@ const runNotificationPolicyTests = () => {
     "#49 notification debug retention should keep 12000 in-memory events",
   );
   assert(
-    mainSource.includes("const DEBUG_LOG_SUMMARY_TAIL_LINES = 8000;"),
-    "#49 debug summary export should keep the larger 8000-line tail",
+    mainSource.includes("const DEBUG_LOG_EXPORT_TAIL_LINES = 1500;") &&
+      mainSource.includes("const DEBUG_LOG_SUMMARY_TAIL_LINES = 250;"),
+    "#50 debug zip export should cap copied logs and summary tails",
   );
   assert(
     mainSource.includes("classifyGroupManagementNotification(payload)") &&

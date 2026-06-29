@@ -15,30 +15,12 @@
        d="m 1000.94,485.90553 c 0,278.68297 -218.33611,484.99554 -500.00001,484.99554 -50.58364,0 -99.1207,-6.66838 -144.74082,-19.2103 -8.86599,-2.45104 -18.28875,-1.75604 -26.70037,1.94548 l -99.24741,43.81288 c -25.95418,11.46807 -55.25663,-6.99732 -56.12697,-35.36414 l -2.72879,-88.95303 C 171.05517,862.18098 166.12877,851.925 157.95777,844.63842 60.667611,757.62959 0.940002,631.68181 0.940002,485.90553 0.940002,207.23536 219.27609,0.91 500.93999,0.91 782.60389,0.91 1000.94,207.23536 1000.94,485.90553 Z"
        fill="#ff6b00"
        id="path1" />
-    <!-- Network diagram - simplified with uniform outer nodes -->
-    <!-- Outer hexagon edges -->
-    <line x1="500" y1="130" x2="840" y2="295" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="840" y1="295" x2="840" y2="665" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="840" y1="665" x2="500" y2="830" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="500" y1="830" x2="160" y2="665" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="160" y1="665" x2="160" y2="295" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="160" y1="295" x2="500" y2="130" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <!-- Inner edges from center to all vertices -->
-    <line x1="500" y1="480" x2="500" y2="130" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="500" y1="480" x2="840" y2="295" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="500" y1="480" x2="840" y2="665" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="500" y1="480" x2="500" y2="830" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="500" y1="480" x2="160" y2="665" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <line x1="500" y1="480" x2="160" y2="295" stroke="#ffffff" stroke-width="15" stroke-linecap="round" />
-    <!-- Center node - much larger -->
-    <circle cx="500" cy="480" r="90" fill="#ffffff" />
-    <!-- Outer nodes - 65% the size of center -->
-    <circle cx="500" cy="130" r="58" fill="#ffffff" />
-    <circle cx="840" cy="295" r="58" fill="#ffffff" />
-    <circle cx="840" cy="665" r="58" fill="#ffffff" />
-    <circle cx="500" cy="830" r="58" fill="#ffffff" />
-    <circle cx="160" cy="665" r="58" fill="#ffffff" />
-    <circle cx="160" cy="295" r="58" fill="#ffffff" />
+    <!-- Symmetric constant-width thunderbolt mark -->
+    <path
+       d="M 70.00 470.00 L 270.99 189.55 L 500.00 470.00 L 729.01 189.55 L 930.00 470.00 L 788.99 -49.55 L 500.00 267.62 L 211.01 -49.55 Z"
+       fill="#ffffff"
+       transform="translate(70.00 284.61) scale(0.86)"
+       id="double-zig-bolt" />
   </g>
   <defs
      id="defs2" />
