@@ -49,31 +49,31 @@ jobs:
         if: steps.promote.outputs.promote_beta == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true"
         run: |
           echo "Promoting from edge to beta..."
-          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta
-          echo "✅ Promoted to beta"
+          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta --yes
+          scripts/verify-snap-channel-version.sh facebook-messenger-desktop beta "${{ steps.promote.outputs.edge_version }}"
+          echo "Promoted to beta"
 
       - name: Promote to stable from edge
         if: steps.promote.outputs.promote_stable == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true"
         run: |
           echo "Promoting from edge to stable..."
-          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable
-          echo "✅ Promoted to stable from edge"
+          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable --yes
+          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.edge_version }}"
+          echo "Promoted to stable from edge"
 
       - name: Promote to stable from beta
         if: steps.promote.outputs.promote_stable_from_beta == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true"
         run: |
           echo "Promoting ${{ steps.promote.outputs.beta_version }} from beta to stable..."
-          yes | snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable
-          echo "✅ Promoted to stable from beta"
+          snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable --yes
+          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.beta_version }}"
+          echo "Promoted to stable from beta"
 
       - name: Final status
         env:
@@ -168,31 +168,31 @@ jobs:
         if: steps.promote.outputs.promote_beta == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true"
         run: |
           echo "Promoting from edge to beta..."
-          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta
-          echo "✅ Promoted to beta"
+          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta --yes
+          scripts/verify-snap-channel-version.sh facebook-messenger-desktop beta "${{ steps.promote.outputs.edge_version }}"
+          echo "Promoted to beta"
 
       - name: Promote to stable from edge
         if: steps.promote.outputs.promote_stable == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true"
         run: |
           echo "Promoting from edge to stable..."
-          yes | snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable
-          echo "✅ Promoted to stable from edge"
+          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable --yes
+          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.edge_version }}"
+          echo "Promoted to stable from edge"
 
       - name: Promote to stable from beta
         if: steps.promote.outputs.promote_stable_from_beta == 'true'
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-          SNAPCRAFT_HAS_TTY: "true"
         run: |
           echo "Promoting ${{ steps.promote.outputs.beta_version }} from beta to stable..."
-          yes | snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable
-          echo "✅ Promoted to stable from beta"
+          snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable --yes
+          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.beta_version }}"
+          echo "Promoted to stable from beta"
 
       - name: Final status
         env:

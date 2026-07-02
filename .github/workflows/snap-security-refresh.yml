@@ -142,8 +142,53 @@ jobs:
             explicit_revision_floor=true
           fi
 
+          fetch_snap_info() {
+            local body_file status fetch_attempt sleep_seconds
+            body_file="$(mktemp)"
+
+            for fetch_attempt in 1 2 3 4; do
+              status="$(curl -sS -L -H "Snap-Device-Series: 16" -o "$body_file" -w "%{http_code}" "$snap_info_url" || true)"
+
+              if [ "$status" = "200" ]; then
+                cat "$body_file"
+                rm -f "$body_file"
+                return 0
+              fi
+
+              if [ "$status" = "429" ]; then
+                sleep_seconds=$((fetch_attempt * 20))
+                echo "Snapcraft info API returned HTTP 429 on fetch attempt ${fetch_attempt}/4; retrying in ${sleep_seconds}s." >&2
+                sleep "$sleep_seconds"
+                continue
+              fi
+
+              echo "Snapcraft info API returned HTTP $status." >&2
+              cat "$body_file" >&2 || true
+              rm -f "$body_file"
+              return 1
+            done
+
+            rm -f "$body_file"
+            return 75
+          }
+
           for attempt in $(seq 1 "$WAIT_ATTEMPTS"); do
-            info="$(curl -fsSL -H "Snap-Device-Series: 16" "$snap_info_url")"
+            fetch_status=0
+            info="$(fetch_snap_info)" || fetch_status=$?
+
+            if [ "$fetch_status" -ne 0 ]; then
+              if [ "$explicit_revision_floor" = false ]; then
+                echo "Snapcraft info API is temporarily unavailable; skipping scheduled refresh instead of failing."
+                {
+                  echo "refresh_needed=false"
+                  echo "skip_reason=snapcraft-info-unavailable"
+                } >>"$GITHUB_OUTPUT"
+                exit 0
+              fi
+
+              echo "Snapcraft info API is unavailable while an explicit revision floor is being waited on." >&2
+              exit "$fetch_status"
+            fi
 
             edge_amd64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "edge" and .channel.architecture == "amd64") | .revision' <<<"$info")"
             edge_arm64_revision="$(jq -r '.["channel-map"][] | select(.channel.track == "latest" and .channel.risk == "edge" and .channel.architecture == "arm64") | .revision' <<<"$info")"
