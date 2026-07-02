@@ -197,13 +197,21 @@ export function shouldAcceptMessengerThreadSubviewHeaderPair(input: {
   }
 
   return (
-    candidateBackBand.top <= 180 &&
-    candidateBackBand.left <= 140 &&
-    candidateBackBand.right <= 220 &&
-    candidateBackBand.bottom <= 240 &&
+    isMessengerThreadSubviewTopLeftBackAnchor(candidateBackBand) &&
     candidateHeaderBand.top <= 180 &&
     candidateHeaderBand.left <= 260
   );
+}
+
+function isMessengerThreadSubviewTopLeftBackAnchor(
+  band: MessengerThreadSubviewHeaderBand,
+): boolean {
+  const candidateBackBand = normalizeBand(band);
+  if (!candidateBackBand) {
+    return false;
+  }
+
+  return candidateBackBand.top <= 180 && candidateBackBand.left <= 140;
 }
 
 export function shouldCarryMessengerThreadSubviewSession(input: {
@@ -233,12 +241,7 @@ export function shouldCarryMessengerThreadSubviewSession(input: {
     return false;
   }
 
-  return (
-    candidateBackBand.top <= 180 &&
-    candidateBackBand.left <= 140 &&
-    candidateBackBand.right <= 220 &&
-    candidateBackBand.bottom <= 240
-  );
+  return isMessengerThreadSubviewTopLeftBackAnchor(candidateBackBand);
 }
 
 export function shouldContinueMessengerThreadSubviewSession(input: {
@@ -270,12 +273,7 @@ export function shouldContinueMessengerThreadSubviewSession(input: {
     return false;
   }
 
-  return (
-    candidateBackBand.top <= 180 &&
-    candidateBackBand.left <= 140 &&
-    candidateBackBand.right <= 220 &&
-    candidateBackBand.bottom <= 240
-  );
+  return isMessengerThreadSubviewTopLeftBackAnchor(candidateBackBand);
 }
 
 export function resolveMessengerThreadSubviewKind(input: {

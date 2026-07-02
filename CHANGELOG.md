@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.33] - 2026-07-02
+
+### Fixed
+
+- **Issue #50 follow-up: keep Archived chats Back visible when Facebook expands the Back hit area after load** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Accept the beta 32 loaded Archived chats layout where the visible top-left Back control is reported as a large left-pane hit region instead of a compact button rectangle.
+  - Keep the relaxed oversized Back acceptance Archived-specific and anchored to the top-left Back/header evidence so Message requests, ordinary chats, and Marketplace behavior remain on their existing paths.
+  - Add deterministic coverage for the exact beta 32 log shape that previously rejected the visible `Back + Archived chats` pair as `relaxed-band-rejected`.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:archived-back:gui` with a 180-second dwell, 36 checks at 5-second intervals, and Back/header suppression stable throughout.
+- `npm run test:requests-back:gui`
+
 ## [1.3.1-beta.32] - 2026-07-02
 
 ### Fixed

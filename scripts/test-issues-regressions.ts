@@ -681,11 +681,32 @@ const runMessengerThreadSubviewPolicyTests = () => {
     shouldAcceptMessengerThreadSubviewHeaderPair({
       freshPairMatched: false,
       headerKind: "archived-chats",
+      candidateBackBand: { top: 56, bottom: 870, left: 0, right: 360 },
+      candidateHeaderBand: { top: 76, bottom: 93, left: 24, right: 192 },
+    }),
+    true,
+    "#50 beta 32 loaded Archived chats Back hit region should survive when it expands to the left pane",
+  );
+  assertEqual(
+    shouldAcceptMessengerThreadSubviewHeaderPair({
+      freshPairMatched: false,
+      headerKind: "archived-chats",
       candidateBackBand: { top: 220, bottom: 252, left: 16, right: 48 },
       candidateHeaderBand: { top: 76, bottom: 94, left: 56, right: 224 },
     }),
     false,
     "#50 relaxed Archived chats acceptance should still reject Back outside the top-left band",
+  );
+  assertEqual(
+    shouldCarryMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      previousRouteKey: "/messages/",
+      currentRouteKey: "/messages/t/archived-thread",
+      lastMatchedAgeMs: 1_200,
+      candidateBackBand: { top: 56, bottom: 870, left: 0, right: 360 },
+    }),
+    true,
+    "#50 archived chats should carry through an oversized top-left Back hit region",
   );
   assertEqual(
     shouldCarryMessengerThreadSubviewSession({
