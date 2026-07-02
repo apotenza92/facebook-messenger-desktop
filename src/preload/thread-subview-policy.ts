@@ -218,14 +218,15 @@ export function shouldContinueMessengerThreadSubviewSession(input: {
   currentRouteKey?: string | null;
   lastMatchedAgeMs?: number | null;
   candidateBackBand?: MessengerThreadSubviewHeaderBand | null;
+  ordinaryThreadControlDetected?: boolean | null;
 }): boolean {
-  if (!input.kind || input.kind !== input.headerKind) {
+  if (input.kind !== "archived-chats" || input.headerKind !== "archived-chats") {
     return false;
   }
 
   const previousRouteKey = normalizeHint(input.previousRouteKey);
   const currentRouteKey = normalizeHint(input.currentRouteKey);
-  if (!previousRouteKey || !currentRouteKey || previousRouteKey !== currentRouteKey) {
+  if (!previousRouteKey || !currentRouteKey) {
     return false;
   }
 

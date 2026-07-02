@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.31] - 2026-07-02
+
+### Fixed
+
+- **Issue #50 follow-up: keep Archived chats Back stable after delayed Facebook rerenders** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Continue the Archived chats subview session while the matching Archived chats header and top-left Back control remain visible, even after Facebook adds ordinary chat controls to the same thread DOM.
+  - Keep the stricter behavior for other Messenger subviews and ordinary chats so the fix does not broaden Marketplace or generic thread-crop handling.
+  - Add a debug breadcrumb for the recovered `Back + Archived chats + ordinary controls` continuation path.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:archived-back:gui` with a 180-second dwell, 36 checks at 5-second intervals, and Back/header suppression stable throughout.
+- `npm run test:requests-back:gui`
+
 ## [1.3.1-beta.30] - 2026-06-30
 
 ### Fixed

@@ -716,6 +716,19 @@ const runMessengerThreadSubviewPolicyTests = () => {
     shouldContinueMessengerThreadSubviewSession({
       kind: "archived-chats",
       headerKind: "archived-chats",
+      previousRouteKey: "/messages/e2ee/t/archived-thread?initial=1",
+      currentRouteKey: "/messages/e2ee/t/archived-thread",
+      lastMatchedAgeMs: 2_200,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+      ordinaryThreadControlDetected: true,
+    }),
+    true,
+    "#50 beta 30 Archived chats Back + header should survive ordinary controls and route-key churn",
+  );
+  assertEqual(
+    shouldContinueMessengerThreadSubviewSession({
+      kind: "archived-chats",
+      headerKind: "archived-chats",
       previousRouteKey: "/messages/t/archived-thread",
       currentRouteKey: "/messages/t/archived-thread",
       lastMatchedAgeMs: 1_400,
@@ -735,6 +748,19 @@ const runMessengerThreadSubviewPolicyTests = () => {
     }),
     false,
     "#50 archived chats header continuation should not bridge to another subview header",
+  );
+  assertEqual(
+    shouldContinueMessengerThreadSubviewSession({
+      kind: "message-requests",
+      headerKind: "message-requests",
+      previousRouteKey: "/messages/t/request-thread",
+      currentRouteKey: "/messages/t/request-thread",
+      lastMatchedAgeMs: 1_400,
+      candidateBackBand: { top: 76, bottom: 112, left: 16, right: 52 },
+      ordinaryThreadControlDetected: true,
+    }),
+    false,
+    "#50 Message requests should not inherit the Archived chats sticky continuation",
   );
 };
 

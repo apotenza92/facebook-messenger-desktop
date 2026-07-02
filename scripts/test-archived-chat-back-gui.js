@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DWELL_ASSERT_INTERVAL_MS = 5_000;
 
 function ts() {
   const d = new Date();
@@ -11,6 +12,10 @@ function ts() {
 }
 
 function parseArgs(argv) {
+  const targetLabel = String(process.env.MESSENGER_SUBVIEW_LABEL || "Archived chats")
+    .replace(/\s+/g, " ")
+    .trim();
+  const defaultSettleMs = /\barchived chats?\b/i.test(targetLabel) ? 180_000 : 0;
   const options = {
     appRoot: process.env.MESSENGER_APP_ROOT
       ? path.resolve(process.env.MESSENGER_APP_ROOT)
@@ -24,10 +29,13 @@ function parseArgs(argv) {
       "playwright",
       `messenger-subview-back-${ts()}`,
     ),
-    targetLabel: String(process.env.MESSENGER_SUBVIEW_LABEL || "Archived chats")
-      .replace(/\s+/g, " ")
-      .trim(),
+    targetLabel,
     homeAfterSubview: false,
+    settleMs: parseNonNegativeInteger(
+      process.env.MESSENGER_SUBVIEW_SETTLE_MS,
+      defaultSettleMs,
+      "MESSENGER_SUBVIEW_SETTLE_MS",
+    ),
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -45,11 +53,19 @@ function parseArgs(argv) {
     } else if (arg === "--target-label") {
       options.targetLabel = String(next || "").replace(/\s+/g, " ").trim();
       i += 1;
+      if (!process.env.MESSENGER_SUBVIEW_SETTLE_MS) {
+        options.settleMs = /\barchived chats?\b/i.test(options.targetLabel)
+          ? 180_000
+          : 0;
+      }
+    } else if (arg === "--settle-ms") {
+      options.settleMs = parseNonNegativeInteger(next, options.settleMs, arg);
+      i += 1;
     } else if (arg === "--home-after-subview") {
       options.homeAfterSubview = true;
     } else if (arg === "--help" || arg === "-h") {
       console.log(
-        `Usage: node scripts/test-archived-chat-back-gui.js [options]\n\nOptions:\n  --target-label <text>    Three-dots menu subview label to open (default: Archived chats)\n  --home-after-subview     Click Facebook Home from the opened subview and expect Chats to return\n  --output-dir <dir>       Directory for summary.json and screenshots\n  --app-root <dir>         Alternate app root containing dist/main/main.js\n  --executable-path <path> Launch a packaged app binary instead of dist/main/main.js\n`,
+        `Usage: node scripts/test-archived-chat-back-gui.js [options]\n\nOptions:\n  --target-label <text>    Three-dots menu subview label to open (default: Archived chats)\n  --settle-ms <ms>         Dwell before clicking Back (default: 180000 for Archived chats, 0 otherwise)\n  --home-after-subview     Click Facebook Home from the opened subview and expect Chats to return\n  --output-dir <dir>       Directory for summary.json and screenshots\n  --app-root <dir>         Alternate app root containing dist/main/main.js\n  --executable-path <path> Launch a packaged app binary instead of dist/main/main.js\n`,
       );
       process.exit(0);
     } else {
@@ -58,6 +74,19 @@ function parseArgs(argv) {
   }
 
   return options;
+}
+
+function parseNonNegativeInteger(value, fallback, label) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return fallback;
+  }
+
+  const parsed = Number(String(value).trim());
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative number of milliseconds`);
+  }
+
+  return Math.round(parsed);
 }
 
 async function withPrimaryWebContents(app, fn, payload) {
@@ -204,6 +233,7 @@ async function evaluatePageState(app, targetLabel = "Archived chats") {
           return {
             url: location.href,
             title: document.title,
+            isTargetThread: /^\\/messages\\/(?:e2ee\\/)?t\\//i.test(location.pathname) && Boolean(targetSubview && back),
             bodyTextSample: document.body ? document.body.textContent.replace(/\\s+/g, ' ').trim().slice(0, 400) : '',
             rootClasses: document.documentElement.className,
             headerSuppressionActive: document.documentElement.classList.contains('md-fb-messages-viewport-fix'),
@@ -251,6 +281,97 @@ async function waitForState(
   }
   throw new Error(
     `Timed out waiting for ${description}. Last state: ${JSON.stringify(latest, null, 2)}`,
+  );
+}
+
+async function dwellOnSubviewThread(app, options, summary) {
+  if (options.settleMs <= 0) {
+    summary.dwell = {
+      settleMs: options.settleMs,
+      assertionIntervalMs: DWELL_ASSERT_INTERVAL_MS,
+      skipped: true,
+    };
+    return;
+  }
+
+  const startedAt = Date.now();
+  const deadline = startedAt + options.settleMs;
+  const middleAt = startedAt + Math.floor(options.settleMs / 2);
+  let capturedMiddle = false;
+  let latest = null;
+
+  summary.dwell = {
+    settleMs: options.settleMs,
+    assertionIntervalMs: DWELL_ASSERT_INTERVAL_MS,
+    skipped: false,
+    checks: [],
+  };
+
+  latest = await evaluatePageState(app, options.targetLabel);
+  summary.states.targetThreadDwellStart = latest;
+  summary.screenshots.targetThreadDwellStart = await screenshot(
+    app,
+    options.outputDir,
+    "05a-target-thread-dwell-start",
+  );
+
+  while (Date.now() < deadline) {
+    latest = await evaluatePageState(app, options.targetLabel);
+    const elapsedMs = Date.now() - startedAt;
+    const backVisible = Boolean(latest.back);
+    const targetSubviewVisible = Boolean(latest.targetSubview);
+    const headerSuppressionInactive = latest.headerSuppressionActive === false;
+    summary.dwell.checks.push({
+      elapsedMs,
+      backVisible,
+      targetSubviewVisible,
+      headerSuppressionInactive,
+      url: latest.url,
+    });
+
+    if (!backVisible || !targetSubviewVisible || !headerSuppressionInactive) {
+      summary.states.targetThreadDwellFailure = latest;
+      summary.screenshots.targetThreadDwellFailure = await screenshot(
+        app,
+        options.outputDir,
+        "05x-target-thread-dwell-failure",
+      );
+      throw new Error(
+        `${options.targetLabel} Back did not survive the ${options.settleMs}ms dwell. Latest state: ${JSON.stringify(latest, null, 2)}`,
+      );
+    }
+
+    if (!capturedMiddle && Date.now() >= middleAt) {
+      capturedMiddle = true;
+      summary.states.targetThreadDwellMiddle = latest;
+      summary.screenshots.targetThreadDwellMiddle = await screenshot(
+        app,
+        options.outputDir,
+        "05b-target-thread-dwell-middle",
+      );
+    }
+
+    await wait(Math.min(DWELL_ASSERT_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+  }
+
+  latest = await evaluatePageState(app, options.targetLabel);
+  if (!latest.back || !latest.targetSubview || latest.headerSuppressionActive) {
+    summary.states.targetThreadDwellEnd = latest;
+    summary.screenshots.targetThreadDwellEnd = await screenshot(
+      app,
+      options.outputDir,
+      "05c-target-thread-dwell-end",
+    );
+    throw new Error(
+      `${options.targetLabel} Back was not stable at dwell end. Latest state: ${JSON.stringify(latest, null, 2)}`,
+    );
+  }
+
+  summary.states.targetThreadDwellEnd = latest;
+  summary.screenshots.targetThreadDwellEnd = await screenshot(
+    app,
+    options.outputDir,
+    "05c-target-thread-dwell-end",
   );
 }
 
@@ -384,6 +505,7 @@ async function main() {
         options.outputDir,
         "05-target-thread",
       );
+      await dwellOnSubviewThread(app, options, summary);
 
       await clickPointIfPresent(
         app,
@@ -395,6 +517,24 @@ async function main() {
         options.targetLabel,
         (state) => Boolean(state.targetSubview && state.back),
         `return to ${options.targetLabel} list after thread Back`,
+      );
+    } else if (summary.states.targetList.isTargetThread) {
+      summary.states.targetThread = summary.states.targetList;
+      await dwellOnSubviewThread(app, options, summary);
+      await clickPointIfPresent(
+        app,
+        summary.states.targetThread.back,
+        `${options.targetLabel} thread Back control`,
+      );
+      summary.states.afterBack = await waitForState(
+        app,
+        options.targetLabel,
+        (state) =>
+          Boolean(state.targetSubview && state.back) ||
+          (!state.targetSubview &&
+            state.headerSuppressionActive &&
+            state.clickableLabels.some((label) => /^chats$/i.test(label))),
+        `return from preselected ${options.targetLabel} thread after Back`,
       );
     } else {
       summary.states.targetThread = null;

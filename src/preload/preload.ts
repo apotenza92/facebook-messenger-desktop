@@ -727,6 +727,7 @@ ipcRenderer.on(
       | "fresh-header"
       | "route-carryover"
       | "header-continuation"
+      | "header-continuation-with-ordinary"
       | "dom-grace";
   };
   type MediaHeaderOverlayKind =
@@ -1991,6 +1992,7 @@ ipcRenderer.on(
         isOrdinaryThreadControlHint(hint)
       ) {
         ordinaryThreadControlDetected = true;
+        matchedSignals.add("header-ordinary-chat-control");
       }
     }
 
@@ -2073,20 +2075,27 @@ ipcRenderer.on(
         currentRouteKey: routeKey,
         lastMatchedAgeMs: now - messengerThreadSubviewVisualSession.lastMatchedAt,
         candidateBackBand: backControlBand,
+        ordinaryThreadControlDetected,
       })
     ) {
       state.messengerThreadSubviewBackHeaderDetected = false;
       state.messengerThreadSubviewVisible = true;
       state.messengerThreadSubviewKind = messengerThreadSubviewVisualSession.kind;
+      state.headerOrdinaryChatDetected = ordinaryThreadControlDetected;
       state.visualCropHeight =
         messengerThreadSubviewVisualSession.visualCropHeight;
       messengerThreadSubviewVisualSession = {
         ...messengerThreadSubviewVisualSession,
+        routeKey,
         lastMatchedAt: now,
-        source: "header-continuation",
+        source: ordinaryThreadControlDetected
+          ? "header-continuation-with-ordinary"
+          : "header-continuation",
       };
       matchedSignals.add(
-        `thread-subview-header-continuation:${messengerThreadSubviewVisualSession.kind}`,
+        ordinaryThreadControlDetected
+          ? `thread-subview-header-continuation-with-ordinary:${messengerThreadSubviewVisualSession.kind}`
+          : `thread-subview-header-continuation:${messengerThreadSubviewVisualSession.kind}`,
       );
       return;
     }
