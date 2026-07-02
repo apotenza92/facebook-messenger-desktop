@@ -47,6 +47,7 @@ const {
   isOrdinaryThreadControlHint,
   resolveMessengerThreadSubviewHeaderKind,
   resolveMessengerThreadSubviewKind,
+  shouldAcceptMessengerThreadSubviewHeaderPair,
   shouldCarryMessengerThreadSubviewSession,
   shouldContinueMessengerThreadSubviewSession,
 } = require(path.join(APP_ROOT, "src/preload/thread-subview-policy.ts"));
@@ -655,6 +656,36 @@ const runMessengerThreadSubviewPolicyTests = () => {
     }),
     false,
     "#50 distant Back + Archived chats text should not match",
+  );
+  assertEqual(
+    shouldAcceptMessengerThreadSubviewHeaderPair({
+      freshPairMatched: false,
+      headerKind: "archived-chats",
+      candidateBackBand: { top: 68, bottom: 100, left: 16, right: 48 },
+      candidateHeaderBand: { top: 76, bottom: 94, left: 56, right: 224 },
+    }),
+    true,
+    "#50 beta 31 Archived chats Back + header should survive ordinary controls even when strict geometry fails",
+  );
+  assertEqual(
+    shouldAcceptMessengerThreadSubviewHeaderPair({
+      freshPairMatched: false,
+      headerKind: "message-requests",
+      candidateBackBand: { top: 68, bottom: 100, left: 16, right: 48 },
+      candidateHeaderBand: { top: 76, bottom: 94, left: 56, right: 224 },
+    }),
+    false,
+    "#50 relaxed Back + header acceptance should stay Archived-only",
+  );
+  assertEqual(
+    shouldAcceptMessengerThreadSubviewHeaderPair({
+      freshPairMatched: false,
+      headerKind: "archived-chats",
+      candidateBackBand: { top: 220, bottom: 252, left: 16, right: 48 },
+      candidateHeaderBand: { top: 76, bottom: 94, left: 56, right: 224 },
+    }),
+    false,
+    "#50 relaxed Archived chats acceptance should still reject Back outside the top-left band",
   );
   assertEqual(
     shouldCarryMessengerThreadSubviewSession({

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.1-beta.32] - 2026-07-02
+
+### Fixed
+
+- **Issue #50 follow-up: accept the loaded Archived chats Back/header layout** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50))
+  - Keep Archived chats classified as a Messenger subview when the visible top-left Back control and Archived chats header remain present after the thread finishes loading, even if the stricter adjacent-geometry check no longer matches.
+  - Keep the relaxed acceptance Archived-specific so Message requests, ordinary chats, and Marketplace/thread crop handling stay on their stricter paths.
+  - Add explicit debug fields for the Back/header bands, strict geometry result, accepted/rejected decision, and rejection reason so future bundles show why a subview header pair was accepted or rejected.
+
+### Validation
+
+- `npm run build`
+- `npm run test:issues`
+- `npm run test:archived-back:gui` with a 180-second dwell, 36 checks at 5-second intervals, and Back/header suppression stable throughout.
+- `npm run test:requests-back:gui`
+
 ## [1.3.1-beta.31] - 2026-07-02
 
 ### Fixed

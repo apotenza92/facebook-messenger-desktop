@@ -176,6 +176,36 @@ export function doesMessengerThreadSubviewFreshHeaderPairMatch(input: {
   return verticalOverlap && anchoredNearHeaderLeft && headerInTopLeftBand;
 }
 
+export function shouldAcceptMessengerThreadSubviewHeaderPair(input: {
+  freshPairMatched?: boolean | null;
+  headerKind?: MessengerThreadSubviewKind | null;
+  candidateHeaderBand?: MessengerThreadSubviewHeaderBand | null;
+  candidateBackBand?: MessengerThreadSubviewHeaderBand | null;
+}): boolean {
+  if (input.freshPairMatched === true) {
+    return true;
+  }
+
+  if (input.headerKind !== "archived-chats") {
+    return false;
+  }
+
+  const candidateHeaderBand = normalizeBand(input.candidateHeaderBand);
+  const candidateBackBand = normalizeBand(input.candidateBackBand);
+  if (!candidateHeaderBand || !candidateBackBand) {
+    return false;
+  }
+
+  return (
+    candidateBackBand.top <= 180 &&
+    candidateBackBand.left <= 140 &&
+    candidateBackBand.right <= 220 &&
+    candidateBackBand.bottom <= 240 &&
+    candidateHeaderBand.top <= 180 &&
+    candidateHeaderBand.left <= 260
+  );
+}
+
 export function shouldCarryMessengerThreadSubviewSession(input: {
   kind?: MessengerThreadSubviewKind | null;
   previousRouteKey?: string | null;

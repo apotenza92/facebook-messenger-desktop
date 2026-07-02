@@ -65,6 +65,7 @@ import {
   isMessengerThreadSubviewBackHint,
   isOrdinaryThreadControlHint,
   resolveMessengerThreadSubviewKind,
+  shouldAcceptMessengerThreadSubviewHeaderPair,
   shouldCarryMessengerThreadSubviewSession,
   shouldContinueMessengerThreadSubviewSession,
   type MessengerThreadSubviewHeaderBand,
@@ -658,6 +659,11 @@ ipcRenderer.on(
     messengerThreadSubviewKind: MessengerThreadSubviewKind | null;
     messengerThreadSubviewHeaderDetected: boolean;
     messengerThreadSubviewBackHeaderDetected: boolean;
+    messengerThreadSubviewBackBand: MessengerThreadSubviewHeaderBand | null;
+    messengerThreadSubviewHeaderBand: MessengerThreadSubviewHeaderBand | null;
+    messengerThreadSubviewHeaderPairStrictMatched: boolean;
+    messengerThreadSubviewHeaderPairAccepted: boolean;
+    messengerThreadSubviewHeaderPairRejectionReason: string | null;
     rightPaneMarketplaceSignalDetected: boolean;
     rightPaneItemLinkDetected: boolean;
     headerMarketplaceDetected: boolean;
@@ -1709,6 +1715,11 @@ ipcRenderer.on(
       messengerThreadSubviewKind: null,
       messengerThreadSubviewHeaderDetected: false,
       messengerThreadSubviewBackHeaderDetected: false,
+      messengerThreadSubviewBackBand: null,
+      messengerThreadSubviewHeaderBand: null,
+      messengerThreadSubviewHeaderPairStrictMatched: false,
+      messengerThreadSubviewHeaderPairAccepted: false,
+      messengerThreadSubviewHeaderPairRejectionReason: null,
       rightPaneMarketplaceSignalDetected: false,
       rightPaneItemLinkDetected: false,
       headerMarketplaceDetected: false,
@@ -2003,8 +2014,48 @@ ipcRenderer.on(
         candidateHeaderBand: subviewHeaderBand,
         candidateBackBand: backControlBand,
       });
+    const acceptedSubviewHeaderPair =
+      shouldAcceptMessengerThreadSubviewHeaderPair({
+        freshPairMatched: freshSubviewPairMatched,
+        headerKind: subviewHeaderKind,
+        candidateHeaderBand: subviewHeaderBand,
+        candidateBackBand: backControlBand,
+      });
+    const subviewHeaderPairDetected =
+      backControlBand !== null &&
+      subviewHeaderBand !== null &&
+      subviewHeaderKind !== null;
+    state.messengerThreadSubviewBackBand = backControlBand;
+    state.messengerThreadSubviewHeaderBand = subviewHeaderBand;
+    state.messengerThreadSubviewHeaderPairStrictMatched =
+      freshSubviewPairMatched;
+    state.messengerThreadSubviewHeaderPairAccepted =
+      acceptedSubviewHeaderPair;
+    if (subviewHeaderPairDetected && !freshSubviewPairMatched) {
+      matchedSignals.add(
+        "thread-subview-header-pair-strict-geometry-rejected",
+      );
+    }
+    if (subviewHeaderPairDetected && !acceptedSubviewHeaderPair) {
+      state.messengerThreadSubviewHeaderPairRejectionReason =
+        subviewHeaderKind === "archived-chats"
+          ? "relaxed-band-rejected"
+          : "relaxed-acceptance-unsupported-kind";
+      matchedSignals.add(
+        `thread-subview-header-pair-rejected:${state.messengerThreadSubviewHeaderPairRejectionReason}`,
+      );
+    }
+    if (
+      subviewHeaderPairDetected &&
+      !freshSubviewPairMatched &&
+      acceptedSubviewHeaderPair
+    ) {
+      matchedSignals.add(
+        `thread-subview-header-pair-relaxed-accepted:${subviewHeaderKind}`,
+      );
+    }
     const subviewKind = resolveMessengerThreadSubviewKind({
-      headerBackDetected: freshSubviewPairMatched,
+      headerBackDetected: acceptedSubviewHeaderPair,
       headerKind: subviewHeaderKind,
       ordinaryThreadControlDetected,
     });
@@ -2033,6 +2084,8 @@ ipcRenderer.on(
       matchedSignals.add(
         freshSubviewPairMatched
           ? `header-back+${subviewKind}`
+          : subviewKind === "archived-chats"
+            ? `header-back+${subviewKind}-relaxed`
           : `header-title+${subviewKind}`,
       );
       return;
