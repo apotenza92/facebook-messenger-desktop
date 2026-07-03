@@ -107,6 +107,7 @@ async function compileNotificationHelper(context) {
   const helperAppPath = path.join(resourcesPath, 'NotificationHelper.app');
   const helperContentsPath = path.join(helperAppPath, 'Contents');
   const helperMacOSPath = path.join(helperContentsPath, 'MacOS');
+  const helperResourcesPath = path.join(helperContentsPath, 'Resources');
   const outputBinary = path.join(helperMacOSPath, 'NotificationHelper');
   
   // Check if source exists
@@ -132,6 +133,14 @@ async function compileNotificationHelper(context) {
   try {
     // Create the app bundle structure
     fs.mkdirSync(helperMacOSPath, { recursive: true });
+    fs.mkdirSync(helperResourcesPath, { recursive: true });
+
+    const appIconPath = path.join(resourcesPath, 'icon.icns');
+    if (fs.existsSync(appIconPath)) {
+      fs.copyFileSync(appIconPath, path.join(helperResourcesPath, 'icon.icns'));
+    } else {
+      console.warn('⚠ App icon not found for notification helper:', appIconPath);
+    }
     
     // Create Info.plist for the mini app bundle
     // This is required for UNUserNotificationCenter to work
@@ -150,6 +159,8 @@ async function compileNotificationHelper(context) {
     <string>${helperBundleId}</string>
     <key>CFBundleName</key>
     <string>NotificationHelper</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

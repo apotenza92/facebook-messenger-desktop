@@ -542,6 +542,9 @@ function ensureNotificationHandler(): {
   notificationHandler = new NotificationHandler(
     () => mainWindow,
     APP_DISPLAY_NAME,
+    undefined,
+    undefined,
+    process.platform === "darwin" ? getNotificationIconPath : undefined,
   );
   return {
     handler: notificationHandler,
@@ -8074,6 +8077,41 @@ function getIconPath(): string | undefined {
   return undefined;
 }
 
+function getNotificationIconPath(): string | undefined {
+  if (process.platform === "darwin") {
+    const packagedIconPath = path.join(process.resourcesPath, "icon.icns");
+    if (fs.existsSync(packagedIconPath)) {
+      return packagedIconPath;
+    }
+  }
+
+  const appPath = app.getAppPath();
+  const subdir = getIconSubdir();
+  const possiblePaths: string[] = [];
+
+  if (subdir) {
+    possiblePaths.push(
+      path.join(appPath, "assets/icons", subdir, "icon-128.png"),
+      path.join(__dirname, "../../assets/icons", subdir, "icon-128.png"),
+      path.join(process.cwd(), "assets/icons", subdir, "icon-128.png"),
+    );
+  }
+
+  possiblePaths.push(
+    path.join(appPath, "assets/icons/icon-128.png"),
+    path.join(__dirname, "../../assets/icons/icon-128.png"),
+    path.join(process.cwd(), "assets/icons/icon-128.png"),
+  );
+
+  for (const iconPath of possiblePaths) {
+    if (fs.existsSync(iconPath)) {
+      return iconPath;
+    }
+  }
+
+  return getIconPath();
+}
+
 function getWindowIcon(): Electron.NativeImage | undefined {
   // For Windows taskbar, ICO files work better as they contain multiple sizes
   // For Linux, PNG is the standard format
@@ -13787,6 +13825,9 @@ app.whenReady().then(async () => {
   notificationHandler = new NotificationHandler(
     () => mainWindow,
     APP_DISPLAY_NAME,
+    undefined,
+    undefined,
+    process.platform === "darwin" ? getNotificationIconPath : undefined,
   );
   badgeManager = new BadgeManager();
   badgeManager.setWindowGetter(() => mainWindow);

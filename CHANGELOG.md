@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.1-beta.34] - 2026-07-03
+
+### Fixed
+
+- **macOS notification banners: use the updated app icon**
+  - Prefer the packaged app icon for macOS native notifications instead of renderer-provided notification artwork, so notification banners pick up the regenerated stable/beta icon after an app update.
+  - Package the same `icon.icns` inside the bundled macOS notification helper app and declare it in the helper `Info.plist`.
+
+- **App icon: soften the thunderbolt corners**
+  - Rounded the bolt mark's corners slightly while preserving the same symmetric shape and stable/beta colors.
+  - Regenerated stable, beta, dark-mode, tray, ICO, ICNS, Linux, and DMG icon assets.
+
+### Validation
+
+- `npm run generate-icons -- --force`
+- `npm run test:issues`
+- `npm run build`
+- unsigned macOS arm64 app directory build with matching app/helper `icon.icns` hashes
+
 ## [1.3.1-beta.33] - 2026-07-02
 
 ### Fixed

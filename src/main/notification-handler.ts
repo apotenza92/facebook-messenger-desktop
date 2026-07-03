@@ -63,6 +63,8 @@ export type NotificationSoundDecisionResolver = (
   data: NotificationData,
 ) => NotificationSoundDecision | null | undefined;
 
+export type NotificationIconPathResolver = () => string | null | undefined;
+
 function normalizeNotificationBodyText(value: string): string {
   const body = String(value || "").replace(/\s+/g, " ").trim();
   if (!body) return "";
@@ -209,6 +211,7 @@ export class NotificationHandler {
   private appDisplayName: string;
   private createNotification: (options: Electron.NotificationConstructorOptions) => Notification;
   private resolveSoundDecision?: NotificationSoundDecisionResolver;
+  private resolveDefaultIconPath?: NotificationIconPathResolver;
   private recordTestNotification(normalizedData: NotificationData): void {
     const enabled =
       process.env.MESSENGER_TEST_CAPTURE_NOTIFICATIONS === '1' ||
@@ -242,11 +245,13 @@ export class NotificationHandler {
     createNotification: (options: Electron.NotificationConstructorOptions) => Notification = (options) =>
       new Notification(options),
     resolveSoundDecision?: NotificationSoundDecisionResolver,
+    resolveDefaultIconPath?: NotificationIconPathResolver,
   ) {
     this.getMainWindow = getMainWindow;
     this.appDisplayName = appDisplayName;
     this.createNotification = createNotification;
     this.resolveSoundDecision = resolveSoundDecision;
+    this.resolveDefaultIconPath = resolveDefaultIconPath;
   }
 
   showNotification(data: NotificationData): boolean {
@@ -297,7 +302,16 @@ export class NotificationHandler {
         : {}),
     };
 
-    if (data.icon) {
+    const defaultIconPath = this.resolveDefaultIconPath?.();
+    if (defaultIconPath) {
+      try {
+        notificationOptions.icon = nativeImage.createFromPath(defaultIconPath);
+      } catch (_e) {
+        // Fall through to a renderer-provided icon if the packaged icon cannot load.
+      }
+    }
+
+    if (!notificationOptions.icon && data.icon) {
       try {
         notificationOptions.icon = nativeImage.createFromDataURL(data.icon);
       } catch (_e) {

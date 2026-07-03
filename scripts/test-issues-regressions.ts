@@ -4717,6 +4717,34 @@ const runNotificationPolicyTests = () => {
       mainSource.includes("main-process-group-management-activity"),
     "#50 main-process display boundary should keep suppressing shared group-management classifications",
   );
+  assert(
+    mainSource.includes("getNotificationIconPath") &&
+      mainSource.includes('path.join(process.resourcesPath, "icon.icns")') &&
+      mainSource.includes('process.platform === "darwin" ? getNotificationIconPath : undefined'),
+    "#50 macOS notifications should resolve the packaged app icon instead of relying on renderer-provided icons",
+  );
+
+  const afterPackSource = fs.readFileSync(
+    path.join(APP_ROOT, "scripts/after-pack.js"),
+    "utf8",
+  );
+  assert(
+    afterPackSource.includes("CFBundleIconFile") &&
+      afterPackSource.includes("fs.copyFileSync(appIconPath") &&
+      afterPackSource.includes("NotificationHelper.app"),
+    "#50 macOS notification helper should package the app icon for notification-system surfaces",
+  );
+
+  const notificationHandlerSource = fs.readFileSync(
+    path.join(APP_ROOT, "src/main/notification-handler.ts"),
+    "utf8",
+  );
+  assert(
+    notificationHandlerSource.includes("resolveDefaultIconPath") &&
+      notificationHandlerSource.includes("nativeImage.createFromPath(defaultIconPath)") &&
+      notificationHandlerSource.includes("if (!notificationOptions.icon && data.icon)"),
+    "#50 notification handler should prefer the configured app icon before renderer-provided icons",
+  );
 
   const globalSocialSuppressed =
     notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
