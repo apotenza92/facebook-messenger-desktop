@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.1-beta.35] - 2026-07-03
+
+### Fixed
+
+- **App icon: refine the thunderbolt mark**
+  - Narrowed the bolt shape while keeping it perfectly symmetric.
+  - Rounded and thickened the two outer lower bolt corners for a softer, cleaner mark.
+  - Regenerated stable, beta, dark-mode, tray, ICO, ICNS, Linux, and DMG icon assets.
+
+- **Icon consistency: respect explicit icon preferences**
+  - Keep macOS notifications aligned with the active channel/theme icon preference instead of always falling back to the native bundle icon.
+  - Use the same preference-aware icon lookup for the custom update dialog so system, stable, beta, light, and dark icon choices stay consistent across app surfaces.
+
+### Validation
+
+- `npm run generate-icons -- --force`
+- `npm run test:issues`
+- `npm run build`
+- `npm run test:release`
+
 ## [1.3.1-beta.34] - 2026-07-03
 
 ### Fixed

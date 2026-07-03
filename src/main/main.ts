@@ -8077,30 +8077,23 @@ function getIconPath(): string | undefined {
   return undefined;
 }
 
-function getNotificationIconPath(): string | undefined {
-  if (process.platform === "darwin") {
-    const packagedIconPath = path.join(process.resourcesPath, "icon.icns");
-    if (fs.existsSync(packagedIconPath)) {
-      return packagedIconPath;
-    }
-  }
-
+function getIconAssetPath(iconFile: string): string | undefined {
   const appPath = app.getAppPath();
   const subdir = getIconSubdir();
   const possiblePaths: string[] = [];
 
   if (subdir) {
     possiblePaths.push(
-      path.join(appPath, "assets/icons", subdir, "icon-128.png"),
-      path.join(__dirname, "../../assets/icons", subdir, "icon-128.png"),
-      path.join(process.cwd(), "assets/icons", subdir, "icon-128.png"),
+      path.join(appPath, "assets/icons", subdir, iconFile),
+      path.join(__dirname, "../../assets/icons", subdir, iconFile),
+      path.join(process.cwd(), "assets/icons", subdir, iconFile),
     );
   }
 
   possiblePaths.push(
-    path.join(appPath, "assets/icons/icon-128.png"),
-    path.join(__dirname, "../../assets/icons/icon-128.png"),
-    path.join(process.cwd(), "assets/icons/icon-128.png"),
+    path.join(appPath, "assets/icons", iconFile),
+    path.join(__dirname, "../../assets/icons", iconFile),
+    path.join(process.cwd(), "assets/icons", iconFile),
   );
 
   for (const iconPath of possiblePaths) {
@@ -8110,6 +8103,25 @@ function getNotificationIconPath(): string | undefined {
   }
 
   return getIconPath();
+}
+
+function shouldUseNativeMacBundleIcon(): boolean {
+  return (
+    process.platform === "darwin" &&
+    currentIconTheme === "system" &&
+    currentIconVariant === "match"
+  );
+}
+
+function getNotificationIconPath(): string | undefined {
+  if (shouldUseNativeMacBundleIcon()) {
+    const packagedIconPath = path.join(process.resourcesPath, "icon.icns");
+    if (fs.existsSync(packagedIconPath)) {
+      return packagedIconPath;
+    }
+  }
+
+  return getIconAssetPath("icon-128.png");
 }
 
 function getWindowIcon(): Electron.NativeImage | undefined {
@@ -12888,8 +12900,10 @@ async function showCustomUpdateDialog(
   const parentWindow = mainWindow;
   const isDark = nativeTheme.shouldUseDarkColors;
 
-  // Get app icon as base64
-  const iconPath = path.join(__dirname, "../../assets/icons/icon-128.png");
+  // Get preference-aware app icon as base64
+  const iconPath =
+    getIconAssetPath("icon-128.png") ||
+    path.join(__dirname, "../../assets/icons/icon-128.png");
   let iconBase64 = "";
   try {
     const iconBuffer = fs.readFileSync(iconPath);

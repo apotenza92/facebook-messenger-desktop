@@ -4719,9 +4719,12 @@ const runNotificationPolicyTests = () => {
   );
   assert(
     mainSource.includes("getNotificationIconPath") &&
+      mainSource.includes("shouldUseNativeMacBundleIcon") &&
+      mainSource.includes('return getIconAssetPath("icon-128.png");') &&
+      mainSource.includes("getIconAssetPath(\"icon-128.png\") ||") &&
       mainSource.includes('path.join(process.resourcesPath, "icon.icns")') &&
       mainSource.includes('process.platform === "darwin" ? getNotificationIconPath : undefined'),
-    "#50 macOS notifications should resolve the packaged app icon instead of relying on renderer-provided icons",
+    "#50 macOS notifications and update dialogs should resolve channel/theme-aware app icons instead of relying on renderer-provided or hard-coded icons",
   );
 
   const afterPackSource = fs.readFileSync(
