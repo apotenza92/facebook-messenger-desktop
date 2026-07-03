@@ -55,7 +55,7 @@ parts:
       - curl
       - unzip
     stage-packages:
-      - libasound2
+      - libasound2t64
       - libatk-bridge2.0-0
       - libatk1.0-0
       - libcairo2
@@ -64,6 +64,7 @@ parts:
       - libdrm2
       - libexpat1
       - libgbm1
+      - libgl1
       - libglib2.0-0
       - libgtk-3-0
       - libnspr4
@@ -77,6 +78,7 @@ parts:
       - libxfixes3
       - libxkbcommon0
       - libxrandr2
+      - liboss4-salsa2
     override-build: |
       set -e
       
@@ -134,6 +136,11 @@ parts:
       for lib_dir in "$SNAP/usr/lib/"* "$SNAP/lib/"* "$SNAP/usr/lib" "$SNAP/lib"; do
         if [ -d "$lib_dir" ]; then
           export LD_LIBRARY_PATH="$lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        fi
+      done
+      for oss_lib_dir in "$SNAP/usr/lib/"*/oss4-libsalsa; do
+        if [ -d "$oss_lib_dir" ]; then
+          export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$oss_lib_dir"
         fi
       done
       exec ./electron/electron --no-sandbox dist/main/main.js "$@"

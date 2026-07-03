@@ -155,7 +155,14 @@ function run(): void {
         ...listFiles(projectRoot, (name) => name.endsWith('.snap')),
       ];
 
-  assert(appImages.length > 0, 'No AppImage artifacts found to inspect');
+  if (explicitArtifacts.length > 0) {
+    assert(
+      appImages.length > 0 || snaps.length > 0,
+      'No Linux artifacts found to inspect',
+    );
+  } else {
+    assert(appImages.length > 0, 'No AppImage artifacts found to inspect');
+  }
 
   for (const appImage of appImages) {
     assertAppImage(appImage);

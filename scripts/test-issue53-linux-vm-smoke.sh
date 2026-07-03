@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fail_patterns='FATAL:sandbox|Cannot find module|App threw an error during load'
+fail_patterns='FATAL:sandbox|Cannot find module|App threw an error during load|SingletonLock|Lock acquired: false|Another instance is already running|Messenger-Dev'
 log_dir="${ISSUE53_SMOKE_LOG_DIR:-/tmp}"
 
 usage() {
@@ -24,17 +24,32 @@ assert_no_issue53_crash() {
   fi
 }
 
+assert_expected_launch_markers() {
+  local log_file="$1"
+
+  grep -Fq "[App] Starting" "$log_file" || {
+    echo "Launch did not reach the app entrypoint" >&2
+    exit 1
+  }
+
+  grep -Fq "[SingleInstance] Lock acquired: true" "$log_file" || {
+    echo "Launch did not acquire the single-instance lock" >&2
+    exit 1
+  }
+}
+
 run_with_timeout() {
   local log_file="$1"
   shift
 
   set +e
-  timeout 20s xvfb-run -a "$@" >"$log_file" 2>&1
+  timeout "${ISSUE53_SMOKE_TIMEOUT:-60s}" xvfb-run -a "$@" >"$log_file" 2>&1
   local code=$?
   set -e
 
   cat "$log_file"
   assert_no_issue53_crash "$log_file"
+  assert_expected_launch_markers "$log_file"
 
   if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
     if grep -Fq "[App] App fully ready" "$log_file"; then
@@ -49,12 +64,24 @@ run_with_timeout() {
 
 appimage_smoke() {
   local appimage="$1"
+  local absolute_appimage
   local log_name
+  local extract_parent
+  local extract_dir
+
+  absolute_appimage="$(realpath "$appimage")"
   log_name="$(basename "$appimage" | tr -c '[:alnum:]._-' '_')"
+  extract_parent="$(mktemp -d)"
 
   mkdir -p "$log_dir"
   chmod +x "$appimage"
-  run_with_timeout "$log_dir/issue53-appimage-${log_name}.log" "$appimage"
+  (
+    cd "$extract_parent"
+    "$absolute_appimage" --appimage-extract >/dev/null
+  )
+  extract_dir="$extract_parent/squashfs-root"
+  test -x "$extract_dir/AppRun"
+  run_with_timeout "$log_dir/issue53-appimage-${log_name}.log" env APPDIR="$extract_dir" "$extract_dir/AppRun"
   echo "AppImage smoke passed: $appimage"
 }
 
@@ -98,7 +125,12 @@ build_snap() {
 
   mkdir -p "$output_dir"
   cd "$work_dir"
-  snapcraft --destructive-mode --build-for "$(detect_snap_build_for)"
+  if [ "$(id -u)" -eq 0 ]; then
+    snapcraft pack --destructive-mode --build-for "$(detect_snap_build_for)"
+  else
+    sudo --preserve-env=SNAP_BUILD_FOR,FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 \
+      snapcraft pack --destructive-mode --build-for "$(detect_snap_build_for)"
+  fi
   cp ./*.snap "$output_dir"/
   ls -lh "$output_dir"/*.snap
 }

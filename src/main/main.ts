@@ -112,62 +112,12 @@ if (
   process.exit(0);
 }
 
-// On Linux: Apply XWayland preference if set (for screen sharing compatibility)
-// This must happen before the app is ready
-// Skip in Flatpak - the launcher script handles ozone platform via command line flag
-if (
-  process.platform === "linux" &&
-  !process.env.MESSENGER_XWAYLAND_CHECKED &&
-  !process.env.FLATPAK_ID
-) {
-  // Mark that we've checked to prevent infinite restart loop
-  process.env.MESSENGER_XWAYLAND_CHECKED = "1";
-
-  try {
-    // Check if user prefers XWayland mode
-    const userDataPath = app.getPath("userData");
-    const xwaylandPrefFile = path.join(
-      userDataPath,
-      "xwayland-preference.json",
-    );
-
-    if (fs.existsSync(xwaylandPrefFile)) {
-      const data = JSON.parse(fs.readFileSync(xwaylandPrefFile, "utf8"));
-      const shouldUseXWayland = data.useXWayland === true;
-      const currentlyUsingXWayland =
-        process.env.ELECTRON_OZONE_PLATFORM_HINT === "x11";
-
-      // Restart if preference doesn't match current mode
-      if (shouldUseXWayland && !currentlyUsingXWayland) {
-        console.log("[XWayland] User prefers XWayland mode, restarting...");
-        const child = spawn(process.execPath, process.argv.slice(1), {
-          detached: true,
-          stdio: "ignore",
-          env: {
-            ...process.env,
-            ELECTRON_OZONE_PLATFORM_HINT: "x11",
-            MESSENGER_XWAYLAND_CHECKED: "1",
-          },
-        });
-        child.unref();
-        process.exit(0);
-      }
-    }
-  } catch (e) {
-    // Ignore errors, just continue with default mode
-    console.log(
-      "[XWayland] Error checking preference, continuing with default:",
-      e,
-    );
-  }
-}
-
 const resetFlag =
   process.argv.includes("--reset-window") || process.argv.includes("--reset"); // legacy
-// Flatpak runs electron with path to main.js, so app.isPackaged is false
-// But FLATPAK_ID being set means we're in a production Flatpak environment
+// Flatpak and Snap run electron with path to main.js, so app.isPackaged is false.
+// Their sandbox environment still means production runtime, not dev mode.
 const isDev =
-  (!app.isPackaged && !process.env.FLATPAK_ID) ||
+  (!app.isPackaged && !process.env.FLATPAK_ID && !process.env.SNAP) ||
   process.env.NODE_ENV === "development";
 
 const isBrokenPipeError = (error: unknown): boolean => {
@@ -2383,9 +2333,61 @@ if (process.platform === "win32") {
   app.setAppUserModelId(appModelId);
 }
 
-const userDataPath = path.join(app.getPath("appData"), APP_DIR_NAME);
+const appDataRoot =
+  process.env.SNAP_USER_COMMON ||
+  process.env.SNAP_USER_DATA ||
+  app.getPath("appData");
+const userDataPath = path.join(appDataRoot, APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
+fs.mkdirSync(app.getPath("userData"), { recursive: true });
+fs.mkdirSync(app.getPath("logs"), { recursive: true });
+
+// On Linux: Apply XWayland preference if set (for screen sharing compatibility).
+// This must happen before the app is ready. Skip in Flatpak because its launcher
+// handles ozone platform via command line flag.
+if (
+  process.platform === "linux" &&
+  !process.env.MESSENGER_XWAYLAND_CHECKED &&
+  !process.env.FLATPAK_ID
+) {
+  process.env.MESSENGER_XWAYLAND_CHECKED = "1";
+
+  try {
+    const xwaylandPrefFile = path.join(
+      app.getPath("userData"),
+      "xwayland-preference.json",
+    );
+
+    if (fs.existsSync(xwaylandPrefFile)) {
+      const data = JSON.parse(fs.readFileSync(xwaylandPrefFile, "utf8"));
+      const shouldUseXWayland = data.useXWayland === true;
+      const currentlyUsingXWayland =
+        process.env.ELECTRON_OZONE_PLATFORM_HINT === "x11";
+
+      if (shouldUseXWayland && !currentlyUsingXWayland) {
+        console.log("[XWayland] User prefers XWayland mode, restarting...");
+        const child = spawn(process.execPath, process.argv.slice(1), {
+          detached: true,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            ELECTRON_OZONE_PLATFORM_HINT: "x11",
+            MESSENGER_XWAYLAND_CHECKED: "1",
+          },
+        });
+        child.unref();
+        process.exit(0);
+      }
+    }
+  } catch (e) {
+    console.log(
+      "[XWayland] Error checking preference, continuing with default:",
+      e,
+    );
+  }
+}
+
 maybeResetMediaOverlayDebugLogOnStart();
 maybeResetIncomingCallDebugLogOnStart();
 maybeResetNotificationDebugLogOnStart();
