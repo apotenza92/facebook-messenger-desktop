@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.1-beta.36] - 2026-07-05
+
+### Fixed
+
+- **Issue #53 follow-up: fix Linux Snap and AppImage startup regressions** ([#53](https://github.com/apotenza92/facebook-messenger-desktop/issues/53))
+  - Treat Snap and Flatpak raw-Electron launches as production runtime instead of dev mode, so Snap no longer falls back to the `Messenger-Dev` profile or fails to create the single-instance lock path.
+  - Create the Linux user-data and log directories before acquiring the single-instance lock.
+  - Prefer writable Snap user-data locations before falling back to the desktop app data path.
+  - Stage the Noble ALSA, OpenGL, and OSS ALSA compatibility libraries needed by the core24 Snap runtime, and keep the normal library paths ahead of the OSS compatibility path.
+  - Harden the Linux runtime smoke tests so they fail on the reported `SingletonLock`, false single-instance lock, `Messenger-Dev`, missing module, and sandbox startup errors.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:linux-sandbox`
+- `RUNTIME_SNAP_DISPLAY=real-x11 npm run test:linux-runtime:vm -- snap-installed` against an installed ARM64 Snap in a live Ubuntu desktop session without Xvfb.
+- GitHub Actions `Issue 53 Linux x64 Smoke` run with both x64 Snap and x64 AppImage launch smoke passing: https://github.com/apotenza92/facebook-messenger-desktop/actions/runs/28747589351
+
 ## [1.3.1-beta.35] - 2026-07-03
 
 ### Fixed
