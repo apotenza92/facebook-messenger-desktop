@@ -302,16 +302,20 @@ export class NotificationHandler {
         : {}),
     };
 
-    const defaultIconPath = this.resolveDefaultIconPath?.();
-    if (defaultIconPath) {
+    const applyDefaultIcon = (): void => {
+      const defaultIconPath = this.resolveDefaultIconPath?.();
+      if (!defaultIconPath) return;
+
       try {
         notificationOptions.icon = nativeImage.createFromPath(defaultIconPath);
       } catch (_e) {
         // Fall through to a renderer-provided icon if the packaged icon cannot load.
       }
-    }
+    };
 
-    if (!notificationOptions.icon && data.icon) {
+    const applyRendererIcon = (): void => {
+      if (!data.icon) return;
+
       try {
         notificationOptions.icon = nativeImage.createFromDataURL(data.icon);
       } catch (_e) {
@@ -321,6 +325,21 @@ export class NotificationHandler {
         } catch (_e2) {
           // Ignore icon errors
         }
+      }
+    };
+
+    const shouldPreferRendererIcon =
+      normalizedData.sourceKind === "messenger-message";
+
+    if (shouldPreferRendererIcon) {
+      applyRendererIcon();
+      if (!notificationOptions.icon) {
+        applyDefaultIcon();
+      }
+    } else {
+      applyDefaultIcon();
+      if (!notificationOptions.icon) {
+        applyRendererIcon();
       }
     }
 

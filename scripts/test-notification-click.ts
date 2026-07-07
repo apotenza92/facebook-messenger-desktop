@@ -10,13 +10,18 @@ const assert = (condition: boolean, message: string) => {
 
 const createMockElectron = () => {
   const notificationHandlers: { click?: () => void; action?: () => void; close?: () => void } = {};
+  const createdNotifications: MockNotification[] = [];
 
   class MockNotification {
+    options: any;
+
     static isSupported() {
       return true;
     }
 
-    constructor(_options: any) {
+    constructor(options: any) {
+      this.options = options;
+      createdNotifications.push(this);
       return this;
     }
 
@@ -78,9 +83,10 @@ const createMockElectron = () => {
   return {
     Notification: MockNotification,
     BrowserWindow: MockBrowserWindow,
+    createdNotifications,
     nativeImage: {
-      createFromDataURL: (_data: string) => ({}) as any,
-      createFromPath: (_path: string) => ({}) as any,
+      createFromDataURL: (data: string) => ({ source: 'renderer', data }) as any,
+      createFromPath: (path: string) => ({ source: 'default', path }) as any,
     },
   };
 };
@@ -143,6 +149,60 @@ const runTest = () => {
 
   assert(executedOn.includes('content'), 'Expected navigation to run in content webContents');
   assert(!executedOn.includes('main'), 'Did not expect navigation to run in main webContents');
+
+  const defaultIconPath = '/tmp/messenger-app-icon.png';
+  const avatarIcon = 'data:image/png;base64,avatar';
+  const iconHandler = new NotificationHandler(
+    () => null,
+    'Messenger-Test',
+    undefined,
+    undefined,
+    () => defaultIconPath,
+  );
+
+  iconHandler.showNotification({
+    title: 'Account A',
+    body: 'New message',
+    icon: avatarIcon,
+    href: TARGET_PATH,
+    sourceKind: 'messenger-message',
+    sourceLabel: 'notification-icon-test',
+    provenanceReason: 'test-thread-proof',
+  });
+  const messengerIcon = mockElectron.createdNotifications.at(-1)?.options.icon;
+  assert(
+    messengerIcon?.source === 'renderer' && messengerIcon?.data === avatarIcon,
+    'Expected Messenger message notifications to prefer the renderer-provided contact icon',
+  );
+
+  iconHandler.showNotification({
+    title: 'Messenger-Test',
+    body: 'Download complete',
+    icon: avatarIcon,
+    sourceKind: 'app-owned',
+    sourceLabel: 'notification-icon-test-app-owned',
+    provenanceReason: 'test-app-owned',
+  });
+  const appOwnedIcon = mockElectron.createdNotifications.at(-1)?.options.icon;
+  assert(
+    appOwnedIcon?.source === 'default' && appOwnedIcon?.path === defaultIconPath,
+    'Expected app-owned notifications to keep preferring the resolved app icon',
+  );
+
+  iconHandler.showNotification({
+    title: 'Account B',
+    body: 'New message',
+    href: TARGET_PATH,
+    sourceKind: 'messenger-message',
+    sourceLabel: 'notification-icon-test-fallback',
+    provenanceReason: 'test-thread-proof',
+  });
+  const fallbackIcon = mockElectron.createdNotifications.at(-1)?.options.icon;
+  assert(
+    fallbackIcon?.source === 'default' && fallbackIcon?.path === defaultIconPath,
+    'Expected Messenger message notifications without a contact icon to fall back to the resolved app icon',
+  );
+
   console.log('PASS Notification click handler targets content webContents on macOS');
 };
 

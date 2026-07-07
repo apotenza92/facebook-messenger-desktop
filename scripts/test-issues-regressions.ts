@@ -4744,9 +4744,14 @@ const runNotificationPolicyTests = () => {
   );
   assert(
     notificationHandlerSource.includes("resolveDefaultIconPath") &&
-      notificationHandlerSource.includes("nativeImage.createFromPath(defaultIconPath)") &&
-      notificationHandlerSource.includes("if (!notificationOptions.icon && data.icon)"),
-    "#50 notification handler should prefer the configured app icon before renderer-provided icons",
+      notificationHandlerSource.includes("const applyDefaultIcon") &&
+      notificationHandlerSource.includes("const applyRendererIcon") &&
+      notificationHandlerSource.includes(
+        'normalizedData.sourceKind === "messenger-message"',
+      ) &&
+      notificationHandlerSource.includes("applyRendererIcon();") &&
+      notificationHandlerSource.includes("applyDefaultIcon();"),
+    "#55 notification handler should prefer contact avatars for Messenger messages while keeping app-icon fallback behavior",
   );
 
   const globalSocialSuppressed =

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.1-beta.37] - 2026-07-07
+
+### Fixed
+
+- **Issue #55: restore contact photos in Messenger message notifications** ([#55](https://github.com/apotenza92/facebook-messenger-desktop/issues/55))
+  - Prefer Messenger's renderer-provided contact/avatar artwork for proven message notifications again.
+  - Keep app-owned notifications, incoming-call notifications, and message notifications without contact artwork on the resolved app icon fallback.
+  - Add regression coverage for the split between contact-avatar message notifications and app-icon-owned notifications.
+
+### Validation
+
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run build`
+
 ## [1.3.1-beta.36] - 2026-07-05
 
 ### Fixed
