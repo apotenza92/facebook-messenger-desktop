@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.1-beta.38] - 2026-07-12
+
+### Fixed
+
+- **Issue #55: restore contact photos in Messenger message notifications** ([#55](https://github.com/apotenza92/facebook-messenger-desktop/issues/55))
+  - Include the notification artwork precedence fix prepared in beta 37, which did not produce a downloadable macOS release.
+  - Prefer Messenger-provided contact artwork for proven message notifications while retaining the app icon fallback for app-owned notifications and messages without artwork.
+
+### Changed
+
+- **App icon: introduce a new custom bubble and curved centre mark**
+  - Replace the previous thunderbolt with a horizontally dominant, point-symmetric painted stroke whose broad centre and rounded internal turns remain clear at small sizes.
+  - Use a custom circular chat bubble with a rounded 20-degree tail instead of Facebook's bubble geometry.
+  - Keep the established stable blue and beta orange as flat colours without lighting effects, gradients, or shadows.
+  - Add a reproducible SVG source generator and regenerate the stable, beta, dark-mode, tray, ICO, ICNS, Linux, and DMG icon assets.
+
+### Validation
+
+- `npm run generate-icons -- --force`
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run build`
+- `npm run test:release`
+
 ## [1.3.1-beta.37] - 2026-07-07
 
 ### Fixed
