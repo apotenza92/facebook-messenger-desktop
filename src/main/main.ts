@@ -2448,8 +2448,6 @@ const snapHelpShownFile = path.join(
   app.getPath("userData"),
   "snap-help-shown.json",
 );
-const iconThemeFile = path.join(app.getPath("userData"), "icon-theme.json");
-const iconVariantFile = path.join(app.getPath("userData"), "icon-variant.json");
 const menuBarHoverFile = path.join(
   app.getPath("userData"),
   "menu-bar-hover.json",
@@ -4591,17 +4589,9 @@ async function injectNotificationScripts(
   });
 }
 
-// Icon theme: 'light', 'dark', or 'system' (default)
-// 'system' mode: Auto-switches between our light/dark icons based on OS dark mode
-// This ensures our dark icon (with white interior) is shown instead of system's
-// automatic darkening which would make everything dark including the interior
-type IconTheme = "light" | "dark" | "system";
-let currentIconTheme: IconTheme = "system";
-
-// Icon variant: 'match' (default), 'official' (blue), or 'beta' (orange)
-// 'match' follows the installed channel (stable/beta)
-type IconVariant = "match" | "official" | "beta";
-let currentIconVariant: IconVariant = "match";
+// Icon identity always follows the installed channel. macOS delegates all
+// appearance variants to Icon Composer; Windows/Linux use one static channel
+// icon that remains unchanged between light and dark environments.
 
 // Request single instance lock early (before app.whenReady) to prevent race conditions
 // on Linux/Windows where multiple instances might start before lock is checked
@@ -4987,72 +4977,6 @@ function removeFromDockAndTaskbar(): void {
   }
 }
 
-// ===== Icon Theme Functions =====
-
-function loadIconTheme(): IconTheme {
-  try {
-    if (fs.existsSync(iconThemeFile)) {
-      const raw = fs.readFileSync(iconThemeFile, "utf8");
-      const parsed = JSON.parse(raw);
-      // Handle migration from old 'native' setting
-      if (parsed.theme === "native") {
-        return "system";
-      }
-      if (
-        parsed.theme === "light" ||
-        parsed.theme === "dark" ||
-        parsed.theme === "system"
-      ) {
-        console.log("[Icon Theme] Loaded theme:", parsed.theme);
-        return parsed.theme;
-      }
-    }
-  } catch (e) {
-    console.warn("[Icon Theme] Failed to load theme, using default:", e);
-  }
-  console.log("[Icon Theme] Using default theme: system");
-  return "system";
-}
-
-function saveIconTheme(theme: IconTheme): void {
-  try {
-    fs.writeFileSync(iconThemeFile, JSON.stringify({ theme }));
-    console.log("[Icon Theme] Saved theme:", theme);
-  } catch (e) {
-    console.warn("[Icon Theme] Failed to save theme:", e);
-  }
-}
-
-function loadIconVariant(): IconVariant {
-  try {
-    if (fs.existsSync(iconVariantFile)) {
-      const raw = fs.readFileSync(iconVariantFile, "utf8");
-      const parsed = JSON.parse(raw);
-      if (
-        parsed.variant === "match" ||
-        parsed.variant === "official" ||
-        parsed.variant === "beta"
-      ) {
-        console.log("[Icon Variant] Loaded variant:", parsed.variant);
-        return parsed.variant;
-      }
-    }
-  } catch (e) {
-    console.warn("[Icon Variant] Failed to load variant, using default:", e);
-  }
-  console.log("[Icon Variant] Using default variant: match");
-  return "match";
-}
-
-function saveIconVariant(variant: IconVariant): void {
-  try {
-    fs.writeFileSync(iconVariantFile, JSON.stringify({ variant }));
-    console.log("[Icon Variant] Saved variant:", variant);
-  } catch (e) {
-    console.warn("[Icon Variant] Failed to save variant:", e);
-  }
-}
-
 // ===== Menu Bar Mode Functions =====
 
 function loadMenuBarModeSetting(): MenuBarMode {
@@ -5278,45 +5202,31 @@ function setMenuBarMode(mode: MenuBarMode): void {
   createApplicationMenu();
 }
 
-function shouldUseDarkIcon(): boolean {
-  if (currentIconTheme === "light") return false;
-  if (currentIconTheme === "dark") return true;
-  // 'system' mode: use nativeTheme to determine
-  return nativeTheme.shouldUseDarkColors;
-}
-
 function shouldUseBetaIcons(): boolean {
-  if (currentIconVariant === "official") return false;
-  if (currentIconVariant === "beta") return true;
   return isBetaVersion;
 }
 
 function getIconSubdir(): string {
   // Returns the appropriate icon subdirectory based on:
-  // 1. Icon variant (uses orange icons from 'beta/' subdirectory)
-  // 2. Dark mode preference (uses icons from 'dark/' subdirectory)
-  // Combines to: '', 'dark', 'beta', or 'beta/dark'
-  const betaPrefix = shouldUseBetaIcons() ? "beta" : "";
-  const darkSuffix = shouldUseDarkIcon() ? "dark" : "";
-
-  if (betaPrefix && darkSuffix) {
-    return path.join(betaPrefix, darkSuffix);
-  }
-  return betaPrefix || darkSuffix;
+  // Stable builds always use blue; beta builds always use orange. Windows and
+  // Linux use one neutral static icon across light and dark environments.
+  return shouldUseBetaIcons() ? "beta" : "";
 }
 
 function applyCurrentIconTheme(): void {
-  const useDark = shouldUseDarkIcon();
   console.log(
-    `[Icon Theme] Applying theme, useDark=${useDark}, currentIconTheme=${currentIconTheme}, currentIconVariant=${currentIconVariant}`,
+    `[Icon Theme] Applying fixed ${isBetaVersion ? "beta" : "stable"} channel icon`,
   );
 
+  if (process.platform === "darwin") {
+    console.log(
+      "[Icon Theme] macOS delegates channel and appearance to the native Icon Composer bundle",
+    );
+    return;
+  }
+
   // Update window icon (Windows/Linux only)
-  if (
-    process.platform !== "darwin" &&
-    mainWindow &&
-    !mainWindow.isDestroyed()
-  ) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     const icon = getWindowIcon();
     if (icon) {
       mainWindow.setIcon(icon);
@@ -5324,92 +5234,14 @@ function applyCurrentIconTheme(): void {
     }
   }
 
-  // Update macOS dock icon
-  if (process.platform === "darwin" && app.dock) {
-    if (currentIconTheme === "system" && currentIconVariant === "match") {
-      // Leave the Dock icon untouched so macOS uses the bundle's compiled
-      // Icon Composer asset and preserves native appearance rendering.
-      console.log(
-        "[Icon Theme] macOS system mode - using native bundle icon (system effects enabled)",
-      );
-    } else {
-      // Explicit light/dark selection - use our custom icon
-      const dockIcon = getDockIcon();
-      if (dockIcon) {
-        app.dock.setIcon(dockIcon);
-        console.log("[Icon Theme] Dock icon updated (explicit selection)");
-      }
-    }
-  }
-
   // Update tray icon (Windows/Linux only - macOS uses template)
-  if (tray && process.platform !== "darwin") {
+  if (tray) {
     const trayIconPath = getTrayIconPath();
     if (trayIconPath) {
       tray.setImage(trayIconPath);
       console.log("[Icon Theme] Tray icon updated");
     }
   }
-}
-
-function setIconTheme(theme: IconTheme): void {
-  if (theme === currentIconTheme) return;
-
-  currentIconTheme = theme;
-  saveIconTheme(theme);
-  applyCurrentIconTheme();
-
-  // Rebuild menu to update checkmarks
-  createApplicationMenu();
-}
-
-function setIconVariant(variant: IconVariant): void {
-  if (variant === currentIconVariant) return;
-
-  currentIconVariant = variant;
-  saveIconVariant(variant);
-  applyCurrentIconTheme();
-
-  // Rebuild menu to update checkmarks
-  createApplicationMenu();
-}
-
-function getDockIcon(): Electron.NativeImage | undefined {
-  // For macOS dock, get the appropriate PNG icon
-  const appPath = app.getAppPath();
-  const subdir = getIconSubdir();
-
-  // The icon.png in dark or root directory
-  const possiblePaths: string[] = [];
-  if (subdir) {
-    possiblePaths.push(
-      path.join(appPath, "assets/icons", subdir, "icon.png"),
-      path.join(__dirname, "../../assets/icons", subdir, "icon.png"),
-      path.join(process.cwd(), "assets/icons", subdir, "icon.png"),
-    );
-  }
-  // Fallback to light icons
-  possiblePaths.push(
-    path.join(appPath, "assets/icons/icon.png"),
-    path.join(__dirname, "../../assets/icons/icon.png"),
-    path.join(process.cwd(), "assets/icons/icon.png"),
-  );
-
-  for (const iconPath of possiblePaths) {
-    if (fs.existsSync(iconPath)) {
-      try {
-        const icon = nativeImage.createFromPath(iconPath);
-        if (!icon.isEmpty()) {
-          console.log("[Icon] Created dock nativeImage from:", iconPath);
-          return icon;
-        }
-      } catch (e) {
-        console.error("[Icon] Failed to create dock nativeImage:", e);
-      }
-    }
-  }
-
-  return undefined;
 }
 
 function loadWindowState(): WindowState {
@@ -8107,11 +7939,7 @@ function getIconAssetPath(iconFile: string): string | undefined {
 }
 
 function shouldUseNativeMacBundleIcon(): boolean {
-  return (
-    process.platform === "darwin" &&
-    currentIconTheme === "system" &&
-    currentIconVariant === "match"
-  );
+  return process.platform === "darwin";
 }
 
 function getNotificationIconPath(): string | undefined {
@@ -8138,7 +7966,7 @@ function getWindowIcon(): Electron.NativeImage | undefined {
 
   const possiblePaths: string[] = [];
   for (const iconFile of iconFiles) {
-    // Try dark icons first if dark mode
+    // Try the installed channel icon first.
     if (subdir) {
       possiblePaths.push(
         path.join(appPath, "assets/icons", subdir, iconFile),
@@ -8146,7 +7974,7 @@ function getWindowIcon(): Electron.NativeImage | undefined {
         path.join(process.cwd(), "assets/icons", subdir, iconFile),
       );
     }
-    // Fallback to light icons
+    // Fallback to the stable icon.
     possiblePaths.push(
       path.join(appPath, "assets/icons", iconFile),
       path.join(__dirname, "../../assets/icons", iconFile),
@@ -8179,9 +8007,8 @@ function getTrayIconPath(): string | undefined {
 
   // Beta uses orange icons from 'beta/' subdirectory
   const betaPrefix = shouldUseBetaIcons() ? "beta" : "";
-  const darkSuffix = shouldUseDarkIcon() ? "dark" : "";
 
-  // macOS uses template icons (always same), Windows/Linux use themed icons
+  // macOS uses its template tray icon; Windows/Linux use one static channel icon.
   const platformIcon =
     process.platform === "win32"
       ? "icon.ico"
@@ -8191,8 +8018,7 @@ function getTrayIconPath(): string | undefined {
 
   const possiblePaths: string[] = [];
 
-  // For Windows/Linux, try themed icons first
-  // macOS uses template icons which don't need dark mode theming, but still need beta icons
+  // Try the beta tray family first in beta builds on every platform.
   if (process.platform === "darwin") {
     // macOS: try beta tray icons first if beta
     if (betaPrefix) {
@@ -8202,28 +8028,15 @@ function getTrayIconPath(): string | undefined {
       );
     }
   } else {
-    // Windows/Linux: try beta/dark, beta, dark, then default
-    if (betaPrefix && darkSuffix) {
-      possiblePaths.push(
-        path.join(trayDir, betaPrefix, darkSuffix, platformIcon),
-        path.join(devTrayDir, betaPrefix, darkSuffix, platformIcon),
-      );
-    }
     if (betaPrefix) {
       possiblePaths.push(
         path.join(trayDir, betaPrefix, platformIcon),
         path.join(devTrayDir, betaPrefix, platformIcon),
       );
     }
-    if (darkSuffix) {
-      possiblePaths.push(
-        path.join(trayDir, darkSuffix, platformIcon),
-        path.join(devTrayDir, darkSuffix, platformIcon),
-      );
-    }
   }
 
-  // Fallback to light/default icons
+  // Fallback to the stable/default tray icon.
   possiblePaths.push(
     path.join(trayDir, platformIcon),
     path.join(devTrayDir, platformIcon),
@@ -9852,67 +9665,6 @@ function createApplicationMenu(): void {
         }
       : null;
 
-  // Icon theme submenu - allows switching between light/dark/system icons
-  const iconThemeSubmenu: Electron.MenuItemConstructorOptions = {
-    label: "Icon Appearance",
-    submenu: [
-      {
-        label: "Match System",
-        type: "radio",
-        checked: currentIconTheme === "system",
-        click: () => {
-          setIconTheme("system");
-        },
-      },
-      {
-        label: "Light Icon",
-        type: "radio",
-        checked: currentIconTheme === "light",
-        click: () => {
-          setIconTheme("light");
-        },
-      },
-      {
-        label: "Dark Icon",
-        type: "radio",
-        checked: currentIconTheme === "dark",
-        click: () => {
-          setIconTheme("dark");
-        },
-      },
-    ],
-  };
-
-  const iconVariantSubmenu: Electron.MenuItemConstructorOptions = {
-    label: "Icon",
-    submenu: [
-      {
-        label: "Match Channel",
-        type: "radio",
-        checked: currentIconVariant === "match",
-        click: () => {
-          setIconVariant("match");
-        },
-      },
-      {
-        label: "Official (Blue)",
-        type: "radio",
-        checked: currentIconVariant === "official",
-        click: () => {
-          setIconVariant("official");
-        },
-      },
-      {
-        label: "Beta (Orange)",
-        type: "radio",
-        checked: currentIconVariant === "beta",
-        click: () => {
-          setIconVariant("beta");
-        },
-      },
-    ],
-  };
-
   // Dev-only menu for testing features (only included in menu when isDev is true)
   const developMenu: Electron.MenuItemConstructorOptions = {
     label: "Develop",
@@ -10064,8 +9816,6 @@ function createApplicationMenu(): void {
           checkUpdatesMenuItem,
           updateFrequencySubmenu,
           notificationSettingsMenuItem,
-          iconVariantSubmenu,
-          iconThemeSubmenu,
           { type: "separator" },
           { role: "services" as const },
           { type: "separator" },
@@ -10167,9 +9917,6 @@ function createApplicationMenu(): void {
     {
       label: "File",
       submenu: [
-        iconVariantSubmenu,
-        iconThemeSubmenu,
-        { type: "separator" },
         { role: "quit" as const },
       ],
     },
@@ -13854,24 +13601,9 @@ app.whenReady().then(async () => {
   // Request media permissions (camera/microphone) for video/audio calls on macOS
   await requestMediaPermissions();
 
-  // Load icon theme preference
-  currentIconTheme = loadIconTheme();
-  console.log(`[Icon Theme] Initial theme: ${currentIconTheme}`);
-
-  // Load icon variant preference
-  currentIconVariant = loadIconVariant();
-  console.log(`[Icon Variant] Initial variant: ${currentIconVariant}`);
-
-  // Listen for system theme changes (for 'system' mode auto-switching)
-  nativeTheme.on("updated", () => {
-    if (currentIconTheme === "system") {
-      console.log("[Icon Theme] System theme changed, updating icons");
-      applyCurrentIconTheme();
-    }
-  });
-
-  // Apply initial icon theme (for macOS dock icon)
-  if (process.platform === "darwin") {
+  // Apply the installed channel's one static icon on Windows/Linux. macOS uses
+  // the signed bundle's native Icon Composer asset throughout its lifetime.
+  if (process.platform !== "darwin") {
     applyCurrentIconTheme();
   }
 

@@ -14,19 +14,6 @@
         {
           "fill" : "none",
           "hidden" : false,
-          "image-name" : "03-stroke.svg",
-          "name" : "03-stroke",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
-        },
-        {
-          "fill" : "none",
-          "hidden" : false,
           "image-name" : "02-bubble.svg",
           "name" : "02-bubble",
           "position" : {

@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.3.1-beta.40] - 2026-07-13
+
+### Fixed
+
+- **macOS: eliminate the runtime Dock icon size regression**
+  - Keep the Dock icon under native bundle and Icon Composer control for the app's entire lifetime.
+  - Remove runtime icon replacement, which bypassed macOS sizing and could make the running icon larger than its native channel icon.
+
+### Changed
+
+- **Use native channel identity instead of manual icon controls**
+  - Remove the Icon and Icon Appearance menus on macOS, Windows, and Linux.
+  - Keep stable installations blue and beta installations orange on every platform.
+  - Let macOS render Default, Dark, Mono, clear, and tinted appearances from the native Icon Composer bundle.
+  - Use one static channel icon on Windows and Linux instead of manually swapping light and dark taskbar or launcher images.
+
+- **Make the centre mark a transparent knockout**
+  - Cut the approved curved mark through the coloured bubble so the rear card shows through naturally.
+  - Collapse the macOS artwork to one coloured vector layer, allowing the native light or dark system background to supply the mark colour.
+  - Regenerate stable and beta PNG, ICO, ICNS, Linux, tray, DMG, and Icon Composer assets from the shared SVG source.
+
+### Validation
+
+- Live packaged macOS Dock review in native dark appearance
+- Confirmed the macOS application menu contains no icon override controls
+- `npm run generate-icons`
+- `FORCE_BETA_BUILD=true npm run test:icons:local`
+- Packaged native macOS arm64 icon validation
+- `npm run test:issues`
+- `npm run test:notification`
+- `npm run test:linux-sandbox`
+- `npm run build`
+- `npm run test:release`
+
 ## [1.3.1-beta.39] - 2026-07-13
 
 ### Changed

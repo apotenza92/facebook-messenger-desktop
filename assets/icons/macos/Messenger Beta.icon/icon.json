@@ -21,26 +21,6 @@
               "value" : "none"
             }
           ],
-          "image-name" : "03-stroke.svg",
-          "name" : "03-stroke",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
-        },
-        {
-          "fill-specializations" : [
-            {
-              "value" : "none"
-            },
-            {
-              "appearance" : "dark",
-              "value" : "none"
-            }
-          ],
           "image-name" : "02-bubble.svg",
           "name" : "02-bubble",
           "position" : {

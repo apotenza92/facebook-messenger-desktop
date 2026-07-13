@@ -12,7 +12,7 @@ const packageJson = require(path.join(root, 'package.json'));
 const isBeta = process.env.FORCE_BETA_BUILD === 'true' || /-(beta|alpha|rc)/.test(packageJson.version);
 const variant = isBeta ? 'beta' : 'stable';
 const legacyIcon = path.join(root, 'assets', 'icons', ...(isBeta ? ['beta', 'icon.icns'] : ['icon.icns']));
-const expectedLayers = ['02-bubble.svg', '03-stroke.svg'];
+const expectedLayers = ['02-bubble.svg'];
 
 function hash(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -75,6 +75,15 @@ async function alphaBounds(input, size = 1024) {
   };
 }
 
+async function pixelRgb(input, x, y) {
+  const { data } = await sharp(input)
+    .extract({ left: x, top: y, width: 1, height: 1 })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return Array.from(data.slice(0, 3));
+}
+
 async function verifyRasterAssets(assetVariant) {
   const variantParts = assetVariant === 'beta' ? ['beta'] : [];
   const core = assetVariant === 'beta' ? [255, 101, 0] : [8, 102, 255];
@@ -116,6 +125,14 @@ async function verifyRasterAssets(assetVariant) {
       { width: 396, height: 396 },
       `${assetVariant} ${appearance} legacy macOS fallback should preserve the shared circular footprint`,
     );
+
+    const legacyMacPath = path.join(root, 'assets', 'icons', ...assetParts, 'icon.png');
+    assert.deepStrictEqual(
+      await pixelRgb(legacyMacPath, 256, 256),
+      appearance === 'dark' ? [45, 45, 45] : [255, 255, 255],
+      `${assetVariant} ${appearance} mark should reveal the rear card through a transparent knockout`,
+    );
+
   }
 
   for (const size of [16, 32, 48, 64, 128, 256, 512]) {
@@ -133,7 +150,7 @@ async function verifyIconComposerSources(assetVariant) {
   const document = JSON.parse(fs.readFileSync(path.join(assetIconBundle, 'icon.json'), 'utf8'));
   const layers = document.groups.flatMap(group => group.layers);
   const names = layers.map(layer => layer['image-name']);
-  assert.deepStrictEqual(names, [...expectedLayers].reverse(), 'Icon Composer layer order should be stroke above bubble');
+  assert.deepStrictEqual(names, expectedLayers, 'Icon Composer should use one coloured layer with a transparent mark knockout');
   assert.deepStrictEqual(
     document['fill-specializations'],
     [{ value: 'system-light' }, { appearance: 'dark', value: 'system-dark' }],
@@ -157,25 +174,11 @@ async function verifyIconComposerSources(assetVariant) {
   assert(!fs.existsSync(path.join(assetIconBundle, 'Assets', '01-background.svg')), `${assetVariant} should not import a background SVG`);
 
   const bubbleBounds = await alphaBounds(path.join(assetIconBundle, 'Assets', '02-bubble.svg'));
+  const bubbleSource = fs.readFileSync(path.join(assetIconBundle, 'Assets', '02-bubble.svg'), 'utf8');
   assert.strictEqual(bubbleBounds.width, 792, `${assetVariant} macOS bubble should use the shared 396/512 width`);
   assert.strictEqual(bubbleBounds.height, 792, `${assetVariant} macOS bubble should preserve the shared circular footprint`);
-
-  const strokeBounds = await alphaBounds(path.join(assetIconBundle, 'Assets', '03-stroke.svg'));
-  assert.deepStrictEqual(
-    { width: strokeBounds.width, height: strokeBounds.height },
-    { width: 534, height: 290 },
-    `${assetVariant} macOS stroke should preserve the approved broad-centre proportions`,
-  );
-  assert.strictEqual(
-    strokeBounds.centreX - bubbleBounds.centreX,
-    0,
-    `${assetVariant} macOS stroke should remain horizontally centred`,
-  );
-  assert.strictEqual(
-    strokeBounds.centreY,
-    511.5,
-    `${assetVariant} macOS stroke should remain vertically centred on the circular body`,
-  );
+  assert(bubbleSource.includes('fill-rule="evenodd"'), `${assetVariant} macOS mark should be a transparent knockout`);
+  assert(!fs.existsSync(path.join(assetIconBundle, 'Assets', '03-stroke.svg')), `${assetVariant} should not retain an opaque stroke layer`);
 }
 
 function verifyPackagedApp(appPath) {
@@ -210,7 +213,13 @@ function verifyPackagedApp(appPath) {
 
 async function main() {
   const mainSource = fs.readFileSync(path.join(root, 'src', 'main', 'main.ts'), 'utf8');
-  assert(!mainSource.includes('app.dock.setIcon(null'), 'macOS native mode must not override the bundle icon at runtime');
+  assert(!/app\.dock\.setIcon\s*\(\s*[A-Za-z_$]/.test(mainSource), 'macOS must never override the native Icon Composer bundle at runtime');
+  assert(!mainSource.includes('label: "Icon Appearance"'), 'manual light/dark icon controls should not be exposed');
+  assert(!mainSource.includes('label: "Match Channel"'), 'manual channel icon controls should not be exposed');
+  assert(
+    mainSource.includes('return shouldUseBetaIcons() ? "beta" : "";'),
+    'Windows and Linux icon identity should follow the installed stable/beta channel',
+  );
 
   for (const assetVariant of ['stable', 'beta']) {
     await verifyIconComposerSources(assetVariant);

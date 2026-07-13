@@ -450,8 +450,7 @@ function buildSvg(palette, option = STROKE_OPTIONS[0]) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
   <g transform="${artworkTransform}">
-    <path d="${bubblePath()}" fill="${palette.core}"/>
-    <path d="${strokePath}" fill="#FFFFFF"/>
+    <path d="${bubblePath()} ${strokePath}" fill="${palette.core}" fill-rule="evenodd"/>
   </g>
 </svg>
 `;
@@ -488,21 +487,20 @@ function writeMacOSLayers(variant, palette, option = STROKE_OPTIONS[0]) {
     }
   };
 
-  // Icon Composer owns the full-bleed system light/dark background. Only the
-  // two unmasked foreground layers are imported.
-  for (const staleBackground of [
+  // Icon Composer owns the full-bleed system light/dark background. The mark is
+  // a true knockout in the single coloured foreground layer, so the native
+  // system background shows through in either appearance.
+  for (const staleLayer of [
     path.join(outputDir, '01-background.svg'),
     path.join(iconBundleAssetsDir, '01-background.svg'),
+    path.join(outputDir, '03-stroke.svg'),
+    path.join(iconBundleAssetsDir, '03-stroke.svg'),
   ]) {
-    if (fs.existsSync(staleBackground)) fs.unlinkSync(staleBackground);
+    if (fs.existsSync(staleLayer)) fs.unlinkSync(staleLayer);
   }
   writeLayer(
     '02-bubble.svg',
-    buildLayerSvg(`<g transform="${macOSCompositionTransform}"><g transform="${artworkTransform}"><path d="${bubblePath()}" fill="${palette.core}"/></g></g>`),
-  );
-  writeLayer(
-    '03-stroke.svg',
-    buildLayerSvg(`<g transform="${macOSCompositionTransform}"><g transform="${artworkTransform}"><path d="${strokePath}" fill="#FFFFFF"/></g></g>`),
+    buildLayerSvg(`<g transform="${macOSCompositionTransform}"><g transform="${artworkTransform}"><path d="${bubblePath()} ${strokePath}" fill="${palette.core}" fill-rule="evenodd"/></g></g>`),
   );
 }
 
