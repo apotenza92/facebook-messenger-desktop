@@ -5,11 +5,41 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const ICONS_DIR = path.join(ROOT, 'assets', 'icons');
+const MACOS_LAYERS_DIR = path.join(ICONS_DIR, 'macos-layers');
 const BODY_RADIUS = 3.55;
-const TAIL_ANGLE = 20;
+// A true 7:30 direction: 135 degrees clockwise from 3 o'clock. Keep the narrow
+// tapered tail on that line, with 80% of the former corner-reaching extension.
+const TAIL_TIP_ANGLE = 135;
+const TAIL_RADIAL_REACH = 1 + 0.8 * (Math.SQRT2 - 1);
+const TAIL_HALF_OPENING = 30;
+const TAIL_TIP_ROUNDING = 0.5;
 const SCALE = 118;
 const CENTER_X = 500;
-const CENTER_Y = 488;
+const CENTER_Y = 500;
+// Let the coloured bubble use more of the shared artwork canvas while retaining
+// each platform generator's native outer-tile padding and corner treatment.
+const ARTWORK_SCALE = 1.15;
+// Match the official Messenger icon's measured bubble-to-enclosure ratio. A
+// 411/512 Icon Composer composition produces a 396/512 coloured footprint,
+// closely matching the official icon's 77-78% visible bubble ratio.
+const MACOS_COMPOSITION_SCALE = 411 / 512;
+
+function tailCorner() {
+  const angle = TAIL_TIP_ANGLE * Math.PI / 180;
+  return [
+    BODY_RADIUS * TAIL_RADIAL_REACH * Math.cos(angle),
+    -BODY_RADIUS * TAIL_RADIAL_REACH * Math.sin(angle),
+  ];
+}
+
+function tailRays() {
+  const inwardAngle = (180 - TAIL_TIP_ANGLE) * Math.PI / 180;
+  const halfOpening = TAIL_HALF_OPENING * Math.PI / 180;
+  return {
+    incomingRay: [Math.cos(inwardAngle + halfOpening), Math.sin(inwardAngle + halfOpening)],
+    outgoingRay: [Math.cos(inwardAngle - halfOpening), Math.sin(inwardAngle - halfOpening)],
+  };
+}
 
 function normalize([x, y]) {
   const length = Math.hypot(x, y);
@@ -84,10 +114,8 @@ function cubicPoints(start, control1, control2, end, count) {
 }
 
 function bubbleOutline() {
-  const fixedCorner = [-BODY_RADIUS, -BODY_RADIUS];
-  const angle = TAIL_ANGLE * Math.PI / 180;
-  const incomingRay = [Math.sin(angle), Math.cos(angle)];
-  const outgoingRay = [Math.cos(angle), Math.sin(angle)];
+  const fixedCorner = tailCorner();
+  const { incomingRay, outgoingRay } = tailRays();
   const incomingHit = rayCircleIntersection(fixedCorner, incomingRay);
   const outgoingHit = rayCircleIntersection(fixedCorner, outgoingRay);
   const incomingAngle = ellipseAngle(incomingHit);
@@ -119,7 +147,7 @@ function bubbleOutline() {
     10,
   ));
 
-  const cornerFilletDistance = 0.5;
+  const cornerFilletDistance = TAIL_TIP_ROUNDING;
   const cornerIn = [
     fixedCorner[0] + incomingRay[0] * cornerFilletDistance,
     fixedCorner[1] + incomingRay[1] * cornerFilletDistance,
@@ -156,10 +184,8 @@ function svgPoint([x, y]) {
 }
 
 function bubblePath() {
-  const fixedCorner = [-BODY_RADIUS, -BODY_RADIUS];
-  const angle = TAIL_ANGLE * Math.PI / 180;
-  const incomingRay = [Math.sin(angle), Math.cos(angle)];
-  const outgoingRay = [Math.cos(angle), Math.sin(angle)];
+  const fixedCorner = tailCorner();
+  const { incomingRay, outgoingRay } = tailRays();
   const incomingHit = rayCircleIntersection(fixedCorner, incomingRay);
   const outgoingHit = rayCircleIntersection(fixedCorner, outgoingRay);
   const incomingArcEndAngle = ellipseAngle(incomingHit) - 4;
@@ -168,7 +194,7 @@ function bubblePath() {
   const outgoingArcStart = ellipsePoint(outgoingArcStartAngle);
   const transitionLength = 0.28;
   const handleLength = 0.18;
-  const cornerFilletDistance = 0.5;
+  const cornerFilletDistance = TAIL_TIP_ROUNDING;
   const incomingLineStart = [
     incomingHit[0] - incomingRay[0] * transitionLength,
     incomingHit[1] - incomingRay[1] * transitionLength,
@@ -219,18 +245,119 @@ function bubblePath() {
   ].join(' ');
 }
 
-// Purpose-built broad-centre silhouette. The lower boundary is the exact
-// 180-degree counterpart of the upper boundary around (500, 500), so the
-// filled mark remains centred and point-symmetric. Cubic handles are tangent
-// matched at every internal join; only the two endpoints form cusps.
-const REFINED_BROAD_CENTRE_PATH = `M 190 610
-  C 275 535 340 365 450 390
-  C 530 408 515 470 590 475
-  C 665 480 750 420 810 390
-  C 725 465 660 635 550 610
-  C 470 592 485 530 410 525
-  C 335 520 250 580 190 610
-  Z`;
+function transformStrokeHeight([x, y], heightScale) {
+  return [x, 500 + (y - 500) * heightScale];
+}
+
+function rotateStrokePoint([x, y]) {
+  return [1000 - x, 1000 - y];
+}
+
+function blendStrokePoints(primary, counterpart, primaryWeight) {
+  const counterpartWeight = 1 - primaryWeight;
+  return [
+    primary[0] * primaryWeight + counterpart[0] * counterpartWeight,
+    primary[1] * primaryWeight + counterpart[1] * counterpartWeight,
+  ];
+}
+
+function interpolateStrokePoint(start, end, amount) {
+  return [
+    start[0] + (end[0] - start[0]) * amount,
+    start[1] + (end[1] - start[1]) * amount,
+  ];
+}
+
+function splitStrokeCubic(segment, amount) {
+  const [start, control1, control2, end] = segment;
+  const level1 = [
+    interpolateStrokePoint(start, control1, amount),
+    interpolateStrokePoint(control1, control2, amount),
+    interpolateStrokePoint(control2, end, amount),
+  ];
+  const level2 = [
+    interpolateStrokePoint(level1[0], level1[1], amount),
+    interpolateStrokePoint(level1[1], level1[2], amount),
+  ];
+  const split = interpolateStrokePoint(level2[0], level2[1], amount);
+  return [
+    [start, level1[0], level2[0], split],
+    [split, level2[1], level1[2], end],
+  ];
+}
+
+function trimStrokeCubic(segment, startAmount, endAmount) {
+  let trimmed = segment;
+  if (endAmount < 1) {
+    [trimmed] = splitStrokeCubic(trimmed, endAmount);
+  }
+  if (startAmount > 0) {
+    const relativeStart = startAmount / endAmount;
+    [, trimmed] = splitStrokeCubic(trimmed, relativeStart);
+  }
+  return trimmed;
+}
+
+// Build a true variable-width loose-N silhouette. Only the lower-left and
+// upper-right tips stay pinned. The two boundaries contract around their
+// shared centreline, allowing the middle curves and top/bottom extents to move
+// naturally as thickness changes. The lower boundary remains the exact
+// 180-degree counterpart of the upper boundary around (500, 500).
+function pinnedEndpointStrokePath(
+  thickness = 0.8,
+  heightScale = 1.55,
+  tipRound = 0,
+  widthScale = 1,
+  xOffset = 0,
+  yOffset = 0,
+) {
+  const upperSegments = [
+    [[190, 610], [275, 535], [340, 365], [450, 390]],
+    [[450, 390], [530, 408], [515, 470], [590, 475]],
+    [[590, 475], [665, 480], [750, 420], [810, 390]],
+  ].map(segment => segment.map(point => transformStrokeHeight(point, heightScale)));
+
+  const primaryWeight = (1 + thickness) / 2;
+  const contractedUpper = upperSegments.map((segment, index) => {
+    const opposite = upperSegments[upperSegments.length - 1 - index];
+    const counterpart = [...opposite].reverse().map(rotateStrokePoint);
+    return segment.map((point, pointIndex) => (
+      blendStrokePoints(point, counterpart[pointIndex], primaryWeight)
+    ));
+  });
+  const contractedLower = contractedUpper.map(segment => segment.map(rotateStrokePoint));
+  const upper = contractedUpper.map(segment => [...segment]);
+  const lower = contractedLower.map(segment => [...segment]);
+  const leftTip = contractedUpper[0][0];
+  const rightTip = contractedUpper[contractedUpper.length - 1][3];
+  if (tipRound > 0) {
+    upper[0] = trimStrokeCubic(upper[0], tipRound, 1);
+    upper[upper.length - 1] = trimStrokeCubic(upper[upper.length - 1], 0, 1 - tipRound);
+    lower[0] = trimStrokeCubic(lower[0], tipRound, 1);
+    lower[lower.length - 1] = trimStrokeCubic(lower[lower.length - 1], 0, 1 - tipRound);
+  }
+  const format = ([x, y]) => `${(500 + (x - 500) * widthScale + xOffset).toFixed(2)} ${(y + yOffset).toFixed(2)}`;
+  const commands = [`M ${format(upper[0][0])}`];
+  for (const [, control1, control2, end] of upper) {
+    commands.push(`C ${format(control1)} ${format(control2)} ${format(end)}`);
+  }
+  if (tipRound > 0) {
+    commands.push(`Q ${format(rightTip)} ${format(lower[0][0])}`);
+  }
+  for (const [, control1, control2, end] of lower) {
+    commands.push(`C ${format(control1)} ${format(control2)} ${format(end)}`);
+  }
+  if (tipRound > 0) {
+    commands.push(`Q ${format(leftTip)} ${format(upper[0][0])}`);
+  }
+  commands.push('Z');
+  return commands.join(' ');
+}
+
+// Keep the previously approved broad-centre smooth-N silhouette. The official
+// icon remains a reference for the surrounding bubble scale and tail angle,
+// while our centre mark intentionally retains its larger custom proportions.
+const REFINED_BROAD_CENTRE_PATH = pinnedEndpointStrokePath(0.8, 1.55, 0.4, 1.06);
 
 const STROKE_OPTIONS = [
   { id: '01-balanced', label: 'Balanced', endOffset: 64, innerOffset: 52, tension: 0.95, halfWidth: 54, taperExponent: 0.95 },
@@ -319,17 +446,70 @@ function strokeShapePath(option) {
 
 function buildSvg(palette, option = STROKE_OPTIONS[0]) {
   const strokePath = option.customPath || strokeShapePath(option);
+  const artworkTransform = `translate(${CENTER_X} ${CENTER_Y}) scale(${ARTWORK_SCALE}) translate(${-CENTER_X} ${-CENTER_Y})`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="${bubblePath()}" fill="${palette.core}"/>
-  <path d="${strokePath}" fill="#FFFFFF"/>
+  <g transform="${artworkTransform}">
+    <path d="${bubblePath()}" fill="${palette.core}"/>
+    <path d="${strokePath}" fill="#FFFFFF"/>
+  </g>
 </svg>
 `;
+}
+
+function buildLayerSvg(contents) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 1000" xmlns="http://www.w3.org/2000/svg">
+  ${contents}
+</svg>
+`;
+}
+
+function writeMacOSLayers(variant, palette, option = STROKE_OPTIONS[0]) {
+  const outputDir = path.join(MACOS_LAYERS_DIR, variant);
+  const iconBundleDir = path.join(
+    ICONS_DIR,
+    'macos',
+    variant === 'stable' ? 'Messenger.icon' : 'Messenger Beta.icon',
+  );
+  const iconBundleAssetsDir = path.join(iconBundleDir, 'Assets');
+  const strokePath = option.customPath || strokeShapePath(option);
+  const artworkTransform = `translate(${CENTER_X} ${CENTER_Y}) scale(${ARTWORK_SCALE}) translate(${-CENTER_X} ${-CENTER_Y})`;
+  const macOSCompositionTransform = `translate(${CENTER_X} ${CENTER_Y}) scale(${MACOS_COMPOSITION_SCALE}) translate(${-CENTER_X} ${-CENTER_Y})`;
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const writeLayer = (filename, contents) => {
+    fs.writeFileSync(path.join(outputDir, filename), contents);
+    // Icon Composer stores local copies of imported artwork. Keep those copies
+    // synchronized after the document has been created in Icon Composer.
+    if (fs.existsSync(path.join(iconBundleDir, 'icon.json'))) {
+      fs.mkdirSync(iconBundleAssetsDir, { recursive: true });
+      fs.writeFileSync(path.join(iconBundleAssetsDir, filename), contents);
+    }
+  };
+
+  // Icon Composer owns the full-bleed system light/dark background. Only the
+  // two unmasked foreground layers are imported.
+  for (const staleBackground of [
+    path.join(outputDir, '01-background.svg'),
+    path.join(iconBundleAssetsDir, '01-background.svg'),
+  ]) {
+    if (fs.existsSync(staleBackground)) fs.unlinkSync(staleBackground);
+  }
+  writeLayer(
+    '02-bubble.svg',
+    buildLayerSvg(`<g transform="${macOSCompositionTransform}"><g transform="${artworkTransform}"><path d="${bubblePath()}" fill="${palette.core}"/></g></g>`),
+  );
+  writeLayer(
+    '03-stroke.svg',
+    buildLayerSvg(`<g transform="${macOSCompositionTransform}"><g transform="${artworkTransform}"><path d="${strokePath}" fill="#FFFFFF"/></g></g>`),
+  );
 }
 
 for (const [variant, palette] of Object.entries(palettes)) {
   const filename = variant === 'stable' ? 'messenger-icon.svg' : 'messenger-icon-beta.svg';
   fs.writeFileSync(path.join(ICONS_DIR, filename), buildSvg(palette, STROKE_OPTIONS[4]));
+  writeMacOSLayers(variant, palette, STROKE_OPTIONS[4]);
   console.log(`Generated ${filename}`);
 }
 
@@ -343,4 +523,22 @@ if (process.argv.includes('--options')) {
   }
   fs.writeFileSync(path.join(reviewDir, 'options.json'), JSON.stringify(STROKE_OPTIONS, null, 2));
   console.log(`Generated ${STROKE_OPTIONS.length} flat stroke options`);
+}
+
+if (process.argv.includes('--tip-options')) {
+  const reviewDir = path.join(ICONS_DIR, 'reviews', 'tip-rounding-options');
+  const tipOptions = [0.12, 0.2, 0.3, 0.4, 0.52, 0.65];
+  fs.mkdirSync(reviewDir, { recursive: true });
+  for (const [index, tipRound] of tipOptions.entries()) {
+    const option = {
+      ...STROKE_OPTIONS[4],
+      customPath: pinnedEndpointStrokePath(0.8, 1.55, tipRound),
+    };
+    fs.writeFileSync(
+      path.join(reviewDir, `${String(index + 1).padStart(2, '0')}-${String(tipRound).replace('.', '_')}.svg`),
+      buildSvg(palettes.beta, option),
+    );
+  }
+  fs.writeFileSync(path.join(reviewDir, 'options.json'), JSON.stringify(tipOptions, null, 2));
+  console.log(`Generated ${tipOptions.length} tip-rounding options`);
 }

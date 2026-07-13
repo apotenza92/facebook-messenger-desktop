@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.1-beta.39] - 2026-07-13
+
+### Changed
+
+- **App icon: finalize the custom bubble and centre mark**
+  - Keep the circular body geometrically centred and enlarge it consistently across the native macOS, Windows, and Linux icon canvases.
+  - Use the approved broad-centre painted stroke with smooth internal curves, subtly rounded tips, and stable blue or beta orange flat colour.
+  - Set the rounded tail on an exact 7:30 centreline, shorten its extension by 20%, and widen its attachment by 50% while keeping the overall circular footprint unchanged.
+
+- **macOS: adopt the native layered icon format**
+  - Package separate bubble and centre-mark layers through an Icon Composer document so macOS can render its native light, dark, clear, and tinted appearances.
+  - Leave the Dock icon under native bundle control in system/matching mode instead of replacing the compiled icon at runtime.
+  - Retain the matching legacy ICNS inside the notification helper for notification-system compatibility.
+
+- **Cross-platform icon generation and packaging**
+  - Generate the shared SVG source before every icon build, then regenerate stable, beta, dark-mode, tray, Windows ICO, Linux PNG, legacy ICNS, and DMG assets from it.
+  - Upgrade `electron-builder` to support the layered macOS icon source and keep the Windows/Linux packaging metadata compatible with the newer builder.
+  - Add deterministic checks for icon dimensions, shared geometry, Icon Composer layers and appearances, Windows ICO frames, Linux PNG sizes, and the packaged macOS `Assets.car`.
+
+### Validation
+
+- `npm run generate-icons`
+- `FORCE_BETA_BUILD=true npm run test:icons:local`
+- Packaged native macOS arm64 app validation and live Dock review
+- `npm run test:issues`
+- `npm run build`
+- `npm run test:release`
+
 ## [1.3.1-beta.38] - 2026-07-12
 
 ### Fixed

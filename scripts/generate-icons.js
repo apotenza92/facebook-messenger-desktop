@@ -83,6 +83,11 @@ const DMG_WINDOW_HEIGHT = 420;
 // Background colors for light and dark mode icons
 const LIGHT_BG_COLOR = 'white';
 const DARK_BG_COLOR = '#2d2d2d'; // Very dark grey - matches dark mode UIs
+// Each rasterizer rounds and antialiases slightly differently. These calibrated
+// scales produce the same 396/512 coloured-bubble footprint in the legacy
+// macOS fallback, Windows ICO's 256px frame, and Linux's 512px hicolor asset.
+const RASTER_APP_LOGO_SCALE = 412 / 512;
+const WINDOWS_APP_LOGO_SCALE = 412 / 512;
 
 // Beta icons directories
 const betaIconsDir = path.join(iconsDir, 'beta');
@@ -96,9 +101,8 @@ const betaTrayDir = path.join(__dirname, '../assets/tray/beta');
 });
 
 // Helper function to generate icon with solid background (Windows/Linux)
-async function generateIconWithBackground(svgBuffer, size, outputPath, bgColor = 'white') {
-  // Scale icon to 80% of size to add padding (10% margin on each side)
-  const iconSize = Math.floor(size * 0.8);
+async function generateIconWithBackground(svgBuffer, size, outputPath, bgColor = 'white', iconScale = 0.8) {
+  const iconSize = Math.floor(size * iconScale);
   const padding = Math.floor((size - iconSize) / 2);
   
   // Resize SVG to fit with padding
@@ -345,13 +349,14 @@ async function generateIcons() {
     const icoFrameSizes = [256, 128, 64, 48, 32, 24, 16];
     
     // macOS icon scaling parameters (used for iconsets and dock icon switching)
-    // Based on Apple's Messages.app: ~83% background, ~68% logo content, ~8.5% margin
-    const macOSBgScale = 0.83;    // Rounded rect is 83% of canvas (8.5% transparent margin)
-    const macOSLogoScale = 0.68;  // Messenger logo is 68% of canvas (sits inside background)
+    // Native Icon Composer, Windows, and Linux all use a full-canvas enclosure;
+    // keep the legacy ICNS fallback geometrically consistent with them.
+    const macOSBgScale = 1;
+    const macOSLogoScale = RASTER_APP_LOGO_SCALE;
 
     // Generate base PNGs (square, kept for reference)
     for (const size of generalPngSizes) {
-      await generateIconWithBackground(svgBuffer, size, path.join(iconsDir, `icon-${size}.png`), LIGHT_BG_COLOR);
+      await generateIconWithBackground(svgBuffer, size, path.join(iconsDir, `icon-${size}.png`), LIGHT_BG_COLOR, RASTER_APP_LOGO_SCALE);
     }
 
     // Generate rounded 512px icon - used for:
@@ -368,16 +373,16 @@ async function generateIcons() {
     // Generate Linux icons directory with proper NxN.png naming for hicolor theme
     // Linux desktop environments (GNOME, KDE) need slight padding around the icon
     // for visual consistency with system icons, but not too much or it looks tiny
-    // backgroundScale: rounded rect is 85% of canvas (slight padding)
-    // iconScale: messenger logo is 68% of canvas (sits inside the background)
+    // Keep the enclosure full-canvas so the enlarged bubble retains the same
+    // source margin as the Windows and native macOS variants.
     console.log('Generating Linux icons directory...');
     const linuxIconsDir = path.join(iconsDir, 'linux');
     if (!fs.existsSync(linuxIconsDir)) {
       fs.mkdirSync(linuxIconsDir, { recursive: true });
     }
     const linuxIconSizes = [512, 256, 128, 96, 72, 64, 48, 32, 24, 22, 16];
-    const linuxBgScale = 0.85;   // Background is 85% of canvas (15% transparent padding)
-    const linuxLogoScale = 0.68; // Messenger logo is 68% of canvas (inside background)
+    const linuxBgScale = 1;
+    const linuxLogoScale = RASTER_APP_LOGO_SCALE;
     for (const size of linuxIconSizes) {
       await generateLinuxIcon(svgBuffer, size, path.join(linuxIconsDir, `${size}x${size}.png`), linuxBgScale, linuxLogoScale, LIGHT_BG_COLOR);
     }
@@ -389,7 +394,7 @@ async function generateIcons() {
       fs.mkdirSync(icoRoundedDir, { recursive: true });
     }
     for (const size of icoFrameSizes) {
-      await generateIconWithRoundedBackground(svgBuffer, size, path.join(icoRoundedDir, `icon-${size}.png`), 0.8, LIGHT_BG_COLOR);
+      await generateIconWithRoundedBackground(svgBuffer, size, path.join(icoRoundedDir, `icon-${size}.png`), WINDOWS_APP_LOGO_SCALE, LIGHT_BG_COLOR);
     }
 
     // Generate Windows ICO (multi-size, real .ico) from rounded PNGs
@@ -516,7 +521,7 @@ async function generateIcons() {
     // Generate dark mode base PNGs
     console.log('Generating dark mode PNG icons...');
     for (const size of generalPngSizes) {
-      await generateIconWithBackground(svgBuffer, size, path.join(darkIconsDir, `icon-${size}.png`), DARK_BG_COLOR);
+      await generateIconWithBackground(svgBuffer, size, path.join(darkIconsDir, `icon-${size}.png`), DARK_BG_COLOR, RASTER_APP_LOGO_SCALE);
     }
     
     // Generate dark rounded 512px icon (same style as light)
@@ -533,7 +538,7 @@ async function generateIcons() {
     // Generate dark rounded PNGs for Windows ICO
     console.log('Generating dark rounded PNGs for Windows ICO...');
     for (const size of icoFrameSizes) {
-      await generateIconWithRoundedBackground(svgBuffer, size, path.join(darkIcoRoundedDir, `icon-${size}.png`), 0.8, DARK_BG_COLOR);
+      await generateIconWithRoundedBackground(svgBuffer, size, path.join(darkIcoRoundedDir, `icon-${size}.png`), WINDOWS_APP_LOGO_SCALE, DARK_BG_COLOR);
     }
     
     // Generate dark Windows ICO
@@ -614,7 +619,7 @@ async function generateIcons() {
       // Generate beta base PNGs (light mode)
       console.log('Generating beta PNG icons...');
       for (const size of generalPngSizes) {
-        await generateIconWithBackground(betaSvgBuffer, size, path.join(betaIconsDir, `icon-${size}.png`), LIGHT_BG_COLOR);
+        await generateIconWithBackground(betaSvgBuffer, size, path.join(betaIconsDir, `icon-${size}.png`), LIGHT_BG_COLOR, RASTER_APP_LOGO_SCALE);
       }
       
       // Generate beta rounded 512px icon
@@ -631,7 +636,7 @@ async function generateIcons() {
       // Generate beta rounded PNGs for Windows ICO
       console.log('Generating beta rounded PNGs for Windows ICO...');
       for (const size of icoFrameSizes) {
-        await generateIconWithRoundedBackground(betaSvgBuffer, size, path.join(betaIcoRoundedDir, `icon-${size}.png`), 0.8, LIGHT_BG_COLOR);
+        await generateIconWithRoundedBackground(betaSvgBuffer, size, path.join(betaIcoRoundedDir, `icon-${size}.png`), WINDOWS_APP_LOGO_SCALE, LIGHT_BG_COLOR);
       }
       
       // Generate beta Windows ICO
@@ -684,7 +689,7 @@ async function generateIcons() {
       
       // Generate beta dark base PNGs
       for (const size of generalPngSizes) {
-        await generateIconWithBackground(betaSvgBuffer, size, path.join(betaDarkIconsDir, `icon-${size}.png`), DARK_BG_COLOR);
+        await generateIconWithBackground(betaSvgBuffer, size, path.join(betaDarkIconsDir, `icon-${size}.png`), DARK_BG_COLOR, RASTER_APP_LOGO_SCALE);
       }
       
       // Generate beta dark rounded icon
@@ -698,7 +703,7 @@ async function generateIcons() {
       
       // Generate beta dark Windows ICO
       for (const size of icoFrameSizes) {
-        await generateIconWithRoundedBackground(betaSvgBuffer, size, path.join(betaDarkIcoRoundedDir, `icon-${size}.png`), 0.8, DARK_BG_COLOR);
+        await generateIconWithRoundedBackground(betaSvgBuffer, size, path.join(betaDarkIcoRoundedDir, `icon-${size}.png`), WINDOWS_APP_LOGO_SCALE, DARK_BG_COLOR);
       }
       const betaDarkIcoPngPaths = icoFrameSizes.map(size => path.join(betaDarkIcoRoundedDir, `icon-${size}.png`));
       const betaDarkIcoBuffer = await pngToIco(betaDarkIcoPngPaths);

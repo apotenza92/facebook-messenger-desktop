@@ -5327,9 +5327,8 @@ function applyCurrentIconTheme(): void {
   // Update macOS dock icon
   if (process.platform === "darwin" && app.dock) {
     if (currentIconTheme === "system" && currentIconVariant === "match") {
-      // In 'system' mode on macOS: Use native bundle icon
-      // This allows Tahoe's glass/clear effects AND automatic dark mode handling
-      app.dock.setIcon(null as unknown as Electron.NativeImage);
+      // Leave the Dock icon untouched so macOS uses the bundle's compiled
+      // Icon Composer asset and preserves native appearance rendering.
       console.log(
         "[Icon Theme] macOS system mode - using native bundle icon (system effects enabled)",
       );

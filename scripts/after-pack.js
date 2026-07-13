@@ -5,7 +5,8 @@ const { execSync } = require('child_process');
 // Get build configuration from package.json version
 const packageJson = require('../package.json');
 const version = packageJson.version;
-const isBeta = version.includes('-beta') || version.includes('-alpha') || version.includes('-rc');
+const isBeta = process.env.FORCE_BETA_BUILD === 'true' ||
+  version.includes('-beta') || version.includes('-alpha') || version.includes('-rc');
 
 /**
  * electron-builder afterPack hook
@@ -135,11 +136,16 @@ async function compileNotificationHelper(context) {
     fs.mkdirSync(helperMacOSPath, { recursive: true });
     fs.mkdirSync(helperResourcesPath, { recursive: true });
 
-    const appIconPath = path.join(resourcesPath, 'icon.icns');
-    if (fs.existsSync(appIconPath)) {
-      fs.copyFileSync(appIconPath, path.join(helperResourcesPath, 'icon.icns'));
+    const legacyAppIconPath = path.join(
+      projectRoot,
+      'assets',
+      'icons',
+      ...(isBeta ? ['beta', 'icon.icns'] : ['icon.icns']),
+    );
+    if (fs.existsSync(legacyAppIconPath)) {
+      fs.copyFileSync(legacyAppIconPath, path.join(helperResourcesPath, 'icon.icns'));
     } else {
-      console.warn('⚠ App icon not found for notification helper:', appIconPath);
+      console.warn('⚠ Legacy icon not found for notification helper:', legacyAppIconPath);
     }
     
     // Create Info.plist for the mini app bundle

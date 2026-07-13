@@ -30,11 +30,13 @@ console.log('');
 // Icon paths - beta uses orange icons from beta/ subdirectory
 const iconPaths = {
   stable: {
+    mac: 'assets/icons/macos/Messenger.icon',
     icns: 'assets/icons/icon.icns',
     ico: 'assets/icons/icon.ico',
     linux: 'assets/icons/linux',
   },
   beta: {
+    mac: 'assets/icons/macos/Messenger Beta.icon',
     icns: 'assets/icons/beta/icon.icns',
     ico: 'assets/icons/beta/icon.ico',
     linux: 'assets/icons/beta/linux',
@@ -86,12 +88,13 @@ const appDisplayName = isBeta ? 'Messenger Beta' : 'Messenger';
 const macConfig = {
   category: 'public.app-category.social-networking',
   target: 'zip',
-  icon: icons.icns,
+  // The layered Icon Composer asset is compiled into Assets.car so macOS can
+  // render native default, dark, clear, and tinted appearances. The legacy
+  // ICNS remains available for the notification helper and DMG artwork.
+  icon: icons.mac,
   entitlements: 'entitlements.mac.plist',
   entitlementsInherit: 'entitlements.mac.plist',
-  notarize: {
-    teamId: '27JL2VERNC',
-  },
+  notarize: true,
   extendInfo: {
     NSCameraUsageDescription: `${appDisplayName} needs access to your camera for video calls.`,
     NSMicrophoneUsageDescription: `${appDisplayName} needs access to your microphone for audio and video calls.`,
@@ -170,13 +173,8 @@ const stableConfig = {
   linux: {
     ...linuxConfig,
     executableName: 'facebook-messenger-desktop',
-    desktop: {
-      Name: 'Messenger',
-      Comment: 'Unofficial desktop client for Facebook Messenger',
-      Categories: 'Network;InstantMessaging;Chat;',
-      StartupWMClass: 'Messenger',
-      Icon: 'facebook-messenger-desktop',
-    },
+    description: 'Unofficial desktop client for Facebook Messenger',
+    category: 'Network;InstantMessaging;Chat',
   },
   appImage: {
     artifactName: 'facebook-messenger-desktop-${arch}.${ext}',
@@ -228,13 +226,8 @@ const betaConfig = {
   linux: {
     ...linuxConfig,
     executableName: 'facebook-messenger-desktop-beta',
-    desktop: {
-      Name: 'Messenger Beta',
-      Comment: 'Unofficial desktop client for Facebook Messenger (Beta)',
-      Categories: 'Network;InstantMessaging;Chat;',
-      StartupWMClass: 'Messenger Beta',
-      Icon: 'facebook-messenger-desktop-beta',
-    },
+    description: 'Unofficial desktop client for Facebook Messenger (Beta)',
+    category: 'Network;InstantMessaging;Chat',
   },
   appImage: {
     artifactName: 'facebook-messenger-desktop-beta-${arch}.${ext}',

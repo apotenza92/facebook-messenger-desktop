@@ -4733,7 +4733,8 @@ const runNotificationPolicyTests = () => {
   );
   assert(
     afterPackSource.includes("CFBundleIconFile") &&
-      afterPackSource.includes("fs.copyFileSync(appIconPath") &&
+      afterPackSource.includes("fs.copyFileSync(legacyAppIconPath") &&
+      afterPackSource.includes("isBeta ? ['beta', 'icon.icns']") &&
       afterPackSource.includes("NotificationHelper.app"),
     "#50 macOS notification helper should package the app icon for notification-system surfaces",
   );
