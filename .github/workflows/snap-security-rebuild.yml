@@ -1,0 +1,252 @@
+name: Snap Scheduled Security Rebuild
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SNAPCRAFT_BUILD_INFO: "1"
+  SNAP_NAME: facebook-messenger-desktop
+
+on:
+  schedule:
+    - cron: "15 2 * * *" # Daily package refresh, before the normal promotion checks
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "Version expected in package.json. Leave empty to use the checked-out version."
+        required: false
+        type: string
+
+concurrency:
+  group: snap-security-rebuild
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Capture current published revisions
+    runs-on: ubuntu-latest
+    outputs:
+      expected_version: ${{ steps.baseline.outputs.expected_version }}
+      prerelease: ${{ steps.baseline.outputs.prerelease }}
+      baseline_channel: ${{ steps.baseline.outputs.baseline_channel }}
+      upload_channel: ${{ steps.baseline.outputs.upload_channel }}
+      amd64_revision: ${{ steps.baseline.outputs.amd64_revision }}
+      arm64_revision: ${{ steps.baseline.outputs.arm64_revision }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Resolve version and revision floor
+        id: baseline
+        env:
+          EXPECTED_VERSION_INPUT: ${{ github.event.inputs.expected_version }}
+        run: |
+          set -euo pipefail
+
+          package_version="$(node -p "require('./package.json').version")"
+          expected_version="${EXPECTED_VERSION_INPUT:-$package_version}"
+          test "$expected_version" = "$package_version"
+
+          if [[ "$expected_version" == *-* ]]; then
+            prerelease=true
+            baseline_channel=beta
+            upload_channel=edge
+          else
+            # Stable security rebuilds are prepared in candidate, but are never
+            # automatically released to stable.
+            prerelease=false
+            baseline_channel=stable
+            upload_channel=candidate
+          fi
+
+          snap_info_url="https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}"
+          info=""
+          for attempt in 1 2 3 4; do
+            if info="$(curl -fsSL \
+              -H "Snap-Device-Series: 16" \
+              -H "User-Agent: snapd/2.63" \
+              "$snap_info_url")"; then
+              break
+            fi
+            sleep $((attempt * 15))
+          done
+          test -n "$info"
+
+          amd64_revision="$(jq -r --arg risk "$baseline_channel" \
+            '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "amd64") | .revision' \
+            <<<"$info")"
+          arm64_revision="$(jq -r --arg risk "$baseline_channel" \
+            '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "arm64") | .revision' \
+            <<<"$info")"
+
+          [[ "$amd64_revision" =~ ^[0-9]+$ ]]
+          [[ "$arm64_revision" =~ ^[0-9]+$ ]]
+
+          {
+            echo "expected_version=$expected_version"
+            echo "prerelease=$prerelease"
+            echo "baseline_channel=$baseline_channel"
+            echo "upload_channel=$upload_channel"
+            echo "amd64_revision=$amd64_revision"
+            echo "arm64_revision=$arm64_revision"
+          } >>"$GITHUB_OUTPUT"
+
+          echo "Building $expected_version for $upload_channel; revision floor is amd64 r$amd64_revision, arm64 r$arm64_revision."
+
+  build:
+    name: Build and upload ${{ matrix.arch }} snap
+    needs: baseline
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Verify runner and version
+        run: |
+          set -euo pipefail
+          test "$(dpkg --print-architecture)" = "${{ matrix.arch }}"
+          test "$(node -p "require('./package.json').version")" = "${{ needs.baseline.outputs.expected_version }}"
+
+      - name: Install build tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools
+          sudo snap install snapcraft --classic
+
+      - name: Build snap with package manifest
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=FORCE_JAVASCRIPT_ACTIONS_TO_NODE24,SNAPCRAFT_BUILD_INFO \
+            snapcraft --destructive-mode --build-for "${{ matrix.arch }}"
+
+      - name: Inspect snap and security manifest
+        id: snap
+        run: |
+          set -euo pipefail
+          snap_file="$(find . -maxdepth 1 -name "facebook-messenger-desktop_*_${{ matrix.arch }}.snap" -print -quit)"
+          test -n "$snap_file"
+
+          unsquashfs -cat "$snap_file" meta/snap.yaml > /tmp/snap-meta.yaml
+          grep -Fx "name: facebook-messenger-desktop" /tmp/snap-meta.yaml
+          grep -Ex "version: '?${{ needs.baseline.outputs.expected_version }}'?" /tmp/snap-meta.yaml
+
+          unsquashfs -cat "$snap_file" snap/manifest.yaml > /tmp/snap-manifest.yaml
+          grep -F "libasound2t64" /tmp/snap-manifest.yaml
+
+          echo "snap_file=$snap_file" >>"$GITHUB_OUTPUT"
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: facebook-messenger-desktop-${{ needs.baseline.outputs.expected_version }}-${{ matrix.arch }}-security-rebuild
+          path: ${{ steps.snap.outputs.snap_file }}
+
+      - name: Upload snap to refresh channel
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          UPLOAD_CHANNEL: ${{ needs.baseline.outputs.upload_channel }}
+        run: |
+          set -euo pipefail
+          snapcraft upload "${{ steps.snap.outputs.snap_file }}" --release "$UPLOAD_CHANNEL"
+
+  verify_and_promote:
+    name: Verify refreshed revisions and promote prerelease
+    needs:
+      - baseline
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Wait for both refreshed revisions
+        id: refreshed
+        env:
+          EXPECTED_VERSION: ${{ needs.baseline.outputs.expected_version }}
+          UPLOAD_CHANNEL: ${{ needs.baseline.outputs.upload_channel }}
+          BASELINE_AMD64_REVISION: ${{ needs.baseline.outputs.amd64_revision }}
+          BASELINE_ARM64_REVISION: ${{ needs.baseline.outputs.arm64_revision }}
+        run: |
+          set -euo pipefail
+
+          snap_info_url="https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}"
+          for attempt in $(seq 1 40); do
+            info="$(curl -fsSL \
+              -H "Snap-Device-Series: 16" \
+              -H "User-Agent: snapd/2.63" \
+              "$snap_info_url" || true)"
+
+            amd64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" \
+              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "amd64" and .version == env.EXPECTED_VERSION) | .revision' \
+              <<<"${info:-{}}")"
+            arm64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" \
+              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "arm64" and .version == env.EXPECTED_VERSION) | .revision' \
+              <<<"${info:-{}}")"
+
+            echo "Attempt $attempt/40: $UPLOAD_CHANNEL amd64=r${amd64_revision:-missing}, arm64=r${arm64_revision:-missing}"
+
+            if [[ "$amd64_revision" =~ ^[0-9]+$ ]] &&
+              [[ "$arm64_revision" =~ ^[0-9]+$ ]] &&
+              [ "$amd64_revision" -gt "$BASELINE_AMD64_REVISION" ] &&
+              [ "$arm64_revision" -gt "$BASELINE_ARM64_REVISION" ]; then
+              {
+                echo "amd64_revision=$amd64_revision"
+                echo "arm64_revision=$arm64_revision"
+              } >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting for refreshed $UPLOAD_CHANNEL revisions on both architectures." >&2
+          exit 1
+
+      - name: Install Snapcraft
+        if: needs.baseline.outputs.prerelease == 'true'
+        run: sudo snap install snapcraft --classic
+
+      - name: Promote refreshed prerelease to beta
+        if: needs.baseline.outputs.prerelease == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          snapcraft promote "$SNAP_NAME" --from-channel edge --to-channel beta --yes
+
+      - name: Verify exact published revisions
+        env:
+          EXPECTED_VERSION: ${{ needs.baseline.outputs.expected_version }}
+          PRERELEASE: ${{ needs.baseline.outputs.prerelease }}
+          UPLOAD_CHANNEL: ${{ needs.baseline.outputs.upload_channel }}
+          AMD64_REVISION: ${{ steps.refreshed.outputs.amd64_revision }}
+          ARM64_REVISION: ${{ steps.refreshed.outputs.arm64_revision }}
+        run: |
+          set -euo pipefail
+          verify_channel="$UPLOAD_CHANNEL"
+          if [ "$PRERELEASE" = "true" ]; then
+            verify_channel=beta
+          fi
+          scripts/verify-snap-channel-revisions.sh \
+            "$SNAP_NAME" "$verify_channel" "$EXPECTED_VERSION" "$AMD64_REVISION" "$ARM64_REVISION"
+
+      - name: Note stable release gate
+        if: needs.baseline.outputs.prerelease != 'true'
+        run: |
+          echo "A refreshed stable-version snap is ready in candidate." >>"$GITHUB_STEP_SUMMARY"
+          echo "Stable remains unchanged until an explicitly approved promotion." >>"$GITHUB_STEP_SUMMARY"
