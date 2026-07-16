@@ -144,6 +144,7 @@ jobs:
           grep -Ex "version: '?${{ needs.baseline.outputs.expected_version }}'?" /tmp/snap-meta.yaml
 
           unsquashfs -cat "$snap_file" snap/manifest.yaml > /tmp/snap-manifest.yaml
+          grep -F "libasound2-data" /tmp/snap-manifest.yaml
           grep -F "libasound2t64" /tmp/snap-manifest.yaml
 
           echo "snap_file=$snap_file" >>"$GITHUB_OUTPUT"
