@@ -191,12 +191,16 @@ jobs:
               -H "User-Agent: snapd/2.63" \
               "$snap_info_url" || true)"
 
-            amd64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" \
-              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "amd64" and .version == env.EXPECTED_VERSION) | .revision' \
-              <<<"${info:-{}}")"
-            arm64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" \
-              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "arm64" and .version == env.EXPECTED_VERSION) | .revision' \
-              <<<"${info:-{}}")"
+            if [ -z "$info" ]; then
+              info='{"channel-map":[]}'
+            fi
+
+            amd64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" --arg version "$EXPECTED_VERSION" \
+              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "amd64" and .version == $version) | .revision' \
+              <<<"$info")"
+            arm64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" --arg version "$EXPECTED_VERSION" \
+              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "arm64" and .version == $version) | .revision' \
+              <<<"$info")"
 
             echo "Attempt $attempt/40: $UPLOAD_CHANNEL amd64=r${amd64_revision:-missing}, arm64=r${arm64_revision:-missing}"
 
