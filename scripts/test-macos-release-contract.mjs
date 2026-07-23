@@ -714,7 +714,7 @@ function testBuilderContract() {
     CSC_NAME: "Example (TEAM123456)",
     FORCE_BETA_BUILD: "true",
     MESSENGER_REQUIRE_RELEASE_SIGNING: "true",
-  });
+  }, ["--mac"]);
   assert.equal(signed.forceCodeSigning, true);
   assert.equal(signed.mac.identity, "Example (TEAM123456)");
   assert.equal(signed.mac.hardenedRuntime, true);
