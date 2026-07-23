@@ -726,7 +726,7 @@ function testBuilderContract() {
     {
       provider: "github",
       owner: "apotenza92",
-      repo: "FacebookMessengerDesktop",
+      repo: "facebook-messenger-desktop",
       channel: "beta",
     },
   ]);

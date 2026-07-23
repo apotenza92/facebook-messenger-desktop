@@ -27,7 +27,7 @@ import {
   validateSignatureMetadata,
 } from "./macos-release-contract.mjs";
 
-const repository = "apotenza92/FacebookMessengerDesktop";
+const repository = "apotenza92/facebook-messenger-desktop";
 const legacyUpdaterBaselines = Object.freeze({
   "beta-arm64": Object.freeze({
     tag: "v1.3.1-beta.40",

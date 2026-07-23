@@ -67,7 +67,7 @@ if (isWindowsBuild) {
 const publishConfig = {
   provider: 'github',
   owner: 'apotenza92',
-  repo: 'FacebookMessengerDesktop',
+  repo: 'facebook-messenger-desktop',
 };
 
 // Beta builds use 'beta' channel for updates

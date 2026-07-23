@@ -367,7 +367,7 @@ function validateEmbeddedUpdater(appPath, contract, version) {
   if (
     updateConfig?.provider !== "github" ||
     updateConfig.owner !== "apotenza92" ||
-    updateConfig.repo !== "FacebookMessengerDesktop"
+    updateConfig.repo !== "facebook-messenger-desktop"
   ) {
     fail(
       "Packaged updater does not use the maintained Messenger GitHub release provider",

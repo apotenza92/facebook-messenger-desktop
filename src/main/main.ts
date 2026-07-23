@@ -11402,7 +11402,7 @@ const MAX_RELEASE_CHECKSUM_BYTES = 1024 * 1024;
 function downloadReleaseChecksums(
   version: string,
 ): Promise<string> {
-  const checksumUrl = `https://github.com/apotenza92/FacebookMessengerDesktop/releases/download/v${version}/SHA256SUMS`;
+  const checksumUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${version}/SHA256SUMS`;
   return downloadReleaseChecksumsFromUrl(checksumUrl, 0);
 }
 
@@ -11487,7 +11487,7 @@ async function downloadWindowsUpdate(version: string): Promise<string> {
   // even when updating to a stable version, and stable users use stable installer
   const appPrefix = isBetaVersion ? "Messenger-Beta" : "Messenger";
   const fileName = `${appPrefix}-windows-${arch}-setup.exe`;
-  const downloadUrl = `https://github.com/apotenza92/FacebookMessengerDesktop/releases/download/v${version}/${fileName}`;
+  const downloadUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${version}/${fileName}`;
 
   // Get user's Downloads folder
   const downloadsPath = app.getPath("downloads");
@@ -11786,7 +11786,7 @@ async function downloadLinuxPackage(
     ? "facebook-messenger-desktop-beta"
     : "facebook-messenger-desktop";
   const fileName = `${packageName}-${archName}.${packageType}`;
-  const downloadUrl = `https://github.com/apotenza92/FacebookMessengerDesktop/releases/download/v${version}/${fileName}`;
+  const downloadUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${version}/${fileName}`;
 
   // Get user's Downloads folder
   const downloadsPath = app.getPath("downloads");
