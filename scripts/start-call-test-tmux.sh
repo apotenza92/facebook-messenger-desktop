@@ -18,7 +18,7 @@ fi
 tmux new-session -d -s "${SESSION_NAME}" -n auth -c "${ROOT_DIR}"
 tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Run once in this pane: op signin'" C-m
 tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Verify: op whoami'" C-m
-tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Item check: op signin >/dev/null && op item get \"Dad Facebook\" --format json >/dev/null && echo ok'" C-m
+tmux send-keys -t "${SESSION_NAME}:auth" "echo '[auth] Optional item check: OP_FACEBOOK_ITEM=\"<test-account-item>\" op item get \"\$OP_FACEBOOK_ITEM\" --format json >/dev/null && echo ok'" C-m
 
 tmux new-window -t "${SESSION_NAME}" -n keepalive -c "${ROOT_DIR}"
 tmux send-keys -t "${SESSION_NAME}:keepalive" "echo '[keepalive] Re-signing/checking every ${KEEPALIVE_SECONDS}s (app integration)'" C-m
@@ -26,7 +26,7 @@ tmux send-keys -t "${SESSION_NAME}:keepalive" "while true; do if op signin >/dev
 
 tmux new-window -t "${SESSION_NAME}" -n runner -c "${ROOT_DIR}"
 tmux send-keys -t "${SESSION_NAME}:runner" "echo '[runner] Example:'" C-m
-tmux send-keys -t "${SESSION_NAME}:runner" "echo 'op signin >/dev/null && MICHAEL_PROFILE_DIR=\"$ROOT_DIR/.tmp/playwright-michael-profile\" OP_FACEBOOK_ITEM=\"Dad Facebook\" CALL_TEST_MODE=both node scripts/test-call-flows-gui.js'" C-m
+tmux send-keys -t "${SESSION_NAME}:runner" "echo 'op signin >/dev/null && TESTER_B_PROFILE_DIR=\"$ROOT_DIR/.tmp/playwright-tester-b-profile\" OP_FACEBOOK_ITEM=\"<test-account-item>\" CALL_TEST_MODE=both node scripts/test-call-flows-gui.js'" C-m
 
 tmux select-window -t "${SESSION_NAME}:auth"
 

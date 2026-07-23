@@ -8,11 +8,72 @@ usage() {
   cat <<'EOF'
 Usage:
   test-issue53-linux-vm-smoke.sh appimage <AppImage>
+  test-issue53-linux-vm-smoke.sh executable <installed-executable>
+  test-issue53-linux-vm-smoke.sh flatpak <bundle> <app-id>
   test-issue53-linux-vm-smoke.sh copy-repo <shared-repo> <work-dir>
   test-issue53-linux-vm-smoke.sh build-snap <work-dir> <output-dir>
   test-issue53-linux-vm-smoke.sh install-snap <snap-file>
   test-issue53-linux-vm-smoke.sh snap-launch
 EOF
+}
+
+flatpak_smoke() {
+  local bundle="$1"
+  local app_id="$2"
+  local smoke_root
+  local smoke_home
+  local smoke_tmp
+
+  test -f "$bundle"
+  smoke_root="$(mktemp -d)"
+  smoke_home="$smoke_root/home"
+  smoke_tmp="$smoke_root/tmp"
+  mkdir -p "$smoke_home" "$smoke_tmp" "$log_dir"
+  env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
+    flatpak install --user --noninteractive "$bundle"
+  run_with_timeout "$log_dir/issue53-flatpak-${app_id}.log" \
+    env -i \
+      HOME="$smoke_home" \
+      LANG=C.UTF-8 \
+      PATH=/usr/local/bin:/usr/bin:/bin \
+      TMPDIR="$smoke_tmp" \
+      flatpak run --user \
+        --env=MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS=true \
+        --env=SKIP_SINGLE_INSTANCE_LOCK=true \
+        "$app_id"
+  env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
+    flatpak uninstall --user --noninteractive --delete-data "$app_id"
+  if env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
+    flatpak info --user "$app_id" >/dev/null 2>&1; then
+    echo "Flatpak uninstall left $app_id installed" >&2
+    exit 1
+  fi
+  echo "Flatpak install, launch, and uninstall passed: $bundle"
+}
+
+executable_smoke() {
+  local executable="$1"
+  local smoke_root
+  local smoke_home
+  local smoke_tmp
+  local log_name
+
+  test -x "$executable"
+  smoke_root="$(mktemp -d)"
+  smoke_home="$smoke_root/home"
+  smoke_tmp="$smoke_root/tmp"
+  log_name="$(basename "$executable" | tr -c '[:alnum:]._-' '_')"
+  mkdir -p "$smoke_home" "$smoke_tmp" "$log_dir"
+  run_with_timeout "$log_dir/issue53-executable-${log_name}.log" \
+    env -i \
+      HOME="$smoke_home" \
+      LANG=C.UTF-8 \
+      MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS=true \
+      PATH=/usr/local/bin:/usr/bin:/bin \
+      SKIP_SINGLE_INSTANCE_LOCK=true \
+      TMPDIR="$smoke_tmp" \
+      "$executable"
+  echo "Installed executable smoke passed: $executable"
 }
 
 assert_no_issue53_crash() {
@@ -41,10 +102,32 @@ assert_expected_launch_markers() {
 run_with_timeout() {
   local log_file="$1"
   shift
+  local display_number
+  local display
+  local xvfb_pid
+  local -a command
+
+  for display_number in $(seq 90 190); do
+    if [ ! -e "/tmp/.X11-unix/X${display_number}" ]; then break; fi
+  done
+  display=":${display_number}"
+  Xvfb "$display" -screen 0 1280x800x24 -nolisten tcp >"${log_file}.xvfb" 2>&1 &
+  xvfb_pid=$!
+  sleep 1
+  kill -0 "$xvfb_pid"
+
+  command=("$@")
+  if [ "${command[0]:-}" = env ] && [ "${command[1]:-}" = -i ]; then
+    command=(env -i "DISPLAY=$display" "${command[@]:2}")
+  else
+    command=(env "DISPLAY=$display" "${command[@]}")
+  fi
 
   set +e
-  timeout "${ISSUE53_SMOKE_TIMEOUT:-60s}" xvfb-run -a "$@" >"$log_file" 2>&1
+  timeout "${ISSUE53_SMOKE_TIMEOUT:-60s}" "${command[@]}" >"$log_file" 2>&1
   local code=$?
+  kill "$xvfb_pid" >/dev/null 2>&1 || true
+  wait "$xvfb_pid" >/dev/null 2>&1 || true
   set -e
 
   cat "$log_file"
@@ -68,10 +151,15 @@ appimage_smoke() {
   local log_name
   local extract_parent
   local extract_dir
+  local smoke_home
+  local smoke_tmp
 
   absolute_appimage="$(realpath "$appimage")"
   log_name="$(basename "$appimage" | tr -c '[:alnum:]._-' '_')"
   extract_parent="$(mktemp -d)"
+  smoke_home="$extract_parent/home"
+  smoke_tmp="$extract_parent/tmp"
+  mkdir -p "$smoke_home" "$smoke_tmp"
 
   mkdir -p "$log_dir"
   chmod +x "$appimage"
@@ -81,7 +169,16 @@ appimage_smoke() {
   )
   extract_dir="$extract_parent/squashfs-root"
   test -x "$extract_dir/AppRun"
-  run_with_timeout "$log_dir/issue53-appimage-${log_name}.log" env APPDIR="$extract_dir" "$extract_dir/AppRun"
+  run_with_timeout "$log_dir/issue53-appimage-${log_name}.log" \
+    env -i \
+      APPDIR="$extract_dir" \
+      HOME="$smoke_home" \
+      LANG=C.UTF-8 \
+      MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS=true \
+      PATH=/usr/local/bin:/usr/bin:/bin \
+      SKIP_SINGLE_INSTANCE_LOCK=true \
+      TMPDIR="$smoke_tmp" \
+      "$extract_dir/AppRun"
   echo "AppImage smoke passed: $appimage"
 }
 
@@ -157,6 +254,14 @@ main() {
     appimage)
       [ "$#" -eq 1 ] || { usage; exit 2; }
       appimage_smoke "$1"
+      ;;
+    executable)
+      [ "$#" -eq 1 ] || { usage; exit 2; }
+      executable_smoke "$1"
+      ;;
+    flatpak)
+      [ "$#" -eq 2 ] || { usage; exit 2; }
+      flatpak_smoke "$1" "$2"
       ;;
     copy-repo)
       [ "$#" -eq 2 ] || { usage; exit 2; }

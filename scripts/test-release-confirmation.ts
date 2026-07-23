@@ -122,10 +122,50 @@ async function testPrereleaseDoesNotRequirePhrase(): Promise<void> {
   }
 }
 
+async function testUntrackedFileFailsPreflight(): Promise<void> {
+  const repoDir = createTempRepo('1.2.3-beta.1');
+  try {
+    fs.writeFileSync(path.join(repoDir, 'untracked-release-input.txt'), 'not committed\n');
+    const result = await runRelease(repoDir, '1.2.3-beta.1');
+    assert(result.code !== 0, 'Expected an untracked file to fail release preflight');
+    assert(
+      result.output.includes('Error: You have uncommitted changes.'),
+      'Expected untracked-file release error message'
+    );
+    console.log('✓ untracked files fail release preflight');
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+}
+
+async function testUnsupportedReleaseChannelsFail(): Promise<void> {
+  for (const version of [
+    '1.2.3-alpha.1',
+    '1.2.3-rc.1',
+    '1.2.3-beta.0',
+    '1.2.3-beta.01',
+  ]) {
+    const repoDir = createTempRepo(version);
+    try {
+      const result = await runRelease(repoDir, version);
+      assert(result.code !== 0, `Expected ${version} to fail release grammar`);
+      assert(
+        result.output.includes('Use X.Y.Z or X.Y.Z-beta.N with N >= 1'),
+        `Expected strict stable/beta grammar error for ${version}`
+      );
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  }
+  console.log('✓ unsupported prerelease channels and beta zero fail');
+}
+
 async function run(): Promise<void> {
   await testStableWrongPhraseFails();
   await testStableCorrectPhrasePassesInDryRun();
   await testPrereleaseDoesNotRequirePhrase();
+  await testUntrackedFileFailsPreflight();
+  await testUnsupportedReleaseChannelsFail();
 }
 
 run()

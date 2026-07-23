@@ -177,9 +177,11 @@
       .slice(0, 180);
 
   const getIncomingCallEvidenceApi = (): IncomingCallEvidenceApi | null => {
-    const api = (globalThis as typeof globalThis & {
-      __mdIncomingCallEvidence?: IncomingCallEvidenceApi;
-    }).__mdIncomingCallEvidence;
+    const api = (
+      globalThis as typeof globalThis & {
+        __mdIncomingCallEvidence?: IncomingCallEvidenceApi;
+      }
+    ).__mdIncomingCallEvidence;
     if (!api || typeof api !== "object") {
       return null;
     }
@@ -187,8 +189,10 @@
   };
 
   const extractIncomingCallerName = (text: string): string | undefined => {
-    const caller = getIncomingCallEvidenceApi()
-      ?.extractIncomingCallCallerName?.(text)?.caller;
+    const caller =
+      getIncomingCallEvidenceApi()?.extractIncomingCallCallerName?.(
+        text,
+      )?.caller;
     return typeof caller === "string" && caller.trim().length > 0
       ? caller
       : undefined;
@@ -332,7 +336,9 @@
             : typeof dataValue,
       dataKeys:
         dataValue && typeof dataValue === "object" && !Array.isArray(dataValue)
-          ? Object.keys(dataValue as Record<string, unknown>).sort().slice(0, 30)
+          ? Object.keys(dataValue as Record<string, unknown>)
+              .sort()
+              .slice(0, 30)
           : undefined,
       dataPreview:
         typeof dataValue === "string"
@@ -458,8 +464,7 @@
     }
 
     if (
-      (evidence.source === "dom-soft" ||
-        evidence.source === "periodic-scan") &&
+      (evidence.source === "dom-soft" || evidence.source === "periodic-scan") &&
       !evidence.hasVisibleControls
     ) {
       return {
@@ -482,8 +487,7 @@
       return;
     }
     if (
-      (evidence.source === "dom-soft" ||
-        evidence.source === "periodic-scan") &&
+      (evidence.source === "dom-soft" || evidence.source === "periodic-scan") &&
       !evidence.hasVisibleControls
     ) {
       return;
@@ -581,15 +585,17 @@
     const groupManagement =
       typeof (policy as NotificationDecisionPolicyApi | null)
         ?.classifyGroupManagementNotification === "function"
-        ? (policy as NotificationDecisionPolicyApi & {
-            classifyGroupManagementNotification: (
-              payload: NotificationPayload,
-            ) => {
-              isGroupManagement: boolean;
-              reason: string;
-              matchedPattern?: string;
-            };
-          }).classifyGroupManagementNotification(payload)
+        ? (
+            policy as NotificationDecisionPolicyApi & {
+              classifyGroupManagementNotification: (
+                payload: NotificationPayload,
+              ) => {
+                isGroupManagement: boolean;
+                reason: string;
+                matchedPattern?: string;
+              };
+            }
+          ).classifyGroupManagementNotification(payload)
         : null;
     const isGlobalActivity = Boolean(
       policy?.isLikelyGlobalFacebookNotification(payload),
@@ -615,7 +621,8 @@
     isGlobalActivity: activity.isGlobalActivity,
     call: {
       isIncomingCall: activity.call.isIncomingCall,
-      shouldSuppressNotification: activity.call.shouldSuppressNotification === true,
+      shouldSuppressNotification:
+        activity.call.shouldSuppressNotification === true,
       isCallActivity: activity.call.isCallActivity === true,
       reason: activity.call.reason,
       matchedPattern: activity.call.matchedPattern,
@@ -872,7 +879,9 @@
       normalizeNativeNotificationDedupeKey(href || "", body),
     );
     const conversationDeliveredAt = href
-      ? recentNativeMessageDeliveries.get(normalizeNativeConversationDeliveryKey(href))
+      ? recentNativeMessageDeliveries.get(
+          normalizeNativeConversationDeliveryKey(href),
+        )
       : undefined;
     const mostRecentDeliveredAt = Math.max(
       deliveredAt ?? 0,
@@ -887,7 +896,10 @@
   const getBoundarySnapshotReplaySuppression = (
     href: string,
     body: string,
-    suppressionClass: "message" | "global-activity" | "call-history" = "message",
+    suppressionClass:
+      | "message"
+      | "global-activity"
+      | "call-history" = "message",
   ): BoundarySnapshotRecord | null => {
     const key = normalizeConversationKey(href);
     const existing = boundarySnapshotRecords.get(key);
@@ -1139,7 +1151,9 @@
     matchedPhrase?: string;
   };
 
-  const collectConversationMetadataTexts = (conversationEl: Element): string[] => {
+  const collectConversationMetadataTexts = (
+    conversationEl: Element,
+  ): string[] => {
     const texts: string[] = [];
     const seen = new Set<string>();
 
@@ -1363,7 +1377,8 @@
   ): NotificationCandidate | undefined => {
     const normalizedHref = normalizeConversationKey(href);
     return candidates.find(
-      (candidate) => normalizeConversationKey(candidate.href) === normalizedHref,
+      (candidate) =>
+        normalizeConversationKey(candidate.href) === normalizedHref,
     );
   };
 
@@ -1641,19 +1656,17 @@
           typeof policy.shouldSuppressBrowserNotificationActivity === "function"
             ? policy.shouldSuppressBrowserNotificationActivity(nativePayload)
             : {
-                suppress: policy.isLikelyGlobalFacebookNotification(nativePayload),
+                suppress:
+                  policy.isLikelyGlobalFacebookNotification(nativePayload),
                 reason: "global-facebook-activity",
               };
         if (browserActivitySuppression.suppress) {
-          log(
-            "Native notification suppressed - non-message browser activity",
-            {
-              title,
-              body,
-              reason: browserActivitySuppression.reason,
-              matchedPattern: browserActivitySuppression.matchedPattern,
-            },
-          );
+          log("Native notification suppressed - non-message browser activity", {
+            title,
+            body,
+            reason: browserActivitySuppression.reason,
+            matchedPattern: browserActivitySuppression.matchedPattern,
+          });
           return;
         }
 
@@ -1731,7 +1744,8 @@
               wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
                 normalizedHref,
                 matchedInfo?.body || bodyDedupeValue,
-                matchedActivity?.suppressionClass ?? rawActivity.suppressionClass,
+                matchedActivity?.suppressionClass ??
+                  rawActivity.suppressionClass,
               );
 
               if (
@@ -1761,12 +1775,12 @@
                     ])
                   : Boolean(
                       matchedInfo &&
-                        typeof policy.isLikelySelfAuthoredMessagePreview ===
-                          "function" &&
-                        policy.isLikelySelfAuthoredMessagePreview({
-                          title: matchedInfo.title,
-                          body: matchedInfo.body,
-                        }),
+                      typeof policy.isLikelySelfAuthoredMessagePreview ===
+                        "function" &&
+                      policy.isLikelySelfAuthoredMessagePreview({
+                        title: matchedInfo.title,
+                        body: matchedInfo.body,
+                      }),
                     );
               if (selfAuthoredNotification) {
                 log("Native notification suppressed - self-authored preview", {
@@ -1778,20 +1792,26 @@
               }
 
               if (!isConversationUnread(matchedRow)) {
-                log("Native notification matched read conversation - suppressing", {
-                  title,
-                  href: normalizedHref,
-                });
+                log(
+                  "Native notification matched read conversation - suppressing",
+                  {
+                    title,
+                    href: normalizedHref,
+                  },
+                );
                 return;
               }
             }
           }
         } else {
-          log("Native notification suppressed - sidebar unavailable for Messenger proof", {
-            title,
-            sourceKind: "facebook",
-            provenanceReason: "missing-sidebar-thread-proof",
-          });
+          log(
+            "Native notification suppressed - sidebar unavailable for Messenger proof",
+            {
+              title,
+              sourceKind: "facebook",
+              provenanceReason: "missing-sidebar-thread-proof",
+            },
+          );
           return;
         }
 
@@ -1850,11 +1870,14 @@
 
         if (hasAlreadyNotified(nativeDedupeKey, bodyStr)) {
           if (wakeReplaySuppression) {
-            log("Native notification suppressed - pre-existing after wake boundary", {
-              href: nativeDedupeKey,
-              boundaryReason: wakeReplaySuppression.reason,
-              wakeGeneration: wakeReplaySuppression.wakeGeneration,
-            });
+            log(
+              "Native notification suppressed - pre-existing after wake boundary",
+              {
+                href: nativeDedupeKey,
+                boundaryReason: wakeReplaySuppression.reason,
+                wakeGeneration: wakeReplaySuppression.wakeGeneration,
+              },
+            );
           } else {
             log("Native notification deduplicated", { href: nativeDedupeKey });
           }
@@ -1974,7 +1997,8 @@
       includeFresh === true &&
       (getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
         reason,
-      ) ?? false);
+      ) ??
+        false);
     if (wakeBoundarySnapshot) {
       wakeGeneration += 1;
       boundarySnapshotRecords.clear();
@@ -2026,7 +2050,8 @@
       reason &&
       (getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
         reason,
-      ) ?? false)
+      ) ??
+        false)
         ? wakeGeneration
         : null;
 
@@ -2176,10 +2201,13 @@
       }
 
       if (!isMessageFresh(row)) {
-        log("Delayed mutation notification suppressed - message is no longer fresh", {
-          title: info.title,
-          href: normalizedHref,
-        });
+        log(
+          "Delayed mutation notification suppressed - message is no longer fresh",
+          {
+            title: info.title,
+            href: normalizedHref,
+          },
+        );
         return;
       }
 
@@ -2191,16 +2219,19 @@
         observedHref,
         conversationCandidates,
       );
-      log("Delayed mutation notification decision", decision.debug || {
-        observedTitle: info.title,
-        observedBody: info.body,
-        observedHref,
-        matchedHref: decision.matchedHref,
-        matchedObservedHref: decision.matchedObservedHref,
-        confidence: decision.confidence,
-        muted: decision.muted,
-        finalReason: decision.reason,
-      });
+      log(
+        "Delayed mutation notification decision",
+        decision.debug || {
+          observedTitle: info.title,
+          observedBody: info.body,
+          observedHref,
+          matchedHref: decision.matchedHref,
+          matchedObservedHref: decision.matchedObservedHref,
+          confidence: decision.confidence,
+          muted: decision.muted,
+          finalReason: decision.reason,
+        },
+      );
 
       if (!decision.shouldNotify || !decision.matchedHref) {
         log("Delayed mutation notification suppressed by policy", {
@@ -2215,7 +2246,9 @@
         return;
       }
 
-      const normalizedMatchedHref = normalizeConversationKey(decision.matchedHref);
+      const normalizedMatchedHref = normalizeConversationKey(
+        decision.matchedHref,
+      );
       const matchedRow = rowByHref.get(normalizedMatchedHref);
       if (!matchedRow) {
         log("Delayed mutation notification suppressed - matched row missing", {
@@ -2236,13 +2269,16 @@
         matchedCandidate,
       );
       if (!messageProof.allow) {
-        log("Delayed mutation notification suppressed - matched row lacks chat-message proof", {
-          title: matchedInfo.title,
-          body: matchedInfo.body,
-          href: normalizedMatchedHref,
-          reason: messageProof.reason,
-          matchedCandidate,
-        });
+        log(
+          "Delayed mutation notification suppressed - matched row lacks chat-message proof",
+          {
+            title: matchedInfo.title,
+            body: matchedInfo.body,
+            href: normalizedMatchedHref,
+            reason: messageProof.reason,
+            matchedCandidate,
+          },
+        );
         return;
       }
 
@@ -2284,10 +2320,13 @@
             });
 
       if (selfAuthoredNotification) {
-        log("Delayed mutation notification suppressed - self-authored preview", {
-          title: matchedInfo.title,
-          href: normalizedMatchedHref,
-        });
+        log(
+          "Delayed mutation notification suppressed - self-authored preview",
+          {
+            title: matchedInfo.title,
+            href: normalizedMatchedHref,
+          },
+        );
         return;
       }
 
@@ -2308,10 +2347,13 @@
       }
 
       if (!isMessageFresh(matchedRow)) {
-        log("Delayed mutation notification suppressed - matched message stale", {
-          title: matchedInfo.title,
-          href: normalizedMatchedHref,
-        });
+        log(
+          "Delayed mutation notification suppressed - matched message stale",
+          {
+            title: matchedInfo.title,
+            href: normalizedMatchedHref,
+          },
+        );
         return;
       }
 
@@ -2454,16 +2496,19 @@
           normalizedObservedHref,
           conversationCandidates,
         );
-        log("Mutation notification decision", decision.debug || {
-          observedTitle: info.title,
-          observedBody: info.body,
-          observedHref: normalizedObservedHref,
-          matchedHref: decision.matchedHref,
-          matchedObservedHref: decision.matchedObservedHref,
-          confidence: decision.confidence,
-          muted: decision.muted,
-          finalReason: decision.reason,
-        });
+        log(
+          "Mutation notification decision",
+          decision.debug || {
+            observedTitle: info.title,
+            observedBody: info.body,
+            observedHref: normalizedObservedHref,
+            matchedHref: decision.matchedHref,
+            matchedObservedHref: decision.matchedObservedHref,
+            confidence: decision.confidence,
+            muted: decision.muted,
+            finalReason: decision.reason,
+          },
+        );
 
         if (!decision.shouldNotify || !decision.matchedHref) {
           log("Mutation notification suppressed by policy", {
@@ -2501,13 +2546,16 @@
           matchedCandidate,
         );
         if (!messageProof.allow) {
-          log("Mutation notification suppressed - matched row lacks chat-message proof", {
-            title: matchedInfo.title,
-            body: matchedInfo.body,
-            href: normalizedMatchedHref,
-            reason: messageProof.reason,
-            matchedCandidate,
-          });
+          log(
+            "Mutation notification suppressed - matched row lacks chat-message proof",
+            {
+              title: matchedInfo.title,
+              body: matchedInfo.body,
+              href: normalizedMatchedHref,
+              reason: messageProof.reason,
+              matchedCandidate,
+            },
+          );
           continue;
         }
 
@@ -2540,13 +2588,16 @@
           observedActivity.suppressionClass === "call-history" ||
           matchedActivity.suppressionClass === "call-history"
         ) {
-          log("Mutation notification suppressed - call history/system activity", {
-            title: matchedInfo.title,
-            body: matchedInfo.body,
-            href: normalizedMatchedHref,
-            raw: summarizeNotificationActivity(observedActivity),
-            matched: summarizeNotificationActivity(matchedActivity),
-          });
+          log(
+            "Mutation notification suppressed - call history/system activity",
+            {
+              title: matchedInfo.title,
+              body: matchedInfo.body,
+              href: normalizedMatchedHref,
+              raw: summarizeNotificationActivity(observedActivity),
+              matched: summarizeNotificationActivity(matchedActivity),
+            },
+          );
           continue;
         }
 
@@ -2554,13 +2605,16 @@
           observedActivity.suppressionClass === "global-activity" ||
           matchedActivity.suppressionClass === "global-activity"
         ) {
-          log("Mutation notification suppressed - non-message Facebook activity", {
-            title: matchedInfo.title,
-            body: matchedInfo.body,
-            href: normalizedMatchedHref,
-            raw: summarizeNotificationActivity(observedActivity),
-            matched: summarizeNotificationActivity(matchedActivity),
-          });
+          log(
+            "Mutation notification suppressed - non-message Facebook activity",
+            {
+              title: matchedInfo.title,
+              body: matchedInfo.body,
+              href: normalizedMatchedHref,
+              raw: summarizeNotificationActivity(observedActivity),
+              matched: summarizeNotificationActivity(matchedActivity),
+            },
+          );
           continue;
         }
 
@@ -2624,7 +2678,8 @@
           continue;
         }
 
-        const observedSearchText = extractConversationSearchText(conversationRow);
+        const observedSearchText =
+          extractConversationSearchText(conversationRow);
         const matchedSearchText =
           matchedRow === conversationRow
             ? observedSearchText
@@ -2665,12 +2720,15 @@
         // Check if we've already notified for this exact message
         if (hasAlreadyNotified(normalizedMatchedHref, matchedInfo.body)) {
           if (wakeReplaySuppression) {
-            log("Mutation notification suppressed - pre-existing after wake boundary", {
-              title: matchedInfo.title,
-              href: normalizedMatchedHref,
-              boundaryReason: wakeReplaySuppression.reason,
-              wakeGeneration: wakeReplaySuppression.wakeGeneration,
-            });
+            log(
+              "Mutation notification suppressed - pre-existing after wake boundary",
+              {
+                title: matchedInfo.title,
+                href: normalizedMatchedHref,
+                boundaryReason: wakeReplaySuppression.reason,
+                wakeGeneration: wakeReplaySuppression.wakeGeneration,
+              },
+            );
           }
           continue;
         }
@@ -2686,7 +2744,10 @@
         }
 
         if (
-          hasRecentNativeMessageDelivery(normalizedMatchedHref, matchedInfo.body)
+          hasRecentNativeMessageDelivery(
+            normalizedMatchedHref,
+            matchedInfo.body,
+          )
         ) {
           log(
             "Mutation notification suppressed - native Facebook notification already mirrored",
@@ -2922,10 +2983,14 @@
       typeof originalShowNotification === "function" &&
       !(registrationPrototype as any).__mdShowNotificationWrapped
     ) {
-      Object.defineProperty(registrationPrototype, "__mdShowNotificationWrapped", {
-        value: true,
-        configurable: false,
-      });
+      Object.defineProperty(
+        registrationPrototype,
+        "__mdShowNotificationWrapped",
+        {
+          value: true,
+          configurable: false,
+        },
+      );
       registrationPrototype.showNotification = function (
         title: string,
         options?: NotificationOptions,
@@ -2945,7 +3010,11 @@
         let provenanceReason: string | undefined;
         let matchDecision: NotificationMatchResult | null = null;
 
-        if (policy && !suppression?.suppress && !callClassification?.isIncomingCall) {
+        if (
+          policy &&
+          !suppression?.suppress &&
+          !callClassification?.isIncomingCall
+        ) {
           const sidebar = findSidebarElement();
           if (sidebar) {
             const { rowByHref, conversationCandidates } =
@@ -2981,18 +3050,23 @@
                 provenHref = normalizedHref;
                 provenanceReason = "service-worker-sidebar-thread-proof";
               } else if (row && !messageProof.allow) {
-                log("Service worker sidebar proof rejected - non-message row shape", {
-                  title: payload.title,
-                  body: payload.body,
-                  href: normalizedHref,
-                  reason: messageProof.reason,
-                  candidate,
-                });
+                log(
+                  "Service worker sidebar proof rejected - non-message row shape",
+                  {
+                    title: payload.title,
+                    body: payload.body,
+                    href: normalizedHref,
+                    reason: messageProof.reason,
+                    candidate,
+                  },
+                );
               }
             }
 
             if (!provenHref && isMessengerThreadHref(metadataThreadHref)) {
-              const normalizedHref = normalizeConversationKey(metadataThreadHref!);
+              const normalizedHref = normalizeConversationKey(
+                metadataThreadHref!,
+              );
               const row = rowByHref.get(normalizedHref);
               const candidate = findConversationCandidateByHref(
                 conversationCandidates,
@@ -3012,13 +3086,16 @@
                 provenHref = normalizedHref;
                 provenanceReason = "service-worker-metadata-thread-proof";
               } else if (row && !messageProof.allow) {
-                log("Service worker metadata proof rejected - non-message row shape", {
-                  title: payload.title,
-                  body: payload.body,
-                  href: normalizedHref,
-                  reason: messageProof.reason,
-                  candidate,
-                });
+                log(
+                  "Service worker metadata proof rejected - non-message row shape",
+                  {
+                    title: payload.title,
+                    body: payload.body,
+                    href: normalizedHref,
+                    reason: messageProof.reason,
+                    candidate,
+                  },
+                );
               }
             }
           }
@@ -3047,19 +3124,25 @@
           return Promise.resolve();
         }
         if (callClassification?.isIncomingCall) {
-          log("Service worker notification suppressed - incoming calls require explicit call path", {
-            title: payload.title,
-            body: payload.body,
-          });
+          log(
+            "Service worker notification suppressed - incoming calls require explicit call path",
+            {
+              title: payload.title,
+              body: payload.body,
+            },
+          );
           return Promise.resolve();
         }
         if (suppression?.suppress) {
-          log("Service worker notification suppressed - non-message browser activity", {
-            title: payload.title,
-            body: payload.body,
-            reason: suppression.reason,
-            matchedPattern: suppression.matchedPattern,
-          });
+          log(
+            "Service worker notification suppressed - non-message browser activity",
+            {
+              title: payload.title,
+              body: payload.body,
+              reason: suppression.reason,
+              matchedPattern: suppression.matchedPattern,
+            },
+          );
           return Promise.resolve();
         }
         if (!provenHref || !provenanceReason) {
@@ -3437,15 +3520,11 @@
 
       const normalizedCaller = normalizeSignaledCaller(caller);
       return (
-        normalizedCaller !== null &&
-        normalizedCaller !== lastCallSignalCaller
+        normalizedCaller !== null && normalizedCaller !== lastCallSignalCaller
       );
     };
 
-    const rememberIncomingCallSignal = (
-      now: number,
-      caller?: string,
-    ): void => {
+    const rememberIncomingCallSignal = (now: number, caller?: string): void => {
       lastCallSignalTime = now;
       const normalizedCaller = normalizeSignaledCaller(caller);
       if (normalizedCaller !== null) {
@@ -3453,15 +3532,9 @@
       }
     };
 
-    const extractIncomingCallerFromVisibleUi = (): string | undefined => {
-      const uiState = getVisibleIncomingCallUiState();
-      return uiState.caller;
-    };
-
-    const hasVisibleIncomingCallUi = (): boolean =>
-      Boolean(getVisibleIncomingCallUiState().source);
-
-    const normalizeOverlayHintText = (value: string | null | undefined): string =>
+    const normalizeOverlayHintText = (
+      value: string | null | undefined,
+    ): string =>
       String(value || "")
         .replace(/\s+/g, " ")
         .trim()
@@ -3472,30 +3545,29 @@
         return false;
       }
 
-      const overlayRoot =
-        element.matches?.(
-          [
-            "[role='dialog']",
-            "[role='menu']",
-            "[role='listbox']",
-            "[role='grid']",
-            "[aria-modal='true']",
-            "[data-testid*='popover']",
-            "[data-testid*='emoji']",
-          ].join(", "),
-        )
-          ? element
-          : element.closest(
-              [
-                "[role='dialog']",
-                "[role='menu']",
-                "[role='listbox']",
-                "[role='grid']",
-                "[aria-modal='true']",
-                "[data-testid*='popover']",
-                "[data-testid*='emoji']",
-              ].join(", "),
-            );
+      const overlayRoot = element.matches?.(
+        [
+          "[role='dialog']",
+          "[role='menu']",
+          "[role='listbox']",
+          "[role='grid']",
+          "[aria-modal='true']",
+          "[data-testid*='popover']",
+          "[data-testid*='emoji']",
+        ].join(", "),
+      )
+        ? element
+        : element.closest(
+            [
+              "[role='dialog']",
+              "[role='menu']",
+              "[role='listbox']",
+              "[role='grid']",
+              "[aria-modal='true']",
+              "[data-testid*='popover']",
+              "[data-testid*='emoji']",
+            ].join(", "),
+          );
       if (!(overlayRoot instanceof Element)) {
         return false;
       }
@@ -3505,7 +3577,9 @@
           overlayRoot.getAttribute("title") || ""
         } ${overlayRoot.textContent || ""}`.slice(0, 400),
       );
-      if (/\b(emoji|emojis|sticker|stickers|gif|gifs|search emoji)\b/i.test(label)) {
+      if (
+        /\b(emoji|emojis|sticker|stickers|gif|gifs|search emoji)\b/i.test(label)
+      ) {
         return true;
       }
 
@@ -3930,7 +4004,9 @@
       '[aria-selected="true"]',
     ].join(", ");
 
-    return row.matches(activeSelector) || row.querySelector(activeSelector) !== null;
+    return (
+      row.matches(activeSelector) || row.querySelector(activeSelector) !== null
+    );
   };
 
   // Get currently active conversation index
@@ -3967,7 +4043,9 @@
     let fallbackIndex = -1;
 
     if (direction === "next") {
-      fallbackIndex = chats.findIndex((chat) => chat.threadId !== currentThreadId);
+      fallbackIndex = chats.findIndex(
+        (chat) => chat.threadId !== currentThreadId,
+      );
     } else {
       for (let i = chats.length - 1; i >= 0; i--) {
         if (chats[i].threadId !== currentThreadId) {
@@ -4204,12 +4282,8 @@
   type NameCache = Record<string, { realNames: string[]; updatedAt: number }>;
 
   type NotificationDisplayPolicyApi = {
-    hasWordLikeDisplaySignal?: (
-      value: string | null | undefined,
-    ) => boolean;
-    inspectNotificationDisplayName?: (
-      value: string | null | undefined,
-    ) => {
+    hasWordLikeDisplaySignal?: (value: string | null | undefined) => boolean;
+    inspectNotificationDisplayName?: (value: string | null | undefined) => {
       normalizedLength: number;
       hasWordLikeSignal: boolean;
       generic: boolean;
@@ -4254,9 +4328,11 @@
 
   const getNotificationDisplayPolicy =
     (): NotificationDisplayPolicyApi | null => {
-      const policy = (globalThis as typeof globalThis & {
-        __mdNotificationDisplayPolicy?: NotificationDisplayPolicyApi;
-      }).__mdNotificationDisplayPolicy;
+      const policy = (
+        globalThis as typeof globalThis & {
+          __mdNotificationDisplayPolicy?: NotificationDisplayPolicyApi;
+        }
+      ).__mdNotificationDisplayPolicy;
       if (!policy || typeof policy !== "object") {
         return null;
       }
@@ -4433,78 +4509,16 @@
 
   const nameCache = loadNameCache();
 
-  const getThreadIdFromHref = (href: string | null | undefined): string | null => {
+  const getThreadIdFromHref = (
+    href: string | null | undefined,
+  ): string | null => {
     const normalizedHref = String(href || "");
     if (!normalizedHref) return null;
 
-    const match = normalizedHref.match(/\/(?:messages\/(?:e2ee\/)?t|t)\/(\d+)/i);
+    const match = normalizedHref.match(
+      /\/(?:messages\/(?:e2ee\/)?t|t)\/(\d+)/i,
+    );
     return match?.[1] || null;
-  };
-
-  const getCachedRealNamesForNotification = (
-    href: string | null | undefined,
-    displayTitle: string,
-  ): string[] => {
-    const threadId = getThreadIdFromHref(href);
-    if (!threadId) return [];
-
-    const cached = nameCache[threadId];
-    if (!cached?.realNames?.length) return [];
-
-    const normalizedTitle = normalizePotentialRealName(displayTitle).toLowerCase();
-    return sanitizeRealNames(cached.realNames).filter(
-      (name) => name.toLowerCase() !== normalizedTitle,
-    );
-  };
-
-  const formatNotificationConversationTitle = (input: {
-    title: string;
-    href?: string;
-    alternateTitle?: string | null;
-  }): string => {
-    const displayTitle = normalizePotentialRealName(input.title);
-    if (!displayTitle) return "";
-
-    const policy = getNotificationDisplayPolicy();
-    const cachedRealNames = getCachedRealNamesForNotification(
-      input.href,
-      displayTitle,
-    );
-    const alternateNames = [input.alternateTitle, ...cachedRealNames];
-
-    const formattedTitle =
-      typeof policy?.formatNotificationDisplayTitle === "function"
-        ? policy.formatNotificationDisplayTitle({
-            title: displayTitle,
-            alternateNames,
-            maxAlternateNames: 2,
-          })
-        : displayTitle;
-
-    if (alternateNames.some((name) => normalizePotentialRealName(name).length > 0)) {
-      const inspection =
-        typeof policy?.inspectNotificationDisplayTitle === "function"
-          ? policy.inspectNotificationDisplayTitle({
-              title: displayTitle,
-              alternateNames,
-              maxAlternateNames: 2,
-            })
-          : null;
-      log("Notification title formatting", {
-        threadId: getThreadIdFromHref(input.href),
-        usedAlternateTitle:
-          normalizePotentialRealName(input.alternateTitle).length > 0,
-        cachedRealNameCount: cachedRealNames.length,
-        alternateCount: inspection?.alternateCount ?? alternateNames.length,
-        keptAlternateCount: inspection?.keptAlternateCount ?? null,
-        rejectedAlternateCount: inspection?.rejectedAlternateCount ?? null,
-        alternates: inspection?.alternates ?? null,
-        formattedTitleChanged: formattedTitle !== displayTitle,
-        finalTitleLength: formattedTitle.length,
-      });
-    }
-
-    return formattedTitle;
   };
 
   // Extract all real names from avatar alts in current conversation

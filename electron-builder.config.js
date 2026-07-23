@@ -44,6 +44,12 @@ const iconPaths = {
 };
 
 const icons = isBeta ? iconPaths.beta : iconPaths.stable;
+const requireReleaseSigning = process.env.MESSENGER_REQUIRE_RELEASE_SIGNING === 'true';
+const releaseSigningIdentity = process.env.CSC_NAME?.trim();
+
+if (requireReleaseSigning && !releaseSigningIdentity) {
+  throw new Error('CSC_NAME is required when MESSENGER_REQUIRE_RELEASE_SIGNING=true');
+}
 
 // Build the files array based on target platform
 const baseFiles = [
@@ -72,7 +78,9 @@ if (isBeta) {
 
 const baseConfig = {
   afterPack: './scripts/after-pack.js',
-  publish: [publishConfig],
+  afterSign: './scripts/notarize-macos.cjs',
+  forceCodeSigning: requireReleaseSigning,
+  ...(isMacBuild ? { publish: [publishConfig] } : {}),
   directories: {
     output: 'release',
   },
@@ -88,13 +96,18 @@ const appDisplayName = isBeta ? 'Messenger Beta' : 'Messenger';
 const macConfig = {
   category: 'public.app-category.social-networking',
   target: 'zip',
+  hardenedRuntime: true,
+  ...(requireReleaseSigning ? { identity: releaseSigningIdentity } : {}),
   // The layered Icon Composer asset is compiled into Assets.car so macOS can
   // render native default, dark, clear, and tinted appearances. The legacy
   // ICNS remains available for the notification helper and DMG artwork.
   icon: icons.mac,
   entitlements: 'entitlements.mac.plist',
   entitlementsInherit: 'entitlements.mac.plist',
-  notarize: true,
+  // The maintained afterSign hook records and validates the notary submission,
+  // staples the app, and fails closed. Ambient Apple-ID notarization is not a
+  // supported release path.
+  notarize: false,
   extendInfo: {
     NSCameraUsageDescription: `${appDisplayName} needs access to your camera for video calls.`,
     NSMicrophoneUsageDescription: `${appDisplayName} needs access to your microphone for audio and video calls.`,

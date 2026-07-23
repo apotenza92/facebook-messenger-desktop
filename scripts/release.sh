@@ -42,8 +42,8 @@ if [ -z "$VERSION" ]; then
 fi
 
 # Validate version format
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-  echo "Error: Invalid version format. Use semver (e.g., 1.2.3 or 1.2.3-beta.1)"
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then
+  echo "Error: Invalid version format. Use X.Y.Z or X.Y.Z-beta.N with N >= 1"
   exit 1
 fi
 
@@ -73,8 +73,8 @@ if [ "$BRANCH" != "main" ]; then
   fi
 fi
 
-# Check for uncommitted changes
-if ! git diff-index --quiet HEAD --; then
+# Check for tracked, untracked, staged, or unstaged changes
+if [ -n "$(git status --porcelain)" ]; then
   echo "Error: You have uncommitted changes. Please commit or stash them first."
   exit 1
 fi
