@@ -1,4 +1,4 @@
-name: Snap Scheduled Security Rebuild
+name: Snap Security Rebuild
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -6,8 +6,6 @@ env:
   SNAP_NAME: facebook-messenger-desktop
 
 on:
-  schedule:
-    - cron: "15 2 * * *" # Daily package refresh, before the normal promotion checks
   workflow_dispatch:
     inputs:
       expected_version:
@@ -36,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Resolve version and revision floor
         id: baseline
@@ -107,11 +105,12 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    environment: snap-security-rebuild
     timeout-minutes: 90
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Verify runner and version
         run: |
@@ -150,7 +149,7 @@ jobs:
           echo "snap_file=$snap_file" >>"$GITHUB_OUTPUT"
 
       - name: Upload snap artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: facebook-messenger-desktop-${{ needs.baseline.outputs.expected_version }}-${{ matrix.arch }}-security-rebuild
           path: ${{ steps.snap.outputs.snap_file }}
@@ -169,11 +168,12 @@ jobs:
       - baseline
       - build
     runs-on: ubuntu-latest
+    environment: snap-beta-promotion
     timeout-minutes: 20
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Wait for both refreshed revisions
         id: refreshed

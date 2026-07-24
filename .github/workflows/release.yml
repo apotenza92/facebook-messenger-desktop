@@ -4,27 +4,177 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 on:
   push:
     tags:
-      - "v*" # Triggers on version tags like v1.0.0
-  workflow_dispatch: # Allows manual triggering
+      - "v*"
+
+concurrency:
+  group: messenger-release
+  cancel-in-progress: false
 
 jobs:
+  validate-release:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      release_environment: ${{ steps.release.outputs.release_environment }}
+      updater_matrix: ${{ steps.release.outputs.updater_matrix }}
+      winget_matrix: ${{ steps.release.outputs.winget_matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag and main provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          TAG_COMMIT="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          MAIN_COMMIT="$(git rev-parse refs/remotes/origin/main)"
+          test "$TAG_COMMIT" = "$GITHUB_SHA"
+          test "$TAG_COMMIT" = "$MAIN_COMMIT"
+          echo "Verified $GITHUB_REF_NAME resolves to current main commit $GITHUB_SHA."
+
+      - name: Validate tag and package version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const packageJson = require('./package.json');
+          const tag = process.env.GITHUB_REF_NAME;
+          const stable = /^v\d+\.\d+\.\d+$/.test(tag);
+          const prerelease = /^v\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(tag);
+          if (!stable && !prerelease) {
+            throw new Error(`Release ref must be vX.Y.Z or vX.Y.Z-beta.N with N >= 1; received ${tag}`);
+          }
+          if (packageJson.version !== tag.slice(1)) {
+            throw new Error(`Tag ${tag} does not match package version ${packageJson.version}`);
+          }
+          const updaterMatrix = [
+            ...(stable ? [
+              { channel: 'stable', arch: 'arm64', runner: 'macos-15' },
+              { channel: 'stable', arch: 'x64', runner: 'macos-15-intel' },
+            ] : []),
+            { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
+            { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
+          ];
+          const wingetMatrix = stable
+            ? [{ channel: 'stable' }, { channel: 'beta' }]
+            : [{ channel: 'beta' }];
+          const output = [
+            `channel=${stable ? 'stable' : 'beta'}`,
+            `prerelease=${prerelease}`,
+            `release_environment=${stable ? 'stable-release' : 'beta-release'}`,
+            `updater_matrix=${JSON.stringify(updaterMatrix)}`,
+            `winget_matrix=${JSON.stringify(wingetMatrix)}`,
+          ];
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output.join('\n')}\n`);
+          NODE
+
+  release-policy:
+    name: Verify immutable release policy
+    needs: validate-release
+    runs-on: ubuntu-24.04
+    environment: release-policy
+    permissions:
+      contents: read
+    steps:
+      - name: Require repository release immutability
+        # Fine-grained token scope: this repository, Administration: read only.
+        env:
+          IMMUTABLE_RELEASES_READ_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$IMMUTABLE_RELEASES_READ_TOKEN"
+          RESPONSE="$(curl --fail --silent --show-error --location \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $IMMUTABLE_RELEASES_READ_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/immutable-releases")"
+          jq -e '.enabled == true' <<<"$RESPONSE" >/dev/null
+          echo "Verified repository release immutability through the read-only policy boundary."
+
+  quality:
+    name: Required deterministic checks
+    needs: validate-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Run required deterministic checks
+        run: npm run test:ci
+        timeout-minutes: 30
+
+  resolve-legacy-updater-bridge:
+    name: Resolve one-release legacy updater bridge
+    needs: validate-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      channels: ${{ steps.bridge.outputs.channels }}
+      enabled: ${{ steps.bridge.outputs.enabled }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+      - name: Require an exact approval for each first migration bridge
+        id: bridge
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MESSENGER_LEGACY_UPDATER_BRIDGE_BETA_TAG: ${{ vars.MESSENGER_LEGACY_UPDATER_BRIDGE_BETA_TAG }}
+          MESSENGER_LEGACY_UPDATER_BRIDGE_STABLE_TAG: ${{ vars.MESSENGER_LEGACY_UPDATER_BRIDGE_STABLE_TAG }}
+        run: >-
+          node scripts/legacy-updater-bridge.mjs resolve
+          --repository "${{ github.repository }}"
+          --current-tag "${{ github.ref_name }}"
+          --release-channel "${{ needs.validate-release.outputs.channel }}"
+
   # ============================================
   # PHASE 1: Build all platforms
   # ============================================
 
   issue53-x64-smoke:
     name: Issue #53 x64 AppImage Smoke
+    needs: [validate-release, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Verify hosted runner architecture
         run: |
@@ -33,7 +183,7 @@ jobs:
           test "$(uname -m)" = "x86_64"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "20"
           cache: "npm"
@@ -89,27 +239,47 @@ jobs:
 
       - name: Upload x64 smoke logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: issue53-x64-release-smoke
           path: |
-            release/*linux*.yml
             issue53-smoke-logs/**
           retention-days: 14
           if-no-files-found: ignore
 
   build-macos:
-    name: Build macOS
-    runs-on: macos-latest
+    name: Build macOS ${{ matrix.arch }}
+    needs: [validate-release, quality]
+    runs-on: ${{ matrix.runner }}
+    environment: release-signing
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            native_arch: arm64
+          - arch: x64
+            runner: macos-15-intel
+            native_arch: x86_64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "20"
           cache: "npm"
+
+      - name: Verify native runner architecture
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.native_arch }}"
 
       - name: Install dependencies
         run: npm ci
@@ -122,73 +292,195 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables (signed/notarized)
-        run: npm run dist:mac
-        timeout-minutes: 30
+      - name: Build, sign, notarize, staple, and verify native package
+        timeout-minutes: 120
+        run: |
+          set -euo pipefail
+          npm run release:mac:signed -- \
+            --channel "${{ needs.validate-release.outputs.channel }}" \
+            --arch "${{ matrix.arch }}" \
+            --skip-build \
+            --skip-launch
+
+          if [[ "${{ needs.validate-release.outputs.channel }}" == stable ]]; then
+            npm run release:mac:signed -- \
+              --channel beta \
+              --arch "${{ matrix.arch }}" \
+              --skip-build \
+              --skip-launch
+          fi
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: 27JL2VERNC
+          APPLE_NOTARYTOOL_ISSUER_ID: ${{ vars.APPLE_NOTARYTOOL_ISSUER_ID }}
+          APPLE_NOTARYTOOL_KEY_ID: ${{ vars.APPLE_NOTARYTOOL_KEY_ID }}
+          APPLE_NOTARYTOOL_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARYTOOL_KEY_P8_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_P12_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
-      - name: Backup stable yml files before beta build
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+      - name: Verify and launch signed package without release credentials
         run: |
-          # Save stable yml files before beta build overwrites them
-          mkdir -p release/stable-yml-backup
-          cp release/*.yml release/stable-yml-backup/ || true
-
-      - name: Build beta-channel artifacts for stable release (signed/notarized)
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: |
-          # Run electron-builder directly without npm run build (which cleans the release folder)
-          # The TypeScript was already compiled in the previous step
-          npx electron-builder --config electron-builder.config.js --mac --arm64 --x64 --publish=never
-        timeout-minutes: 30
+          set -euo pipefail
+          node scripts/verify-macos-package.mjs \
+            --channel "${{ needs.validate-release.outputs.channel }}" \
+            --arch "${{ matrix.arch }}" \
+            --release-dir release \
+            --require-checksum
+          if [[ "${{ needs.validate-release.outputs.channel }}" == stable ]]; then
+            node scripts/verify-macos-package.mjs \
+              --channel beta \
+              --arch "${{ matrix.arch }}" \
+              --release-dir release \
+              --require-checksum
+          fi
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: 27JL2VERNC
-          FORCE_BETA_BUILD: "true"
-
-      - name: Restore stable yml files (beta yml already created by electron-builder)
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: |
-          # The beta build with channel:'beta' creates beta-*.yml files directly
-          # We just need to restore the stable latest-*.yml files from backup
-          cp release/stable-yml-backup/latest*.yml release/ || true
-          rm -rf release/stable-yml-backup
-          echo "YML files in release folder:"
-          ls -la release/*.yml
+          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
 
       - name: Upload artifacts
         timeout-minutes: 10
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: macos-build
+          name: macos-input-${{ matrix.arch }}
           path: |
             release/*.zip
-            release/*.yml
             release/*.blockmap
+            release/*-mac.yml
+            release/*.sha256
+            release/notarization-*.json
           compression-level: 0
           retention-days: 30
           if-no-files-found: error
 
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
+  assemble-macos:
+    name: Assemble macOS updater metadata
+    needs: [validate-release, build-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "20"
           cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        timeout-minutes: 10
+
+      - name: Download native macOS inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: artifacts/macos
+          pattern: macos-input-*
+
+      - name: Assemble and validate two-architecture updater metadata
+        run: |
+          set -euo pipefail
+          node scripts/assemble-macos-release.mjs \
+            --input-dir artifacts/macos \
+            --output-dir artifacts/macos-assembled \
+            --release-channel "${{ needs.validate-release.outputs.channel }}"
+
+      - name: Upload assembled macOS release assets
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos-build
+          path: artifacts/macos-assembled
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+  macos-updater-e2e:
+    name: macOS ${{ matrix.channel }} ${{ matrix.arch }} N-1 updater gate
+    needs: [validate-release, assemble-macos]
+    runs-on: ${{ matrix.runner }}
+    environment: ${{ matrix.channel }}-updater-verification
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.validate-release.outputs.updater_matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+      - name: Download assembled macOS candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: macos-build
+          path: artifacts/macos
+      - name: Exercise valid, corrupt, and wrong-signature updates from N-1
+        env:
+          APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG: ${{ vars.MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG }}
+        run: |
+          set -euo pipefail
+          PRODUCT_PREFIX=Messenger
+          if [[ "${{ matrix.channel }}" == beta ]]; then PRODUCT_PREFIX='Messenger-Beta'; fi
+          node scripts/test-macos-updater-e2e.mjs \
+            --channel "${{ matrix.channel }}" \
+            --arch "${{ matrix.arch }}" \
+            --current-tag "${{ github.ref_name }}" \
+            --bootstrap-tag "$MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG" \
+            --candidate "artifacts/macos/${PRODUCT_PREFIX}-macos-${{ matrix.arch }}.zip"
+
+  # Windows remains unsigned until a dedicated Authenticode credential and
+  # signing gate are configured. This job proves native packaging and fresh
+  # install/launch/uninstall behavior, not trusted N-1 automatic updating.
+  build-windows:
+    name: Build Windows ${{ matrix.arch }}
+    needs: [validate-release, quality]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            node_arch: x64
+            pe_machine: "0x8664"
+          - arch: arm64
+            runner: windows-11-arm
+            node_arch: arm64
+            pe_machine: "0xAA64"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Verify native runner architecture
+        shell: pwsh
+        run: |
+          if (node -p "process.arch" | Select-String -NotMatch '^${{ matrix.node_arch }}$') {
+            throw "Expected native Node architecture ${{ matrix.node_arch }}"
+          }
 
       - name: Install dependencies
         run: npm ci
@@ -201,73 +493,180 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables
-        run: npm run dist:win
+      - name: Build native distributables
+        run: npx electron-builder --config electron-builder.config.js --win --${{ matrix.arch }} --publish=never
         timeout-minutes: 30
 
-      - name: Backup stable yml files before beta build
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        shell: pwsh
-        run: |
-          # Save stable yml files before beta build overwrites them
-          New-Item -ItemType Directory -Force -Path release/stable-yml-backup | Out-Null
-          Copy-Item release/*.yml release/stable-yml-backup/ -ErrorAction SilentlyContinue
-
       - name: Build beta-channel artifacts for stable release
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: npx electron-builder --config electron-builder.config.js --win --publish=never
+        if: needs.validate-release.outputs.channel == 'stable'
+        run: npx electron-builder --config electron-builder.config.js --win --${{ matrix.arch }} --publish=never
         timeout-minutes: 30
         env:
           FORCE_BETA_BUILD: "true"
 
-      - name: Restore stable yml files (beta yml already created by electron-builder)
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+      - name: Install, launch, and uninstall native NSIS packages
         shell: pwsh
-        run: |
-          # The beta build with channel:'beta' creates beta-*.yml files directly
-          # We just need to restore the stable latest-*.yml files from backup
-          Copy-Item release/stable-yml-backup/latest*.yml release/ -Force -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force release/stable-yml-backup -ErrorAction SilentlyContinue
-          Write-Host "YML files in release folder:"
-          Get-ChildItem release/*.yml
+        run: ./scripts/test-windows-installer.ps1 -Arch "${{ matrix.arch }}" -ReleaseChannel "${{ needs.validate-release.outputs.channel }}" -ExpectedMachine "${{ matrix.pe_machine }}" -ReleaseDirectory release
 
       - name: Upload artifacts
         timeout-minutes: 10
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: windows-build
-          path: |
-            release/*.exe
-            release/*.yml
-            release/*.blockmap
+          name: windows-input-${{ matrix.arch }}
+          path: release/*.exe
           compression-level: 0
           retention-days: 30
           if-no-files-found: error
 
-  # Linux builds (AppImage, deb, rpm, flatpak) for both x64 and ARM64
-  build-linux:
-    name: Build Linux
-    runs-on: ubuntu-latest
+  assemble-windows:
+    name: Assemble exact unsigned Windows installers
+    needs: [validate-release, build-windows]
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "20"
           cache: "npm"
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+      - name: Download native Windows inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: artifacts/windows
+          pattern: windows-input-*
+      - name: Assemble and validate exact installer set
+        run: node scripts/assemble-windows-release.mjs --input-dir artifacts/windows --output-dir artifacts/windows-assembled --release-channel "${{ needs.validate-release.outputs.channel }}"
+      - name: Upload assembled Windows assets
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-build
+          path: artifacts/windows-assembled
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+  build-windows-legacy-bridge:
+    name: Build one-release universal Windows updater bridge
+    needs: [validate-release, quality, resolve-legacy-updater-bridge]
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install dependencies and build application
+        if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
+        run: npm ci && npm run generate-icons && npm run build
+        timeout-minutes: 20
+      - name: Build exact universal compatibility installers
+        if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          BRIDGE_CHANNELS: ${{ needs.resolve-legacy-updater-bridge.outputs.channels }}
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/legacy-updater-bridge-build | Out-Null
+          foreach ($channel in $env:BRIDGE_CHANNELS.Split(',')) {
+            $env:FORCE_BETA_BUILD = if ($channel -eq 'beta') { 'true' } else { 'false' }
+            npx --no-install electron-builder --config electron-builder.config.js --win nsis --x64 --arm64 --publish=never
+            if ($LASTEXITCODE -ne 0) { throw "Universal $channel NSIS bridge build failed" }
+            $prefix = if ($channel -eq 'beta') { 'Messenger-Beta' } else { 'Messenger' }
+            $installer = "release/$prefix-windows-setup.exe"
+            if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+              throw "Electron Builder did not produce the required universal bridge installer $installer"
+            }
+            Copy-Item -LiteralPath $installer -Destination artifacts/legacy-updater-bridge-build/
+          }
+        timeout-minutes: 60
+      - name: Install, launch, and uninstall each bridge on x64
+        if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          BRIDGE_CHANNELS: ${{ needs.resolve-legacy-updater-bridge.outputs.channels }}
+        run: |
+          foreach ($channel in $env:BRIDGE_CHANNELS.Split(',')) {
+            ./scripts/test-windows-installer.ps1 `
+              -Arch x64 `
+              -ReleaseChannel $channel `
+              -ExpectedMachine "0x8664" `
+              -ReleaseDirectory artifacts/legacy-updater-bridge-build `
+              -LegacyBridge
+          }
+      - name: Record exact bridge policy
+        shell: pwsh
+        env:
+          BRIDGE_CHANNELS: ${{ needs.resolve-legacy-updater-bridge.outputs.channels }}
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/legacy-updater-bridge-build | Out-Null
+          $channels = if ($env:BRIDGE_CHANNELS) { @($env:BRIDGE_CHANNELS.Split(',')) } else { @() }
+          $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          @{ channels = $channels; version = $version } |
+            ConvertTo-Json -Compress |
+            Set-Content -NoNewline artifacts/legacy-updater-bridge-build/bridge-policy.json
+      - name: Upload exact bridge inputs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: legacy-updater-bridge-build
+          path: artifacts/legacy-updater-bridge-build
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux ${{ matrix.arch }}
+    needs: [validate-release, quality]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            native_arch: x86_64
+            appimage_arch: x86_64
+            deb_arch: amd64
+            rpm_arch: x86_64
+            builder_targets: AppImage deb rpm flatpak
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            native_arch: aarch64
+            appimage_arch: arm64
+            deb_arch: arm64
+            rpm_arch: aarch64
+            builder_targets: AppImage deb rpm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Verify native runner architecture
+        run: test "$(uname -m)" = "${{ matrix.native_arch }}"
 
       - name: Install dependencies
         run: npm ci
         timeout-minutes: 10
 
-      - name: Install Flatpak tools and runtimes
+      - name: Install Linux package and launch dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            flatpak \
-            flatpak-builder \
             squashfs-tools \
             xvfb \
             xauth \
@@ -284,9 +683,13 @@ jobs:
             libxss1
           sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
           sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
-          # Add Flathub for runtimes (needed by electron-builder)
+
+      - name: Install Flatpak tools and runtimes
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y flatpak flatpak-builder
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          # Install required runtimes for Flatpak build
           sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
 
       - name: Generate icons
@@ -296,100 +699,90 @@ jobs:
         run: npm run build
         timeout-minutes: 5
 
-      - name: Build distributables
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            echo "Linux build attempt ${attempt}/3"
-            if npm run dist:linux; then
-              exit 0
-            fi
-
-            if [ "$attempt" -lt 3 ]; then
-              echo "Linux build failed (attempt ${attempt}/3). Retrying after cleanup..."
-              rm -rf release
-              sleep $((attempt * 20))
-            fi
-          done
-
-          echo "Linux build failed after 3 attempts"
-          exit 1
+      - name: Build native distributables
+        run: npx electron-builder --config electron-builder.config.js --linux ${{ matrix.builder_targets }} --${{ matrix.arch }} --publish=never
         timeout-minutes: 60
 
-      - name: Backup stable yml files before beta build
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: |
-          # Save stable yml files before beta build overwrites them
-          mkdir -p release/stable-yml-backup
-          cp release/*.yml release/stable-yml-backup/ || true
-
       - name: Build beta-channel artifacts for stable release
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+        if: needs.validate-release.outputs.channel == 'stable'
         run: |
           set -euo pipefail
-          # Run electron-builder directly without npm run build (which cleans the release folder)
-          # The TypeScript was already compiled in the previous step
-          for attempt in 1 2 3; do
-            echo "Linux beta-channel build attempt ${attempt}/3"
-            if npx electron-builder --config electron-builder.config.js --linux --publish=never; then
-              exit 0
-            fi
-
-            if [ "$attempt" -lt 3 ]; then
-              echo "Linux beta-channel build failed (attempt ${attempt}/3). Retrying after cleanup..."
-              rm -rf release
-              sleep $((attempt * 20))
-            fi
-          done
-
-          echo "Linux beta-channel build failed after 3 attempts"
-          exit 1
+          npx electron-builder --config electron-builder.config.js --linux ${{ matrix.builder_targets }} --${{ matrix.arch }} --publish=never
         timeout-minutes: 60
         env:
           FORCE_BETA_BUILD: "true"
 
-      - name: Restore stable yml files (beta yml already created by electron-builder)
-        if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
-        run: |
-          # The beta build with channel:'beta' creates beta-*.yml files directly
-          # We just need to restore the stable latest-*.yml files from backup
-          cp release/stable-yml-backup/latest*.yml release/ || true
-          rm -rf release/stable-yml-backup
-          echo "YML files in release folder:"
-          ls -la release/*.yml
-
       - name: Inspect Linux artifacts
-        run: npm run test:linux-artifacts
+        run: npm run test:linux-artifacts -- release/*${{ matrix.appimage_arch }}.AppImage
 
-      - name: Smoke x64 AppImage launch
+      - name: Verify AppImage architecture and launch runtime
         run: |
           set -euo pipefail
           mkdir -p issue53-smoke-logs
-          for appimage in release/*x86_64.AppImage; do
+          for appimage in release/*${{ matrix.appimage_arch }}.AppImage; do
+            readelf -h "$appimage" | grep -F 'Machine:' | grep -F "${{ matrix.native_arch == 'x86_64' && 'Advanced Micro Devices X86-64' || 'AArch64' }}"
             ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
               ./scripts/test-issue53-linux-vm-smoke.sh appimage "$appimage"
           done
 
+      - name: Install, launch, and uninstall native DEB packages
+        run: |
+          set -euo pipefail
+          for deb in release/*${{ matrix.deb_arch }}.deb; do
+            package_name="$(dpkg-deb --field "$deb" Package)"
+            test -n "$package_name"
+            sudo apt-get install -y "$PWD/$deb"
+            executable="/usr/bin/$package_name"
+            test -x "$executable"
+            ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
+              ./scripts/test-issue53-linux-vm-smoke.sh executable "$executable"
+            sudo apt-get remove -y "$package_name"
+            test ! -e "$executable"
+          done
+
+      - name: Install, launch, and uninstall native RPM packages
+        run: |
+          set -euo pipefail
+          for rpm in release/*${{ matrix.rpm_arch }}.rpm; do
+            docker run --rm \
+              --volume "$PWD:/workspace" \
+              --workdir /workspace \
+              fedora:41 \
+              ./scripts/test-rpm-package.sh "/workspace/$rpm"
+          done
+
+      - name: Install, launch, and uninstall Flatpak bundles
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          for bundle in release/*x86_64.flatpak; do
+            app_id=com.facebook.messenger.desktop
+            if [[ "$(basename "$bundle")" == *-beta-* ]]; then
+              app_id=com.facebook.messenger.desktop.beta
+            fi
+            ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
+              ./scripts/test-issue53-linux-vm-smoke.sh flatpak "$bundle" "$app_id"
+          done
+
       - name: Upload Linux smoke logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: linux-smoke-logs
+          name: linux-smoke-logs-${{ matrix.arch }}
           path: issue53-smoke-logs/**
           retention-days: 30
           if-no-files-found: ignore
 
       - name: Upload artifacts
         timeout-minutes: 10
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: linux-build
+          name: linux-build-${{ matrix.arch }}
           path: |
             release/*.AppImage
             release/*.deb
             release/*.rpm
             release/*.flatpak
-            release/*.yml
           compression-level: 0
           retention-days: 30
           if-no-files-found: error
@@ -405,29 +798,82 @@ jobs:
 
   release:
     name: Create Release
-    needs: [issue53-x64-smoke, build-macos, build-windows, build-linux]
-    runs-on: ubuntu-latest
+    needs:
+      [
+        validate-release,
+        release-policy,
+        resolve-legacy-updater-bridge,
+        issue53-x64-smoke,
+        assemble-macos,
+        macos-updater-e2e,
+        assemble-windows,
+        build-windows-legacy-bridge,
+        build-linux,
+      ]
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: ${{ needs.validate-release.outputs.release_environment }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install release assembly dependencies
+        run: npm ci --ignore-scripts
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          path: artifacts
-          pattern: "*-build"
-          merge-multiple: true
+          path: artifacts/inputs
+          pattern: "*-build*"
 
-      - name: List artifacts
+      - name: Assemble exact collision-free public release assets
         run: |
-          echo "Artifacts from CI builds:"
-          find artifacts -type f | sort || echo "No CI artifacts found"
+          set -euo pipefail
+          node scripts/assemble-public-release.mjs \
+            --input-dir artifacts/inputs \
+            --output-dir artifacts/release \
+            --release-channel "${{ needs.validate-release.outputs.channel }}" \
+            --legacy-bridge-channels "${{ needs.resolve-legacy-updater-bridge.outputs.channels }}"
+          find artifacts/release -maxdepth 1 -type f -print | sort
+
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd artifacts/release
+            find . -maxdepth 1 -type f \
+              ! -name 'SHA256SUMS*' \
+              ! -name '*.sha256' \
+              -print0 \
+              | sort -z \
+              | xargs -0 shasum -a 256 \
+              | sed 's#  \./#  #'
+          ) > artifacts/release/SHA256SUMS
+
+      - name: Attest release assets
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: artifacts/release/**/*
 
       - name: Extract version from tag
         id: tag_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release notes
         run: |-
@@ -454,36 +900,250 @@ jobs:
             exit 1
           fi
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: artifacts/**/*
-          name: Release v${{ steps.tag_version.outputs.VERSION }}
-          draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-          generate_release_notes: false
-          body_path: release_notes.txt
+      - name: Stage, verify, and publish exact release assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          REPOSITORY="${{ github.repository }}"
+          VERSION="${{ steps.tag_version.outputs.VERSION }}"
+          mapfile -d '' ASSETS < <(find artifacts/release -maxdepth 1 -type f -print0 | sort -z)
+          find artifacts/release -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > expected-assets.txt
+
+          RELEASE_EXISTS=false
+          RELEASE_IS_DRAFT=false
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+            RELEASE_IS_DRAFT=$(gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq .isDraft)
+          fi
+
+          if [[ "$RELEASE_EXISTS" == false ]]; then
+            CREATE_ARGS=(
+              "$TAG"
+              --repo "$REPOSITORY"
+              --verify-tag
+              --title "Release v${VERSION}"
+              --notes-file release_notes.txt
+              --draft
+            )
+            if [[ "${{ needs.validate-release.outputs.prerelease }}" == true ]]; then
+              CREATE_ARGS+=(--prerelease)
+            fi
+            gh release create "${CREATE_ARGS[@]}"
+            RELEASE_IS_DRAFT=true
+          fi
+
+          if [[ "$RELEASE_IS_DRAFT" == true ]]; then
+            rm -rf existing-draft-assets
+            mkdir existing-draft-assets
+            mapfile -t EXISTING_ASSETS < <(gh api "repos/$REPOSITORY/releases/tags/$TAG" --jq '.assets[].name' | LC_ALL=C sort)
+            for asset_name in "${EXISTING_ASSETS[@]}"; do
+              if ! grep --fixed-strings --line-regexp --quiet "$asset_name" expected-assets.txt; then
+                echo "Draft release contains unexpected asset: $asset_name" >&2
+                exit 1
+              fi
+              gh release download "$TAG" --repo "$REPOSITORY" --pattern "$asset_name" --dir existing-draft-assets
+              cmp "artifacts/release/$asset_name" "existing-draft-assets/$asset_name"
+            done
+            MISSING_ASSETS=()
+            for asset_path in "${ASSETS[@]}"; do
+              asset_name="$(basename "$asset_path")"
+              if ! printf '%s\n' "${EXISTING_ASSETS[@]}" | grep --fixed-strings --line-regexp --quiet "$asset_name"; then
+                MISSING_ASSETS+=("$asset_path")
+              fi
+            done
+            if [[ "${#MISSING_ASSETS[@]}" -gt 0 ]]; then
+              gh release upload "$TAG" "${MISSING_ASSETS[@]}" --repo "$REPOSITORY"
+            fi
+          else
+            echo 'Published release already exists; verifying it without mutating assets.'
+          fi
+
+          rm -rf downloaded-release
+          mkdir downloaded-release
+          gh release download "$TAG" --repo "$REPOSITORY" --dir downloaded-release
+          find downloaded-release -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > actual-assets.txt
+          diff --unified expected-assets.txt actual-assets.txt
+          cmp artifacts/release/SHA256SUMS downloaded-release/SHA256SUMS
+          (cd downloaded-release && shasum -a 256 --check SHA256SUMS)
+
+          if [[ "${{ needs.validate-release.outputs.prerelease }}" == true ]]; then
+            gh release edit "$TAG" --repo "$REPOSITORY" --title "Release v${VERSION}" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$TAG" --repo "$REPOSITORY" --title "Release v${VERSION}" --draft=false --prerelease=false --latest
+          fi
+
+      - name: Verify the unauthenticated public release boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset GH_TOKEN GITHUB_TOKEN
+          TAG="${{ github.ref_name }}"
+          REPOSITORY="${{ github.repository }}"
+          EXPECTED_PRERELEASE="${{ needs.validate-release.outputs.prerelease }}"
+          API_URL="https://api.github.com/repos/${REPOSITORY}/releases/tags/${TAG}"
+
+          verified=false
+          for _ in {1..12}; do
+            if curl --fail --silent --show-error --location \
+              --header 'Accept: application/vnd.github+json' \
+              "$API_URL" > public-release.json; then
+              jq -r '.assets[].name' public-release.json | LC_ALL=C sort > public-assets.txt
+              if diff --unified expected-assets.txt public-assets.txt \
+                && [[ "$(jq -r '.draft' public-release.json)" == false ]] \
+                && [[ "$(jq -r '.prerelease' public-release.json)" == "$EXPECTED_PRERELEASE" ]]; then
+                verified=true
+                break
+              fi
+            fi
+            sleep 5
+          done
+          [[ "$verified" == true ]]
+
+          while IFS= read -r asset_url; do
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+              --range 0-0 --output /dev/null "$asset_url"
+          done < <(jq -r '.assets[].browser_download_url' public-release.json)
+          echo "Verified exact unauthenticated public release classification and asset access."
 
   # ============================================
   # PHASE 3: Update package managers
   # (Runs after release is created)
   # ============================================
 
-  update-homebrew:
-    name: Update Homebrew (Stable)
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
+  update-winget:
+    name: Submit WinGet (${{ matrix.channel }})
+    needs: [validate-release, release]
+    runs-on: windows-2025
+    environment: winget-release
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.validate-release.outputs.winget_matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install manifest dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download and authenticate public Windows installers
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $prefix = if ($env:CHANNEL -eq 'beta') { 'Messenger-Beta' } else { 'Messenger' }
+          $baseUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)"
+          New-Item -ItemType Directory -Force winget-input | Out-Null
+          Invoke-WebRequest "$baseUrl/SHA256SUMS" -OutFile winget-input/SHA256SUMS
+
+          foreach ($arch in @('x64', 'arm64')) {
+            $name = "$prefix-windows-$arch-setup.exe"
+            $path = "winget-input/$name"
+            Invoke-WebRequest "$baseUrl/$name" -OutFile $path
+            $escapedName = [regex]::Escape($name)
+            $matches = @(Select-String -LiteralPath winget-input/SHA256SUMS -Pattern "^([0-9a-f]{64})  $escapedName$")
+            if ($matches.Count -ne 1) { throw "SHA256SUMS must contain exactly one entry for $name" }
+            $expected = $matches[0].Matches[0].Groups[1].Value
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "SHA-256 mismatch for $name" }
+            gh attestation verify $path --repo $env:GITHUB_REPOSITORY
+          }
+
+          $publishedAt = gh api "repos/$($env:GITHUB_REPOSITORY)/releases/tags/$($env:GITHUB_REF_NAME)" --jq .published_at
+          if ($LASTEXITCODE -ne 0 -or $publishedAt -notmatch '^\d{4}-\d{2}-\d{2}T') {
+            throw 'Could not resolve the immutable GitHub release date'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "release_date=$($publishedAt.Substring(0, 10))" >> $env:GITHUB_OUTPUT
+          "base_url=$baseUrl" >> $env:GITHUB_OUTPUT
+          "prefix=$prefix" >> $env:GITHUB_OUTPUT
+
+      - name: Generate exact WinGet manifests
+        shell: pwsh
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+          BASE_URL: ${{ steps.release.outputs.base_url }}
+          PREFIX: ${{ steps.release.outputs.prefix }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/create-winget-manifests.mjs `
+            --channel $env:CHANNEL `
+            --version $env:VERSION `
+            --release-date $env:RELEASE_DATE `
+            --x64-installer "winget-input/$($env:PREFIX)-windows-x64-setup.exe" `
+            --x64-url "$($env:BASE_URL)/$($env:PREFIX)-windows-x64-setup.exe" `
+            --arm64-installer "winget-input/$($env:PREFIX)-windows-arm64-setup.exe" `
+            --arm64-url "$($env:BASE_URL)/$($env:PREFIX)-windows-arm64-setup.exe" `
+            --output-dir winget-manifests
+
+      - name: Install pinned Microsoft WinGetCreate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/microsoft/winget-create/releases/download/v1.12.8.0/wingetcreate.exe'
+          $expected = '8BD738851B524885410112678E3771B341C5C716DE60FBBECB88AB0A363ED85D'
+          Invoke-WebRequest $url -OutFile wingetcreate.exe
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath wingetcreate.exe).Hash
+          if ($actual -ne $expected) { throw 'Microsoft WinGetCreate SHA-256 mismatch' }
+          .\wingetcreate.exe --version
+
+      - name: Submit manifests to the WinGet Community repository
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WINGET_CREATE_GITHUB_TOKEN)) {
+            throw 'WINGET_CREATE_GITHUB_TOKEN is required in the protected winget-release environment'
+          }
+          .\wingetcreate.exe submit `
+            --prtitle "Messenger $($env:CHANNEL) $($env:VERSION)" `
+            --no-open `
+            winget-manifests
+
+      - name: Upload submitted WinGet manifests
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: winget-${{ matrix.channel }}-${{ github.ref_name }}
+          path: winget-manifests/*.yaml
+          retention-days: 14
+          if-no-files-found: warn
+
+  prepare-homebrew-publication:
+    name: Prepare Homebrew publication (Stable)
+    needs: [validate-release, release]
+    runs-on: macos-15
+    permissions:
+      contents: read
+    if: needs.validate-release.outputs.channel == 'stable'
 
     steps:
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Wait for release assets to be available
-        run: sleep 30
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Download release assets and calculate hashes
         id: hashes
@@ -491,28 +1151,33 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
 
           # Download and hash ARM64 (stable)
-          curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-macos-arm64.zip" -o arm64.zip
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-macos-arm64.zip" -o arm64.zip
           ARM64_SHA256=$(shasum -a 256 arm64.zip | cut -d' ' -f1)
-          echo "ARM64_SHA256=${ARM64_SHA256}" >> $GITHUB_OUTPUT
+          echo "ARM64_SHA256=${ARM64_SHA256}" >> "$GITHUB_OUTPUT"
 
           # Download and hash x64 (stable)
-          curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-macos-x64.zip" -o x64.zip
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-macos-x64.zip" -o x64.zip
           X64_SHA256=$(shasum -a 256 x64.zip | cut -d' ' -f1)
-          echo "X64_SHA256=${X64_SHA256}" >> $GITHUB_OUTPUT
+          echo "X64_SHA256=${X64_SHA256}" >> "$GITHUB_OUTPUT"
 
           # Download and hash ARM64 (beta-branded artifacts for beta cask)
-          curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-arm64.zip" -o arm64-beta.zip
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-arm64.zip" -o arm64-beta.zip
           ARM64_BETA_SHA256=$(shasum -a 256 arm64-beta.zip | cut -d' ' -f1)
-          echo "ARM64_BETA_SHA256=${ARM64_BETA_SHA256}" >> $GITHUB_OUTPUT
+          echo "ARM64_BETA_SHA256=${ARM64_BETA_SHA256}" >> "$GITHUB_OUTPUT"
 
           # Download and hash x64 (beta-branded artifacts for beta cask)
-          curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-x64.zip" -o x64-beta.zip
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-x64.zip" -o x64-beta.zip
           X64_BETA_SHA256=$(shasum -a 256 x64-beta.zip | cut -d' ' -f1)
-          echo "X64_BETA_SHA256=${X64_BETA_SHA256}" >> $GITHUB_OUTPUT
+          echo "X64_BETA_SHA256=${X64_BETA_SHA256}" >> "$GITHUB_OUTPUT"
 
-      - name: Update Homebrew casks (stable and beta)
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: apotenza92/homebrew-tap
+          path: homebrew-tap
+          persist-credentials: false
+
+      - name: Generate and validate Homebrew casks (stable and beta)
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           ARM64_SHA256="${{ steps.hashes.outputs.ARM64_SHA256 }}"
@@ -520,8 +1185,14 @@ jobs:
           ARM64_BETA_SHA256="${{ steps.hashes.outputs.ARM64_BETA_SHA256 }}"
           X64_BETA_SHA256="${{ steps.hashes.outputs.X64_BETA_SHA256 }}"
 
-          # Clone homebrew-tap repo
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/apotenza92/homebrew-tap.git
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          INSTALLED_CASK=""
+          cleanup() {
+            if [[ -n "$INSTALLED_CASK" ]]; then
+              brew uninstall --cask "$INSTALLED_CASK" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
           cd homebrew-tap
 
           # Update the stable cask file
@@ -531,11 +1202,12 @@ jobs:
 
             on_arm do
               sha256 "${ARM64_SHA256}"
+
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/Messenger-macos-arm64.zip"
             end
-
             on_intel do
               sha256 "${X64_SHA256}"
+
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/Messenger-macos-x64.zip"
             end
 
@@ -547,6 +1219,8 @@ jobs:
               url :url
               strategy :github_latest
             end
+
+            depends_on :macos
 
             app "Messenger.app"
 
@@ -568,11 +1242,12 @@ jobs:
 
             on_arm do
               sha256 "${ARM64_BETA_SHA256}"
+
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/Messenger-Beta-macos-arm64.zip"
             end
-
             on_intel do
               sha256 "${X64_BETA_SHA256}"
+
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/Messenger-Beta-macos-x64.zip"
             end
 
@@ -582,9 +1257,11 @@ jobs:
 
             livecheck do
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases"
-              regex(/v?(\d+(?:\.\d+)*(?:-(?:alpha|beta|rc)[\w.]*)?)/i)
+              regex(/v?(\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?)/i)
               strategy :page_match
             end
+
+            depends_on :macos
 
             app "Messenger Beta.app"
 
@@ -598,26 +1275,104 @@ jobs:
           end
           EOF
 
-          # Commit and push both cask updates
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/facebook-messenger-desktop.rb 'Casks/facebook-messenger-desktop@beta.rb'
-          git commit -m "Update facebook-messenger-desktop to v${VERSION} (stable + beta casks)"
-          git push
+          verify_cask() {
+            local cask_path="$1"
+            local cask_token="$2"
+            local app_path="$3"
+            local executable_path="$4"
+            local data_name="$5"
+            local smoke_home="$RUNNER_TEMP/homebrew-smoke-$cask_token"
+            local user_data="$smoke_home/Library/Application Support/$data_name"
+            local smoke_log="$RUNNER_TEMP/homebrew-smoke-$cask_token.log"
 
-  update-homebrew-beta:
-    name: Update Homebrew (Beta)
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && (contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc'))
+            brew style "$cask_path"
+            brew audit --cask --strict "$cask_path"
+            INSTALLED_CASK="$cask_token"
+            brew install --cask "$cask_path"
+            xcrun stapler validate "$app_path"
+            spctl --assess --type execute --verbose=4 "$app_path"
+
+            mkdir -p "$user_data"
+            printf '%s\n' '{"prompted":true}' > "$user_data/move-to-applications-prompted.json"
+            printf '%s\n' '{"frequency":"never"}' > "$user_data/update-frequency.json"
+            env -i \
+              HOME="$smoke_home" \
+              LANG=en_US.UTF-8 \
+              MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS=true \
+              PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+              SKIP_SINGLE_INSTANCE_LOCK=true \
+              TMPDIR="$RUNNER_TEMP" \
+              "$executable_path" >"$smoke_log" 2>&1 &
+            local app_pid=$!
+            sleep 5
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              cat "$smoke_log"
+              echo "Homebrew-installed $cask_token exited before launch smoke completed"
+              exit 1
+            fi
+            kill "$app_pid"
+            wait "$app_pid" || true
+            brew uninstall --cask "$cask_token"
+            INSTALLED_CASK=""
+          }
+
+          verify_cask \
+            "$PWD/Casks/facebook-messenger-desktop.rb" \
+            facebook-messenger-desktop \
+            "/Applications/Messenger.app" \
+            "/Applications/Messenger.app/Contents/MacOS/Messenger" \
+            Messenger
+          verify_cask \
+            "$PWD/Casks/facebook-messenger-desktop@beta.rb" \
+            facebook-messenger-desktop@beta \
+            "/Applications/Messenger Beta.app" \
+            "/Applications/Messenger Beta.app/Contents/MacOS/Messenger Beta" \
+            Messenger-Beta
+
+          mkdir -p "$GITHUB_WORKSPACE/publication/Casks"
+          cp Casks/facebook-messenger-desktop.rb \
+            'Casks/facebook-messenger-desktop@beta.rb' \
+            "$GITHUB_WORKSPACE/publication/Casks/"
+
+      - name: Seal Homebrew publication bundle
+        run: |
+          set -euo pipefail
+          casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
+          [[ "$casks" == 'facebook-messenger-desktop.rb facebook-messenger-desktop@beta.rb' ]]
+          (
+            cd publication
+            find Casks -type f -name '*.rb' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 shasum -a 256 > SHA256SUMS
+          )
+          printf '%s\n' \
+            "Messenger Homebrew publication bundle" \
+            "release-tag=${{ github.ref_name }}" \
+            "release-commit=${{ github.sha }}" \
+            "destination=apotenza92/homebrew-tap:Casks/" \
+            "Apply these exact natively validated bytes manually after the release approval gate." \
+            > publication/PUBLICATION.txt
+
+      - name: Upload Homebrew publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: messenger-homebrew-publication-${{ github.ref_name }}
+          path: publication
+          if-no-files-found: error
+          retention-days: 14
+
+  prepare-homebrew-beta-publication:
+    name: Prepare Homebrew publication (Beta)
+    needs: [validate-release, release]
+    runs-on: macos-15
+    permissions:
+      contents: read
+    if: needs.validate-release.outputs.channel == 'beta'
 
     steps:
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Wait for release assets to be available
-        run: sleep 30
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Download release assets and calculate hashes
         id: hashes
@@ -625,25 +1380,36 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
 
           # Download and hash ARM64 (beta artifacts have different names)
-          curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-arm64.zip" -o arm64.zip
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-arm64.zip" -o arm64.zip
           ARM64_SHA256=$(shasum -a 256 arm64.zip | cut -d' ' -f1)
-          echo "ARM64_SHA256=${ARM64_SHA256}" >> $GITHUB_OUTPUT
+          echo "ARM64_SHA256=${ARM64_SHA256}" >> "$GITHUB_OUTPUT"
 
           # Download and hash x64
-          curl -sL "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-x64.zip" -o x64.zip
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${VERSION}/Messenger-Beta-macos-x64.zip" -o x64.zip
           X64_SHA256=$(shasum -a 256 x64.zip | cut -d' ' -f1)
-          echo "X64_SHA256=${X64_SHA256}" >> $GITHUB_OUTPUT
+          echo "X64_SHA256=${X64_SHA256}" >> "$GITHUB_OUTPUT"
 
-      - name: Update Homebrew beta cask
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: apotenza92/homebrew-tap
+          path: homebrew-tap
+          persist-credentials: false
+
+      - name: Generate and validate Homebrew beta cask
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           ARM64_SHA256="${{ steps.hashes.outputs.ARM64_SHA256 }}"
           X64_SHA256="${{ steps.hashes.outputs.X64_SHA256 }}"
 
-          # Clone homebrew-tap repo
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/apotenza92/homebrew-tap.git
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          INSTALLED_CASK=""
+          cleanup() {
+            if [[ -n "$INSTALLED_CASK" ]]; then
+              brew uninstall --cask "$INSTALLED_CASK" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
           cd homebrew-tap
 
           # Update the beta cask file (versioned cask style: name@beta)
@@ -653,11 +1419,12 @@ jobs:
 
             on_arm do
               sha256 "${ARM64_SHA256}"
+
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/Messenger-Beta-macos-arm64.zip"
             end
-
             on_intel do
               sha256 "${X64_SHA256}"
+
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/Messenger-Beta-macos-x64.zip"
             end
 
@@ -667,9 +1434,11 @@ jobs:
 
             livecheck do
               url "https://github.com/apotenza92/facebook-messenger-desktop/releases"
-              regex(/v?(\d+(?:\.\d+)*-(?:alpha|beta|rc)[\w.]*)/i)
+              regex(/v?(\d+\.\d+\.\d+-beta\.[1-9]\d*)/i)
               strategy :page_match
             end
+
+            depends_on :macos
 
             app "Messenger Beta.app"
 
@@ -683,51 +1452,95 @@ jobs:
           end
           EOF
 
-          # Commit and push
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add 'Casks/facebook-messenger-desktop@beta.rb'
-          git commit -m "Update facebook-messenger-desktop@beta to v${VERSION}"
-          git push
+          CASK_PATH="$PWD/Casks/facebook-messenger-desktop@beta.rb"
+          brew style "$CASK_PATH"
+          brew audit --cask --strict "$CASK_PATH"
+          INSTALLED_CASK=facebook-messenger-desktop@beta
+          brew install --cask "$CASK_PATH"
+          xcrun stapler validate "/Applications/Messenger Beta.app"
+          spctl --assess --type execute --verbose=4 "/Applications/Messenger Beta.app"
 
-  update-winget:
-    name: Update WinGet
-    needs: release
-    runs-on: windows-latest
-    if: false # Disabled - no winget package yet
-    # Original condition: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
-    continue-on-error: true # Don't fail the workflow if winget update fails
+          SMOKE_HOME="$RUNNER_TEMP/homebrew-smoke-beta"
+          USER_DATA="$SMOKE_HOME/Library/Application Support/Messenger-Beta"
+          SMOKE_LOG="$RUNNER_TEMP/homebrew-smoke-beta.log"
+          mkdir -p "$USER_DATA"
+          printf '%s\n' '{"prompted":true}' > "$USER_DATA/move-to-applications-prompted.json"
+          printf '%s\n' '{"frequency":"never"}' > "$USER_DATA/update-frequency.json"
+          env -i \
+            HOME="$SMOKE_HOME" \
+            LANG=en_US.UTF-8 \
+            MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS=true \
+            PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+            SKIP_SINGLE_INSTANCE_LOCK=true \
+            TMPDIR="$RUNNER_TEMP" \
+            "/Applications/Messenger Beta.app/Contents/MacOS/Messenger Beta" >"$SMOKE_LOG" 2>&1 &
+          APP_PID=$!
+          sleep 5
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            cat "$SMOKE_LOG"
+            echo "Homebrew-installed beta app exited before launch smoke completed"
+            exit 1
+          fi
+          kill "$APP_PID"
+          wait "$APP_PID" || true
+          brew uninstall --cask "$INSTALLED_CASK"
+          INSTALLED_CASK=""
 
-    steps:
-      - name: Submit to WinGet
-        uses: vedantmgoyal2009/winget-releaser@v2
+          mkdir -p "$GITHUB_WORKSPACE/publication/Casks"
+          cp 'Casks/facebook-messenger-desktop@beta.rb' \
+            "$GITHUB_WORKSPACE/publication/Casks/"
+
+      - name: Seal Homebrew beta publication bundle
+        run: |
+          set -euo pipefail
+          casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
+          [[ "$casks" == 'facebook-messenger-desktop@beta.rb' ]]
+          (
+            cd publication
+            find Casks -type f -name '*.rb' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 shasum -a 256 > SHA256SUMS
+          )
+          printf '%s\n' \
+            "Messenger Beta Homebrew publication bundle" \
+            "release-tag=${{ github.ref_name }}" \
+            "release-commit=${{ github.sha }}" \
+            "destination=apotenza92/homebrew-tap:Casks/" \
+            "Apply this exact natively validated byte stream manually after the release approval gate." \
+            > publication/PUBLICATION.txt
+
+      - name: Upload Homebrew beta publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          identifier: apotenza92.FacebookMessengerDesktop
-          installers-regex: 'Messenger-windows-x64-setup\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}
+          name: messenger-homebrew-publication-${{ github.ref_name }}
+          path: publication
+          if-no-files-found: error
+          retention-days: 14
 
-  # NOTE: Snap promotion is handled by snap-promote.yml workflow (runs every 6 hours)
-  # Launchpad builds snaps automatically, then snap-promote.yml promotes edge to beta/stable
+  # Snap promotion is manual and protected in snap-promote.yml.
 
-  update-flatpak-repo:
-    name: Update Flatpak Repo
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
-    continue-on-error: true # Don't fail the workflow if flatpak update fails
-
+  prepare-flatpak-publication:
+    name: Prepare Flatpak repository publication
+    needs: [validate-release, release]
+    runs-on: ubuntu-24.04
+    environment: flatpak-release
+    permissions:
+      contents: read
+    if: needs.validate-release.outputs.channel == 'stable'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Download Linux artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: linux-build
+          name: linux-build-x64
           path: artifacts/linux
 
       - name: Install Flatpak tools
@@ -739,13 +1552,23 @@ jobs:
         env:
           FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
         run: |
+          set -euo pipefail
+          FLATPAK_GNUPGHOME="$(mktemp -d "$RUNNER_TEMP/messenger-flatpak-gnupg.XXXXXX")"
+          chmod 700 "$FLATPAK_GNUPGHOME"
+          export GNUPGHOME="$FLATPAK_GNUPGHOME"
+          cleanup_failed_import() {
+            exit_code=$?
+            if [ "$exit_code" -ne 0 ]; then rm -rf "$FLATPAK_GNUPGHOME"; fi
+            exit "$exit_code"
+          }
+          trap cleanup_failed_import EXIT
           if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ]; then
             echo "ERROR: FLATPAK_GPG_PRIVATE_KEY secret not set"
             echo "To fix: Generate a GPG key, export it with 'gpg --export-secret-keys KEY_ID | base64', and add as secret"
             exit 1
           fi
           # Try to decode and import the GPG key
-          echo "$FLATPAK_GPG_PRIVATE_KEY" | base64 -d | gpg --import || {
+          printf '%s' "$FLATPAK_GPG_PRIVATE_KEY" | base64 -d | gpg --import || {
             echo "ERROR: Failed to import GPG key. The FLATPAK_GPG_PRIVATE_KEY secret may be incorrectly encoded."
             echo "To fix: Export your GPG key with 'gpg --export-secret-keys KEY_ID | base64 -w 0' and update the secret"
             exit 1
@@ -756,66 +1579,90 @@ jobs:
             echo "ERROR: Failed to get GPG key ID after import"
             exit 1
           fi
-          echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
+          echo "GNUPGHOME=$FLATPAK_GNUPGHOME" >> "$GITHUB_ENV"
+          echo "GPG_KEY_ID=$GPG_KEY_ID" >> "$GITHUB_ENV"
           echo "Successfully imported GPG key: $GPG_KEY_ID"
+          trap - EXIT
+
+      - name: Checkout current Flatpak repository read-only
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          path: main-deploy
+          persist-credentials: false
 
       - name: Build Flatpak repository
         run: |
-          # Create a temporary directory for the OSTree repo
-          mkdir -p flatpak-repo
+          set -euo pipefail
+          test -n "${GNUPGHOME:-}"
+          test -d "$GNUPGHOME"
+          cleanup_gnupg() { rm -rf "$GNUPGHOME"; }
+          trap cleanup_gnupg EXIT
           REPO_PATH="flatpak-repo"
 
-          # Initialize OSTree repo
-          echo "Initializing OSTree repository..."
-          ostree init --repo="$REPO_PATH" --mode=archive-z2
+          # Preserve the existing OSTree history once the repository exists.
+          if [ -f main-deploy/docs/flatpak/repo/config ]; then
+            echo "Continuing the published OSTree repository..."
+            cp -a main-deploy/docs/flatpak/repo "$REPO_PATH"
+            ostree --repo="$REPO_PATH" fsck
+          else
+            echo "Bootstrapping the OSTree repository..."
+            mkdir -p "$REPO_PATH"
+            ostree init --repo="$REPO_PATH" --mode=archive-z2
+          fi
 
           # List available flatpak files for debugging
           echo "Available flatpak files:"
           find artifacts/linux -name "*.flatpak" -type f || echo "No flatpak files found"
 
-          # Import x64 flatpak (electron-builder uses 'x86_64' in flatpak filename)
-          X64_FLATPAK=$(find artifacts/linux -name "*x86_64*.flatpak" -type f | head -1)
-          if [ -n "$X64_FLATPAK" ]; then
-            echo "Importing x64 flatpak: $X64_FLATPAK"
-            flatpak build-import-bundle "$REPO_PATH" "$X64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
-          fi
-
-          # Import ARM64 flatpak (electron-builder uses 'aarch64' in flatpak filename)
-          ARM64_FLATPAK=$(find artifacts/linux -name "*aarch64*.flatpak" -type f | head -1)
-          if [ -n "$ARM64_FLATPAK" ]; then
-            echo "Importing ARM64 flatpak: $ARM64_FLATPAK"
-            flatpak build-import-bundle "$REPO_PATH" "$ARM64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
-          fi
-
-          if [ -z "$X64_FLATPAK" ] && [ -z "$ARM64_FLATPAK" ]; then
-            echo "⚠️ No flatpak files found in artifacts - skipping repo update"
-            echo "To enable: add 'flatpak' target to package.json linux.target array"
-            exit 0
-          fi
+          # Stable Flatpak publication is x64-only. Select the exact stable
+          # bundle even though stable releases also contain beta artifacts.
+          X64_FLATPAK="artifacts/linux/facebook-messenger-desktop-x86_64.flatpak"
+          test -f "$X64_FLATPAK"
+          echo "Importing x64 flatpak: $X64_FLATPAK"
+          flatpak build-import-bundle "$REPO_PATH" "$X64_FLATPAK" --gpg-sign="$GPG_KEY_ID"
 
           # Update repository metadata and sign
           echo "Updating repository metadata..."
           flatpak build-update-repo "$REPO_PATH" --gpg-sign="$GPG_KEY_ID" --generate-static-deltas
+          ostree --repo="$REPO_PATH" fsck
+          ostree --repo="$REPO_PATH" refs | grep -E '^app/com\.facebook\.messenger\.desktop/x86_64/'
 
           # Export public GPG key for users
           gpg --armor --export "$GPG_KEY_ID" > flatpak-repo/flatpak-repo.gpg
 
           echo "Repository built successfully"
+          cleanup_gnupg
+          trap - EXIT
+          test ! -e "$GNUPGHOME"
 
-      - name: Deploy to GitHub Pages
+      - name: Seal Flatpak publication bundle
         run: |
-          # Clone main branch to update the docs folder
-          git clone --single-branch --branch main "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main-deploy
+          set -euo pipefail
+          test -s flatpak-repo/summary
+          test -s flatpak-repo/flatpak-repo.gpg
+          ostree --repo=flatpak-repo fsck
+          mkdir -p publication/docs/flatpak
+          cp -a flatpak-repo publication/docs/flatpak/repo
+          (
+            cd publication
+            find docs/flatpak/repo -type f -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum > SHA256SUMS
+          )
+          printf '%s\n' \
+            "Messenger signed Flatpak repository publication bundle" \
+            "release-tag=${{ github.ref_name }}" \
+            "release-commit=${{ github.sha }}" \
+            "destination=${{ github.repository }}:docs/flatpak/repo" \
+            "Apply this exact signed OSTree repository manually after the release approval gate." \
+            > publication/PUBLICATION.txt
 
-          # Copy flatpak repo to docs/flatpak/repo (GitHub Pages serves from docs/ on main)
-          mkdir -p main-deploy/docs/flatpak
-          rm -rf main-deploy/docs/flatpak/repo
-          cp -r flatpak-repo main-deploy/docs/flatpak/repo
-
-          # Commit and push
-          cd main-deploy
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/flatpak/
-          git commit -m "Update Flatpak repository to v${{ steps.version.outputs.VERSION }}" || echo "No changes to commit"
-          git push origin main
+      - name: Upload Flatpak publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: messenger-flatpak-publication-${{ github.ref_name }}
+          path: publication
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

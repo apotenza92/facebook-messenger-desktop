@@ -1,3 +1,0 @@
-#!/bin/bash
-# Wrapper to run codex with dangerous bypass for Ralphy
-exec /opt/homebrew/bin/codex exec --dangerously-bypass-approvals-and-sandbox "${@:2}"
