@@ -836,7 +836,6 @@ function testWorkflowContract() {
   assert.match(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
   assert.match(workflow, /stable-release/);
   assert.match(workflow, /beta-release/);
-  assert.match(workflow, /environment:\s*homebrew-release/);
   assert.match(workflow, /environment:\s*winget-release/);
   assert.match(workflow, /runner:\s*windows-11-arm/);
   assert.match(workflow, /runner:\s*ubuntu-24\.04-arm/);
@@ -844,7 +843,7 @@ function testWorkflowContract() {
   assert.match(workflow, /MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG/);
   assert.match(
     workflow,
-    /update-homebrew:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew audit --cask --strict[\s\S]*?brew install --cask[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
+    /prepare-homebrew-publication:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew audit --cask --strict[\s\S]*?brew install --cask[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
   );
   assert.doesNotMatch(
     workflow,
@@ -905,8 +904,9 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /X64_FLATPAK=\$\(find/);
   assert.match(workflow, /Continuing the published OSTree repository/);
   assert.match(workflow, /ostree --repo="\$REPO_PATH" fsck/);
-  assert.match(workflow, /git add --force docs\/flatpak\/repo/);
-  assert.match(workflow, /Verify public Flatpak repository/);
+  assert.match(workflow, /messenger-flatpak-publication-/);
+  assert.match(workflow, /Apply this exact signed OSTree repository manually/);
+  assert.match(workflow, /include-hidden-files:\s*true/);
   assert.match(workflow, /Verify the unauthenticated public release boundary/);
   assert.match(workflow, /update-winget:/);
   assert.match(workflow, /runs-on:\s*windows-2025/);
@@ -929,9 +929,9 @@ function testWorkflowContract() {
   );
   for (const storeJob of [
     "update-winget",
-    "update-homebrew",
-    "update-homebrew-beta",
-    "update-flatpak-repo",
+    "prepare-homebrew-publication",
+    "prepare-homebrew-beta-publication",
+    "prepare-flatpak-publication",
   ]) {
     assert.match(
       jobSource(workflow, storeJob),
@@ -945,11 +945,15 @@ function testWorkflowContract() {
   assert.equal(homebrewCheckouts?.length, 2);
   for (const checkout of homebrewCheckouts)
     assert.doesNotMatch(checkout, /HOMEBREW_TAP_TOKEN/);
+  assert.match(workflow, /messenger-homebrew-publication-/);
+  assert.match(workflow, /Apply these exact natively validated bytes manually/);
   const workflowDirectory = join(repositoryRoot, ".github", "workflows");
   const maintainedWorkflows = readdirSync(workflowDirectory)
     .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
     .map((name) => readFileSync(join(workflowDirectory, name), "utf8"))
     .join("\n");
+  assert.doesNotMatch(maintainedWorkflows, /\bgit (?:commit|push)\b/);
+  assert.doesNotMatch(maintainedWorkflows, /HOMEBREW_TAP_TOKEN/);
   const ciWorkflow = readFileSync(join(workflowDirectory, "ci.yml"), "utf8");
   assert.match(ciWorkflow, /^on:\n  workflow_dispatch:\s*$/m);
   assert.doesNotMatch(

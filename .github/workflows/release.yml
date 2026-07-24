@@ -1132,11 +1132,10 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-  update-homebrew:
-    name: Update Homebrew (Stable)
+  prepare-homebrew-publication:
+    name: Prepare Homebrew publication (Stable)
     needs: [validate-release, release]
     runs-on: macos-15
-    environment: homebrew-release
     permissions:
       contents: read
     if: needs.validate-release.outputs.channel == 'stable'
@@ -1178,7 +1177,7 @@ jobs:
           path: homebrew-tap
           persist-credentials: false
 
-      - name: Update Homebrew casks (stable and beta)
+      - name: Generate and validate Homebrew casks (stable and beta)
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           ARM64_SHA256="${{ steps.hashes.outputs.ARM64_SHA256 }}"
@@ -1330,41 +1329,42 @@ jobs:
             "/Applications/Messenger Beta.app/Contents/MacOS/Messenger Beta" \
             Messenger-Beta
 
-          # Commit and push both cask updates
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/facebook-messenger-desktop.rb 'Casks/facebook-messenger-desktop@beta.rb'
-          if git diff --cached --quiet; then
-            echo "Homebrew stable and beta casks already match v${VERSION}"
-          else
-            git commit -m "Update facebook-messenger-desktop to v${VERSION} (stable + beta casks)"
-          fi
+          mkdir -p "$GITHUB_WORKSPACE/publication/Casks"
+          cp Casks/facebook-messenger-desktop.rb \
+            'Casks/facebook-messenger-desktop@beta.rb' \
+            "$GITHUB_WORKSPACE/publication/Casks/"
 
-      - name: Publish verified Homebrew casks
-        working-directory: homebrew-tap
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Seal Homebrew publication bundle
         run: |
           set -euo pipefail
-          ASKPASS="$RUNNER_TEMP/messenger-homebrew-askpass.sh"
-          trap 'rm -f "$ASKPASS"' EXIT
-          cat > "$ASKPASS" <<'ASKPASS_SCRIPT'
-          #!/bin/sh
-          case "$1" in
-            *Username*) printf '%s\n' 'x-access-token' ;;
-            *) printf '%s\n' "$HOMEBREW_TAP_TOKEN" ;;
-          esac
-          ASKPASS_SCRIPT
-          chmod 700 "$ASKPASS"
-          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 git push origin HEAD:main
-          git fetch origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
+          [[ "$casks" == 'facebook-messenger-desktop.rb facebook-messenger-desktop@beta.rb' ]]
+          (
+            cd publication
+            find Casks -type f -name '*.rb' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 shasum -a 256 > SHA256SUMS
+          )
+          printf '%s\n' \
+            "Messenger Homebrew publication bundle" \
+            "release-tag=${{ github.ref_name }}" \
+            "release-commit=${{ github.sha }}" \
+            "destination=apotenza92/homebrew-tap:Casks/" \
+            "Apply these exact natively validated bytes manually after the release approval gate." \
+            > publication/PUBLICATION.txt
 
-  update-homebrew-beta:
-    name: Update Homebrew (Beta)
+      - name: Upload Homebrew publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: messenger-homebrew-publication-${{ github.ref_name }}
+          path: publication
+          if-no-files-found: error
+          retention-days: 14
+
+  prepare-homebrew-beta-publication:
+    name: Prepare Homebrew publication (Beta)
     needs: [validate-release, release]
     runs-on: macos-15
-    environment: homebrew-release
     permissions:
       contents: read
     if: needs.validate-release.outputs.channel == 'beta'
@@ -1396,7 +1396,7 @@ jobs:
           path: homebrew-tap
           persist-credentials: false
 
-      - name: Update Homebrew beta cask
+      - name: Generate and validate Homebrew beta cask
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           ARM64_SHA256="${{ steps.hashes.outputs.ARM64_SHA256 }}"
@@ -1486,45 +1486,46 @@ jobs:
           brew uninstall --cask "$INSTALLED_CASK"
           INSTALLED_CASK=""
 
-          # Commit and push
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add 'Casks/facebook-messenger-desktop@beta.rb'
-          if git diff --cached --quiet; then
-            echo "Homebrew beta cask already matches v${VERSION}"
-          else
-            git commit -m "Update facebook-messenger-desktop@beta to v${VERSION}"
-          fi
+          mkdir -p "$GITHUB_WORKSPACE/publication/Casks"
+          cp 'Casks/facebook-messenger-desktop@beta.rb' \
+            "$GITHUB_WORKSPACE/publication/Casks/"
 
-      - name: Publish verified Homebrew beta cask
-        working-directory: homebrew-tap
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Seal Homebrew beta publication bundle
         run: |
           set -euo pipefail
-          ASKPASS="$RUNNER_TEMP/messenger-homebrew-askpass.sh"
-          trap 'rm -f "$ASKPASS"' EXIT
-          cat > "$ASKPASS" <<'ASKPASS_SCRIPT'
-          #!/bin/sh
-          case "$1" in
-            *Username*) printf '%s\n' 'x-access-token' ;;
-            *) printf '%s\n' "$HOMEBREW_TAP_TOKEN" ;;
-          esac
-          ASKPASS_SCRIPT
-          chmod 700 "$ASKPASS"
-          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 git push origin HEAD:main
-          git fetch origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
+          [[ "$casks" == 'facebook-messenger-desktop@beta.rb' ]]
+          (
+            cd publication
+            find Casks -type f -name '*.rb' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 shasum -a 256 > SHA256SUMS
+          )
+          printf '%s\n' \
+            "Messenger Beta Homebrew publication bundle" \
+            "release-tag=${{ github.ref_name }}" \
+            "release-commit=${{ github.sha }}" \
+            "destination=apotenza92/homebrew-tap:Casks/" \
+            "Apply this exact natively validated byte stream manually after the release approval gate." \
+            > publication/PUBLICATION.txt
+
+      - name: Upload Homebrew beta publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: messenger-homebrew-publication-${{ github.ref_name }}
+          path: publication
+          if-no-files-found: error
+          retention-days: 14
 
   # Snap promotion is manual and protected in snap-promote.yml.
 
-  update-flatpak-repo:
-    name: Update Flatpak Repo
+  prepare-flatpak-publication:
+    name: Prepare Flatpak repository publication
     needs: [validate-release, release]
     runs-on: ubuntu-24.04
     environment: flatpak-release
     permissions:
-      contents: write
+      contents: read
     if: needs.validate-release.outputs.channel == 'stable'
     steps:
       - name: Checkout code
@@ -1583,12 +1584,12 @@ jobs:
           echo "Successfully imported GPG key: $GPG_KEY_ID"
           trap - EXIT
 
-      - name: Checkout protected publication branch
+      - name: Checkout current Flatpak repository read-only
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: main
           path: main-deploy
-          token: ${{ github.token }}
+          persist-credentials: false
 
       - name: Build Flatpak repository
         run: |
@@ -1635,41 +1636,33 @@ jobs:
           trap - EXIT
           test ! -e "$GNUPGHOME"
 
-      - name: Deploy to GitHub Pages
+      - name: Seal Flatpak publication bundle
         run: |
           set -euo pipefail
-          # Copy flatpak repo to docs/flatpak/repo (GitHub Pages serves from docs/ on main)
-          mkdir -p main-deploy/docs/flatpak
-          rm -rf main-deploy/docs/flatpak/repo
-          cp -r flatpak-repo main-deploy/docs/flatpak/repo
+          test -s flatpak-repo/summary
+          test -s flatpak-repo/flatpak-repo.gpg
+          ostree --repo=flatpak-repo fsck
+          mkdir -p publication/docs/flatpak
+          cp -a flatpak-repo publication/docs/flatpak/repo
+          (
+            cd publication
+            find docs/flatpak/repo -type f -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum > SHA256SUMS
+          )
+          printf '%s\n' \
+            "Messenger signed Flatpak repository publication bundle" \
+            "release-tag=${{ github.ref_name }}" \
+            "release-commit=${{ github.sha }}" \
+            "destination=${{ github.repository }}:docs/flatpak/repo" \
+            "Apply this exact signed OSTree repository manually after the release approval gate." \
+            > publication/PUBLICATION.txt
 
-          # Commit and push
-          cd main-deploy
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Repository objects are intentionally ignored for local hygiene, so
-          # publication must force-add this exact generated directory.
-          git add --force docs/flatpak/repo
-          if git diff --cached --quiet; then
-            echo "Flatpak repository already matches v${{ steps.version.outputs.VERSION }}"
-          else
-            git commit -m "Update Flatpak repository to v${{ steps.version.outputs.VERSION }}"
-          fi
-          git push origin main
-
-      - name: Verify public Flatpak repository
-        run: |
-          set -euo pipefail
-          BASE_URL="https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo"
-          for _ in {1..12}; do
-            if curl --fail --silent --show-error --location "$BASE_URL/summary" --output public-flatpak-summary \
-              && curl --fail --silent --show-error --location "$BASE_URL/flatpak-repo.gpg" --output public-flatpak-repo.gpg \
-              && test -s public-flatpak-summary \
-              && test -s public-flatpak-repo.gpg; then
-              echo "Verified public Flatpak summary and signing key."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Public Flatpak repository did not become available." >&2
-          exit 1
+      - name: Upload Flatpak publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: messenger-flatpak-publication-${{ github.ref_name }}
+          path: publication
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
