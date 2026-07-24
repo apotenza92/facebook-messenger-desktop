@@ -8,8 +8,6 @@ permissions:
   contents: read
 
 on:
-  schedule:
-    - cron: "30 */2 * * *" # Every 2 hours, offset from the normal Snap promotion check
   workflow_dispatch:
     inputs:
       expected_version:
@@ -53,7 +51,6 @@ jobs:
       - name: Resolve and validate inputs
         id: inputs
         env:
-          EVENT_NAME: ${{ github.event_name }}
           EXPECTED_VERSION_INPUT: ${{ github.event.inputs.expected_version }}
           MINIMUM_AMD64_REVISION_INPUT: ${{ github.event.inputs.minimum_amd64_revision }}
           MINIMUM_ARM64_REVISION_INPUT: ${{ github.event.inputs.minimum_arm64_revision }}
@@ -74,11 +71,7 @@ jobs:
           fi
 
           if [ -z "$wait_attempts" ]; then
-            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-              wait_attempts="48"
-            else
-              wait_attempts="1"
-            fi
+            wait_attempts="48"
           fi
 
           if [ -z "$wait_seconds" ]; then

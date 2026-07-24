@@ -69,6 +69,12 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 - If a release build fails, fix and retry the same version; do not bump merely because the build failed.
 - Release deletion, tag deletion, channel rollback, and stable package-store promotion are destructive/high-risk and require explicit confirmation.
 
+## GitHub automation
+
+- Keep ordinary CI and maintenance manually dispatchable. Do not run routine push, pull-request, scheduled, Dependabot, or autonomous maintenance workflows.
+- Keep Snap rebuild, refresh, rescue, and promotion workflows manual-only.
+- Keep releases restricted to deliberate `v*` tags whose commits are reachable from `main`.
+
 ## Platform invariants
 
 ```typescript

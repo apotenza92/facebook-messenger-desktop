@@ -1,4 +1,4 @@
-name: Snap Scheduled Security Rebuild
+name: Snap Security Rebuild
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -6,8 +6,6 @@ env:
   SNAP_NAME: facebook-messenger-desktop
 
 on:
-  schedule:
-    - cron: "15 2 * * *" # Daily package refresh, before the normal promotion checks
   workflow_dispatch:
     inputs:
       expected_version:

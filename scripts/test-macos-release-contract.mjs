@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -949,6 +950,23 @@ function testWorkflowContract() {
     .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
     .map((name) => readFileSync(join(workflowDirectory, name), "utf8"))
     .join("\n");
+  const ciWorkflow = readFileSync(join(workflowDirectory, "ci.yml"), "utf8");
+  assert.match(ciWorkflow, /^on:\n  workflow_dispatch:\s*$/m);
+  assert.doesNotMatch(
+    ciWorkflow,
+    /^\s*(?:push|pull_request|pull_request_target|workflow_run|schedule):/m,
+    "CI must remain manual-only",
+  );
+  assert.doesNotMatch(
+    maintainedWorkflows,
+    /^\s*schedule:/m,
+    "Maintained workflows must not run on a schedule",
+  );
+  assert.equal(
+    existsSync(join(repositoryRoot, ".github", "dependabot.yml")),
+    false,
+    "Dependabot must remain disabled while unattended maintenance is paused",
+  );
   assert.doesNotMatch(maintainedWorkflows, /https:\/\/x-access-token:/);
   for (const name of readdirSync(workflowDirectory).filter(
     (candidate) => candidate.endsWith(".yml") || candidate.endsWith(".yaml"),
@@ -962,7 +980,7 @@ function testWorkflowContract() {
     const allowedEvents =
       name === "release.yml"
         ? new Set(["push"])
-        : new Set(["schedule", "workflow_dispatch"]);
+        : new Set(["workflow_dispatch"]);
     assert(events.length > 0, `${name} must declare an explicit trusted event`);
     for (const event of events) {
       assert(
@@ -1088,6 +1106,20 @@ function testWorkflowContract() {
   assert.match(
     downloadPage,
     /arm64:[\s\S]*?flatpak:\s*\{[\s\S]*?disabled:\s*true,[\s\S]*?available for x64 Linux only/,
+  );
+
+  const packageVerifier = readFileSync(
+    join(repositoryRoot, "scripts", "verify-macos-package.mjs"),
+    "utf8",
+  );
+  assert.doesNotMatch(packageVerifier, /\.map\(realpathSync\)/);
+  assert.match(
+    packageVerifier,
+    /map\(\(bundlePath\) => realpathSync\(bundlePath\)\)/,
+  );
+  assert.match(
+    packageVerifier,
+    /map\(\(filePath\) => realpathSync\(filePath\)\)/,
   );
 
   const maintainedReleaseSources = [

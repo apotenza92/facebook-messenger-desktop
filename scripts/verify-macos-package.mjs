@@ -231,8 +231,12 @@ function collectCodeObjects(appPath) {
   }
   visit(appPath);
   return {
-    bundles: [...new Set(bundles.map(realpathSync))].sort(),
-    machOFiles: [...new Set(machOFiles.map(realpathSync))].sort(),
+    bundles: [
+      ...new Set(bundles.map((bundlePath) => realpathSync(bundlePath))),
+    ].sort(),
+    machOFiles: [
+      ...new Set(machOFiles.map((filePath) => realpathSync(filePath))),
+    ].sort(),
   };
 }
 
