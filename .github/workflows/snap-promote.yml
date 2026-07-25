@@ -2,202 +2,266 @@ name: Snap Promotion Check
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SNAP_NAME: facebook-messenger-desktop
 
-# Runs daily to check if there are new edge builds that should be promoted
-# This handles cases where Launchpad builds complete after the release workflow
+permissions:
+  contents: read
+
+# Manual only: stable publication requires approval from the protected environment.
 
 on:
-  schedule:
-    - cron: "0 */6 * * *" # Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
-  workflow_dispatch: # Allow manual triggering
+  workflow_dispatch:
 
 concurrency:
   group: snap-promotion-check
   cancel-in-progress: false
 
 jobs:
-  check_and_promote:
-    name: Check and Promote Snap
+  plan:
+    name: Plan Snap promotions from public state
     runs-on: ubuntu-latest
     outputs:
-      rescue_arm64_edge: ${{ steps.promote.outputs.rescue_arm64_edge }}
-      rescue_version: ${{ steps.promote.outputs.rescue_version }}
-
+      promote_beta: ${{ steps.plan.outputs.promote_beta }}
+      promote_stable: ${{ steps.plan.outputs.promote_stable }}
+      promote_stable_from_beta: ${{ steps.plan.outputs.promote_stable_from_beta }}
+      rescue_arm64_edge: ${{ steps.plan.outputs.rescue_arm64_edge }}
+      edge_version: ${{ steps.plan.outputs.edge_version }}
+      beta_version: ${{ steps.plan.outputs.beta_version }}
+      rescue_version: ${{ steps.plan.outputs.rescue_version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          fetch-depth: 0 # Need full history for tag lookup
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Install Snapcraft
-        run: sudo snap install snapcraft --classic
-
-      - name: Check snap status
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+      - name: Read public Snap channel state
         run: |
-          echo "Current Snap store status:"
-          snapcraft status facebook-messenger-desktop || exit 1
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --header 'Snap-Device-Series: 16' \
+            --header 'User-Agent: snapd/2.63' \
+            "https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}" > snap-info.json
+          {
+            printf 'Track\tArch\tChannel\tVersion\tRevision\tProgress\n'
+            jq -r '."channel-map"[]
+              | select(.channel.track == "latest")
+              | select(.channel.risk == "stable" or .channel.risk == "candidate" or .channel.risk == "beta" or .channel.risk == "edge")
+              | ["latest", .channel.architecture, .channel.risk, .version, .revision, "-"]
+              | @tsv' snap-info.json
+          } > snap-status.txt
 
       - name: Determine promotions needed
-        id: promote
+        id: plan
         env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_STATUS_FILE: snap-status.txt
         run: scripts/snap-promotion-decision.sh
 
-      - name: Promote to beta
-        if: steps.promote.outputs.promote_beta == 'true'
+  promote_beta:
+    name: Promote Snap to beta
+    needs: plan
+    if: needs.plan.outputs.promote_beta == 'true'
+    runs-on: ubuntu-latest
+    environment: snap-beta-promotion
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+      - name: Promote exact edge version to beta
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
-          echo "Promoting from edge to beta..."
-          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta --yes
-          scripts/verify-snap-channel-version.sh facebook-messenger-desktop beta "${{ steps.promote.outputs.edge_version }}"
-          echo "Promoted to beta"
+          set -euo pipefail
+          snapcraft promote "$SNAP_NAME" --from-channel edge --to-channel beta --yes
+          scripts/verify-snap-channel-version.sh "$SNAP_NAME" beta "${{ needs.plan.outputs.edge_version }}"
 
-      - name: Promote to stable from edge
-        if: steps.promote.outputs.promote_stable == 'true'
+  promote_stable:
+    name: Promote Snap to stable
+    needs: plan
+    if: needs.plan.outputs.promote_stable == 'true' || needs.plan.outputs.promote_stable_from_beta == 'true'
+    runs-on: ubuntu-latest
+    environment: snap-stable-promotion
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+      - name: Promote exact approved version to stable
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          PROMOTE_FROM_EDGE: ${{ needs.plan.outputs.promote_stable }}
+          EDGE_VERSION: ${{ needs.plan.outputs.edge_version }}
+          BETA_VERSION: ${{ needs.plan.outputs.beta_version }}
         run: |
-          echo "Promoting from edge to stable..."
-          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable --yes
-          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.edge_version }}"
-          echo "Promoted to stable from edge"
+          set -euo pipefail
+          if [ "$PROMOTE_FROM_EDGE" = true ]; then
+            source_channel=edge
+            expected_version="$EDGE_VERSION"
+          else
+            source_channel=beta
+            expected_version="$BETA_VERSION"
+          fi
+          test -n "$expected_version"
+          snapcraft promote "$SNAP_NAME" --from-channel "$source_channel" --to-channel stable --yes
+          scripts/verify-snap-channel-version.sh "$SNAP_NAME" stable "$expected_version"
 
-      - name: Promote to stable from beta
-        if: steps.promote.outputs.promote_stable_from_beta == 'true'
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          echo "Promoting ${{ steps.promote.outputs.beta_version }} from beta to stable..."
-          snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable --yes
-          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.beta_version }}"
-          echo "Promoted to stable from beta"
-
-      - name: Final status
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          echo ""
-          echo "Final Snap store status:"
-          snapcraft status facebook-messenger-desktop || true
-
-  rescue_arm64_edge:
-    name: Rescue ARM64 edge snap
+  build_arm64_rescue:
+    name: Build ARM64 rescue snap
+    needs: plan
+    if: needs.plan.outputs.rescue_arm64_edge == 'true'
     runs-on: ubuntu-24.04-arm
-    needs: check_and_promote
-    if: needs.check_and_promote.outputs.rescue_arm64_edge == 'true'
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - name: Verify runner and version
         run: |
           set -euo pipefail
-          test "$(dpkg --print-architecture)" = "arm64"
-          version="$(node -p "require('./package.json').version")"
-          test "$version" = "${{ needs.check_and_promote.outputs.rescue_version }}"
-
+          test "$(dpkg --print-architecture)" = arm64
+          test "$(node -p "require('./package.json').version")" = "${{ needs.plan.outputs.rescue_version }}"
       - name: Install build tooling
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y squashfs-tools
           sudo snap install snapcraft --classic
-
-      - name: Build snap
-        run: |
-          set -euo pipefail
-          sudo --preserve-env=FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 snapcraft --destructive-mode --build-for arm64
-
-      - name: Inspect snap
+      - name: Build and inspect snap
         id: snap
         run: |
           set -euo pipefail
-          snap_file="$(ls facebook-messenger-desktop_*_arm64.snap | head -n 1)"
+          sudo --preserve-env=FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 snapcraft --destructive-mode --build-for arm64
+          snap_file="$(find . -maxdepth 1 -name 'facebook-messenger-desktop_*_arm64.snap' -print -quit)"
           test -n "$snap_file"
           unsquashfs -cat "$snap_file" meta/snap.yaml > /tmp/snap-meta.yaml
-          grep -Fx "name: facebook-messenger-desktop" /tmp/snap-meta.yaml
-          grep -Ex "version: '?${{ needs.check_and_promote.outputs.rescue_version }}'?" /tmp/snap-meta.yaml
+          grep -Fx "name: $SNAP_NAME" /tmp/snap-meta.yaml
+          grep -Ex "version: '?${{ needs.plan.outputs.rescue_version }}'?" /tmp/snap-meta.yaml
           echo "snap_file=$snap_file" >> "$GITHUB_OUTPUT"
-
-      - name: Upload snap artifact
-        uses: actions/upload-artifact@v6
+      - name: Upload verified rescue artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: facebook-messenger-desktop-${{ needs.check_and_promote.outputs.rescue_version }}-arm64-rescue-snap
+          name: facebook-messenger-desktop-${{ needs.plan.outputs.rescue_version }}-arm64-rescue-snap
           path: ${{ steps.snap.outputs.snap_file }}
+          if-no-files-found: error
 
-      - name: Upload and release snap to edge
+  publish_arm64_rescue_edge:
+    name: Publish ARM64 rescue snap to edge
+    needs: [plan, build_arm64_rescue]
+    runs-on: ubuntu-latest
+    environment: snap-edge-release
+    steps:
+      - name: Download verified rescue artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: facebook-messenger-desktop-${{ needs.plan.outputs.rescue_version }}-arm64-rescue-snap
+          path: artifacts/snap
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+      - name: Upload exact rescue revision to edge
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           set -euo pipefail
-          snapcraft upload "${{ steps.snap.outputs.snap_file }}" --release edge
+          snap_file="$(find artifacts/snap -maxdepth 1 -name 'facebook-messenger-desktop_*_arm64.snap' -print -quit)"
+          test -n "$snap_file"
+          snapcraft upload "$snap_file" --release edge
 
-      - name: Final Snap status
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: snapcraft status facebook-messenger-desktop
-
-  promote_after_arm64_rescue:
-    name: Promote after ARM64 rescue
+  replan_after_rescue:
+    name: Replan after ARM64 rescue
+    needs: [plan, publish_arm64_rescue_edge]
     runs-on: ubuntu-latest
-    needs:
-      - check_and_promote
-      - rescue_arm64_edge
-    if: needs.rescue_arm64_edge.result == 'success'
-
+    outputs:
+      promote_beta: ${{ steps.plan.outputs.promote_beta }}
+      promote_stable: ${{ steps.plan.outputs.promote_stable }}
+      promote_stable_from_beta: ${{ steps.plan.outputs.promote_stable_from_beta }}
+      edge_version: ${{ steps.plan.outputs.edge_version }}
+      beta_version: ${{ steps.plan.outputs.beta_version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Wait for public edge state and plan
+        id: plan
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 20); do
+            curl --fail --silent --show-error --location \
+              --header 'Snap-Device-Series: 16' \
+              --header 'User-Agent: snapd/2.63' \
+              "https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}" > snap-info.json
+            {
+              printf 'Track\tArch\tChannel\tVersion\tRevision\tProgress\n'
+              jq -r '."channel-map"[]
+                | select(.channel.track == "latest")
+                | select(.channel.risk == "stable" or .channel.risk == "candidate" or .channel.risk == "beta" or .channel.risk == "edge")
+                | ["latest", .channel.architecture, .channel.risk, .version, .revision, "-"]
+                | @tsv' snap-info.json
+            } > snap-status.txt
+            if grep -Eq "arm64[[:space:]]+edge[[:space:]]+${{ needs.plan.outputs.rescue_version }}[[:space:]]" snap-status.txt; then
+              SNAP_STATUS_FILE=snap-status.txt scripts/snap-promotion-decision.sh
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for the ARM64 rescue revision to reach public edge." >&2
+          exit 1
 
+  promote_beta_after_rescue:
+    name: Promote rescued Snap to beta
+    needs: replan_after_rescue
+    if: needs.replan_after_rescue.outputs.promote_beta == 'true'
+    runs-on: ubuntu-latest
+    environment: snap-beta-promotion
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic
-
-      - name: Determine promotions needed
-        id: promote
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: scripts/snap-promotion-decision.sh
-
-      - name: Promote to beta
-        if: steps.promote.outputs.promote_beta == 'true'
+      - name: Promote exact rescued version to beta
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
-          echo "Promoting from edge to beta..."
-          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel beta --yes
-          scripts/verify-snap-channel-version.sh facebook-messenger-desktop beta "${{ steps.promote.outputs.edge_version }}"
-          echo "Promoted to beta"
+          set -euo pipefail
+          snapcraft promote "$SNAP_NAME" --from-channel edge --to-channel beta --yes
+          scripts/verify-snap-channel-version.sh "$SNAP_NAME" beta "${{ needs.replan_after_rescue.outputs.edge_version }}"
 
-      - name: Promote to stable from edge
-        if: steps.promote.outputs.promote_stable == 'true'
+  promote_stable_after_rescue:
+    name: Promote rescued Snap to stable
+    needs: replan_after_rescue
+    if: needs.replan_after_rescue.outputs.promote_stable == 'true' || needs.replan_after_rescue.outputs.promote_stable_from_beta == 'true'
+    runs-on: ubuntu-latest
+    environment: snap-stable-promotion
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+      - name: Promote exact approved rescued version to stable
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          PROMOTE_FROM_EDGE: ${{ needs.replan_after_rescue.outputs.promote_stable }}
+          EDGE_VERSION: ${{ needs.replan_after_rescue.outputs.edge_version }}
+          BETA_VERSION: ${{ needs.replan_after_rescue.outputs.beta_version }}
         run: |
-          echo "Promoting from edge to stable..."
-          snapcraft promote facebook-messenger-desktop --from-channel edge --to-channel stable --yes
-          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.edge_version }}"
-          echo "Promoted to stable from edge"
-
-      - name: Promote to stable from beta
-        if: steps.promote.outputs.promote_stable_from_beta == 'true'
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          echo "Promoting ${{ steps.promote.outputs.beta_version }} from beta to stable..."
-          snapcraft promote facebook-messenger-desktop --from-channel beta --to-channel stable --yes
-          scripts/verify-snap-channel-version.sh facebook-messenger-desktop stable "${{ steps.promote.outputs.beta_version }}"
-          echo "Promoted to stable from beta"
-
-      - name: Final status
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          echo ""
-          echo "Final Snap store status:"
-          snapcraft status facebook-messenger-desktop || true
+          set -euo pipefail
+          if [ "$PROMOTE_FROM_EDGE" = true ]; then
+            source_channel=edge
+            expected_version="$EDGE_VERSION"
+          else
+            source_channel=beta
+            expected_version="$BETA_VERSION"
+          fi
+          test -n "$expected_version"
+          snapcraft promote "$SNAP_NAME" --from-channel "$source_channel" --to-channel stable --yes
+          scripts/verify-snap-channel-version.sh "$SNAP_NAME" stable "$expected_version"

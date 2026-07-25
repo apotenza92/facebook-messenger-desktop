@@ -1657,10 +1657,11 @@
           flatpak: {
             url: null,
             btnText: "Install via Terminal",
-            label: "Add Flatpak repository and install:",
-            command:
-              "wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop",
+            label: "Flatpak availability:",
+            command: "",
             noDownload: true,
+            disabled: true,
+            note: "Flatpak is currently available for x64 Linux only.",
           },
         },
       };
@@ -1681,13 +1682,16 @@
           arm64Btn.classList.remove("active");
         }
 
-        // Update format button states (some disabled for ARM64, but not flatpak in beta - we show switch prompt instead)
+        // Update format button states. x64 beta Flatpak offers a switch to the
+        // stable channel; ARM64 Flatpak stays disabled because it is not built.
         document.querySelectorAll(".format-btn").forEach((btn) => {
           const format = btn.getAttribute("data-format");
           const formatData = linuxFormats[arch][format];
-          // Don't disable flatpak in beta mode - we show "switch to stable" prompt instead
+          // Keep x64 beta Flatpak interactive so it can offer "switch to stable".
           const isFlatpakBeta =
-            format === "flatpak" && currentChannel === "beta";
+            format === "flatpak" &&
+            currentChannel === "beta" &&
+            arch === "x64";
           if (formatData && formatData.disabled && !isFlatpakBeta) {
             btn.classList.add("disabled");
           } else {
@@ -1695,10 +1699,13 @@
           }
         });
 
-        // If current format is disabled (but not flatpak in beta), switch to appimage
+        // If the selected format is unavailable, switch to AppImage. The x64
+        // beta Flatpak exception stays selected to show its stable-channel prompt.
         const currentFormatData = linuxFormats[arch][currentLinuxFormat];
         const isFlatpakBeta =
-          currentLinuxFormat === "flatpak" && currentChannel === "beta";
+          currentLinuxFormat === "flatpak" &&
+          currentChannel === "beta" &&
+          arch === "x64";
         if (currentFormatData && currentFormatData.disabled && !isFlatpakBeta) {
           setLinuxFormat("appimage");
         } else {
@@ -1736,6 +1743,7 @@
         const isFlatpakBeta =
           currentLinuxFormat === "flatpak" &&
           currentChannel === "beta" &&
+          currentLinuxArch === "x64" &&
           formatData.disabled;
 
         if (isFlatpakBeta) {
@@ -2060,11 +2068,7 @@
           linuxFormats.x64.flatpak.note =
             "Flatpak beta builds coming soon. Use stable version or another format.";
         }
-        if (linuxFormats.arm64 && linuxFormats.arm64.flatpak) {
-          linuxFormats.arm64.flatpak.disabled = true;
-          linuxFormats.arm64.flatpak.note =
-            "Flatpak beta builds coming soon. Use stable version or another format.";
-        }
+        // ARM64 Flatpak is not built for either channel.
 
         // Update macOS Homebrew command and label for beta
         const homebrewCode = document.getElementById("mac-homebrew-code");
@@ -2162,11 +2166,11 @@
             "wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop";
         }
         if (linuxFormats.arm64 && linuxFormats.arm64.flatpak) {
-          linuxFormats.arm64.flatpak.disabled = false;
-          linuxFormats.arm64.flatpak.label =
-            "Add Flatpak repository and install:";
-          linuxFormats.arm64.flatpak.command =
-            "wget -qO /tmp/messenger.gpg https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo/flatpak-repo.gpg && flatpak remote-add --if-not-exists --user --gpg-import=/tmp/messenger.gpg messenger https://apotenza92.github.io/facebook-messenger-desktop/flatpak/repo && flatpak install --user messenger com.facebook.messenger.desktop";
+          linuxFormats.arm64.flatpak.disabled = true;
+          linuxFormats.arm64.flatpak.label = "Flatpak availability:";
+          linuxFormats.arm64.flatpak.command = "";
+          linuxFormats.arm64.flatpak.note =
+            "Flatpak is currently available for x64 Linux only.";
         }
 
         // Reset macOS Homebrew command and label to stable

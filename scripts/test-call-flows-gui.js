@@ -55,8 +55,7 @@ const INCOMING_DECLINE_SELECTORS = [
   '[aria-label*="Decline audio call" i]',
 ];
 
-const INCOMING_JOIN_PATTERN =
-  /join (?:the )?(?:audio |video )?(?:call|chat)/i;
+const INCOMING_JOIN_PATTERN = /join (?:the )?(?:audio |video )?(?:call|chat)/i;
 
 const IN_CALL_HANGUP_INCLUDE_PATTERNS = [
   /end call/i,
@@ -257,12 +256,14 @@ async function waitForPrimaryElectronWindow(electronApp, timeoutMs) {
     () => [],
   );
   throw new Error(
-    `Electron main window did not appear within timeout. Last state: ${JSON.stringify({
-      description: result.description,
-      elapsedMs: result.elapsedMs,
-      pageCount: result.lastResult?.pageCount ?? 0,
-      browserWindows,
-    })}`,
+    `Electron main window did not appear within timeout. Last state: ${JSON.stringify(
+      {
+        description: result.description,
+        elapsedMs: result.elapsedMs,
+        pageCount: result.lastResult?.pageCount ?? 0,
+        browserWindows,
+      },
+    )}`,
   );
 }
 
@@ -434,9 +435,9 @@ function readOnePasswordFacebookCredentials({ item, vault }) {
   return { username, password, otp };
 }
 
-async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
+async function attemptTesterBLoginWithOnePassword(page, { item, vault }) {
   console.log(
-    `[Setup] Michael session unauthenticated, attempting 1Password login via item: ${item}`,
+    `[Setup] TesterB session unauthenticated, attempting 1Password login via item: ${item}`,
   );
 
   const credentials = readOnePasswordFacebookCredentials({ item, vault });
@@ -512,7 +513,7 @@ async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
   }
 
   if (!submitClicked) {
-    throw new Error("Could not submit Facebook login form in Michael session.");
+    throw new Error("Could not submit Facebook login form in TesterB session.");
   }
 
   await page.waitForLoadState("domcontentloaded");
@@ -563,11 +564,11 @@ async function attemptMichaelLoginWithOnePassword(page, { item, vault }) {
   const authState = await isBrowserAuthenticated(page);
   if (!authState.authenticated) {
     throw new Error(
-      `Michael 1Password login did not complete. Current URL: ${authState.url}`,
+      `TesterB 1Password login did not complete. Current URL: ${authState.url}`,
     );
   }
 
-  console.log("[Setup] Michael login via 1Password succeeded.");
+  console.log("[Setup] TesterB login via 1Password succeeded.");
 }
 
 function attachDialogLogging(page, label) {
@@ -687,11 +688,11 @@ async function launchElectronAppWithRetries({
       electronApp = await electron.launch(
         buildElectronLaunchOptions({ executablePath, appEntry }),
       );
-      const alexWindow = await waitForPrimaryElectronWindow(
+      const testerAWindow = await waitForPrimaryElectronWindow(
         electronApp,
         timeoutMs,
       );
-      return { electronApp, alexWindow, attempt };
+      return { electronApp, testerAWindow, attempt };
     } catch (error) {
       lastError = error;
       console.log(
@@ -709,12 +710,12 @@ async function launchElectronAppWithRetries({
   throw lastError || new Error("Electron launch failed");
 }
 
-async function waitForMichaelManualLogin(page, timeoutMs) {
+async function waitForTesterBManualLogin(page, timeoutMs) {
   const waitMs = Math.max(0, Number(timeoutMs || 0));
   if (waitMs <= 0) return false;
 
   console.log(
-    `[Setup] Waiting up to ${waitMs}ms for manual Michael login completion (solve any checkpoint/2FA in browser window)...`,
+    `[Setup] Waiting up to ${waitMs}ms for manual TesterB login completion (solve any checkpoint/2FA in browser window)...`,
   );
 
   const started = Date.now();
@@ -1070,9 +1071,7 @@ async function verifyStableVisibility(
       typeof result === "boolean"
         ? result
         : Boolean(
-            result &&
-              typeof result === "object" &&
-              "visible" in result
+            result && typeof result === "object" && "visible" in result
               ? result.visible
               : result,
           );
@@ -1360,8 +1359,20 @@ async function clickElectronWindowButtonViaInput(
       const y = Math.round(target.y);
       wc.focus();
       wc.sendInputEvent({ type: "mouseMove", x, y, button: "left" });
-      wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
-      wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+      wc.sendInputEvent({
+        type: "mouseDown",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      wc.sendInputEvent({
+        type: "mouseUp",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
       return { clicked: true, label: target.label, x, y };
     },
     {
@@ -1398,26 +1409,26 @@ function describeSurface(prefix, entry) {
   return `${prefix} window/page ${entry.index} @ ${location} incoming=${Boolean(state.incomingVisible)} inCall=${Boolean(state.hasInCallControls || state.canHangUp)} clean=${Boolean(state.incomingCallCleanClass)} topBarVisible=${Boolean(state.topBarChromeVisible)} labels=[${labels}]`;
 }
 
-function assertAlexIncomingTopBarState(entry) {
+function assertTesterAIncomingTopBarState(entry) {
   const state = entry?.value || {};
   if (state.topBarChromeVisible) {
     throw new Error(
-      `Alex incoming overlay still showed Facebook top-bar chrome. State: ${JSON.stringify(state)}`,
+      `TesterA incoming overlay still showed Facebook top-bar chrome. State: ${JSON.stringify(state)}`,
     );
   }
   if (!state.incomingVisible) {
     throw new Error(
-      `Alex incoming overlay was not visibly actionable. State: ${JSON.stringify(state)}`,
+      `TesterA incoming overlay was not visibly actionable. State: ${JSON.stringify(state)}`,
     );
   }
   if (!state.incomingCallCleanClass) {
     console.log(
-      `[Answer Alex] Incoming-call clean class absent; accepting hidden top-bar state instead. State: ${JSON.stringify(state)}`,
+      `[Answer TesterA] Incoming-call clean class absent; accepting hidden top-bar state instead. State: ${JSON.stringify(state)}`,
     );
   }
 }
 
-async function waitForAlexCleanup(electronApp, timeoutMs, description) {
+async function waitForTesterACleanup(electronApp, timeoutMs, description) {
   return waitForPrimaryElectronSurface(
     electronApp,
     (state) =>
@@ -1548,34 +1559,34 @@ async function exerciseMuteToggleCycles({
   }
 }
 
-async function runIncomingMichaelToAlex({
+async function runIncomingTesterBToTesterA({
   electronApp,
-  michaelPage,
+  testerBPage,
   timeoutMs,
 }) {
   console.log(
-    "\n[Incoming] Michael -> Alex: triggering call from Michael web session...",
+    "\n[Incoming] TesterB -> TesterA: triggering call from TesterB web session...",
   );
 
   const threadReady = await waitForThreadReady(
-    michaelPage,
+    testerBPage,
     timeoutMs,
-    "Michael thread to expose call controls",
+    "TesterB thread to expose call controls",
   );
   if (!threadReady.ok) {
     throw new Error(
-      `Michael thread not ready for calling. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+      `TesterB thread not ready for calling. Last state: ${JSON.stringify(threadReady.lastResult)}`,
     );
   }
 
-  const clickFromMichael = await michaelPage.evaluate(
+  const clickFromTesterB = await testerBPage.evaluate(
     buildClickCallStartScript(),
   );
-  if (!clickFromMichael.clicked) {
-    throw new Error("Failed to click call start button in Michael session");
+  if (!clickFromTesterB.clicked) {
+    throw new Error("Failed to click call start button in TesterB session");
   }
   console.log(
-    `[Incoming] Michael call button clicked: ${clickFromMichael.label}`,
+    `[Incoming] TesterB call button clicked: ${clickFromTesterB.label}`,
   );
 
   const incomingVisibleScript = buildIncomingVisibleScript();
@@ -1590,17 +1601,17 @@ async function runIncomingMichaelToAlex({
     },
     timeoutMs,
     500,
-    "Alex incoming call controls to appear",
+    "TesterA incoming call controls to appear",
   );
 
   if (!appeared.ok) {
     throw new Error(
-      "Incoming call controls did not appear in Alex app within timeout",
+      "Incoming call controls did not appear in TesterA app within timeout",
     );
   }
 
   console.log(
-    `[Incoming] Alex incoming controls detected after ${appeared.elapsedMs}ms`,
+    `[Incoming] TesterA incoming controls detected after ${appeared.elapsedMs}ms`,
   );
   await focusPrimaryElectronWindow(electronApp).catch(() => false);
 
@@ -1627,12 +1638,12 @@ async function runIncomingMichaelToAlex({
 
   if (!stable.ok) {
     throw new Error(
-      `Incoming call controls disappeared too early on Alex app (after ${stable.elapsedMs}ms of ${INCOMING_RING_STABILITY_MS}ms). First disappearance: ${JSON.stringify(stable.firstFailure)}. Last visible snapshot: ${JSON.stringify(stable.lastVisibleResult)}`,
+      `Incoming call controls disappeared too early on TesterA app (after ${stable.elapsedMs}ms of ${INCOMING_RING_STABILITY_MS}ms). First disappearance: ${JSON.stringify(stable.firstFailure)}. Last visible snapshot: ${JSON.stringify(stable.lastVisibleResult)}`,
     );
   }
 
   console.log(
-    `[Incoming] Alex incoming controls stayed visible for >= ${INCOMING_RING_STABILITY_MS}ms (sample every ${INCOMING_RING_STABILITY_SAMPLE_MS}ms)`,
+    `[Incoming] TesterA incoming controls stayed visible for >= ${INCOMING_RING_STABILITY_MS}ms (sample every ${INCOMING_RING_STABILITY_SAMPLE_MS}ms)`,
   );
   if (
     stable.lastVisibleResult &&
@@ -1640,125 +1651,127 @@ async function runIncomingMichaelToAlex({
     !stable.lastVisibleResult.hasAnswer
   ) {
     console.log(
-      "[Incoming] Alex incoming surface transitioned from Accept/Decline to Join Audio/Video Chat while remaining actionable.",
+      "[Incoming] TesterA incoming surface transitioned from Accept/Decline to Join Audio/Video Chat while remaining actionable.",
     );
   }
 
-  const declineOnAlex = await evaluateInElectronPage(
+  const declineOnTesterA = await evaluateInElectronPage(
     electronApp,
     buildClickDeclineScript(),
   );
-  if (declineOnAlex.clicked) {
+  if (declineOnTesterA.clicked) {
     console.log(
-      `[Incoming] Declined call on Alex side: ${declineOnAlex.label || "Decline"}`,
+      `[Incoming] Declined call on TesterA side: ${declineOnTesterA.label || "Decline"}`,
     );
   }
 }
 
-async function runOutgoingAlexToMichael({
+async function runOutgoingTesterAToTesterB({
   electronApp,
-  michaelPage,
+  testerBPage,
   timeoutMs,
 }) {
   console.log(
-    "\n[Outgoing] Alex -> Michael: triggering call from Alex desktop app...",
+    "\n[Outgoing] TesterA -> TesterB: triggering call from TesterA desktop app...",
   );
 
   const threadReady = await waitForThreadReady(
-    michaelPage,
+    testerBPage,
     timeoutMs,
-    "Michael thread to expose call controls before outgoing validation",
+    "TesterB thread to expose call controls before outgoing validation",
   );
   if (!threadReady.ok) {
     throw new Error(
-      `Michael thread not ready for outgoing validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+      `TesterB thread not ready for outgoing validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
     );
   }
 
-  const clickFromAlex = await evaluateInElectronPage(
+  const clickFromTesterA = await evaluateInElectronPage(
     electronApp,
     buildClickCallStartScript(),
   );
-  if (!clickFromAlex.clicked) {
-    throw new Error("Failed to click call start button in Alex app");
+  if (!clickFromTesterA.clicked) {
+    throw new Error("Failed to click call start button in TesterA app");
   }
-  console.log(`[Outgoing] Alex call button clicked: ${clickFromAlex.label}`);
+  console.log(
+    `[Outgoing] TesterA call button clicked: ${clickFromTesterA.label}`,
+  );
 
   const appeared = await waitFor(
     async () => {
-      const state = await michaelPage.evaluate(buildIncomingVisibleScript());
+      const state = await testerBPage.evaluate(buildIncomingVisibleScript());
       return state.visible ? state : false;
     },
     timeoutMs,
     500,
-    "Michael incoming call controls to appear",
+    "TesterB incoming call controls to appear",
   );
 
   if (!appeared.ok) {
     throw new Error(
-      "Incoming call controls did not appear in Michael session within timeout",
+      "Incoming call controls did not appear in TesterB session within timeout",
     );
   }
 
   console.log(
-    `[Outgoing] Michael incoming controls detected after ${appeared.elapsedMs}ms`,
+    `[Outgoing] TesterB incoming controls detected after ${appeared.elapsedMs}ms`,
   );
 
-  const declineOnMichael = await michaelPage.evaluate(
+  const declineOnTesterB = await testerBPage.evaluate(
     buildClickDeclineScript(),
   );
-  if (declineOnMichael.clicked) {
+  if (declineOnTesterB.clicked) {
     console.log(
-      `[Outgoing] Declined call on Michael side: ${declineOnMichael.label || "Decline"}`,
+      `[Outgoing] Declined call on TesterB side: ${declineOnTesterB.label || "Decline"}`,
     );
   }
 }
 
-async function runMichaelToAlexAnsweredFlow({
+async function runTesterBToTesterAAnsweredFlow({
   electronApp,
-  michaelPage,
-  alexThreadUrl,
+  testerBPage,
+  testerAThreadUrl,
   timeoutMs,
 }) {
-  const michaelContext = michaelPage.context();
+  const testerBContext = testerBPage.context();
 
   console.log(
-    "\n[Answer Alex] Michael -> Alex: ring, answer on Alex, then hang up...",
+    "\n[Answer TesterA] TesterB -> TesterA: ring, answer on TesterA, then hang up...",
   );
   await clearCapturedNotifications(electronApp);
 
   const threadReady = await waitForThreadReady(
-    michaelPage,
+    testerBPage,
     timeoutMs,
-    "Michael thread to expose call controls before Alex-answer validation",
+    "TesterB thread to expose call controls before TesterA-answer validation",
   );
   if (!threadReady.ok) {
     throw new Error(
-      `Michael thread not ready before Alex-answer validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+      `TesterB thread not ready before TesterA-answer validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
     );
   }
 
-  const clickFromMichael = await michaelPage.evaluate(
+  const clickFromTesterB = await testerBPage.evaluate(
     buildClickCallStartScript(),
   );
-  if (!clickFromMichael.clicked) {
+  if (!clickFromTesterB.clicked) {
     throw new Error(
-      "Failed to click call start button in Michael session for Alex-answer flow",
+      "Failed to click call start button in TesterB session for TesterA-answer flow",
     );
   }
   console.log(
-    `[Answer Alex] Michael call button clicked: ${clickFromMichael.label}`,
+    `[Answer TesterA] TesterB call button clicked: ${clickFromTesterB.label}`,
   );
 
   const initialNotification = await waitForNotificationPredicate(
     electronApp,
     (notifications) => getIncomingCallNotifications(notifications).length >= 1,
     Math.min(timeoutMs, 10000),
-    "Alex native incoming-call notification to appear",
+    "TesterA native incoming-call notification to appear",
   );
   if (!initialNotification.ok) {
     throw new Error(
-      `Alex did not receive an incoming-call notification before answer. Notifications: ${JSON.stringify(initialNotification.notifications)}`,
+      `TesterA did not receive an incoming-call notification before answer. Notifications: ${JSON.stringify(initialNotification.notifications)}`,
     );
   }
 
@@ -1766,31 +1779,31 @@ async function runMichaelToAlexAnsweredFlow({
     electronApp,
     (state) => Boolean(state && state.incomingVisible),
     timeoutMs,
-    "Alex incoming controls to appear for Alex-answer validation",
+    "TesterA incoming controls to appear for TesterA-answer validation",
   );
   if (!appeared.ok) {
     throw new Error(
-      `Alex incoming controls did not appear for Alex-answer validation. Last state: ${JSON.stringify(appeared.lastResult)}`,
+      `TesterA incoming controls did not appear for TesterA-answer validation. Last state: ${JSON.stringify(appeared.lastResult)}`,
     );
   }
 
   console.log(
     describeSurface(
-      "[Answer Alex] Alex incoming surface",
+      "[Answer TesterA] TesterA incoming surface",
       appeared.lastResult.match,
     ),
   );
-  assertAlexIncomingTopBarState(appeared.lastResult.match);
+  assertTesterAIncomingTopBarState(appeared.lastResult.match);
 
-  const answerOnAlex = await clickElectronWindowButtonViaInput(
+  const answerOnTesterA = await clickElectronWindowButtonViaInput(
     electronApp,
     appeared.lastResult.match.index,
     /answer|accept|join call|accept call|accept video call|accept audio call/i,
   );
-  if (!answerOnAlex.clicked) {
-    throw new Error("Failed to answer call on Alex side");
+  if (!answerOnTesterA.clicked) {
+    throw new Error("Failed to answer call on TesterA side");
   }
-  console.log(`[Answer Alex] Answered on Alex: ${answerOnAlex.label}`);
+  console.log(`[Answer TesterA] Answered on TesterA: ${answerOnTesterA.label}`);
 
   await wait(4000);
   const notificationsAfterAnswer = await readCapturedNotifications(electronApp);
@@ -1803,259 +1816,259 @@ async function runMichaelToAlexAnsweredFlow({
     );
   }
 
-  const alexActive = await waitForElectronSurface(
+  const testerAActive = await waitForElectronSurface(
     electronApp,
     (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
     timeoutMs,
-    "Alex in-call controls after answering on Alex",
+    "TesterA in-call controls after answering on TesterA",
   );
-  if (!alexActive.ok) {
+  if (!testerAActive.ok) {
     throw new Error(
-      `Alex did not transition to in-call controls after answering. Last state: ${JSON.stringify(alexActive.lastResult)}`,
+      `TesterA did not transition to in-call controls after answering. Last state: ${JSON.stringify(testerAActive.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Alex] Alex active call surface",
-      alexActive.lastResult.match,
+      "[Answer TesterA] TesterA active call surface",
+      testerAActive.lastResult.match,
     ),
   );
 
   await exerciseMuteToggleCycles({
     electronApp,
-    windowIndex: alexActive.lastResult.match.index,
+    windowIndex: testerAActive.lastResult.match.index,
     timeoutMs,
-    prefix: "[Answer Alex] Alex mute/unmute",
+    prefix: "[Answer TesterA] TesterA mute/unmute",
   });
 
-  const michaelActive = await waitForBrowserSurface(
-    michaelContext,
+  const testerBActive = await waitForBrowserSurface(
+    testerBContext,
     (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
     timeoutMs,
-    "Michael in-call controls after Alex answered",
+    "TesterB in-call controls after TesterA answered",
   );
-  if (!michaelActive.ok) {
+  if (!testerBActive.ok) {
     throw new Error(
-      `Michael did not show in-call controls after Alex answered. Last state: ${JSON.stringify(michaelActive.lastResult)}`,
+      `TesterB did not show in-call controls after TesterA answered. Last state: ${JSON.stringify(testerBActive.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Alex] Michael active call surface",
-      michaelActive.lastResult.match,
+      "[Answer TesterA] TesterB active call surface",
+      testerBActive.lastResult.match,
     ),
   );
 
-  const hangupOnAlex = await clickElectronWindowAction(
+  const hangupOnTesterA = await clickElectronWindowAction(
     electronApp,
-    alexActive.lastResult.match.index,
+    testerAActive.lastResult.match.index,
     buildClickHangupScript(),
   );
-  if (!hangupOnAlex.clicked) {
-    throw new Error("Failed to hang up on Alex side after answering");
+  if (!hangupOnTesterA.clicked) {
+    throw new Error("Failed to hang up on TesterA side after answering");
   }
-  console.log(`[Answer Alex] Hung up on Alex: ${hangupOnAlex.label}`);
+  console.log(`[Answer TesterA] Hung up on TesterA: ${hangupOnTesterA.label}`);
 
-  const alexCleanup = await waitForAlexCleanup(
+  const testerACleanup = await waitForTesterACleanup(
     electronApp,
     Math.max(timeoutMs, 15000),
-    "Alex main window cleanup after Alex-side hangup",
+    "TesterA main window cleanup after TesterA-side hangup",
   );
-  if (!alexCleanup.ok) {
+  if (!testerACleanup.ok) {
     throw new Error(
-      `Alex main window did not clear incoming-call cleanup state after hangup. Last state: ${JSON.stringify(alexCleanup.lastResult)}`,
+      `TesterA main window did not clear incoming-call cleanup state after hangup. Last state: ${JSON.stringify(testerACleanup.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Alex] Alex post-hangup main surface",
-      alexCleanup.lastResult,
+      "[Answer TesterA] TesterA post-hangup main surface",
+      testerACleanup.lastResult,
     ),
   );
 
   await wait(1500);
-  const michaelStatesAfter = await getBrowserCallSurfaceStates(michaelContext);
-  const michaelStillActive = michaelStatesAfter.find(
+  const testerBStatesAfter = await getBrowserCallSurfaceStates(testerBContext);
+  const testerBStillActive = testerBStatesAfter.find(
     (entry) =>
       entry &&
       !entry.error &&
       entry.value &&
       (entry.value.canHangUp || entry.value.incomingVisible),
   );
-  if (michaelStillActive) {
+  if (testerBStillActive) {
     throw new Error(
-      `Michael still showed active/ringing call UI after Alex hung up. State: ${JSON.stringify(michaelStillActive)}`,
+      `TesterB still showed active/ringing call UI after TesterA hung up. State: ${JSON.stringify(testerBStillActive)}`,
     );
   }
 
-  await closeBrowserPagesMatching(michaelContext, (url) =>
+  await closeBrowserPagesMatching(testerBContext, (url) =>
     /\/groupcall\//i.test(String(url || "")),
   );
-  await ensureElectronOnUrl(electronApp, alexThreadUrl);
+  await ensureElectronOnUrl(electronApp, testerAThreadUrl);
   await waitForElectronThreadReady(
     electronApp,
     timeoutMs,
-    "Alex thread to restore call controls after Alex-answer hangup",
+    "TesterA thread to restore call controls after TesterA-answer hangup",
   );
 }
 
-async function runAlexToMichaelAnsweredFlow({
+async function runTesterAToTesterBAnsweredFlow({
   electronApp,
-  michaelPage,
-  alexThreadUrl,
+  testerBPage,
+  testerAThreadUrl,
   timeoutMs,
 }) {
-  const michaelContext = michaelPage.context();
+  const testerBContext = testerBPage.context();
 
   console.log(
-    "\n[Answer Michael] Alex -> Michael: ring, answer on Michael, then hang up...",
+    "\n[Answer TesterB] TesterA -> TesterB: ring, answer on TesterB, then hang up...",
   );
 
-  await ensureElectronOnUrl(electronApp, alexThreadUrl);
-  const alexThreadReady = await waitForElectronThreadReady(
+  await ensureElectronOnUrl(electronApp, testerAThreadUrl);
+  const testerAThreadReady = await waitForElectronThreadReady(
     electronApp,
     timeoutMs,
-    "Alex thread to expose call controls before Michael-answer validation",
+    "TesterA thread to expose call controls before TesterB-answer validation",
   );
-  if (!alexThreadReady.ok) {
+  if (!testerAThreadReady.ok) {
     throw new Error(
-      `Alex thread not ready before Michael-answer validation. Last state: ${JSON.stringify(alexThreadReady.lastResult)}`,
+      `TesterA thread not ready before TesterB-answer validation. Last state: ${JSON.stringify(testerAThreadReady.lastResult)}`,
     );
   }
 
   const threadReady = await waitForThreadReady(
-    michaelPage,
+    testerBPage,
     timeoutMs,
-    "Michael thread to expose call controls before Michael-answer validation",
+    "TesterB thread to expose call controls before TesterB-answer validation",
   );
   if (!threadReady.ok) {
     throw new Error(
-      `Michael thread not ready before Michael-answer validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+      `TesterB thread not ready before TesterB-answer validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
     );
   }
 
-  const clickFromAlex = await evaluateInElectronPage(
+  const clickFromTesterA = await evaluateInElectronPage(
     electronApp,
     buildClickCallStartScript(),
   );
-  if (!clickFromAlex.clicked) {
+  if (!clickFromTesterA.clicked) {
     throw new Error(
-      "Failed to click call start button in Alex app for Michael-answer flow",
+      "Failed to click call start button in TesterA app for TesterB-answer flow",
     );
   }
   console.log(
-    `[Answer Michael] Alex call button clicked: ${clickFromAlex.label}`,
+    `[Answer TesterB] TesterA call button clicked: ${clickFromTesterA.label}`,
   );
 
-  const michaelIncoming = await waitForBrowserSurface(
-    michaelContext,
+  const testerBIncoming = await waitForBrowserSurface(
+    testerBContext,
     (state) => Boolean(state && state.incomingVisible),
     timeoutMs,
-    "Michael incoming controls to appear for Michael-answer validation",
+    "TesterB incoming controls to appear for TesterB-answer validation",
   );
-  if (!michaelIncoming.ok) {
+  if (!testerBIncoming.ok) {
     throw new Error(
-      `Michael incoming controls did not appear for Michael-answer validation. Last state: ${JSON.stringify(michaelIncoming.lastResult)}`,
+      `TesterB incoming controls did not appear for TesterB-answer validation. Last state: ${JSON.stringify(testerBIncoming.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Michael] Michael incoming surface",
-      michaelIncoming.lastResult.match,
+      "[Answer TesterB] TesterB incoming surface",
+      testerBIncoming.lastResult.match,
     ),
   );
 
-  const answerOnMichael = await clickBrowserPageAction(
-    michaelContext,
-    michaelIncoming.lastResult.match.index,
+  const answerOnTesterB = await clickBrowserPageAction(
+    testerBContext,
+    testerBIncoming.lastResult.match.index,
     buildClickAnswerScript(),
   );
-  if (!answerOnMichael.clicked) {
-    throw new Error("Failed to answer call on Michael side");
+  if (!answerOnTesterB.clicked) {
+    throw new Error("Failed to answer call on TesterB side");
   }
-  console.log(`[Answer Michael] Answered on Michael: ${answerOnMichael.label}`);
+  console.log(`[Answer TesterB] Answered on TesterB: ${answerOnTesterB.label}`);
 
-  const alexActive = await waitForElectronSurface(
+  const testerAActive = await waitForElectronSurface(
     electronApp,
     (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
     timeoutMs,
-    "Alex in-call controls after Michael answered",
+    "TesterA in-call controls after TesterB answered",
   );
-  if (!alexActive.ok) {
+  if (!testerAActive.ok) {
     throw new Error(
-      `Alex did not show in-call controls after Michael answered. Last state: ${JSON.stringify(alexActive.lastResult)}`,
+      `TesterA did not show in-call controls after TesterB answered. Last state: ${JSON.stringify(testerAActive.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Michael] Alex active call surface",
-      alexActive.lastResult.match,
+      "[Answer TesterB] TesterA active call surface",
+      testerAActive.lastResult.match,
     ),
   );
 
   await exerciseMuteToggleCycles({
     electronApp,
-    windowIndex: alexActive.lastResult.match.index,
+    windowIndex: testerAActive.lastResult.match.index,
     timeoutMs,
-    prefix: "[Answer Michael] Alex mute/unmute",
+    prefix: "[Answer TesterB] TesterA mute/unmute",
   });
 
-  const michaelActive = await waitForBrowserSurface(
-    michaelContext,
+  const testerBActive = await waitForBrowserSurface(
+    testerBContext,
     (state) => Boolean(state && (state.canHangUp || state.hasInCallControls)),
     timeoutMs,
-    "Michael in-call controls after answering on Michael",
+    "TesterB in-call controls after answering on TesterB",
   );
-  if (!michaelActive.ok) {
+  if (!testerBActive.ok) {
     throw new Error(
-      `Michael did not transition to in-call controls after answering. Last state: ${JSON.stringify(michaelActive.lastResult)}`,
+      `TesterB did not transition to in-call controls after answering. Last state: ${JSON.stringify(testerBActive.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Michael] Michael active call surface",
-      michaelActive.lastResult.match,
+      "[Answer TesterB] TesterB active call surface",
+      testerBActive.lastResult.match,
     ),
   );
 
-  const hangupOnAlex = await clickElectronWindowAction(
+  const hangupOnTesterA = await clickElectronWindowAction(
     electronApp,
-    alexActive.lastResult.match.index,
+    testerAActive.lastResult.match.index,
     buildClickHangupScript(),
   );
-  if (!hangupOnAlex.clicked) {
-    throw new Error("Failed to hang up on Alex side after Michael answered");
+  if (!hangupOnTesterA.clicked) {
+    throw new Error("Failed to hang up on TesterA side after TesterB answered");
   }
   console.log(
-    `[Answer Michael] Hung up on Alex after Michael answered: ${hangupOnAlex.label}`,
+    `[Answer TesterB] Hung up on TesterA after TesterB answered: ${hangupOnTesterA.label}`,
   );
 
-  const alexCleanup = await waitForAlexCleanup(
+  const testerACleanup = await waitForTesterACleanup(
     electronApp,
     Math.max(timeoutMs, 15000),
-    "Alex main window cleanup after Alex-side hangup in Michael-answer flow",
+    "TesterA main window cleanup after TesterA-side hangup in TesterB-answer flow",
   );
-  if (!alexCleanup.ok) {
+  if (!testerACleanup.ok) {
     throw new Error(
-      `Alex main window did not clear incoming-call cleanup state after Alex hung up in Michael-answer flow. Last state: ${JSON.stringify(alexCleanup.lastResult)}`,
+      `TesterA main window did not clear incoming-call cleanup state after TesterA hung up in TesterB-answer flow. Last state: ${JSON.stringify(testerACleanup.lastResult)}`,
     );
   }
   console.log(
     describeSurface(
-      "[Answer Michael] Alex post-hangup main surface",
-      alexCleanup.lastResult,
+      "[Answer TesterB] TesterA post-hangup main surface",
+      testerACleanup.lastResult,
     ),
   );
 
-  const michaelCleanup = await waitForBrowserNoCallSurface(
-    michaelContext,
+  const testerBCleanup = await waitForBrowserNoCallSurface(
+    testerBContext,
     Math.max(timeoutMs, 15000),
-    "Michael browser cleanup after Alex hung up in the Michael-answer flow",
+    "TesterB browser cleanup after TesterA hung up in the TesterB-answer flow",
   );
-  if (!michaelCleanup.ok) {
-    const michaelStatesAfter =
-      await getBrowserCallSurfaceStates(michaelContext);
-    const michaelStillActive = michaelStatesAfter.find(
+  if (!testerBCleanup.ok) {
+    const testerBStatesAfter =
+      await getBrowserCallSurfaceStates(testerBContext);
+    const testerBStillActive = testerBStatesAfter.find(
       (entry) =>
         entry &&
         !entry.error &&
@@ -2063,57 +2076,57 @@ async function runAlexToMichaelAnsweredFlow({
         (entry.value.canHangUp || entry.value.incomingVisible),
     );
     throw new Error(
-      `Michael still showed active/ringing call UI after Alex hung up in the Michael-answer flow. State: ${JSON.stringify(michaelStillActive)}`,
+      `TesterB still showed active/ringing call UI after TesterA hung up in the TesterB-answer flow. State: ${JSON.stringify(testerBStillActive)}`,
     );
   }
 
-  await closeBrowserPagesMatching(michaelContext, (url) =>
+  await closeBrowserPagesMatching(testerBContext, (url) =>
     /\/groupcall\//i.test(String(url || "")),
   );
-  await ensureElectronOnUrl(electronApp, alexThreadUrl);
+  await ensureElectronOnUrl(electronApp, testerAThreadUrl);
   await waitForElectronThreadReady(
     electronApp,
     timeoutMs,
-    "Alex thread to restore call controls after Michael-answer hangup",
+    "TesterA thread to restore call controls after TesterB-answer hangup",
   );
 }
 
-async function runMessageMichaelToAlex({
+async function runMessageTesterBToTesterA({
   electronApp,
-  michaelPage,
-  alexHomeUrl,
+  testerBPage,
+  testerAHomeUrl,
   timeoutMs,
 }) {
   console.log(
-    "\n[Message] Michael -> Alex: sending normal message and checking notifications...",
+    "\n[Message] TesterB -> TesterA: sending normal message and checking notifications...",
   );
 
   const threadReady = await waitForThreadReady(
-    michaelPage,
+    testerBPage,
     timeoutMs,
-    "Michael thread to expose composer before message validation",
+    "TesterB thread to expose composer before message validation",
   );
   if (!threadReady.ok) {
     throw new Error(
-      `Michael thread not ready for message validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
+      `TesterB thread not ready for message validation. Last state: ${JSON.stringify(threadReady.lastResult)}`,
     );
   }
 
   await clearCapturedNotifications(electronApp);
-  await ensureElectronOnUrl(electronApp, alexHomeUrl);
+  await ensureElectronOnUrl(electronApp, testerAHomeUrl);
   await wait(1200);
 
   const messageText = `codex message ${Date.now()}`;
-  const sent = await michaelPage.evaluate(buildSendMessageScript(messageText));
+  const sent = await testerBPage.evaluate(buildSendMessageScript(messageText));
   if (!sent.sent) {
-    throw new Error("Failed to send normal message from Michael session");
+    throw new Error("Failed to send normal message from TesterB session");
   }
 
   const result = await waitForNotificationPredicate(
     electronApp,
     (notifications) => notifications.length > 0,
     timeoutMs,
-    "Alex desktop notification after normal message",
+    "TesterA desktop notification after normal message",
   );
 
   const incomingCallNotification = result.notifications.find(
@@ -2166,7 +2179,7 @@ async function runSyntheticGhostCallScenario({
     electronApp,
     `(() => {
       try {
-        new Notification('Messenger', { body: 'Michael Potenza is calling you' });
+        new Notification('Messenger', { body: 'Tester B is calling you' });
         return true;
       } catch (error) {
         return { error: String(error) };
@@ -2261,36 +2274,37 @@ async function run() {
 
   const threadUrl =
     process.env.CALL_THREAD_URL || "https://www.facebook.com/messages/";
-  const alexThreadUrl = process.env.ALEX_THREAD_URL || threadUrl;
-  const michaelThreadUrl = process.env.MICHAEL_THREAD_URL || threadUrl;
+  const testerAThreadUrl = process.env.TESTER_A_THREAD_URL || threadUrl;
+  const testerBThreadUrl = process.env.TESTER_B_THREAD_URL || threadUrl;
 
-  const michaelProfileDir =
-    process.env.MICHAEL_PROFILE_DIR ||
-    path.join(__dirname, "../.tmp/playwright-michael-profile");
-  const opFacebookItem = String(process.env.OP_FACEBOOK_ITEM || "Dad Facebook");
+  const testerBProfileDir =
+    process.env.TESTER_B_PROFILE_DIR ||
+    path.join(__dirname, "../.tmp/playwright-tester-b-profile");
+  const opFacebookItem = String(process.env.OP_FACEBOOK_ITEM || "").trim();
   const opVault = process.env.OP_VAULT || "";
-  const autoLoginMichaelWithOp =
-    String(process.env.MICHAEL_AUTOLOGIN_WITH_OP || "true").toLowerCase() !==
-    "false";
-  const michaelManualLoginTimeoutMs = Number(
-    process.env.MICHAEL_MANUAL_LOGIN_TIMEOUT_MS || 180000,
+  const autoLoginTesterBWithOp =
+    opFacebookItem.length > 0 &&
+    String(process.env.TESTER_B_AUTOLOGIN_WITH_OP || "true").toLowerCase() !==
+      "false";
+  const testerBManualLoginTimeoutMs = Number(
+    process.env.TESTER_B_MANUAL_LOGIN_TIMEOUT_MS || 180000,
   );
 
   let electronApp;
-  let michaelContext;
-  let michaelContextPageListener = null;
+  let testerBContext;
+  let testerBContextPageListener = null;
 
   try {
-    console.log("\n🧪 Call flow GUI test (Michael ↔ Alex)\n");
+    console.log("\n🧪 Call flow GUI test (TesterB ↔ TesterA)\n");
     console.log(`Mode: ${mode}`);
-    console.log(`Alex URL: ${alexThreadUrl}`);
-    console.log(`Michael URL: ${michaelThreadUrl}`);
-    console.log(`Michael profile: ${michaelProfileDir}`);
+    console.log(`TesterA URL: ${testerAThreadUrl}`);
+    console.log(`TesterB URL: ${testerBThreadUrl}`);
+    console.log(`TesterB profile: ${testerBProfileDir}`);
     console.log(
-      `Michael auto-login with 1Password: ${autoLoginMichaelWithOp ? `enabled (${opFacebookItem})` : "disabled"}`,
+      `TesterB auto-login with 1Password: ${autoLoginTesterBWithOp ? `enabled (${opFacebookItem})` : "disabled"}`,
     );
     console.log(
-      `Michael manual-login fallback timeout: ${michaelManualLoginTimeoutMs}ms`,
+      `TesterB manual-login fallback timeout: ${testerBManualLoginTimeoutMs}ms`,
     );
 
     const requestedModes = new Set(
@@ -2316,12 +2330,12 @@ async function run() {
       }
       return false;
     };
-    const requiresMichael =
+    const requiresTesterB =
       hasMode("incoming") ||
       hasMode("outgoing") ||
       hasMode("message") ||
-      hasMode("answer-alex") ||
-      hasMode("answer-michael");
+      hasMode("answer-tester-a") ||
+      hasMode("answer-tester-b");
 
     const launchedElectron = await launchElectronAppWithRetries({
       executablePath,
@@ -2335,123 +2349,131 @@ async function run() {
       );
     }
 
-    const alexWindow = launchedElectron.alexWindow;
-    await alexWindow.waitForLoadState("domcontentloaded").catch(() => {});
+    const testerAWindow = launchedElectron.testerAWindow;
+    await testerAWindow.waitForLoadState("domcontentloaded").catch(() => {});
     await wait(2000);
 
-    await ensureElectronOnUrl(electronApp, alexThreadUrl);
+    await ensureElectronOnUrl(electronApp, testerAThreadUrl);
 
-    const alexAuth = await isElectronAuthenticated(electronApp);
-    let michaelPage = null;
-    let michaelAuth = { authenticated: true, url: michaelThreadUrl };
+    const testerAAuth = await isElectronAuthenticated(electronApp);
+    let testerBPage = null;
+    let testerBAuth = { authenticated: true, url: testerBThreadUrl };
 
-    if (!alexAuth.authenticated) {
+    if (!testerAAuth.authenticated) {
       throw new Error(
-        `Alex app session is not authenticated. Current URL: ${alexAuth.url}`,
+        `TesterA app session is not authenticated. Current URL: ${testerAAuth.url}`,
       );
     }
 
-    if (requiresMichael) {
-      fs.mkdirSync(michaelProfileDir, { recursive: true });
+    if (requiresTesterB) {
+      fs.mkdirSync(testerBProfileDir, { recursive: true });
 
-      michaelContext = await chromium.launchPersistentContext(
-        michaelProfileDir,
+      testerBContext = await chromium.launchPersistentContext(
+        testerBProfileDir,
         {
           headless: false,
           viewport: { width: 1440, height: 900 },
         },
       );
 
-      michaelContextPageListener = (page) => {
+      testerBContextPageListener = (page) => {
         attachDialogLogging(
           page,
-          `Michael page ${michaelContext.pages().length}`,
+          `TesterB page ${testerBContext.pages().length}`,
         );
       };
-      michaelContext.on("page", michaelContextPageListener);
+      testerBContext.on("page", testerBContextPageListener);
 
-      michaelPage =
-        michaelContext.pages()[0] || (await michaelContext.newPage());
-      for (const [index, page] of michaelContext.pages().entries()) {
-        attachDialogLogging(page, `Michael page ${index}`);
+      testerBPage =
+        testerBContext.pages()[0] || (await testerBContext.newPage());
+      for (const [index, page] of testerBContext.pages().entries()) {
+        attachDialogLogging(page, `TesterB page ${index}`);
       }
 
-      await michaelPage.goto(michaelThreadUrl, {
+      await testerBPage.goto(testerBThreadUrl, {
         waitUntil: "domcontentloaded",
       });
       await wait(1500);
 
-      michaelAuth = await isBrowserAuthenticated(michaelPage);
+      testerBAuth = await isBrowserAuthenticated(testerBPage);
 
-      if (!michaelAuth.authenticated && autoLoginMichaelWithOp) {
+      if (!testerBAuth.authenticated && autoLoginTesterBWithOp) {
         try {
-          await attemptMichaelLoginWithOnePassword(michaelPage, {
+          await attemptTesterBLoginWithOnePassword(testerBPage, {
             item: opFacebookItem,
             vault: opVault,
           });
         } catch (error) {
           console.log(
-            `[Setup] Michael 1Password auto-login did not complete: ${error?.message || error}`,
+            `[Setup] TesterB 1Password auto-login did not complete: ${error?.message || error}`,
           );
         }
-        michaelAuth = await isBrowserAuthenticated(michaelPage);
+        testerBAuth = await isBrowserAuthenticated(testerBPage);
       }
 
-      if (!michaelAuth.authenticated) {
-        const manualOk = await waitForMichaelManualLogin(
-          michaelPage,
-          michaelManualLoginTimeoutMs,
+      if (!testerBAuth.authenticated) {
+        const manualOk = await waitForTesterBManualLogin(
+          testerBPage,
+          testerBManualLoginTimeoutMs,
         );
         if (manualOk) {
-          michaelAuth = await isBrowserAuthenticated(michaelPage);
+          testerBAuth = await isBrowserAuthenticated(testerBPage);
         }
       }
 
-      if (!michaelAuth.authenticated) {
+      if (!testerBAuth.authenticated) {
         throw new Error(
-          `Michael browser session is not authenticated. Current URL: ${michaelAuth.url}. ` +
+          `TesterB browser session is not authenticated. Current URL: ${testerBAuth.url}. ` +
             `Either pre-login this profile or keep manual login window open until authenticated.`,
         );
       }
     }
 
     console.log(
-      requiresMichael
-        ? "[Setup] Both Alex and Michael sessions are authenticated."
-        : "[Setup] Alex session is authenticated. Michael session not required for selected modes.",
+      requiresTesterB
+        ? "[Setup] Both TesterA and TesterB sessions are authenticated."
+        : "[Setup] TesterA session is authenticated. TesterB session not required for selected modes.",
     );
 
     if (hasMode("incoming")) {
-      await runIncomingMichaelToAlex({ electronApp, michaelPage, timeoutMs });
-    }
-
-    if (hasMode("outgoing")) {
-      await runOutgoingAlexToMichael({ electronApp, michaelPage, timeoutMs });
-    }
-
-    if (hasMode("answer-alex")) {
-      await runMichaelToAlexAnsweredFlow({
+      await runIncomingTesterBToTesterA({
         electronApp,
-        michaelPage,
-        alexThreadUrl,
+        testerBPage,
         timeoutMs,
       });
     }
 
-    if (hasMode("answer-michael")) {
-      await runAlexToMichaelAnsweredFlow({
+    if (hasMode("outgoing")) {
+      await runOutgoingTesterAToTesterB({
         electronApp,
-        michaelPage,
-        alexThreadUrl,
+        testerBPage,
+        timeoutMs,
+      });
+    }
+
+    if (hasMode("answer-tester-a")) {
+      await runTesterBToTesterAAnsweredFlow({
+        electronApp,
+        testerBPage,
+        testerAThreadUrl,
+        timeoutMs,
+      });
+    }
+
+    if (hasMode("answer-tester-b")) {
+      await runTesterAToTesterBAnsweredFlow({
+        electronApp,
+        testerBPage,
+        testerAThreadUrl,
         timeoutMs,
       });
     }
 
     if (hasMode("message")) {
-      await runMessageMichaelToAlex({
+      await runMessageTesterBToTesterA({
         electronApp,
-        michaelPage,
-        alexHomeUrl: "https://www.facebook.com/messages/",
+        testerBPage,
+        testerAHomeUrl: "https://www.facebook.com/messages/",
         timeoutMs,
       });
     }
@@ -2481,15 +2503,15 @@ async function run() {
 
     console.log("\n✅ Call flow GUI test passed.");
   } finally {
-    if (michaelContext) {
-      if (michaelContextPageListener) {
-        michaelContext.removeListener("page", michaelContextPageListener);
+    if (testerBContext) {
+      if (testerBContextPageListener) {
+        testerBContext.removeListener("page", testerBContextPageListener);
       }
-      await closeBrowserContextPages(michaelContext);
-      for (const page of michaelContext.pages()) {
+      await closeBrowserContextPages(testerBContext);
+      for (const page of testerBContext.pages()) {
         detachDialogLogging(page);
       }
-      await michaelContext.close().catch(() => {});
+      await testerBContext.close().catch(() => {});
     }
     if (electronApp) {
       await shutdownElectronApp(electronApp);

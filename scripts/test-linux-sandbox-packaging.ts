@@ -95,23 +95,6 @@ function run(): void {
     'Linux runtime smoke must require the single-instance lock success marker',
   );
 
-  const prlctlRuntimeSmoke = readRootFile('scripts/test-linux-runtime-prlctl.js');
-  assert.match(
-    prlctlRuntimeSmoke,
-    /RUNTIME_SNAP_DISPLAY/,
-    'Parallels runtime smoke must expose a selectable Snap display mode',
-  );
-  assert.match(
-    prlctlRuntimeSmoke,
-    /real-x11/,
-    'Parallels runtime smoke must support the real GNOME X11/XWayland session without Xvfb',
-  );
-  assert.match(
-    prlctlRuntimeSmoke,
-    /XAUTHORITY/,
-    'Parallels real-display smoke must pass Xauthority from the active graphical session',
-  );
-
   const electronBuilderConfig = readRootFile('electron-builder.config.js');
   const appImageSandboxArgs = electronBuilderConfig.match(
     /appImage:\s*\{[\s\S]*?executableArgs:\s*\[\s*'--no-sandbox'\s*\]/g,

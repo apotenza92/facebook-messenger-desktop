@@ -35,9 +35,9 @@ const {
   shouldConfirmWeakMarketplaceBootstrap,
   shouldRetainMarketplaceVisualCrop,
 } = require(path.join(APP_ROOT, "src/preload/marketplace-thread-policy.ts"));
-const {
-  evaluateMediaOverlayVisible,
-} = require(path.join(APP_ROOT, "src/preload/media-overlay-policy.ts"));
+const { evaluateMediaOverlayVisible } = require(
+  path.join(APP_ROOT, "src/preload/media-overlay-policy.ts"),
+);
 const {
   collectMessengerThreadSubviewHintSignals,
   doesMessengerThreadSubviewFreshHeaderPairMatch,
@@ -80,9 +80,7 @@ const {
   decideWindowOpenActionForContext,
   isExternalAuthProviderRoute,
   isMessagesSurfaceRoute,
-} = require(
-  path.join(APP_ROOT, "src/main/url-policy"),
-);
+} = require(path.join(APP_ROOT, "src/main/url-policy"));
 
 const assert = (condition: boolean, message: string) => {
   if (!condition) {
@@ -213,11 +211,12 @@ const readLocalZipEntries = (zipPath: string): Map<string, string> => {
 };
 
 const runDebugZipExportTests = () => {
-  const { writeZipArchive } = require(path.join(
-    APP_ROOT,
-    "src/main/zip-archive.ts",
-  ));
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "messenger-zip-test-"));
+  const { writeZipArchive } = require(
+    path.join(APP_ROOT, "src/main/zip-archive.ts"),
+  );
+  const tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "messenger-zip-test-"),
+  );
 
   try {
     const firstPath = path.join(tempRoot, "debug-summary.json");
@@ -268,13 +267,13 @@ const runDebugZipExportTests = () => {
 const buildMutedConflictEvidence = () => {
   const notificationDecisionPolicy = loadNotificationDecisionPolicy();
   const payload = {
-    title: "Alex",
+    title: "Person A",
     body: "sent a message",
   };
   const candidateRows = [
     {
-      href: "/t/alex",
-      title: "Alex",
+      href: "/t/person-a",
+      title: "Person A",
       body: "sent a message",
       muted: false,
       unread: true,
@@ -282,12 +281,12 @@ const buildMutedConflictEvidence = () => {
     {
       href: "/t/group-project",
       title: "Project Squad",
-      body: "Alex sent a message",
+      body: "Person A sent a message",
       muted: true,
       unread: true,
     },
   ];
-  const observedHref = "/t/alex";
+  const observedHref = "/t/person-a";
   const nativeMatch =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       payload,
@@ -387,16 +386,8 @@ const runViewportPolicyTests = () => {
       marketplaceThreadVisible: extra.marketplaceThreadVisible,
       marketplaceVisualCropHeight: extra.marketplaceVisualCropHeight,
     });
-    assertEqual(
-      mode,
-      expectedMode,
-      `#45 viewport mode mismatch for ${path}`,
-    );
-    assertEqual(
-      crop,
-      expectedCrop,
-      `#45 crop mismatch for ${path}`,
-    );
+    assertEqual(mode, expectedMode, `#45 viewport mode mismatch for ${path}`);
+    assertEqual(crop, expectedCrop, `#45 crop mismatch for ${path}`);
   };
 
   // Core #45 deterministic checks
@@ -504,7 +495,7 @@ const runViewportPolicyTests = () => {
   assertEqual(
     marketplaceBackHeaderViewportState.shouldCrop,
     true,
-    "#49 Allen's Back + Marketplace header should switch to the reduced BrowserView crop heuristic",
+    "#49 reporter's Back + Marketplace header should switch to the reduced BrowserView crop heuristic",
   );
   assertEqual(
     marketplaceBackHeaderViewportState.cropHeight,
@@ -851,7 +842,7 @@ const runMarketplaceThreadPolicyTests = () => {
   assertEqual(
     hasMarketplaceThreadHeaderSignal(["Back", "Marketplace"]),
     true,
-    "#49 Allen's Back + Marketplace header should disable the Messenger crop",
+    "#49 reporter's Back + Marketplace header should disable the Messenger crop",
   );
   assertEqual(
     hasMarketplaceThreadHeaderSignal(["Back", "Chat info"]),
@@ -983,7 +974,8 @@ const runMarketplaceThreadPolicyTests = () => {
   assertEqual(
     JSON.stringify({
       confirmationKind: confirmedSession.nextSession?.confirmationKind,
-      lastStrongConfirmedAt: confirmedSession.nextSession?.lastStrongConfirmedAt,
+      lastStrongConfirmedAt:
+        confirmedSession.nextSession?.lastStrongConfirmedAt,
     }),
     JSON.stringify({
       confirmationKind: "strong-header",
@@ -1059,7 +1051,8 @@ const runMarketplaceThreadPolicyTests = () => {
       transition: weakBootstrapCallerRejected.transition,
       pendingBootstrapSignalSource:
         weakBootstrapCallerRejected.pendingBootstrapSignalSource,
-      pendingBootstrapAllowed: weakBootstrapCallerRejected.pendingBootstrapAllowed,
+      pendingBootstrapAllowed:
+        weakBootstrapCallerRejected.pendingBootstrapAllowed,
       pendingBootstrapRejectedReason:
         weakBootstrapCallerRejected.pendingBootstrapRejectedReason,
       nextState: weakBootstrapCallerRejected.nextState,
@@ -1097,7 +1090,8 @@ const runMarketplaceThreadPolicyTests = () => {
         weakBootstrapCallerFirstPending.pendingBootstrapAllowed,
       stablePasses: weakBootstrapCallerFirstPending.stablePasses,
       firstSeenAgeMs: weakBootstrapCallerFirstPending.firstSeenAgeMs,
-      confirmationEligible: weakBootstrapCallerFirstPending.confirmationEligible,
+      confirmationEligible:
+        weakBootstrapCallerFirstPending.confirmationEligible,
       trackedSignal: weakBootstrapCallerFirstPending.nextState?.signalSource,
     }),
     JSON.stringify({
@@ -1559,7 +1553,8 @@ const runMarketplaceThreadPolicyTests = () => {
         signalSource: decision.signalSource,
         lifecycleReason: decision.lifecycleReason,
         visualCropHeight: decision.visualCropHeight,
-        rescuePending: decision.nextSession?.routeChangeRescuePendingUntil !== null,
+        rescuePending:
+          decision.nextSession?.routeChangeRescuePendingUntil !== null,
       },
       expected: step.expect,
     };
@@ -1567,7 +1562,7 @@ const runMarketplaceThreadPolicyTests = () => {
   assertEqual(
     JSON.stringify(replayResults.map((result) => result.actual)),
     JSON.stringify(replayResults.map((result) => result.expected)),
-    "#49 the local Marketplace fixture replay should match Allen's latest beta.2 route-change timeline closely enough to validate the rescue-state behavior",
+    "#49 the local Marketplace fixture replay should match reporter's latest beta.2 route-change timeline closely enough to validate the rescue-state behavior",
   );
 
   const routeChangeRescuePending = replayResults[1]?.actual;
@@ -1581,14 +1576,14 @@ const runMarketplaceThreadPolicyTests = () => {
   assertEqual(
     JSON.stringify(routeChangeLateWeakHeaderStillPending),
     JSON.stringify(marketplaceReplayFixture.steps[2].expect),
-    "#49 the first late weak Marketplace candidate from Allen's beta.2 bundle should keep the rescue hold alive even if it is not spatially strong enough yet",
+    "#49 the first late weak Marketplace candidate from reporter's beta.2 bundle should keep the rescue hold alive even if it is not spatially strong enough yet",
   );
 
   const routeChangeLateWeakHeaderRescue = replayResults[3]?.actual;
   assertEqual(
     JSON.stringify(routeChangeLateWeakHeaderRescue),
     JSON.stringify(marketplaceReplayFixture.steps[3].expect),
-    "#49 the later weak Marketplace header from Allen's beta.2 bundle should rescue the held route-change session once it slides back into the expected header region",
+    "#49 the later weak Marketplace header from reporter's beta.2 bundle should rescue the held route-change session once it slides back into the expected header region",
   );
 
   const routeChangeRescueExpired = resolveMarketplaceVisualSessionDecision({
@@ -1744,7 +1739,8 @@ const runMarketplaceThreadPolicyTests = () => {
     JSON.stringify({
       sessionActive: routeChangeItemLinkPendingBootstrapRejected.sessionActive,
       transition: routeChangeItemLinkPendingBootstrapRejected.transition,
-      lifecycleReason: routeChangeItemLinkPendingBootstrapRejected.lifecycleReason,
+      lifecycleReason:
+        routeChangeItemLinkPendingBootstrapRejected.lifecycleReason,
       visualCropHeight:
         routeChangeItemLinkPendingBootstrapRejected.visualCropHeight,
     }),
@@ -1883,8 +1879,8 @@ const runMarketplaceThreadPolicyTests = () => {
     "#49 weak-bootstrap Marketplace continuity must still expire once the recent-match window is stale",
   );
 
-  const ordinaryRoutePendingBootstrap =
-    resolveMarketplaceVisualSessionDecision({
+  const ordinaryRoutePendingBootstrap = resolveMarketplaceVisualSessionDecision(
+    {
       currentRouteKey: "/messages/t/ordinary-chat-2",
       nowMs: 18_320,
       graceMs: MARKETPLACE_SESSION_DOM_GRACE_MS,
@@ -1897,7 +1893,8 @@ const runMarketplaceThreadPolicyTests = () => {
       pendingBootstrapSignalSource: "right-pane-action",
       pendingBootstrapAllowed: true,
       headerBackDetected: false,
-    });
+    },
+  );
   assertEqual(
     JSON.stringify({
       sessionActive: ordinaryRoutePendingBootstrap.sessionActive,
@@ -1932,7 +1929,8 @@ const runMarketplaceThreadPolicyTests = () => {
     });
   assertEqual(
     JSON.stringify({
-      sessionActive: detachedRecentContinuityPendingBootstrapBridge.sessionActive,
+      sessionActive:
+        detachedRecentContinuityPendingBootstrapBridge.sessionActive,
       transition: detachedRecentContinuityPendingBootstrapBridge.transition,
       signalSource: detachedRecentContinuityPendingBootstrapBridge.signalSource,
       lifecycleReason:
@@ -1980,8 +1978,7 @@ const runMarketplaceThreadPolicyTests = () => {
       sessionActive: detachedRecentContinuityWeakHeaderBridge.sessionActive,
       transition: detachedRecentContinuityWeakHeaderBridge.transition,
       signalSource: detachedRecentContinuityWeakHeaderBridge.signalSource,
-      lifecycleReason:
-        detachedRecentContinuityWeakHeaderBridge.lifecycleReason,
+      lifecycleReason: detachedRecentContinuityWeakHeaderBridge.lifecycleReason,
       visualCropHeight:
         detachedRecentContinuityWeakHeaderBridge.visualCropHeight,
     }),
@@ -2048,7 +2045,8 @@ const runMarketplaceThreadPolicyTests = () => {
       sessionActive: detachedRecentContinuityItemLinkRejected.sessionActive,
       transition: detachedRecentContinuityItemLinkRejected.transition,
       lifecycleReason: detachedRecentContinuityItemLinkRejected.lifecycleReason,
-      visualCropHeight: detachedRecentContinuityItemLinkRejected.visualCropHeight,
+      visualCropHeight:
+        detachedRecentContinuityItemLinkRejected.visualCropHeight,
     }),
     JSON.stringify({
       sessionActive: false,
@@ -2290,7 +2288,9 @@ const runWindowOpenRoutingTests = () => {
     "#45 chat popups should still reroute into the main Messenger surface",
   );
   assertEqual(
-    decideWindowOpenAction("https://www.facebook.com/messages/t/issue52-thread/"),
+    decideWindowOpenAction(
+      "https://www.facebook.com/messages/t/issue52-thread/",
+    ),
     "reroute-main-view",
     "#52 regular chat clicks opened through window.open should reroute into the app instead of the system browser",
   );
@@ -2316,12 +2316,16 @@ const runWindowOpenRoutingTests = () => {
     "#45 messenger_media routes should stay in the main Messenger surface",
   );
   assertEqual(
-    decideWindowOpenAction("https://www.facebook.com/messages/media_viewer.123"),
+    decideWindowOpenAction(
+      "https://www.facebook.com/messages/media_viewer.123",
+    ),
     "reroute-main-view",
     "#45 media_viewer routes should stay in the main Messenger surface",
   );
   assertEqual(
-    decideWindowOpenAction("https://www.facebook.com/checkpoint/1501092823525282/"),
+    decideWindowOpenAction(
+      "https://www.facebook.com/checkpoint/1501092823525282/",
+    ),
     "reroute-auth-flow",
     "#54 Facebook checkpoint popups should reroute into the app login flow instead of the system browser",
   );
@@ -2340,7 +2344,9 @@ const runWindowOpenRoutingTests = () => {
     "#54 post-verification remember-browser routes should stay attached to the app",
   );
   assertEqual(
-    decideWindowOpenAction("https://accounts.google.com/signin/v2/challenge/pwd"),
+    decideWindowOpenAction(
+      "https://accounts.google.com/signin/v2/challenge/pwd",
+    ),
     "open-external-browser",
     "#54 non-Facebook verification pages should still open in the system browser",
   );
@@ -2376,7 +2382,9 @@ const runWindowOpenRoutingTests = () => {
     "#54 generic Google pages should not be pulled into the app auth window",
   );
   assertEqual(
-    isMessagesSurfaceRoute("https://www.facebook.com/messages/?checkpoint_src=any"),
+    isMessagesSurfaceRoute(
+      "https://www.facebook.com/messages/?checkpoint_src=any",
+    ),
     true,
     "#54 post-checkpoint Messenger landing should be recognized as a Messenger surface",
   );
@@ -3142,9 +3150,10 @@ const runIncomingCallIpcPolicyTests = () => {
     incomingCallIpcPolicy.decideIncomingCallSignalEscalation({
       evidence: incomingCallEvidence.buildIncomingCallEvidence({
         source: "dom-soft",
-        caller: incomingCallEvidence.extractIncomingCallCallerName(
-          "Incoming call Account A messaged you",
-        ).caller ?? undefined,
+        caller:
+          incomingCallEvidence.extractIncomingCallCallerName(
+            "Incoming call Account A messaged you",
+          ).caller ?? undefined,
         confidence: "medium",
         hasVisibleControls: false,
         matchedPattern: "incoming (video |audio )?call",
@@ -3466,18 +3475,16 @@ const runIncomingCallIpcPolicyTests = () => {
     "#49 incoming-call caller normalisation should drop placeholder caller labels",
   );
   assertEqual(
-    incomingCallEvidence.normalizeIncomingCallCaller(
-      "Michael Potenza Michael Potenza",
-    ),
-    "Michael Potenza",
+    incomingCallEvidence.normalizeIncomingCallCaller("Person B Person B"),
+    "Person B",
     "#49 incoming-call caller normalisation should collapse repeated caller names",
   );
   assertEqual(
     incomingCallEvidence.buildIncomingCallNotificationBody({
       caller: "Profile Picture",
-      fallbackCaller: "Michael Potenza",
+      fallbackCaller: "Person B",
     }),
-    "Michael Potenza is calling you on Messenger",
+    "Person B is calling you on Messenger",
     "#49 incoming-call notification bodies should reuse the active session caller when a placeholder echo arrives",
   );
   assertEqual(
@@ -3683,13 +3690,13 @@ const runNotificationPolicyTests = () => {
   const mutedIndividualMatch =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        title: "Alex",
+        title: "Person A",
         body: "Can you review this?",
       },
       [
         {
-          href: "/t/alex",
-          title: "Alex",
+          href: "/t/person-a",
+          title: "Person A",
           body: "Can you review this?",
           muted: true,
           unread: true,
@@ -3697,7 +3704,7 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/group-project",
           title: "Project Squad",
-          body: "Alex sent a message",
+          body: "Person A sent a message",
           muted: false,
           unread: true,
         },
@@ -3710,7 +3717,7 @@ const runNotificationPolicyTests = () => {
   );
   assertEqual(
     mutedIndividualMatch.matchedHref,
-    "/t/alex",
+    "/t/person-a",
     "#46 muted individual matched wrong conversation",
   );
   assertEqual(
@@ -3741,12 +3748,12 @@ const runNotificationPolicyTests = () => {
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
         title: "Facebook User",
-        body: "Alex sent a message",
+        body: "Person A sent a message",
       },
       [
         {
-          href: "/t/alex",
-          title: "Alex",
+          href: "/t/person-a",
+          title: "Person A",
           body: "sent a message",
           muted: false,
           unread: true,
@@ -3754,7 +3761,7 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/project-squad",
           title: "Project Squad",
-          body: "Alex sent a message",
+          body: "Person A sent a message",
           muted: true,
           unread: true,
         },
@@ -3779,13 +3786,13 @@ const runNotificationPolicyTests = () => {
   const aliasMutedConflict =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        title: "Alexander",
+        title: "Person Alpha",
         body: "sent a message",
       },
       [
         {
-          href: "/t/alexander",
-          title: "Alexander",
+          href: "/t/person-alpha",
+          title: "Person Alpha",
           body: "sent a message",
           muted: false,
           unread: true,
@@ -3793,8 +3800,8 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/project-squad",
           title: "Project Squad",
-          body: "Alex sent a message",
-          searchText: "Project Squad Alexander sent a message",
+          body: "Person A sent a message",
+          searchText: "Project Squad Person Alpha sent a message",
           muted: true,
           unread: true,
         },
@@ -3809,13 +3816,13 @@ const runNotificationPolicyTests = () => {
   const aliasMutedConflictWithoutMetadata =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        title: "Alexander",
+        title: "Person Alpha",
         body: "sent a message",
       },
       [
         {
-          href: "/t/alexander",
-          title: "Alexander",
+          href: "/t/person-alpha",
+          title: "Person Alpha",
           body: "sent a message",
           muted: false,
           unread: true,
@@ -3823,7 +3830,7 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/project-squad",
           title: "Project Squad",
-          body: "Alex sent a message",
+          body: "Person A sent a message",
           muted: true,
           unread: true,
         },
@@ -3838,13 +3845,13 @@ const runNotificationPolicyTests = () => {
   const photoMutedConflict =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        title: "Alex",
+        title: "Person A",
         body: "sent a photo.",
       },
       [
         {
-          href: "/t/alex",
-          title: "Alex",
+          href: "/t/person-a",
+          title: "Person A",
           body: "sent a photo.",
           muted: false,
           unread: true,
@@ -3852,7 +3859,7 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/project-squad",
           title: "Project Squad",
-          body: "Alex sent a photo.",
+          body: "Person A sent a photo.",
           muted: true,
           unread: true,
         },
@@ -3867,13 +3874,13 @@ const runNotificationPolicyTests = () => {
   const linkMutedConflict =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        title: "Alex",
+        title: "Person A",
         body: "shared a link.",
       },
       [
         {
-          href: "/t/alex",
-          title: "Alex",
+          href: "/t/person-a",
+          title: "Person A",
           body: "shared a link.",
           muted: false,
           unread: true,
@@ -3881,7 +3888,7 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/project-squad",
           title: "Project Squad",
-          body: "Alex shared a link.",
+          body: "Person A shared a link.",
           muted: true,
           unread: true,
         },
@@ -3896,13 +3903,13 @@ const runNotificationPolicyTests = () => {
   const aliasNonMutedAlternative =
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
-        title: "Alexander",
+        title: "Person Alpha",
         body: "sent a message",
       },
       [
         {
-          href: "/t/alexander",
-          title: "Alexander",
+          href: "/t/person-alpha",
+          title: "Person Alpha",
           body: "sent a message",
           muted: false,
           unread: true,
@@ -3910,7 +3917,7 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/project-squad",
           title: "Project Squad",
-          body: "Alex sent a message",
+          body: "Person A sent a message",
           muted: false,
           unread: true,
         },
@@ -3923,7 +3930,7 @@ const runNotificationPolicyTests = () => {
   );
   assertEqual(
     aliasNonMutedAlternative.matchedHref,
-    "/t/alexander",
+    "/t/person-alpha",
     "#46 sender-title notifications should still target the direct conversation when alias overlap is unmuted",
   );
   assertEqual(
@@ -3941,7 +3948,7 @@ const runNotificationPolicyTests = () => {
       [
         {
           href: "/t/direct-thread",
-          title: "Alex",
+          title: "Person A",
           body: "Shipped the fix",
           muted: false,
           unread: true,
@@ -3975,7 +3982,7 @@ const runNotificationPolicyTests = () => {
       [
         {
           href: "/t/direct-thread",
-          title: "Alex",
+          title: "Person A",
           body: "Shipped the fix",
           muted: false,
           unread: true,
@@ -4011,16 +4018,14 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/account-a-direct",
           title: "Account A",
-          body:
-            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          body: "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           muted: false,
           unread: true,
         },
         {
           href: "/t/group-muted-preview",
           title: "Group Thread",
-          body:
-            "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          body: "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           searchText:
             "Account B replied to Account C - Group Thread Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           muted: true,
@@ -4050,16 +4055,14 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/account-a-direct",
           title: "Account A",
-          body:
-            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          body: "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           muted: false,
           unread: true,
         },
         {
           href: "/t/group-unmuted-preview",
           title: "Group Thread",
-          body:
-            "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          body: "Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           searchText:
             "Account B replied to Account C - Group Thread Account A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           muted: false,
@@ -4089,16 +4092,14 @@ const runNotificationPolicyTests = () => {
         {
           href: "/t/user-a-direct",
           title: "Facebook User",
-          body:
-            "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          body: "I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           muted: false,
           unread: true,
         },
         {
           href: "/t/group-muted-preview",
           title: "Group Thread",
-          body:
-            "Facebook User: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+          body: "Facebook User: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           searchText:
             "User B replied in Group Thread to User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
           muted: true,
@@ -4125,7 +4126,8 @@ const runNotificationPolicyTests = () => {
         body: "New message",
       },
       {
-        title: "User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        title:
+          "User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
         body: "New message",
       },
     );
@@ -4143,7 +4145,8 @@ const runNotificationPolicyTests = () => {
   const mutationPreviewRecheckNormalSender =
     notificationDecisionPolicy.classifyMutationMuteStateRecheckReason(
       {
-        title: "User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
+        title:
+          "User A: I passed by three scrub areas tonight but nothing appeared on my radar 😬",
         body: "New message",
       },
       {
@@ -4472,19 +4475,19 @@ const runNotificationPolicyTests = () => {
     notificationDecisionPolicy.resolveNativeNotificationTarget(
       {
         title: "Project Squad",
-        body: "Alex: shipped the fix",
+        body: "Person A: shipped the fix",
       },
       [
         {
           href: "/t/group-project",
           title: "Project Squad",
-          body: "Alex: shipped the fix",
+          body: "Person A: shipped the fix",
           muted: true,
           unread: true,
         },
         {
-          href: "/t/alex",
-          title: "Alex",
+          href: "/t/person-a",
+          title: "Person A",
           body: "shipped the fix",
           muted: false,
           unread: true,
@@ -4721,9 +4724,11 @@ const runNotificationPolicyTests = () => {
     mainSource.includes("getNotificationIconPath") &&
       mainSource.includes("shouldUseNativeMacBundleIcon") &&
       mainSource.includes('return getIconAssetPath("icon-128.png");') &&
-      mainSource.includes("getIconAssetPath(\"icon-128.png\") ||") &&
+      mainSource.includes('getIconAssetPath("icon-128.png") ||') &&
       mainSource.includes('path.join(process.resourcesPath, "icon.icns")') &&
-      mainSource.includes('process.platform === "darwin" ? getNotificationIconPath : undefined'),
+      mainSource.includes(
+        'process.platform === "darwin" ? getNotificationIconPath : undefined',
+      ),
     "#50 macOS notifications and update dialogs should resolve channel/theme-aware app icons instead of relying on renderer-provided or hard-coded icons",
   );
 
@@ -4834,7 +4839,7 @@ const runNotificationPolicyTests = () => {
 
   const personTitleParticipationRequestSuppressed =
     notificationActivityPolicy.isLikelyGlobalFacebookNotification({
-      title: "Alex",
+      title: "Person A",
       body: "3 people requested to participate for the first time in a group you're managing",
     });
   assertEqual(
@@ -5238,7 +5243,10 @@ const runNotificationPolicyTests = () => {
       searchText?: string;
     };
   }) => {
-    const classifySuppressionClass = (payload: { title: string; body: string }) => {
+    const classifySuppressionClass = (payload: {
+      title: string;
+      body: string;
+    }) => {
       const callClassification =
         notificationDecisionPolicy.classifyCallNotification(payload);
       if (callClassification.shouldSuppressNotification) {
@@ -5259,7 +5267,10 @@ const runNotificationPolicyTests = () => {
       );
     const recordedState = new Map<
       string,
-      { body: string; suppressionClass: "message" | "global-activity" | "call-history" }
+      {
+        body: string;
+        suppressionClass: "message" | "global-activity" | "call-history";
+      }
     >();
     if (snapshotFresh) {
       for (const row of input.existingUnreadRows) {
@@ -5294,15 +5305,15 @@ const runNotificationPolicyTests = () => {
       });
     const preExistingReplaySuppressed = Boolean(
       match.matchedHref &&
-        (() => {
-          const existing = recordedState.get(match.matchedHref!);
-          return Boolean(
-            existing &&
-              (existing.body === input.replayRow.body ||
-                (existing.suppressionClass !== "message" &&
-                  existing.suppressionClass === replaySuppressionClass)),
-          );
-        })(),
+      (() => {
+        const existing = recordedState.get(match.matchedHref!);
+        return Boolean(
+          existing &&
+          (existing.body === input.replayRow.body ||
+            (existing.suppressionClass !== "message" &&
+              existing.suppressionClass === replaySuppressionClass)),
+        );
+      })(),
     );
     const shouldNotify =
       !match.ambiguous &&
@@ -5392,7 +5403,7 @@ const runNotificationPolicyTests = () => {
 
   const selfAuthoredTextMessage =
     notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
-      title: "Michael Potenza",
+      title: "Person B",
       body: "You: selfnotif test",
     });
   assertEqual(
@@ -5403,7 +5414,7 @@ const runNotificationPolicyTests = () => {
 
   const selfAuthoredAttachmentMessage =
     notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
-      title: "Michael Potenza",
+      title: "Person B",
       body: "You sent an attachment.",
     });
   assertEqual(
@@ -5425,7 +5436,7 @@ const runNotificationPolicyTests = () => {
 
   const incomingMessagePreview =
     notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
-      title: "Michael Potenza",
+      title: "Person B",
       body: "Can you review this?",
     });
   assertEqual(
@@ -5436,7 +5447,7 @@ const runNotificationPolicyTests = () => {
 
   const selfAuthoredEditedMessage =
     notificationDecisionPolicy.isLikelySelfAuthoredMessagePreview({
-      title: "Michael Potenza",
+      title: "Person B",
       body: "You edited a message",
     });
   assertEqual(
@@ -5448,11 +5459,11 @@ const runNotificationPolicyTests = () => {
   const selfAuthoredPayloadMismatchSuppressed =
     notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification([
       {
-        title: "Michael Potenza",
+        title: "Person B",
         body: "You: selfnotif test",
       },
       {
-        title: "Michael Potenza",
+        title: "Person B",
         body: "selfnotif test",
       },
     ]);
@@ -5482,11 +5493,11 @@ const runNotificationPolicyTests = () => {
   const incomingPayloadMismatchNotSuppressed =
     notificationDecisionPolicy.shouldSuppressSelfAuthoredNotification([
       {
-        title: "Michael Potenza",
+        title: "Person B",
         body: "Can you review this?",
       },
       {
-        title: "Michael Potenza",
+        title: "Person B",
         body: "Can you review this?",
       },
     ]);
@@ -5499,7 +5510,7 @@ const runNotificationPolicyTests = () => {
   const callClassifierBodyCase =
     notificationDecisionPolicy.classifyCallNotification({
       title: "Facebook",
-      body: "Alex is calling you",
+      body: "Person A is calling you",
     });
   assertEqual(
     callClassifierBodyCase.isIncomingCall,
@@ -5598,7 +5609,7 @@ const runNotificationPolicyTests = () => {
   const incomingCallNotSuppressed =
     notificationDecisionPolicy.isLikelyGlobalFacebookNotification({
       title: "Facebook",
-      body: "Alex is calling you",
+      body: "Person A is calling you",
     });
   assertEqual(
     incomingCallNotSuppressed,
@@ -5660,7 +5671,8 @@ const runNotificationPolicyTests = () => {
 const runNotificationDisplayPolicyTests = () => {
   const notificationDisplayPolicy = loadNotificationDisplayPolicy();
   const notificationTextPolicy = loadNotificationTextPolicy();
-  const { resolveNotificationDisplayBoundary, NotificationHandler } = loadNotificationHandler();
+  const { resolveNotificationDisplayBoundary, NotificationHandler } =
+    loadNotificationHandler();
   assert(
     typeof notificationDisplayPolicy.formatNotificationDisplayTitle ===
       "function",
@@ -5684,7 +5696,7 @@ const runNotificationDisplayPolicyTests = () => {
   assertEqual(
     notificationDisplayPolicy.formatNotificationDisplayTitle({
       title: "Weekend Plans",
-      alternateNames: ["Alexander", "Taylor", "Casey"],
+      alternateNames: ["Person Alpha", "Taylor", "Casey"],
     }),
     "Weekend Plans",
     "#50 group notification titles should not append inferred participant names",
@@ -5692,37 +5704,37 @@ const runNotificationDisplayPolicyTests = () => {
 
   assertEqual(
     notificationDisplayPolicy.formatNotificationDisplayTitle({
-      title: "Alex",
-      alternateNames: ["Facebook User", "Alex", "Alexander"],
+      title: "Person A",
+      alternateNames: ["Facebook User", "Person A", "Person Alpha"],
     }),
-    "Alex",
+    "Person A",
     "#50 notification title pass-through should ignore alternate-name metadata",
   );
 
   assertEqual(
     notificationDisplayPolicy.formatNotificationDisplayTitle({
-      title: "Alex",
+      title: "Person A",
       alternateNames: ["🤦🏻‍♀️"],
     }),
-    "Alex",
+    "Person A",
     "#50 notification title pass-through should ignore emoji-only alternate names",
   );
 
   assertEqual(
     notificationDisplayPolicy.formatNotificationDisplayTitle({
-      title: "Alex",
+      title: "Person A",
       alternateNames: ["✨", "Taylor", "🤦🏻‍♀️"],
     }),
-    "Alex",
+    "Person A",
     "#50 notification title pass-through should ignore decorative and valid alternate names alike",
   );
 
   assertEqual(
     notificationDisplayPolicy.formatNotificationDisplayTitle({
-      title: "Alex",
+      title: "Person A",
       alternateNames: ["Profile picture", "Taylor"],
     }),
-    "Alex",
+    "Person A",
     "#50 notification title pass-through should ignore avatar-derived alternate names",
   );
 
@@ -5751,105 +5763,98 @@ const runNotificationDisplayPolicyTests = () => {
     "#50 notification body alt cleanup should preserve real emoji alt text",
   );
 
-  const iconArtefactBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Bub",
-      body: "Icon for this message",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const iconArtefactBoundary = resolveNotificationDisplayBoundary({
+    title: "Bub",
+    body: "Icon for this message",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     iconArtefactBoundary.normalizedData.body,
     "",
     "#50 display-boundary policy should drop generic Messenger message-icon body text",
   );
 
-  const chatLikeSomeoneAnswerBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Account A",
-      body: "Someone liked your answer to their question",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const chatLikeSomeoneAnswerBoundary = resolveNotificationDisplayBoundary({
+    title: "Account A",
+    body: "Someone liked your answer to their question",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     chatLikeSomeoneAnswerBoundary.suppress,
     false,
     "#50 display boundary should not suppress sender-titled chat text matching answer-like social activity",
   );
 
-  const chatLikeAnswerBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Account A",
-      body: "I liked your answer to their question",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const chatLikeAnswerBoundary = resolveNotificationDisplayBoundary({
+    title: "Account A",
+    body: "I liked your answer to their question",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     chatLikeAnswerBoundary.suppress,
     false,
     "#50 display boundary should not suppress ordinary chat text resembling answer-like social activity",
   );
 
-  const shellAnswerActivityBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "New notification",
-      body: "Someone liked your answer to their question",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const shellAnswerActivityBoundary = resolveNotificationDisplayBoundary({
+    title: "New notification",
+    body: "Someone liked your answer to their question",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     shellAnswerActivityBoundary.suppress,
     true,
     "#50 display boundary should suppress shell-titled answer-like Facebook activity",
   );
 
-  const groupActivityCommentBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Group activity",
-      body: "Someone liked your comment",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const groupActivityCommentBoundary = resolveNotificationDisplayBoundary({
+    title: "Group activity",
+    body: "Someone liked your comment",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     groupActivityCommentBoundary.suppress,
     true,
     "#50 display boundary should suppress group activity comment-like notifications even with thread-shaped hrefs",
   );
 
-  const facebookGroupFeedBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Facebook group activity",
-      body: "Someone posted in a group",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const facebookGroupFeedBoundary = resolveNotificationDisplayBoundary({
+    title: "Facebook group activity",
+    body: "Someone posted in a group",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     facebookGroupFeedBoundary.suppress,
     true,
     "#50 display boundary should suppress Facebook group feed activity after reconnect or wake replay",
   );
 
-  const directChatCommentBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Account A",
-      body: "Someone liked your comment",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const directChatCommentBoundary = resolveNotificationDisplayBoundary({
+    title: "Account A",
+    body: "Someone liked your comment",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     directChatCommentBoundary.suppress,
     false,
@@ -5974,106 +5979,101 @@ const runNotificationDisplayPolicyTests = () => {
     "#50 wake notification cleanup should preserve fresh and incoming-call notification records",
   );
   assertEqual(
-    firstFake.closeCount === 1 && secondFake.closeCount === 0 && incomingFake.closeCount === 0,
+    firstFake.closeCount === 1 &&
+      secondFake.closeCount === 0 &&
+      incomingFake.closeCount === 0,
     true,
     "#50 wake notification cleanup should close stale non-call notifications while preserving fresh messages and incoming calls",
   );
 
-  const calledYouBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Amanda",
-      body: "Amanda called you",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const calledYouBoundary = resolveNotificationDisplayBoundary({
+    title: "Amanda",
+    body: "Amanda called you",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     calledYouBoundary.suppress,
     true,
     "#50 display-boundary policy should suppress connected-call history notifications",
   );
 
-  const groupAdminBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "New notification",
-      body: "3 people requested to participate for the first time in a group you're managing",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const groupAdminBoundary = resolveNotificationDisplayBoundary({
+    title: "New notification",
+    body: "3 people requested to participate for the first time in a group you're managing",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     groupAdminBoundary.suppress,
     true,
     "#50 display-boundary policy should suppress group-admin participation request notifications",
   );
 
-  const firstTimePostAdminBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "User A",
-      body: "User A wants to post for the first time in Example Group. Review their post.",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const firstTimePostAdminBoundary = resolveNotificationDisplayBoundary({
+    title: "User A",
+    body: "User A wants to post for the first time in Example Group. Review their post.",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     firstTimePostAdminBoundary.suppress,
     true,
     "#50 display-boundary policy should suppress first-time-post admin review notifications even after Messenger thread proof",
   );
 
-  const personTitledGroupAdminBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Taylor",
-      body: "Taylor requested to join this group you're managing",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const personTitledGroupAdminBoundary = resolveNotificationDisplayBoundary({
+    title: "Taylor",
+    body: "Taylor requested to join this group you're managing",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     personTitledGroupAdminBoundary.suppress,
     true,
     "#50 display-boundary policy should suppress person-titled group-admin request notifications",
   );
 
-  const callEndedBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Messenger",
-      body: "Call ended",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const callEndedBoundary = resolveNotificationDisplayBoundary({
+    title: "Messenger",
+    body: "Call ended",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     callEndedBoundary.suppress,
     true,
     "#50 display-boundary policy should suppress call ended status notifications",
   );
 
-  const incomingCallBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Incoming call",
-      body: "Amanda Goodwin is calling you on Messenger",
-      sourceKind: "incoming-call",
-      sourceLabel: "test-incoming-call",
-      provenanceReason: "test-call-proof",
-    });
+  const incomingCallBoundary = resolveNotificationDisplayBoundary({
+    title: "Incoming call",
+    body: "Amanda Goodwin is calling you on Messenger",
+    sourceKind: "incoming-call",
+    sourceLabel: "test-incoming-call",
+    provenanceReason: "test-call-proof",
+  });
   assertEqual(
     incomingCallBoundary.suppress,
     false,
     "#50 display-boundary policy should keep genuine incoming-call notifications",
   );
 
-  const untypedBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Account A",
-      body: "New message",
-      href: "/t/test",
-    } as any);
+  const untypedBoundary = resolveNotificationDisplayBoundary({
+    title: "Account A",
+    body: "New message",
+    href: "/t/test",
+  } as any);
   assertEqual(
     untypedBoundary.suppress,
     true,
@@ -6085,45 +6085,42 @@ const runNotificationDisplayPolicyTests = () => {
     "provenance contract should report missing source kind",
   );
 
-  const unprovenFacebookBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Account A",
-      body: "New message",
-      sourceKind: "facebook",
-      sourceLabel: "test-unproven-facebook",
-      provenanceReason: "raw-facebook-notification",
-      href: "/t/test",
-    });
+  const unprovenFacebookBoundary = resolveNotificationDisplayBoundary({
+    title: "Account A",
+    body: "New message",
+    sourceKind: "facebook",
+    sourceLabel: "test-unproven-facebook",
+    provenanceReason: "raw-facebook-notification",
+    href: "/t/test",
+  });
   assertEqual(
     unprovenFacebookBoundary.suppress,
     true,
     "raw Facebook notification sources should fail closed without Messenger proof",
   );
 
-  const appOwnedBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Download Complete",
-      body: "Saved to Downloads: file.jpg",
-      sourceKind: "app-owned",
-      sourceLabel: "test-download-complete",
-      provenanceReason: "test-app-owned",
-      silent: true,
-    });
+  const appOwnedBoundary = resolveNotificationDisplayBoundary({
+    title: "Download Complete",
+    body: "Saved to Downloads: file.jpg",
+    sourceKind: "app-owned",
+    sourceLabel: "test-download-complete",
+    provenanceReason: "test-app-owned",
+    silent: true,
+  });
   assertEqual(
     appOwnedBoundary.suppress,
     false,
     "app-owned notifications should bypass Facebook provenance suppression",
   );
 
-  const messengerMessageBoundary =
-    resolveNotificationDisplayBoundary({
-      title: "Account A",
-      body: "New message",
-      sourceKind: "messenger-message",
-      sourceLabel: "test-message",
-      provenanceReason: "test-thread-proof",
-      href: "/t/test",
-    });
+  const messengerMessageBoundary = resolveNotificationDisplayBoundary({
+    title: "Account A",
+    body: "New message",
+    sourceKind: "messenger-message",
+    sourceLabel: "test-message",
+    provenanceReason: "test-thread-proof",
+    href: "/t/test",
+  });
   assertEqual(
     messengerMessageBoundary.suppress,
     false,

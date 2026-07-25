@@ -3,6 +3,9 @@ name: Snap ARM64 Rescue Build
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -10,10 +13,11 @@ on:
         description: Expected package.json/snap version
         required: true
         default: 1.3.1-beta.15
-      release_channels:
-        description: Optional comma-separated channels to upload/release to, e.g. edge or beta,edge
+      release_edge:
+        description: Upload the verified rescue revision to edge
         required: false
-        default: ""
+        default: false
+        type: boolean
 
 jobs:
   build-arm64:
@@ -22,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Verify runner and version
         run: |
@@ -47,7 +51,7 @@ jobs:
         id: snap
         run: |
           set -euo pipefail
-          snap_file="$(ls facebook-messenger-desktop_*_arm64.snap | head -n 1)"
+          snap_file="$(find . -maxdepth 1 -name 'facebook-messenger-desktop_*_arm64.snap' -print -quit)"
           test -n "$snap_file"
           unsquashfs -cat "$snap_file" meta/snap.yaml > /tmp/snap-meta.yaml
           grep -Fx "name: facebook-messenger-desktop" /tmp/snap-meta.yaml
@@ -55,21 +59,37 @@ jobs:
           echo "snap_file=$snap_file" >> "$GITHUB_OUTPUT"
 
       - name: Upload snap artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: facebook-messenger-desktop-${{ inputs.expected_version }}-arm64-snap
           path: ${{ steps.snap.outputs.snap_file }}
 
+  publish-edge:
+    name: Publish ARM64 rescue snap to edge
+    needs: build-arm64
+    if: inputs.release_edge
+    runs-on: ubuntu-latest
+    environment: snap-edge-release
+    steps:
+      - name: Download verified snap artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: facebook-messenger-desktop-${{ inputs.expected_version }}-arm64-snap
+          path: artifacts/snap
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
       - name: Upload and release snap
-        if: inputs.release_channels != ''
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           set -euo pipefail
-          snapcraft upload "${{ steps.snap.outputs.snap_file }}" --release "${{ inputs.release_channels }}"
+          snap_file="$(find artifacts/snap -maxdepth 1 -name 'facebook-messenger-desktop_*_arm64.snap' -print -quit)"
+          test -n "$snap_file"
+          snapcraft upload "$snap_file" --release edge
 
       - name: Final Snap status
-        if: inputs.release_channels != ''
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: snapcraft status facebook-messenger-desktop

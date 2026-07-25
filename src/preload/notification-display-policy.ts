@@ -123,16 +123,6 @@ function sanitizeNotificationAlternateNames(
   return results;
 }
 
-function uniqueAlternateNames(
-  title: string,
-  alternateNames: Array<string | null | undefined>,
-): string[] {
-  const titleKey = normalizeDisplayKey(title);
-  return sanitizeNotificationAlternateNames(alternateNames).filter(
-    (candidate) => normalizeDisplayKey(candidate) !== titleKey,
-  );
-}
-
 function sanitizeNotificationNameCache(
   cache: unknown,
   nowMs: number = Date.now(),
@@ -143,7 +133,12 @@ function sanitizeNotificationNameCache(
 
   const results: NotificationNameCache = {};
   for (const key of Object.keys(cache as Record<string, unknown>)) {
-    const entry = (cache as Record<string, NotificationNameCacheEntryInput | null | undefined>)[key];
+    const entry = (
+      cache as Record<
+        string,
+        NotificationNameCacheEntryInput | null | undefined
+      >
+    )[key];
     if (!entry || typeof entry !== "object") {
       continue;
     }
@@ -178,7 +173,8 @@ function inspectNotificationDisplayTitle(
   const alternates = (input.alternateNames || []).map((candidate) => {
     const inspection = inspectNotificationDisplayName(candidate);
     const normalized = normalizeDisplayName(candidate);
-    const sameAsTitle = !!normalized && normalizeDisplayKey(normalized) === titleKey;
+    const sameAsTitle =
+      !!normalized && normalizeDisplayKey(normalized) === titleKey;
     const kept = inspection.plausible && !sameAsTitle;
     return {
       ...inspection,
@@ -187,7 +183,9 @@ function inspectNotificationDisplayTitle(
     };
   });
 
-  const keptAlternateCount = alternates.filter((alternate) => alternate.kept).length;
+  const keptAlternateCount = alternates.filter(
+    (alternate) => alternate.kept,
+  ).length;
   return {
     alternateCount: alternates.length,
     keptAlternateCount,
