@@ -118,6 +118,16 @@ function run(): void {
   );
   assert.match(
     afterPack,
+    /readlink -f -- "\$SELF"/,
+    'Linux wrapper must resolve package-manager symlinks before locating the wrapped binary',
+  );
+  assert.match(
+    afterPack,
+    /dirname -- "\$SELF"/,
+    'Linux wrapper must locate its renamed binary beside the resolved executable',
+  );
+  assert.match(
+    afterPack,
     /exec "\$DIR\/\$\{executableName\}\.bin" --no-sandbox "\$@"/,
     'Linux wrapper must pass --no-sandbox before user arguments',
   );

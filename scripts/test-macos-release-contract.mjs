@@ -752,6 +752,14 @@ function testWorkflowContract() {
     join(repositoryRoot, "scripts", "release.sh"),
     "utf8",
   );
+  const macSigningScript = readFileSync(
+    join(repositoryRoot, "scripts", "build-signed-macos.mjs"),
+    "utf8",
+  );
+  const windowsInstallerTest = readFileSync(
+    join(repositoryRoot, "scripts", "test-windows-installer.ps1"),
+    "utf8",
+  );
   const jobSource = (source, jobId) => {
     const match = source.match(
       new RegExp(
@@ -834,6 +842,14 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /secrets\.APPLE_NOTARYTOOL_ISSUER_ID/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_SHA256/);
   assert.match(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
+  assert.match(workflow, /brew list openssl@3/);
+  assert.match(workflow, /npm run test:icons:local/);
+  assert.doesNotMatch(workflow, /npm run generate-icons/);
+  assert.match(macSigningScript, /function resolveOpenSsl3Binary/);
+  assert.match(macSigningScript, /openssl@3/);
+  assert.match(macSigningScript, /startsWith\("OpenSSL 3\."\)/);
+  assert.doesNotMatch(macSigningScript, /run\("openssl",\s*\[/);
+  assert.match(windowsInstallerTest, /\$ProcessTimeoutMilliseconds = 300000/);
   assert.match(workflow, /stable-release/);
   assert.match(workflow, /beta-release/);
   assert.match(workflow, /environment:\s*winget-release/);

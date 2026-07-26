@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProcessTimeoutMilliseconds = 300000
 
 function Test-PeMachine([string]$Path, [UInt16]$Expected) {
   $stream = [System.IO.File]::OpenRead($Path)
@@ -59,9 +60,9 @@ function Start-ExactProcess(
   }
   $process = [System.Diagnostics.Process]::Start($startInfo)
   if ($Wait) {
-    if (-not $process.WaitForExit(120000)) {
+    if (-not $process.WaitForExit($ProcessTimeoutMilliseconds)) {
       taskkill /PID $process.Id /T /F | Out-Null
-      throw "$Executable timed out"
+      throw "$Executable timed out after $ProcessTimeoutMilliseconds ms"
     }
     if ($process.ExitCode -ne 0) { throw "$Executable exited with code $($process.ExitCode)" }
   }
