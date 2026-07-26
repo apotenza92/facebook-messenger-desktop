@@ -39,8 +39,8 @@ import {
 } from "./legacy-updater-bridge.mjs";
 import {
   compareVersions,
+  resolveNativeMacArchitecture,
   resolveLegacyUpdaterBaseline,
-  validatePriorReleaseArchitecture,
   validateChecksumEntry,
 } from "./test-macos-updater-e2e.mjs";
 import {
@@ -232,17 +232,6 @@ function testLegacyUpdaterBaselines() {
       }),
     /source-pinned legacy baseline/,
   );
-  const mislabeledBetaX64 = resolveLegacyUpdaterBaseline(
-    "beta",
-    "x64",
-    "v1.3.1-beta.40",
-    {
-      name: "Messenger-Beta-macos-x64.zip",
-      digest:
-        "sha256:7ad7ac036bc9e692ff136a05bb50760c1c5206e462b9166b2e073e7d36af58fe",
-    },
-  );
-  assert.equal(mislabeledBetaX64?.packagedArchitecture, "arm64");
 }
 
 function testArchiveValidation() {
@@ -706,45 +695,8 @@ function testUpdaterTrustUtilities() {
   assert(compareVersions("v1.3.1-beta.40", "v1.3.1-beta.41") < 0);
   assert(compareVersions("v1.3.1-beta.41", "v1.3.1") < 0);
   assert(compareVersions("v1.3.1", "v1.3.0") > 0);
-  const architectureFixture = {
-    architectures: ["arm64"],
-    bootstrapTag: "v1.3.1-beta.43",
-    contract: { arch: "x64" },
-    currentTag: "v1.3.1-beta.43",
-    executablePath: "/tmp/Messenger Beta",
-    hasUpdaterE2EHook: false,
-    legacyBaseline: { packagedArchitecture: "arm64" },
-  };
-  assert.equal(
-    validatePriorReleaseArchitecture(architectureFixture),
-    "source-pinned-legacy-bootstrap-mismatch",
-  );
-  assert.doesNotThrow(() =>
-    validatePriorReleaseArchitecture({
-      ...architectureFixture,
-      architectures: ["x64"],
-      bootstrapTag: "",
-      legacyBaseline: null,
-    }),
-  );
-  for (const rejected of [
-    { bootstrapTag: "" },
-    { hasUpdaterE2EHook: true },
-    { legacyBaseline: null },
-    { architectures: ["x64", "arm64"] },
-    {
-      legacyBaseline: { packagedArchitecture: "x64" },
-    },
-  ]) {
-    assert.throws(
-      () =>
-        validatePriorReleaseArchitecture({
-          ...architectureFixture,
-          ...rejected,
-        }),
-      /is not exactly x64/,
-    );
-  }
+  assert.equal(resolveNativeMacArchitecture("x64"), "x86_64");
+  assert.equal(resolveNativeMacArchitecture("arm64"), "arm64");
   const temporaryDirectory = mkdtempSync(
     join(tmpdir(), "messenger-checksum-test-"),
   );
@@ -949,7 +901,9 @@ function testWorkflowContract() {
     /while \(\(-not \(Test-Path -LiteralPath \$applicationPath -PathType Leaf\)\)/,
   );
   assert.match(windowsInstallerTest, /Expected executable:/);
-  assert.match(windowsInstallerTest, /Observed paths:/);
+  assert.match(windowsInstallerTest, /Observed top-level paths:/);
+  assert.match(windowsInstallerTest, /Get-MpThreatDetection/);
+  assert.match(windowsInstallerTest, /ThreatID/);
   assert(
     windowsInstallerTest.includes(
       `@('/S', "/D=$installDirectory")`,
@@ -973,6 +927,11 @@ function testWorkflowContract() {
   assert.match(workflow, /stable-release/);
   assert.match(workflow, /beta-release/);
   assert.match(workflow, /runner:\s*windows-11-arm/);
+  const buildWindows = jobSource(workflow, "build-windows");
+  assert.match(
+    buildWindows,
+    /name:\s*Upload artifacts[\s\S]*?if:\s*always\(\)[\s\S]*?name:\s*windows-input-\$\{\{ matrix\.arch \}\}/,
+  );
   assert.match(workflow, /runner:\s*ubuntu-24\.04-arm/);
   assert.match(workflow, /macos-updater-e2e:/);
   assert.match(workflow, /MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG/);
@@ -1189,10 +1148,7 @@ function testWorkflowContract() {
     updaterHarness,
     /Bootstrap is forbidden because eligible prior release/,
   );
-  assert.match(
-    updaterHarness,
-    /source-pinned-legacy-bootstrap-mismatch/,
-  );
+  assert.match(updaterHarness, /return arch === "x64" \? "x86_64"/);
   assert(
     updaterHarness.indexOf("findPreviousEligibleRelease(") <
       updaterHarness.lastIndexOf("if (!previous)"),

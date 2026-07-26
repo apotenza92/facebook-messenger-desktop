@@ -99,22 +99,53 @@ foreach ($product in $products) {
   $installDirectory = Join-Path $smokeRoot 'installation'
   New-Item -ItemType Directory -Force -Path $profile, $temporaryDirectory | Out-Null
   $environment = New-ExactEnvironment $profile $temporaryDirectory
+  $resolvedInstaller = (Resolve-Path $installer).Path
+  $installStartedAt = [DateTime]::Now
 
-  [void](Start-ExactProcess (Resolve-Path $installer) @('/S', "/D=$installDirectory") $environment $true)
+  [void](Start-ExactProcess $resolvedInstaller @('/S', "/D=$installDirectory") $environment $true)
   $applicationPath = Join-Path $installDirectory $product.Executable
   $deadline = [DateTime]::UtcNow.AddMilliseconds($ProcessTimeoutMilliseconds)
   while ((-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) -and [DateTime]::UtcNow -lt $deadline) {
     Start-Sleep -Milliseconds 500
   }
   if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) {
-    $observed = if (Test-Path -LiteralPath $installDirectory -PathType Container) {
-      Get-ChildItem -LiteralPath $installDirectory -Force -Recurse -ErrorAction SilentlyContinue |
-        Select-Object -ExpandProperty FullName
+    $observedTopLevel = if (Test-Path -LiteralPath $installDirectory -PathType Container) {
+      @(
+        Get-ChildItem -LiteralPath $installDirectory -Force -ErrorAction SilentlyContinue |
+          Select-Object Name, Length, LastWriteTimeUtc
+      )
     } else {
       @()
     }
-    $observedPaths = if ($observed.Count -gt 0) { $observed -join ', ' } else { '<none>' }
-    throw "NSIS did not install an application executable for $($product.Prefix). Expected executable: $applicationPath. Observed paths: $observedPaths"
+    $observedPaths = if ($observedTopLevel.Count -gt 0) {
+      $observedTopLevel | ConvertTo-Json -Compress
+    } else {
+      '[]'
+    }
+
+    $defenderStatus = [ordered]@{
+      available = $false
+      queryError = $null
+      detections = @()
+    }
+    if (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue) {
+      $defenderStatus.available = $true
+      try {
+        $defenderStatus.detections = @(
+          Get-MpThreatDetection -ErrorAction Stop |
+            Where-Object {
+              $resources = @($_.Resources) -join "`n"
+              $_.InitialDetectionTime -ge $installStartedAt -and
+                ($resources.Contains($smokeRoot) -or $resources.Contains($resolvedInstaller))
+            } |
+            Select-Object -First 10 ThreatID, ThreatStatusID, ActionSuccess, InitialDetectionTime, LastThreatStatusChangeTime, Resources
+        )
+      } catch {
+        $defenderStatus.queryError = $_.Exception.Message
+      }
+    }
+    $defenderDetections = $defenderStatus | ConvertTo-Json -Compress -Depth 5
+    throw "NSIS did not install an application executable for $($product.Prefix). Expected executable: $applicationPath. Observed top-level paths: $observedPaths. Defender detections: $defenderDetections"
   }
   $application = Get-Item -LiteralPath $applicationPath
   Test-PeMachine $application.FullName $expected

@@ -38,7 +38,6 @@ const legacyUpdaterBaselines = Object.freeze({
     tag: "v1.3.1-beta.40",
     asset: "Messenger-Beta-macos-x64.zip",
     sha256: "7ad7ac036bc9e692ff136a05bb50760c1c5206e462b9166b2e073e7d36af58fe",
-    packagedArchitecture: "arm64",
   }),
   "stable-arm64": Object.freeze({
     tag: "v1.3.0",
@@ -149,28 +148,8 @@ export function resolveLegacyUpdaterBaseline(channel, arch, tag, asset) {
   return baseline;
 }
 
-export function validatePriorReleaseArchitecture({
-  architectures,
-  bootstrapTag,
-  contract,
-  currentTag,
-  executablePath,
-  hasUpdaterE2EHook,
-  legacyBaseline,
-}) {
-  const exactArchitecture =
-    architectures.length === 1 && architectures[0] === contract.arch;
-  if (exactArchitecture) return "exact";
-
-  const matchesSourcePinnedLegacyMismatch =
-    bootstrapTag === currentTag &&
-    !hasUpdaterE2EHook &&
-    architectures.length === 1 &&
-    legacyBaseline?.packagedArchitecture === architectures[0];
-  if (matchesSourcePinnedLegacyMismatch)
-    return "source-pinned-legacy-bootstrap-mismatch";
-
-  fail(`${executablePath} is not exactly ${contract.arch}`);
+export function resolveNativeMacArchitecture(arch) {
+  return arch === "x64" ? "x86_64" : arch;
 }
 
 async function download(url, destination, token) {
@@ -244,7 +223,6 @@ export function verifyTrustedApp(
   expectedVersion,
   expectations,
   certificateDirectory,
-  { deferArchitectureValidation = false } = {},
 ) {
   if (!existsSync(appPath)) fail(`Expected app is missing: ${appPath}`);
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=4", appPath]);
@@ -292,9 +270,10 @@ export function verifyTrustedApp(
     .trim()
     .split(/\s+/)
     .filter(Boolean);
+  const expectedArchitecture = resolveNativeMacArchitecture(contract.arch);
   if (
-    !deferArchitectureValidation &&
-    (architectures.length !== 1 || architectures[0] !== contract.arch)
+    architectures.length !== 1 ||
+    architectures[0] !== expectedArchitecture
   )
     fail(`${executablePath} is not exactly ${contract.arch}`);
   if (readPlist(appPath, "CFBundleIdentifier") !== contract.bundleId)
@@ -624,37 +603,15 @@ export async function main() {
     run("ditto", ["-x", "-k", previousZip, baselineDirectory]);
     const baselineApp = join(baselineDirectory, contract.appName);
     const previousVersion = previous.release.tag_name.replace(/^v/, "");
-    const priorTrust = verifyTrustedApp(
+    verifyTrustedApp(
       baselineApp,
       contract,
       previousVersion,
       priorExpectations,
       certificateDirectory,
-      {
-        deferArchitectureValidation: Boolean(previous.legacy),
-      },
     );
 
-    const hasUpdaterE2EHook = containsUpdaterE2EHook(baselineApp);
-    const priorArchitectureStatus = validatePriorReleaseArchitecture({
-      architectures: priorTrust.architectures,
-      bootstrapTag,
-      contract,
-      currentTag,
-      executablePath: priorTrust.executablePath,
-      hasUpdaterE2EHook,
-      legacyBaseline: previous.legacy,
-    });
-    if (
-      priorArchitectureStatus ===
-      "source-pinned-legacy-bootstrap-mismatch"
-    ) {
-      console.log(
-        `Protected updater bootstrap accepted the source-pinned ${previous.release.tag_name} architecture mismatch without launching it`,
-      );
-    }
-
-    if (!hasUpdaterE2EHook) {
+    if (!containsUpdaterE2EHook(baselineApp)) {
       if (bootstrapTag !== currentTag)
         fail(`Prior release ${previous.release.tag_name} is trusted but predates the updater E2E hook; protected bootstrap must exactly match ${currentTag}`);
       console.log(`Protected updater bootstrap accepted for ${currentTag}: trusted prior ${previous.release.tag_name} predates the E2E hook`);
