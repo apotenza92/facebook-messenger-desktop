@@ -793,6 +793,10 @@ function testWorkflowContract() {
     join(repositoryRoot, "scripts", "build-signed-macos.mjs"),
     "utf8",
   );
+  const macUpdaterScript = readFileSync(
+    join(repositoryRoot, "scripts", "test-macos-updater-e2e.mjs"),
+    "utf8",
+  );
   const windowsInstallerTest = readFileSync(
     join(repositoryRoot, "scripts", "test-windows-installer.ps1"),
     "utf8",
@@ -867,6 +871,14 @@ function testWorkflowContract() {
   assert.match(macSigningScript, /openssl@3/);
   assert.match(macSigningScript, /startsWith\("OpenSSL 3\."\)/);
   assert.doesNotMatch(macSigningScript, /run\("openssl",\s*\[/);
+  assert.match(
+    macUpdaterScript,
+    /`--extract-certificates=\$\{certificatePrefix\}`/,
+  );
+  assert.doesNotMatch(
+    macUpdaterScript,
+    /"--extract-certificates",\s*certificatePrefix/,
+  );
   assert.match(windowsInstallerTest, /\$ProcessTimeoutMilliseconds = 300000/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");

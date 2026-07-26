@@ -229,8 +229,7 @@ export function verifyTrustedApp(appPath, contract, expectedVersion, expectation
   );
   run("codesign", [
     "-d",
-    "--extract-certificates",
-    certificatePrefix,
+    `--extract-certificates=${certificatePrefix}`,
     appPath,
   ]);
   const leafCertificate = `${certificatePrefix}0`;
