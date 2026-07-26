@@ -24,7 +24,6 @@ jobs:
       prerelease: ${{ steps.release.outputs.prerelease }}
       release_environment: ${{ steps.release.outputs.release_environment }}
       updater_matrix: ${{ steps.release.outputs.updater_matrix }}
-      winget_matrix: ${{ steps.release.outputs.winget_matrix }}
     steps:
       - name: Checkout code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -68,15 +67,11 @@ jobs:
             { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
             { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
           ];
-          const wingetMatrix = stable
-            ? [{ channel: 'stable' }, { channel: 'beta' }]
-            : [{ channel: 'beta' }];
           const output = [
             `channel=${stable ? 'stable' : 'beta'}`,
             `prerelease=${prerelease}`,
             `release_environment=${stable ? 'stable-release' : 'beta-release'}`,
             `updater_matrix=${JSON.stringify(updaterMatrix)}`,
-            `winget_matrix=${JSON.stringify(wingetMatrix)}`,
           ];
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output.join('\n')}\n`);
           NODE
@@ -986,130 +981,6 @@ jobs:
               --range 0-0 --output /dev/null "$asset_url"
           done < <(jq -r '.assets[].browser_download_url' public-release.json)
           echo "Verified exact unauthenticated public release classification and asset access."
-
-  # ============================================
-  # PHASE 3: Update package managers
-  # (Runs after release is created)
-  # ============================================
-
-  update-winget:
-    name: Submit WinGet (${{ matrix.channel }})
-    needs: [validate-release, release]
-    runs-on: windows-2025
-    environment: winget-release
-    permissions:
-      contents: read
-      attestations: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.validate-release.outputs.winget_matrix) }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: "22.12.0"
-          cache: "npm"
-
-      - name: Install manifest dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Download and authenticate public Windows installers
-        id: release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CHANNEL: ${{ matrix.channel }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = $env:GITHUB_REF_NAME.Substring(1)
-          $prefix = if ($env:CHANNEL -eq 'beta') { 'Messenger-Beta' } else { 'Messenger' }
-          $baseUrl = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)"
-          New-Item -ItemType Directory -Force winget-input | Out-Null
-          Invoke-WebRequest "$baseUrl/SHA256SUMS" -OutFile winget-input/SHA256SUMS
-
-          foreach ($arch in @('x64', 'arm64')) {
-            $name = "$prefix-windows-$arch-setup.exe"
-            $path = "winget-input/$name"
-            Invoke-WebRequest "$baseUrl/$name" -OutFile $path
-            $escapedName = [regex]::Escape($name)
-            $matches = @(Select-String -LiteralPath winget-input/SHA256SUMS -Pattern "^([0-9a-f]{64})  $escapedName$")
-            if ($matches.Count -ne 1) { throw "SHA256SUMS must contain exactly one entry for $name" }
-            $expected = $matches[0].Matches[0].Groups[1].Value
-            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
-            if ($actual -ne $expected) { throw "SHA-256 mismatch for $name" }
-            gh attestation verify $path --repo $env:GITHUB_REPOSITORY
-          }
-
-          $publishedAt = gh api "repos/$($env:GITHUB_REPOSITORY)/releases/tags/$($env:GITHUB_REF_NAME)" --jq .published_at
-          if ($LASTEXITCODE -ne 0 -or $publishedAt -notmatch '^\d{4}-\d{2}-\d{2}T') {
-            throw 'Could not resolve the published GitHub release date'
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "release_date=$($publishedAt.Substring(0, 10))" >> $env:GITHUB_OUTPUT
-          "base_url=$baseUrl" >> $env:GITHUB_OUTPUT
-          "prefix=$prefix" >> $env:GITHUB_OUTPUT
-
-      - name: Generate exact WinGet manifests
-        shell: pwsh
-        env:
-          CHANNEL: ${{ matrix.channel }}
-          VERSION: ${{ steps.release.outputs.version }}
-          RELEASE_DATE: ${{ steps.release.outputs.release_date }}
-          BASE_URL: ${{ steps.release.outputs.base_url }}
-          PREFIX: ${{ steps.release.outputs.prefix }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          node scripts/create-winget-manifests.mjs `
-            --channel $env:CHANNEL `
-            --version $env:VERSION `
-            --release-date $env:RELEASE_DATE `
-            --x64-installer "winget-input/$($env:PREFIX)-windows-x64-setup.exe" `
-            --x64-url "$($env:BASE_URL)/$($env:PREFIX)-windows-x64-setup.exe" `
-            --arm64-installer "winget-input/$($env:PREFIX)-windows-arm64-setup.exe" `
-            --arm64-url "$($env:BASE_URL)/$($env:PREFIX)-windows-arm64-setup.exe" `
-            --output-dir winget-manifests
-
-      - name: Install pinned Microsoft WinGetCreate
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $url = 'https://github.com/microsoft/winget-create/releases/download/v1.12.8.0/wingetcreate.exe'
-          $expected = '8BD738851B524885410112678E3771B341C5C716DE60FBBECB88AB0A363ED85D'
-          Invoke-WebRequest $url -OutFile wingetcreate.exe
-          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath wingetcreate.exe).Hash
-          if ($actual -ne $expected) { throw 'Microsoft WinGetCreate SHA-256 mismatch' }
-          .\wingetcreate.exe --version
-
-      - name: Submit manifests to the WinGet Community repository
-        shell: pwsh
-        env:
-          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
-          VERSION: ${{ steps.release.outputs.version }}
-          CHANNEL: ${{ matrix.channel }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:WINGET_CREATE_GITHUB_TOKEN)) {
-            throw 'WINGET_CREATE_GITHUB_TOKEN is required in the protected winget-release environment'
-          }
-          .\wingetcreate.exe submit `
-            --prtitle "Messenger $($env:CHANNEL) $($env:VERSION)" `
-            --no-open `
-            winget-manifests
-
-      - name: Upload submitted WinGet manifests
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: winget-${{ matrix.channel }}-${{ github.ref_name }}
-          path: winget-manifests/*.yaml
-          retention-days: 14
-          if-no-files-found: warn
 
   prepare-homebrew-publication:
     name: Prepare Homebrew publication (Stable)

@@ -20,6 +20,7 @@
 - Build and test native Apple Silicon, Intel Mac, Windows ARM64/x64, and Linux ARM64/x64 packages on their matching hosted runners.
 - Harden releases with Developer ID signing, notarisation, stapling, Gatekeeper assessment, native macOS N-1 update tests, exact asset contracts, checksums, provenance, and protected publication environments.
 - Publish a single exact-tag compatibility bridge for existing Windows and Linux auto-update clients, then keep subsequent non-macOS versions on the verified manual or package-manager path.
+- Keep Windows releases on GitHub without introducing unpublished WinGet package identities or a WinGet submission credential.
 - Supersede the unchanged `v1.3.1-beta.41` tag, which did not produce a GitHub release, without rewriting its history.
 
 ## [1.3.1-beta.41] - 2026-07-26

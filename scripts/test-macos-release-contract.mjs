@@ -890,7 +890,6 @@ function testWorkflowContract() {
   );
   assert.match(workflow, /stable-release/);
   assert.match(workflow, /beta-release/);
-  assert.match(workflow, /environment:\s*winget-release/);
   assert.match(workflow, /runner:\s*windows-11-arm/);
   assert.match(workflow, /runner:\s*ubuntu-24\.04-arm/);
   assert.match(workflow, /macos-updater-e2e:/);
@@ -902,6 +901,10 @@ function testWorkflowContract() {
   assert.doesNotMatch(
     workflow,
     /APPLE_ID|APPLE_APP_SPECIFIC_PASSWORD|CSC_LINK|CSC_KEY_PASSWORD/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /update-winget|winget_matrix|WINGET_CREATE_GITHUB_TOKEN|winget-create|create-winget-manifests/,
   );
   assert.doesNotMatch(workflow, /git clone https:\/\/x-access-token:/);
   assert.doesNotMatch(workflow, /merge-multiple:\s*true/);
@@ -962,27 +965,7 @@ function testWorkflowContract() {
   assert.match(workflow, /Apply this exact signed OSTree repository manually/);
   assert.match(workflow, /include-hidden-files:\s*true/);
   assert.match(workflow, /Verify the unauthenticated public release boundary/);
-  assert.match(workflow, /update-winget:/);
-  assert.match(workflow, /runs-on:\s*windows-2025/);
-  assert.match(workflow, /WINGET_CREATE_GITHUB_TOKEN/);
-  assert.match(
-    workflow,
-    /microsoft\/winget-create\/releases\/download\/v1\.12\.8\.0\/wingetcreate\.exe/,
-  );
-  assert.match(
-    workflow,
-    /8BD738851B524885410112678E3771B341C5C716DE60FBBECB88AB0A363ED85D/,
-  );
-  assert.match(workflow, /create-winget-manifests\.mjs/);
-  assert.match(workflow, /gh attestation verify \$path/);
-  assert.doesNotMatch(workflow, /wingetcreate(?:\.exe)?[^\n]*--token/);
-  assert(
-    workflow.indexOf("Verify the unauthenticated public release boundary") <
-      workflow.indexOf("update-winget:"),
-    "WinGet submission must follow unauthenticated public release verification",
-  );
   for (const storeJob of [
-    "update-winget",
     "prepare-homebrew-publication",
     "prepare-homebrew-beta-publication",
     "prepare-flatpak-publication",
