@@ -101,9 +101,22 @@ foreach ($product in $products) {
   $environment = New-ExactEnvironment $profile $temporaryDirectory
 
   [void](Start-ExactProcess (Resolve-Path $installer) @('/S', "/D=$installDirectory") $environment $true)
-  $application = Get-ChildItem $installDirectory -Recurse -Filter $product.Executable |
-    Select-Object -First 1
-  if (-not $application) { throw "NSIS did not install an application executable for $($product.Prefix)" }
+  $applicationPath = Join-Path $installDirectory $product.Executable
+  $deadline = [DateTime]::UtcNow.AddMilliseconds($ProcessTimeoutMilliseconds)
+  while ((-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) -and [DateTime]::UtcNow -lt $deadline) {
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) {
+    $observed = if (Test-Path -LiteralPath $installDirectory -PathType Container) {
+      Get-ChildItem -LiteralPath $installDirectory -Force -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName
+    } else {
+      @()
+    }
+    $observedPaths = if ($observed.Count -gt 0) { $observed -join ', ' } else { '<none>' }
+    throw "NSIS did not install an application executable for $($product.Prefix). Expected executable: $applicationPath. Observed paths: $observedPaths"
+  }
+  $application = Get-Item -LiteralPath $applicationPath
   Test-PeMachine $application.FullName $expected
 
   $userData = Join-Path $environment.APPDATA $product.DataName
