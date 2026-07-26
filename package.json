@@ -44,8 +44,7 @@
     "test:release:confirm": "node -r ./scripts/register-ts.js scripts/test-release-confirmation.ts",
     "test:release:mac": "node scripts/test-macos-release-contract.mjs",
     "test:release:integrity": "node -r ./scripts/register-ts.js scripts/test-release-integrity.ts",
-    "test:release:winget": "node scripts/test-winget-manifests.mjs",
-    "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts && npm run test:release:confirm && npm run test:release:integrity && npm run test:release:mac && npm run test:release:winget && npm run test:linux-sandbox"
+    "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts && npm run test:release:confirm && npm run test:release:integrity && npm run test:release:mac && npm run test:linux-sandbox"
   },
   "keywords": [
     "messenger",

@@ -30,12 +30,12 @@ function checkReleaseConfiguration(trackedFiles) {
       relativePath.startsWith(".github/workflows/") ||
       relativePath === "electron-builder.config.js" ||
       relativePath === "package.json" ||
-      /^scripts\/(?:build|notarize|verify|assemble|create-winget|test-macos|test-winget)/.test(
+      /^scripts\/(?:build|notarize|verify|assemble|test-macos)/.test(
         relativePath,
       ),
   );
   const retiredSecretNames =
-    /\b(?:APPLE_ID|APPLE_APP_SPECIFIC_PASSWORD|CSC_LINK|CSC_KEY_PASSWORD|WINGET_TOKEN)\b/;
+    /\b(?:APPLE_ID|APPLE_APP_SPECIFIC_PASSWORD|CSC_LINK|CSC_KEY_PASSWORD|WINGET_TOKEN|WINGET_CREATE_GITHUB_TOKEN)\b/;
 
   for (const relativePath of releaseFiles) {
     const text = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
