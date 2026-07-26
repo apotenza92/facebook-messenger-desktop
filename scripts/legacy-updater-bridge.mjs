@@ -74,6 +74,22 @@ export function parseBridgeChannels(value, releaseChannel) {
   return channels.sort();
 }
 
+export function writeLegacyBridgePolicy({
+  channels,
+  outputPath,
+  releaseChannel,
+  version,
+}) {
+  parseVersion(version);
+  const normalizedChannels = parseBridgeChannels(
+    Array.isArray(channels) ? channels.join(",") : channels,
+    releaseChannel,
+  );
+  const policy = { channels: normalizedChannels, version };
+  writeFileSync(outputPath, JSON.stringify(policy), { mode: 0o600 });
+  return policy;
+}
+
 export function legacyMetadataNames(channel) {
   assertChannel(channel);
   const prefix = channel === "beta" ? "beta" : "latest";
@@ -314,12 +330,31 @@ async function resolveFromGitHub() {
   );
 }
 
+function writePolicyFromCommand() {
+  const releaseChannel = option(
+    "--release-channel",
+    process.env.MESSENGER_RELEASE_CHANNEL,
+  );
+  const packageMetadata = JSON.parse(
+    readFileSync(resolve(import.meta.dirname, "..", "package.json"), "utf8"),
+  );
+  const policy = writeLegacyBridgePolicy({
+    channels: option("--channels", ""),
+    outputPath: resolve(option("--output", "bridge-policy.json")),
+    releaseChannel,
+    version: packageMetadata.version,
+  });
+  console.log(
+    `Recorded legacy updater bridge policy for ${policy.channels.join(",") || "no channels"}`,
+  );
+}
+
 const invoked =
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 if (invoked) {
   const command = process.argv[2];
-  if (command !== "resolve")
-    fail(`Unsupported legacy bridge command ${command}`);
-  await resolveFromGitHub();
+  if (command === "resolve") await resolveFromGitHub();
+  else if (command === "policy") writePolicyFromCommand();
+  else fail(`Unsupported legacy bridge command ${command}`);
 }

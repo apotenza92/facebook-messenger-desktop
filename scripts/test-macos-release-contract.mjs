@@ -36,6 +36,7 @@ import {
   compareReleaseTags,
   legacyMetadataNames,
   resolveLegacyBridgeChannels,
+  writeLegacyBridgePolicy,
 } from "./legacy-updater-bridge.mjs";
 import {
   compareVersions,
@@ -620,6 +621,17 @@ async function testLegacyUpdaterBridge() {
     const version = JSON.parse(
       readFileSync(join(repositoryRoot, "package.json"), "utf8"),
     ).version;
+    const singleChannelPolicy = join(temporaryDirectory, "single-policy.json");
+    writeLegacyBridgePolicy({
+      channels: "beta",
+      outputPath: singleChannelPolicy,
+      releaseChannel: "beta",
+      version,
+    });
+    assert.deepEqual(
+      JSON.parse(readFileSync(singleChannelPolicy, "utf8")),
+      { channels: ["beta"], version },
+    );
     for (const [artifactName, entry] of Object.entries(contract)) {
       const directory = join(inputDirectory, artifactName);
       mkdirSync(directory, { recursive: true });
@@ -674,6 +686,20 @@ async function testLegacyUpdaterBridge() {
       inputDirectory,
       "legacy-updater-bridge-build",
       "bridge-policy.json",
+    );
+    writeFileSync(
+      policyPath,
+      JSON.stringify({ channels: "stable,beta", version }),
+    );
+    assert.throws(
+      () =>
+        assemblePublicRelease({
+          inputDirectory,
+          legacyBridgeChannels: bridgeChannels,
+          outputDirectory,
+          releaseChannel: "stable",
+        }),
+      /policy channels must be an array/,
     );
     writeFileSync(policyPath, JSON.stringify({ channels: ["beta"], version }));
     assert.throws(
@@ -980,6 +1006,8 @@ function testWorkflowContract() {
   const bridgeBuilder = jobSource(workflow, "build-windows-legacy-bridge");
   assert.match(bridgeBuilder, /--win nsis --x64 --arm64 --publish=never/);
   assert.match(bridgeBuilder, /-LegacyBridge/);
+  assert.match(bridgeBuilder, /legacy-updater-bridge\.mjs policy/);
+  assert.doesNotMatch(bridgeBuilder, /ConvertTo-Json/);
   assert.match(
     bridgeBuilder,
     /needs\.resolve-legacy-updater-bridge\.outputs\.enabled == 'true'/,
