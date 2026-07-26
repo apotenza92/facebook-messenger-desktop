@@ -6,7 +6,7 @@
 
 ### Fixed
 
-- Repair hosted native packaging by using Node.js 22.12, a Windows ARM64-capable Sharp build, a non-launching silent NSIS installer, explicit Homebrew OpenSSL 3 certificate import, portable macOS certificate extraction, and symlink-safe Linux package launchers.
+- Repair hosted native packaging by using Node.js 22.12, a Windows ARM64-capable Sharp build, a non-launching silent NSIS installer, macOS 26 runners with Icon Composer-capable build tools, explicit Homebrew OpenSSL 3 certificate import, portable macOS certificate extraction, and symlink-safe Linux package launchers.
 - **Issue #62: suppress stale Facebook group-management cards inside Messenger** ([#62](https://github.com/apotenza92/facebook-messenger-desktop/issues/62))
   - Detect group join, participation, and first-time-post review activity rendered as in-page Facebook notification cards, including cards revealed after sleep or inactivity.
   - Hide only cards that match the shared group-management policy and an in-page notification shell, preserving ordinary Messenger message cards and chat text.

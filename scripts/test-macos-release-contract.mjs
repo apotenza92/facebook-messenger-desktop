@@ -846,8 +846,13 @@ function testWorkflowContract() {
     "Stable/beta publication approval must gate only the final release job",
   );
   assert.match(workflow, /environment:\s*release-signing/);
-  assert.match(workflow, /runner:\s*macos-15\b/);
-  assert.match(workflow, /runner:\s*macos-15-intel\b/);
+  assert.match(validateRelease, /runner:\s*'macos-26'/);
+  assert.match(validateRelease, /runner:\s*'macos-26-intel'/);
+  assert.doesNotMatch(validateRelease, /runner:\s*'macos-15(?:-intel)?'/);
+  const buildMacos = jobSource(workflow, "build-macos");
+  assert.match(buildMacos, /runner:\s*macos-26\b/);
+  assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
+  assert.doesNotMatch(buildMacos, /runner:\s*macos-15(?:-intel)?\b/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_P12_BASE64/);
   assert.match(workflow, /APPLE_NOTARYTOOL_KEY_P8_BASE64/);
   assert.match(
@@ -880,6 +885,11 @@ function testWorkflowContract() {
     /"--extract-certificates",\s*certificatePrefix/,
   );
   assert.match(windowsInstallerTest, /\$ProcessTimeoutMilliseconds = 300000/);
+  assert.match(
+    windowsInstallerTest,
+    /\$deadline = \[DateTime\]::UtcNow\.AddMilliseconds\(\$ProcessTimeoutMilliseconds\)/,
+  );
+  assert.match(windowsInstallerTest, /with remaining paths:/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);

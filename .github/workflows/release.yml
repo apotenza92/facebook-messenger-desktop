@@ -61,11 +61,11 @@ jobs:
           }
           const updaterMatrix = [
             ...(stable ? [
-              { channel: 'stable', arch: 'arm64', runner: 'macos-15' },
-              { channel: 'stable', arch: 'x64', runner: 'macos-15-intel' },
+              { channel: 'stable', arch: 'arm64', runner: 'macos-26' },
+              { channel: 'stable', arch: 'x64', runner: 'macos-26-intel' },
             ] : []),
-            { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
-            { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
+            { channel: 'beta', arch: 'arm64', runner: 'macos-26' },
+            { channel: 'beta', arch: 'x64', runner: 'macos-26-intel' },
           ];
           const output = [
             `channel=${stable ? 'stable' : 'beta'}`,
@@ -231,10 +231,10 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-15
+            runner: macos-26
             native_arch: arm64
           - arch: x64
-            runner: macos-15-intel
+            runner: macos-26-intel
             native_arch: x86_64
     steps:
       - name: Checkout code
