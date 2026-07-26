@@ -96,7 +96,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -124,7 +124,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install metadata dependencies
         run: npm ci --ignore-scripts
@@ -162,7 +162,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -250,7 +250,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Verify native runner architecture
@@ -349,7 +349,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -398,7 +398,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install metadata dependencies
         run: npm ci --ignore-scripts
@@ -452,7 +452,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Verify native runner architecture
@@ -510,7 +510,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install metadata dependencies
         run: npm ci --ignore-scripts
@@ -545,7 +545,7 @@ jobs:
         if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install dependencies and build application
         if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
@@ -633,7 +633,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Verify native runner architecture
@@ -808,7 +808,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install release assembly dependencies
@@ -1013,7 +1013,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install manifest dependencies

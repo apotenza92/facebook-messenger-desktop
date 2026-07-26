@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Repair hosted native packaging by using Node.js 22.12, a Windows ARM64-capable Sharp build, a non-launching silent NSIS installer, explicit Homebrew OpenSSL 3 certificate import, and symlink-safe Linux package launchers.
+
 ## [1.3.1-beta.41] - 2026-07-26
 
 ### Fixed

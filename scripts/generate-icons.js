@@ -33,7 +33,7 @@ try {
 } catch (e) {
   console.log('Sharp not found, attempting to install...');
   try {
-    execSync('npm install sharp@0.33.5 --save-dev', { 
+    execSync('npm install sharp@0.34.5 --save-dev', {
       stdio: 'inherit',
       cwd: path.join(__dirname, '..')
     });

@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -116,7 +116,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
