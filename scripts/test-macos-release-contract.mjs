@@ -979,6 +979,10 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /gh api --method DELETE/);
   assert.doesNotMatch(workflow, /gh release upload[^\n]*--clobber/);
   assert.match(workflow, /Draft release contains unexpected asset/);
+  assert.match(
+    workflow,
+    /gh release view "\$TAG" --repo "\$REPOSITORY" --json assets --jq '\.assets\[\]\.name'/,
+  );
   assert.match(workflow, /MISSING_ASSETS/);
   assert.match(workflow, /cmp "artifacts\/release\/\$asset_name"/);
   assert.match(

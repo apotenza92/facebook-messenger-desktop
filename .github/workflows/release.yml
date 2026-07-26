@@ -913,7 +913,10 @@ jobs:
           if [[ "$RELEASE_IS_DRAFT" == true ]]; then
             rm -rf existing-draft-assets
             mkdir existing-draft-assets
-            mapfile -t EXISTING_ASSETS < <(gh api "repos/$REPOSITORY/releases/tags/$TAG" --jq '.assets[].name' | LC_ALL=C sort)
+            mapfile -t EXISTING_ASSETS < <(
+              gh release view "$TAG" --repo "$REPOSITORY" --json assets --jq '.assets[].name' |
+                LC_ALL=C sort
+            )
             for asset_name in "${EXISTING_ASSETS[@]}"; do
               if ! grep --fixed-strings --line-regexp --quiet "$asset_name" expected-assets.txt; then
                 echo "Draft release contains unexpected asset: $asset_name" >&2
