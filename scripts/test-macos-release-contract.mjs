@@ -40,6 +40,7 @@ import {
 import {
   compareVersions,
   resolveLegacyUpdaterBaseline,
+  validatePriorReleaseArchitecture,
   validateChecksumEntry,
 } from "./test-macos-updater-e2e.mjs";
 import {
@@ -231,6 +232,17 @@ function testLegacyUpdaterBaselines() {
       }),
     /source-pinned legacy baseline/,
   );
+  const mislabeledBetaX64 = resolveLegacyUpdaterBaseline(
+    "beta",
+    "x64",
+    "v1.3.1-beta.40",
+    {
+      name: "Messenger-Beta-macos-x64.zip",
+      digest:
+        "sha256:7ad7ac036bc9e692ff136a05bb50760c1c5206e462b9166b2e073e7d36af58fe",
+    },
+  );
+  assert.equal(mislabeledBetaX64?.packagedArchitecture, "arm64");
 }
 
 function testArchiveValidation() {
@@ -694,6 +706,45 @@ function testUpdaterTrustUtilities() {
   assert(compareVersions("v1.3.1-beta.40", "v1.3.1-beta.41") < 0);
   assert(compareVersions("v1.3.1-beta.41", "v1.3.1") < 0);
   assert(compareVersions("v1.3.1", "v1.3.0") > 0);
+  const architectureFixture = {
+    architectures: ["arm64"],
+    bootstrapTag: "v1.3.1-beta.43",
+    contract: { arch: "x64" },
+    currentTag: "v1.3.1-beta.43",
+    executablePath: "/tmp/Messenger Beta",
+    hasUpdaterE2EHook: false,
+    legacyBaseline: { packagedArchitecture: "arm64" },
+  };
+  assert.equal(
+    validatePriorReleaseArchitecture(architectureFixture),
+    "source-pinned-legacy-bootstrap-mismatch",
+  );
+  assert.doesNotThrow(() =>
+    validatePriorReleaseArchitecture({
+      ...architectureFixture,
+      architectures: ["x64"],
+      bootstrapTag: "",
+      legacyBaseline: null,
+    }),
+  );
+  for (const rejected of [
+    { bootstrapTag: "" },
+    { hasUpdaterE2EHook: true },
+    { legacyBaseline: null },
+    { architectures: ["x64", "arm64"] },
+    {
+      legacyBaseline: { packagedArchitecture: "x64" },
+    },
+  ]) {
+    assert.throws(
+      () =>
+        validatePriorReleaseArchitecture({
+          ...architectureFixture,
+          ...rejected,
+        }),
+      /is not exactly x64/,
+    );
+  }
   const temporaryDirectory = mkdtempSync(
     join(tmpdir(), "messenger-checksum-test-"),
   );
@@ -893,6 +944,12 @@ function testWorkflowContract() {
     windowsInstallerTest,
     /\$deadline = \[DateTime\]::UtcNow\.AddMilliseconds\(\$ProcessTimeoutMilliseconds\)/,
   );
+  assert.match(
+    windowsInstallerTest,
+    /while \(\(-not \(Test-Path -LiteralPath \$applicationPath -PathType Leaf\)\)/,
+  );
+  assert.match(windowsInstallerTest, /Expected executable:/);
+  assert.match(windowsInstallerTest, /Observed paths:/);
   assert(
     windowsInstallerTest.includes(
       `@('/S', "/D=$installDirectory")`,
@@ -901,7 +958,10 @@ function testWorkflowContract() {
   );
   assert.doesNotMatch(windowsInstallerTest, /Join-Path \$environment\.LOCALAPPDATA 'Programs'/);
   assert.match(windowsInstallerTest, /with remaining paths:/);
+  assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak install --user/);
   assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak run --user/);
+  assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak uninstall --user/);
+  assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak info --user/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);
@@ -1128,6 +1188,10 @@ function testWorkflowContract() {
   assert.match(
     updaterHarness,
     /Bootstrap is forbidden because eligible prior release/,
+  );
+  assert.match(
+    updaterHarness,
+    /source-pinned-legacy-bootstrap-mismatch/,
   );
   assert(
     updaterHarness.indexOf("findPreviousEligibleRelease(") <

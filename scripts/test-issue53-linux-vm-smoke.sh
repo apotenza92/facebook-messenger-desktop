@@ -30,7 +30,7 @@ flatpak_smoke() {
   smoke_tmp="$smoke_root/tmp"
   mkdir -p "$smoke_home" "$smoke_tmp" "$log_dir"
   env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
-    flatpak install --user --noninteractive "$bundle"
+    dbus-run-session -- flatpak install --user --noninteractive "$bundle"
   run_with_timeout "$log_dir/issue53-flatpak-${app_id}.log" \
     env -i \
       HOME="$smoke_home" \
@@ -42,9 +42,9 @@ flatpak_smoke() {
         --env=SKIP_SINGLE_INSTANCE_LOCK=true \
         "$app_id"
   env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
-    flatpak uninstall --user --noninteractive --delete-data "$app_id"
+    dbus-run-session -- flatpak uninstall --user --noninteractive --delete-data "$app_id"
   if env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
-    flatpak info --user "$app_id" >/dev/null 2>&1; then
+    dbus-run-session -- flatpak info --user "$app_id" >/dev/null 2>&1; then
     echo "Flatpak uninstall left $app_id installed" >&2
     exit 1
   fi
