@@ -16,6 +16,7 @@
     "./notification-display-policy.ts",
     "./notification-text-policy.ts",
     "./notification-decision-policy.ts",
+    "./in-page-notification-diagnostics.ts",
     "./url-policy.ts",
     "./notifications-inject.ts",
     "./call-window-preload.ts",
