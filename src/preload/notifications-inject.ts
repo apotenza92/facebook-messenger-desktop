@@ -13,6 +13,10 @@
   const DEBUG = true;
   const notifications = new Map<number, any>();
   type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
+  let lastPowerState: {
+    state: PowerStateEvent;
+    receivedAt: number;
+  } | null = null;
   type NotificationCandidate = {
     href: string;
     title: string;
@@ -104,6 +108,15 @@
       reason: string;
       matchedPattern?: string;
     };
+    shouldSuppressInPageFacebookNotificationCard?: (input: {
+      shellText: string;
+      text: string;
+      hasDismissControl: boolean;
+    }) => {
+      suppress: boolean;
+      reason: string;
+      matchedPattern?: string;
+    };
     evaluateMessengerMessageProof?: (
       payload: { title: string; body: string },
       candidate: NotificationCandidate,
@@ -121,6 +134,30 @@
         | "group-sender-preview"
         | "none";
     };
+  };
+
+  type InPageNotificationDiagnosticsApi = {
+    summarizeLinkCategories: (
+      hrefs: Array<string | null | undefined>,
+      baseUrl: string,
+    ) => Record<string, unknown>;
+    summarizeActionCategories: (
+      labels: Array<string | null | undefined>,
+    ) => Record<string, unknown>;
+    sanitizeAttributeNames: (attributeNames: string[]) => string[];
+    hashStructuralTokens: (tokens: string[]) => string;
+    isPrivacySafeDiagnosticPayload: (value: unknown) => boolean;
+    bucketCount: (value: number) => string;
+    bucketTextLength: (value: number) => string;
+    bucketDimension: (value: number) => string;
+    classifyViewportRegion: (input: {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      viewportWidth: number;
+      viewportHeight: number;
+    }) => Record<string, unknown>;
   };
 
   type IncomingCallEvidenceApi = {
@@ -553,6 +590,30 @@
         typeof policy.classifyCallNotification === "function"
       ) {
         return policy as NotificationDecisionPolicyApi;
+      }
+      return null;
+    };
+
+  const getInPageNotificationDiagnostics =
+    (): InPageNotificationDiagnosticsApi | null => {
+      const diagnostics = (
+        window as typeof window & {
+          __mdInPageNotificationDiagnostics?: InPageNotificationDiagnosticsApi;
+        }
+      ).__mdInPageNotificationDiagnostics;
+      if (
+        diagnostics &&
+        typeof diagnostics.summarizeLinkCategories === "function" &&
+        typeof diagnostics.summarizeActionCategories === "function" &&
+        typeof diagnostics.sanitizeAttributeNames === "function" &&
+        typeof diagnostics.hashStructuralTokens === "function" &&
+        typeof diagnostics.isPrivacySafeDiagnosticPayload === "function" &&
+        typeof diagnostics.bucketCount === "function" &&
+        typeof diagnostics.bucketTextLength === "function" &&
+        typeof diagnostics.bucketDimension === "function" &&
+        typeof diagnostics.classifyViewportRegion === "function"
+      ) {
+        return diagnostics as InPageNotificationDiagnosticsApi;
       }
       return null;
     };
@@ -1444,6 +1505,10 @@
     if (type === "electron-power-state") {
       const state = eventData?.state as PowerStateEvent | undefined;
       if (!state) return;
+      lastPowerState = {
+        state,
+        receivedAt: Date.now(),
+      };
 
       log("Power state change received", {
         state,
@@ -3177,6 +3242,582 @@
   // Start MutationObserver detection
   log("Starting MutationObserver notification detection...");
   setupMutationObserver();
+
+  // Facebook can also render global activity as an in-page card without using
+  // the browser Notification API. Keep group-management activity out of the
+  // Messenger surface while leaving ordinary message cards untouched.
+  const setupInPageFacebookActivitySuppression = () => {
+    const suppressedAttribute =
+      "data-md-suppressed-facebook-activity";
+    const dismissControlSelector = [
+      'button[aria-label*="close" i]',
+      '[role="button"][aria-label*="close" i]',
+      'button[aria-label*="dismiss" i]',
+      '[role="button"][aria-label*="dismiss" i]',
+      'button[title*="close" i]',
+      '[role="button"][title*="close" i]',
+      'button[title*="dismiss" i]',
+      '[role="button"][title*="dismiss" i]',
+    ].join(", ");
+    const notificationSemanticSelector = [
+      '[role="alert"]',
+      '[role="status"]',
+      '[aria-live="assertive"]',
+      '[aria-live="polite"]',
+      '[aria-label*="notification" i]',
+      '[title*="notification" i]',
+    ].join(", ");
+    const notificationSeedSelector = [
+      notificationSemanticSelector,
+      dismissControlSelector,
+    ].join(", ");
+    const maxAncestorDepth = 10;
+    const maxCandidateTextLength = 2000;
+    const maxSeedDescendants = 60;
+    let attributeScanTimeoutId: number | null = null;
+    const diagnosticStateByElement = new WeakMap<HTMLElement, string>();
+
+    const normalizeCardText = (value: string | null | undefined): string =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const normalizeSemanticValue = (
+      value: string | null | undefined,
+      allowed: string[],
+    ): string => {
+      const normalized = String(value || "")
+        .toLowerCase()
+        .trim();
+      return allowed.includes(normalized)
+        ? normalized
+        : normalized
+          ? "other"
+          : "none";
+    };
+
+    const bucketPowerStateAge = (
+      receivedAt: number | undefined,
+    ): "none" | "<10s" | "10-60s" | "1-10m" | "10m+" => {
+      if (!receivedAt) return "none";
+      const ageMs = Math.max(0, Date.now() - receivedAt);
+      if (ageMs < 10_000) return "<10s";
+      if (ageMs < 60_000) return "10-60s";
+      if (ageMs < 10 * 60_000) return "1-10m";
+      return "10m+";
+    };
+
+    const buildInPageActivityCandidateDiagnostics = (
+      element: HTMLElement,
+      input: {
+        trigger: string;
+        decision?: {
+          suppress: boolean;
+          reason: string;
+          matchedPattern?: string;
+        };
+        hasDismissControl: boolean;
+      },
+    ): Record<string, unknown> | null => {
+      const diagnostics = getInPageNotificationDiagnostics();
+      if (!diagnostics) {
+        return null;
+      }
+
+      const text = normalizeCardText(element.textContent);
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      const links = Array.from(element.querySelectorAll("a[href]"));
+      const actions = Array.from(
+        element.querySelectorAll('button, [role="button"]'),
+      );
+      const allElements = [element, ...Array.from(element.querySelectorAll("*"))]
+        .slice(0, 240)
+        .filter((entry): entry is HTMLElement => entry instanceof HTMLElement);
+      const iconElements = Array.from(
+        element.querySelectorAll("svg, svg path, svg use, img"),
+      ).slice(0, 80);
+
+      const structuralTokens: string[] = [];
+      for (const entry of allElements) {
+        const attributeNames = diagnostics.sanitizeAttributeNames(
+          Array.from(entry.attributes).map((attribute) => attribute.name),
+        );
+        structuralTokens.push(
+          entry.tagName.toLowerCase(),
+          `role:${normalizeSemanticValue(entry.getAttribute("role"), [
+            "alert",
+            "button",
+            "dialog",
+            "link",
+            "listitem",
+            "status",
+          ])}`,
+          ...attributeNames.map((name) => `attribute:${name}`),
+        );
+      }
+
+      const iconTokens = iconElements.flatMap((entry) => [
+        entry.tagName.toLowerCase(),
+        ...diagnostics
+          .sanitizeAttributeNames(
+            Array.from(entry.attributes).map((attribute) => attribute.name),
+          )
+          .map((name) => `attribute:${name}`),
+        entry.getAttribute("viewBox") || "",
+        entry.getAttribute("d") || "",
+        entry.getAttribute("href") || entry.getAttribute("xlink:href") || "",
+      ]);
+
+      const linkCategories = diagnostics.summarizeLinkCategories(
+        links.map((link) => link.getAttribute("href")),
+        window.location.href,
+      );
+      const actionCategories = diagnostics.summarizeActionCategories(
+        actions.map(
+          (action) =>
+            action.getAttribute("aria-label") ||
+            action.getAttribute("title") ||
+            action.textContent,
+        ),
+      );
+
+      const ancestorChain: Array<Record<string, unknown>> = [];
+      let ancestor: HTMLElement | null = element;
+      for (
+        let depth = 0;
+        ancestor && depth < 7;
+        depth += 1, ancestor = ancestor.parentElement
+      ) {
+        const attributeNames = diagnostics.sanitizeAttributeNames(
+          Array.from(ancestor.attributes).map((attribute) => attribute.name),
+        );
+        ancestorChain.push({
+          depth,
+          tag: ancestor.tagName.toLowerCase(),
+          role: normalizeSemanticValue(ancestor.getAttribute("role"), [
+            "alert",
+            "dialog",
+            "list",
+            "listitem",
+            "main",
+            "navigation",
+            "status",
+          ]),
+          ariaLive: normalizeSemanticValue(
+            ancestor.getAttribute("aria-live"),
+            ["assertive", "off", "polite"],
+          ),
+          dataAttributeNames: attributeNames.filter((name) =>
+            name.startsWith("data-"),
+          ),
+          childCount: diagnostics.bucketCount(ancestor.childElementCount),
+        });
+      }
+
+      const landmarkCounts = {
+        alerts: diagnostics.bucketCount(
+          element.querySelectorAll('[role="alert"]').length,
+        ),
+        dialogs: diagnostics.bucketCount(
+          element.querySelectorAll('[role="dialog"]').length,
+        ),
+        statuses: diagnostics.bucketCount(
+          element.querySelectorAll('[role="status"]').length,
+        ),
+        buttons: diagnostics.bucketCount(actions.length),
+        links: diagnostics.bucketCount(links.length),
+      };
+      const attributeNames = diagnostics.sanitizeAttributeNames(
+        Array.from(element.attributes).map((attribute) => attribute.name),
+      );
+      const structuralFingerprint =
+        diagnostics.hashStructuralTokens(structuralTokens);
+      const iconFingerprint = diagnostics.hashStructuralTokens(iconTokens);
+
+      return {
+        schemaVersion: 1,
+        trigger: input.trigger,
+        decision: {
+          suppress: input.decision?.suppress === true,
+          reason: input.decision?.reason || "candidate-only",
+          matchedPattern: input.decision?.matchedPattern,
+        },
+        candidate: {
+          tag: element.tagName.toLowerCase(),
+          role: normalizeSemanticValue(element.getAttribute("role"), [
+            "alert",
+            "dialog",
+            "listitem",
+            "status",
+          ]),
+          ariaLive: normalizeSemanticValue(
+            element.getAttribute("aria-live"),
+            ["assertive", "off", "polite"],
+          ),
+          hasAriaLabel: element.hasAttribute("aria-label"),
+          ariaLabelLength: diagnostics.bucketTextLength(
+            element.getAttribute("aria-label")?.length || 0,
+          ),
+          hasTitle: element.hasAttribute("title"),
+          titleLength: diagnostics.bucketTextLength(
+            element.getAttribute("title")?.length || 0,
+          ),
+          textLength: diagnostics.bucketTextLength(text.length),
+          childCount: diagnostics.bucketCount(element.childElementCount),
+          descendantCount: diagnostics.bucketCount(allElements.length - 1),
+          hasDismissControl: input.hasDismissControl,
+          dataAttributeNames: attributeNames.filter((name) =>
+            name.startsWith("data-"),
+          ),
+          semanticAttributeNames: attributeNames.filter(
+            (name) => !name.startsWith("data-"),
+          ),
+        },
+        structure: {
+          structuralFingerprint,
+          iconFingerprint,
+          sampledElementCount: allElements.length,
+          sampledIconElementCount: iconElements.length,
+          landmarkCounts,
+          ancestorChain,
+        },
+        routes: {
+          linkCategories,
+          actionCategories,
+        },
+        layout: {
+          connected: element.isConnected,
+          hiddenAttribute: element.hasAttribute("hidden"),
+          ariaHidden: element.getAttribute("aria-hidden") === "true",
+          display: normalizeSemanticValue(style.display, [
+            "block",
+            "contents",
+            "flex",
+            "grid",
+            "inline",
+            "inline-block",
+            "none",
+          ]),
+          visibility: normalizeSemanticValue(style.visibility, [
+            "collapse",
+            "hidden",
+            "visible",
+          ]),
+          width: diagnostics.bucketDimension(rect.width),
+          height: diagnostics.bucketDimension(rect.height),
+          viewportRegion: diagnostics.classifyViewportRegion({
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+          }),
+        },
+        runtime: {
+          documentVisibility: normalizeSemanticValue(
+            document.visibilityState,
+            ["hidden", "prerender", "visible"],
+          ),
+          windowFocused: isWindowFocused(),
+          online: navigator.onLine,
+          isSettling,
+          wakeGeneration,
+          lastPowerState: lastPowerState?.state || "none",
+          lastPowerStateAge: bucketPowerStateAge(
+            lastPowerState?.receivedAt,
+          ),
+        },
+      };
+    };
+
+    const recordCandidateDiagnostics = (
+      element: HTMLElement,
+      input: {
+        trigger: string;
+        decision?: {
+          suppress: boolean;
+          reason: string;
+          matchedPattern?: string;
+        };
+        hasDismissControl: boolean;
+      },
+    ): void => {
+      const diagnostics = buildInPageActivityCandidateDiagnostics(
+        element,
+        input,
+      );
+      if (!diagnostics) {
+        return;
+      }
+
+      const diagnosticsApi = getInPageNotificationDiagnostics();
+      if (!diagnosticsApi) {
+        return;
+      }
+      if (!diagnosticsApi.isPrivacySafeDiagnosticPayload(diagnostics)) {
+        log("In-page Facebook activity diagnostics rejected by privacy guard");
+        return;
+      }
+      const diagnosticState = diagnosticsApi.hashStructuralTokens([
+        JSON.stringify(diagnostics),
+      ]);
+      if (diagnosticStateByElement.get(element) === diagnosticState) {
+        return;
+      }
+      diagnosticStateByElement.set(element, diagnosticState);
+      log("In-page Facebook activity candidate diagnostics", diagnostics);
+    };
+
+    const inspectCandidate = (
+      candidate: Element,
+    ):
+      | {
+          element: HTMLElement;
+          reason: string;
+          matchedPattern?: string;
+          hasDismissControl: boolean;
+        }
+      | undefined => {
+      if (!(candidate instanceof HTMLElement)) {
+        return undefined;
+      }
+
+      const text = normalizeCardText(candidate.textContent);
+      if (!text || text.length > maxCandidateTextLength) {
+        return undefined;
+      }
+
+      const shellText = normalizeCardText(
+        [
+          candidate.getAttribute("aria-label"),
+          candidate.getAttribute("title"),
+          text,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      const hasDismissControl =
+        candidate.matches(dismissControlSelector) ||
+        candidate.querySelector(dismissControlSelector) !== null;
+      const policy = getNotificationDecisionPolicy();
+      const decision =
+        policy?.shouldSuppressInPageFacebookNotificationCard?.({
+          shellText,
+          text,
+          hasDismissControl,
+        });
+
+      if (!decision?.suppress) {
+        return undefined;
+      }
+
+      return {
+        element: candidate,
+        reason: decision.reason,
+        matchedPattern: decision.matchedPattern,
+        hasDismissControl,
+      };
+    };
+
+    const findSuppressibleCard = (
+      start: Element,
+    ): ReturnType<typeof inspectCandidate> => {
+      let current: Element | null = start;
+      let fallback: ReturnType<typeof inspectCandidate>;
+
+      for (
+        let depth = 0;
+        current && current !== document.body && depth < maxAncestorDepth;
+        depth += 1
+      ) {
+        const inspected = inspectCandidate(current);
+        if (inspected) {
+          if (inspected.hasDismissControl) {
+            return inspected;
+          }
+          fallback ??= inspected;
+        }
+        current = current.parentElement;
+      }
+
+      return fallback;
+    };
+
+    const findDiagnosticCard = (start: Element): HTMLElement | null => {
+      let current: Element | null = start;
+      for (
+        let depth = 0;
+        current && current !== document.body && depth < maxAncestorDepth;
+        depth += 1
+      ) {
+        if (current instanceof HTMLElement) {
+          const textLength = normalizeCardText(current.textContent).length;
+          const hasDismissControl =
+            current.matches(dismissControlSelector) ||
+            current.querySelector(dismissControlSelector) !== null;
+          const hasNotificationSemantics =
+            current.matches(notificationSemanticSelector) ||
+            current.querySelector(notificationSemanticSelector) !== null;
+          if (
+            textLength > 0 &&
+            textLength <= maxCandidateTextLength &&
+            hasDismissControl &&
+            hasNotificationSemantics
+          ) {
+            return current;
+          }
+        }
+        current = current.parentElement;
+      }
+      return null;
+    };
+
+    const suppressCard = (
+      card: NonNullable<ReturnType<typeof inspectCandidate>>,
+      trigger: string,
+    ): void => {
+      const { element } = card;
+      recordCandidateDiagnostics(element, {
+        trigger,
+        decision: {
+          suppress: true,
+          reason: card.reason,
+          matchedPattern: card.matchedPattern,
+        },
+        hasDismissControl: card.hasDismissControl,
+      });
+      const alreadySuppressed =
+        element.getAttribute(suppressedAttribute) === card.reason &&
+        element.getAttribute("aria-hidden") === "true" &&
+        element.hasAttribute("hidden") &&
+        element.style.getPropertyValue("display") === "none" &&
+        element.style.getPropertyPriority("display") === "important";
+      if (alreadySuppressed) {
+        return;
+      }
+
+      element.setAttribute(suppressedAttribute, card.reason);
+      element.setAttribute("aria-hidden", "true");
+      element.setAttribute("hidden", "");
+      element.style.setProperty("display", "none", "important");
+      log("In-page Facebook activity card suppressed", {
+        reason: card.reason,
+        matchedPattern: card.matchedPattern,
+        hadDismissControl: card.hasDismissControl,
+      });
+    };
+
+    const inspectElement = (element: Element, trigger: string): void => {
+      const diagnosticCard = findDiagnosticCard(element);
+      if (diagnosticCard) {
+        recordCandidateDiagnostics(diagnosticCard, {
+          trigger,
+          hasDismissControl: true,
+        });
+      }
+
+      const directMatch = findSuppressibleCard(element);
+      if (directMatch) {
+        suppressCard(directMatch, trigger);
+        return;
+      }
+
+      const seeds = Array.from(
+        element.querySelectorAll(notificationSeedSelector),
+      ).slice(0, maxSeedDescendants);
+      for (const seed of seeds) {
+        const nestedDiagnosticCard = findDiagnosticCard(seed);
+        if (nestedDiagnosticCard) {
+          recordCandidateDiagnostics(nestedDiagnosticCard, {
+            trigger,
+            hasDismissControl: true,
+          });
+        }
+        const match = findSuppressibleCard(seed);
+        if (match) {
+          suppressCard(match, trigger);
+        }
+      }
+    };
+
+    const inspectNode = (node: Node, trigger: string): void => {
+      const element =
+        node instanceof Element
+          ? node
+          : node.parentElement instanceof Element
+            ? node.parentElement
+            : null;
+      if (element) {
+        inspectElement(element, trigger);
+      }
+    };
+
+    const scanExistingCards = (trigger: string): void => {
+      const seeds = Array.from(
+        document.querySelectorAll(notificationSeedSelector),
+      ).slice(0, 200);
+      for (const seed of seeds) {
+        const diagnosticCard = findDiagnosticCard(seed);
+        if (diagnosticCard) {
+          recordCandidateDiagnostics(diagnosticCard, {
+            trigger,
+            hasDismissControl: true,
+          });
+        }
+        const match = findSuppressibleCard(seed);
+        if (match) {
+          suppressCard(match, trigger);
+        }
+      }
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "childList") {
+          mutation.addedNodes.forEach((node) =>
+            inspectNode(node, "added-node"),
+          );
+          continue;
+        }
+
+        if (attributeScanTimeoutId === null) {
+          attributeScanTimeoutId = window.setTimeout(() => {
+            attributeScanTimeoutId = null;
+            scanExistingCards("attribute-scan");
+          }, 100);
+        }
+      }
+    });
+
+    const start = (): void => {
+      if (!document.body) {
+        window.setTimeout(start, 250);
+        return;
+      }
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: [
+          "aria-label",
+          "aria-hidden",
+          "class",
+          "hidden",
+          "style",
+          "title",
+        ],
+      });
+      scanExistingCards("initial-scan");
+      log("In-page Facebook activity suppression active");
+    };
+
+    start();
+  };
+
+  setupInPageFacebookActivitySuppression();
 
   // ============================================================================
   // INCOMING CALL POPUP DETECTION

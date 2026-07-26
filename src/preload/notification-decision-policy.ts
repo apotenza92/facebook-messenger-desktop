@@ -101,6 +101,21 @@ type NotificationActivitySuppressionDecision = {
   matchedPattern?: string;
 };
 
+type InPageFacebookNotificationCardInput = {
+  shellText: string;
+  text: string;
+  hasDismissControl: boolean;
+};
+
+type InPageFacebookNotificationCardDecision = {
+  suppress: boolean;
+  reason:
+    | "group-management-card"
+    | "missing-notification-shell"
+    | "not-group-management";
+  matchedPattern?: string;
+};
+
 type MessengerMessageProofDecision = {
   allow: boolean;
   reason:
@@ -137,6 +152,9 @@ type NotificationDecisionPolicyApi = {
   shouldSuppressBrowserNotificationActivity?: (
     payload: NotificationPayload,
   ) => NotificationActivitySuppressionDecision;
+  shouldSuppressInPageFacebookNotificationCard?: (
+    input: InPageFacebookNotificationCardInput,
+  ) => InPageFacebookNotificationCardDecision;
   evaluateMessengerMessageProof?: (
     payload: NotificationPayload,
     candidate: NotificationCandidate,
@@ -1442,6 +1460,45 @@ function shouldSuppressBrowserNotificationActivity(
   };
 }
 
+function shouldSuppressInPageFacebookNotificationCard(
+  input: InPageFacebookNotificationCardInput,
+): InPageFacebookNotificationCardDecision {
+  const shellText = normalizeText(input.shellText);
+  const hasNotificationShell =
+    input.hasDismissControl ||
+    /(?:^|\s)new notifications?(?:\s|$)/.test(shellText) ||
+    /^notifications?$/.test(shellText);
+
+  if (!hasNotificationShell) {
+    return {
+      suppress: false,
+      reason: "missing-notification-shell",
+    };
+  }
+
+  const classification =
+    typeof notificationActivityPolicy.classifyGroupManagementNotification ===
+    "function"
+      ? notificationActivityPolicy.classifyGroupManagementNotification({
+          title: shellText,
+          body: input.text,
+        })
+      : null;
+
+  if (!classification?.isGroupManagement) {
+    return {
+      suppress: false,
+      reason: "not-group-management",
+    };
+  }
+
+  return {
+    suppress: true,
+    reason: "group-management-card",
+    matchedPattern: classification.matchedPattern,
+  };
+}
+
 const policyApi: NotificationDecisionPolicyApi = {
   resolveNativeNotificationTarget,
   resolveObservedSidebarNotificationTarget,
@@ -1461,6 +1518,7 @@ const policyApi: NotificationDecisionPolicyApi = {
           )
       : undefined,
   shouldSuppressBrowserNotificationActivity,
+  shouldSuppressInPageFacebookNotificationCard,
   evaluateMessengerMessageProof,
   shouldSnapshotFreshUnreadOnBoundary,
   classifyMutationMuteStateRecheckReason,

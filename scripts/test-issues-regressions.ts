@@ -63,6 +63,13 @@ const loadNotificationDisplayPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-display-policy.ts"));
 const loadNotificationTextPolicy = () =>
   require(path.join(APP_ROOT, "src/preload/notification-text-policy.ts"));
+const loadInPageNotificationDiagnostics = () =>
+  require(
+    path.join(
+      APP_ROOT,
+      "src/preload/in-page-notification-diagnostics.ts",
+    ),
+  );
 const loadNotificationHandler = () =>
   require(path.join(APP_ROOT, "src/main/notification-handler.ts"));
 const loadIncomingCallOverlayPolicy = () =>
@@ -3633,6 +3640,7 @@ const runIncomingCallIpcPolicyTests = () => {
 const runNotificationPolicyTests = () => {
   const notificationDecisionPolicy = loadNotificationDecisionPolicy();
   const notificationActivityPolicy = loadNotificationActivityPolicy();
+  const inPageNotificationDiagnostics = loadInPageNotificationDiagnostics();
   assert(
     typeof notificationDecisionPolicy.resolveNativeNotificationTarget ===
       "function",
@@ -3677,6 +3685,11 @@ const runNotificationPolicyTests = () => {
     "notification decision policy missing shouldSuppressBrowserNotificationActivity",
   );
   assert(
+    typeof notificationDecisionPolicy.shouldSuppressInPageFacebookNotificationCard ===
+      "function",
+    "notification decision policy missing shouldSuppressInPageFacebookNotificationCard",
+  );
+  assert(
     typeof notificationDecisionPolicy.evaluateMessengerMessageProof ===
       "function",
     "notification decision policy missing evaluateMessengerMessageProof",
@@ -3685,6 +3698,125 @@ const runNotificationPolicyTests = () => {
     typeof notificationActivityPolicy.isLikelyGlobalFacebookNotification ===
       "function",
     "notification activity policy missing isLikelyGlobalFacebookNotification",
+  );
+  assert(
+    typeof inPageNotificationDiagnostics.summarizeLinkCategories ===
+      "function",
+    "#62 in-page diagnostics missing privacy-safe link categorization",
+  );
+  assert(
+    typeof inPageNotificationDiagnostics.hashStructuralTokens === "function",
+    "#62 in-page diagnostics missing structural fingerprinting",
+  );
+  assert(
+    typeof inPageNotificationDiagnostics.isPrivacySafeDiagnosticPayload ===
+      "function",
+    "#62 in-page diagnostics missing a mechanical raw-field privacy guard",
+  );
+
+  const issue62LinkSummary =
+    inPageNotificationDiagnostics.summarizeLinkCategories(
+      [
+        "/messages/t/123456789",
+        "/groups/987654321/member_requests",
+        "/notifications/",
+        "https://example.org/private/path",
+      ],
+      "https://www.facebook.com/messages/t/111111111",
+    );
+  assertEqual(
+    issue62LinkSummary.categories["messenger-thread"],
+    1,
+    "#62 diagnostics should categorize Messenger thread links without retaining IDs",
+  );
+  assertEqual(
+    issue62LinkSummary.categories["group-admin"],
+    1,
+    "#62 diagnostics should categorize group-admin routes without retaining IDs",
+  );
+  assertEqual(
+    issue62LinkSummary.categories["facebook-notifications"],
+    1,
+    "#62 diagnostics should categorize Facebook notification routes",
+  );
+  assertEqual(
+    issue62LinkSummary.categories.external,
+    1,
+    "#62 diagnostics should categorize external routes without retaining URLs",
+  );
+  assertEqual(
+    JSON.stringify(issue62LinkSummary).includes("123456789") ||
+      JSON.stringify(issue62LinkSummary).includes("987654321") ||
+      JSON.stringify(issue62LinkSummary).includes("example.org"),
+    false,
+    "#62 diagnostics must not retain raw route IDs or external origins",
+  );
+  const issue62MessengerOriginLinkSummary =
+    inPageNotificationDiagnostics.summarizeLinkCategories(
+      ["/groups/246813579/member_requests"],
+      "https://www.messenger.com/t/135792468",
+    );
+  assertEqual(
+    issue62MessengerOriginLinkSummary.categories["group-admin"],
+    1,
+    "#62 diagnostics should categorize relative group-admin routes rendered on Messenger",
+  );
+  assertEqual(
+    JSON.stringify(issue62MessengerOriginLinkSummary).includes("246813579") ||
+      JSON.stringify(issue62MessengerOriginLinkSummary).includes("135792468"),
+    false,
+    "#62 Messenger-origin diagnostics must not retain raw route IDs",
+  );
+
+  const issue62AttributeNames =
+    inPageNotificationDiagnostics.sanitizeAttributeNames([
+      "data-pagelet",
+      "data-visualcompletion",
+      "aria-live",
+      "class",
+      "onclick",
+      "data-private-id",
+    ]);
+  assertEqual(
+    issue62AttributeNames.join(","),
+    "aria-live,data-pagelet,data-private-id,data-visualcompletion",
+    "#62 diagnostics should retain only safe semantic/data attribute names and never values",
+  );
+
+  const issue62StructuralFingerprint =
+    inPageNotificationDiagnostics.hashStructuralTokens([
+      "div",
+      "role:alert",
+      "aria-live",
+      "button",
+    ]);
+  assertEqual(
+    /^[a-f0-9]{8}$/.test(issue62StructuralFingerprint),
+    true,
+    "#62 diagnostics should emit a bounded opaque structural fingerprint",
+  );
+  assertEqual(
+    inPageNotificationDiagnostics.isPrivacySafeDiagnosticPayload({
+      structuralFingerprint: issue62StructuralFingerprint,
+      linkCategories: issue62LinkSummary,
+      dataAttributeNames: issue62AttributeNames,
+    }),
+    true,
+    "#62 diagnostics privacy guard should accept the categorical schema",
+  );
+  assertEqual(
+    inPageNotificationDiagnostics.isPrivacySafeDiagnosticPayload({
+      href: "/messages/t/123456789",
+    }),
+    false,
+    "#62 diagnostics privacy guard should reject raw href fields",
+  );
+  assertEqual(
+    inPageNotificationDiagnostics.isPrivacySafeDiagnosticPayload({
+      nested: { body: "private notification content" },
+    }),
+    false,
+    "#62 diagnostics privacy guard should reject raw notification body fields recursively",
   );
 
   const mutedIndividualMatch =
@@ -4721,6 +4853,25 @@ const runNotificationPolicyTests = () => {
     "#50 main-process display boundary should keep suppressing shared group-management classifications",
   );
   assert(
+    mainSource.includes("in-page-notification-diagnostics.js") &&
+      mainSource.includes(
+        "In-page notification diagnostics script injected successfully",
+      ) &&
+      /scriptPath:\s*inPageNotificationDiagnosticsScriptPath,[\s\S]{0,500}sanitizeCommonJsExports:\s*true/.test(
+        mainSource,
+    ),
+    "#62 privacy-safe in-page diagnostics should be injected before the notification observer",
+  );
+  assert(
+    mainSource.includes(
+      'safeName.startsWith("In-page Facebook activity")',
+    ) &&
+      mainSource.includes(
+        "isInPageFacebookActivityEvent\n          ? {}\n          : { url: event.sender.getURL() }",
+      ),
+    "#62 in-page activity diagnostics should not inherit the current page URL in the fallback-log envelope",
+  );
+  assert(
     mainSource.includes("getNotificationIconPath") &&
       mainSource.includes("shouldUseNativeMacBundleIcon") &&
       mainSource.includes('return getIconAssetPath("icon-128.png");') &&
@@ -4813,6 +4964,52 @@ const runNotificationPolicyTests = () => {
     participationRequestSuppressed,
     true,
     "#46 should suppress Facebook participation-request notifications",
+  );
+
+  const issue62InPageParticipationRequest =
+    notificationDecisionPolicy.shouldSuppressInPageFacebookNotificationCard({
+      shellText: "New notification",
+      text: "New notification 3 people requested to participate for the first time in Example Group 25m",
+      hasDismissControl: true,
+    });
+  assertEqual(
+    issue62InPageParticipationRequest.suppress,
+    true,
+    "#62 should suppress group-management activity rendered as an in-page Facebook notification card",
+  );
+  assertEqual(
+    issue62InPageParticipationRequest.reason,
+    "group-management-card",
+    "#62 in-page group-management suppression should record its boundary reason",
+  );
+
+  const issue62OrdinaryChatText =
+    notificationDecisionPolicy.shouldSuppressInPageFacebookNotificationCard({
+      shellText: "",
+      text: "I requested to participate for the first time in the planning discussion",
+      hasDismissControl: false,
+    });
+  assertEqual(
+    issue62OrdinaryChatText.suppress,
+    false,
+    "#62 ordinary chat text without an in-page notification shell should remain visible",
+  );
+  assertEqual(
+    issue62OrdinaryChatText.reason,
+    "missing-notification-shell",
+    "#62 ordinary chat text should fail the in-page notification shell requirement",
+  );
+
+  const issue62OrdinaryMessageCard =
+    notificationDecisionPolicy.shouldSuppressInPageFacebookNotificationCard({
+      shellText: "New message",
+      text: "New message Can you review this?",
+      hasDismissControl: true,
+    });
+  assertEqual(
+    issue62OrdinaryMessageCard.suppress,
+    false,
+    "#62 ordinary Messenger message cards should remain visible",
   );
 
   const sharedParticipationRequestSuppressed =
@@ -6136,6 +6333,30 @@ const runNotificationDisplayPolicyTests = () => {
       'sendNotification(\n          String(title),\n          String(body),\n          "NATIVE"',
     ),
     "#50 native Facebook notifications should pass title/body through without sidebar-derived title rewriting",
+  );
+  assert(
+    notificationInjectSource.includes(
+      "setupInPageFacebookActivitySuppression",
+    ) &&
+      notificationInjectSource.includes(
+        "shouldSuppressInPageFacebookNotificationCard",
+      ) &&
+      notificationInjectSource.includes(
+        "data-md-suppressed-facebook-activity",
+      ),
+    "#62 the preload should suppress matching in-page Facebook activity cards at their DOM presentation boundary",
+  );
+  assert(
+    notificationInjectSource.includes(
+      "In-page Facebook activity candidate diagnostics",
+    ) &&
+      notificationInjectSource.includes("structuralFingerprint") &&
+      notificationInjectSource.includes("iconFingerprint") &&
+      notificationInjectSource.includes("linkCategories") &&
+      notificationInjectSource.includes("ancestorChain") &&
+      notificationInjectSource.includes("dataAttributeNames") &&
+      notificationInjectSource.includes("lastPowerState"),
+    "#62 in-page candidate diagnostics should capture structural provenance without raw notification content",
   );
 };
 

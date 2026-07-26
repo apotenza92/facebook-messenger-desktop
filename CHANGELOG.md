@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-## [1.3.1-beta.41] - 2026-07-23
+## [1.3.1-beta.41] - 2026-07-26
+
+### Fixed
+
+- **Issue #62: suppress stale Facebook group-management cards inside Messenger** ([#62](https://github.com/apotenza92/facebook-messenger-desktop/issues/62))
+  - Detect group join, participation, and first-time-post review activity rendered as in-page Facebook notification cards, including cards revealed after sleep or inactivity.
+  - Hide only cards that match the shared group-management policy and an in-page notification shell, preserving ordinary Messenger message cards and chat text.
+  - Record privacy-safe structural diagnostics for in-page candidates: semantic roles, safe attribute names, route/action categories, opaque DOM/icon fingerprints, layout buckets, and wake/focus state without raw notification text, URLs, account IDs, thread IDs, classes, or attribute values.
+  - Add deterministic coverage for the reported participation-request shape and the ordinary-message boundaries.
 
 ### Changed
 

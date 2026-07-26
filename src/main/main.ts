@@ -3872,6 +3872,21 @@ async function injectNotificationScripts(
       "[Main Process] Failed to inject notification decision policy script:",
   });
 
+  const inPageNotificationDiagnosticsScriptPath = path.join(
+    __dirname,
+    "../preload/in-page-notification-diagnostics.js",
+  );
+  await executeInjectedScript({
+    scriptPath: inPageNotificationDiagnosticsScriptPath,
+    successMessage:
+      "[Main Process] In-page notification diagnostics script injected successfully",
+    missingMessage:
+      "[Main Process] In-page notification diagnostics script not found at:",
+    errorMessage:
+      "[Main Process] Failed to inject in-page notification diagnostics script:",
+    sanitizeCommonJsExports: true,
+  });
+
   const notificationScriptPath = path.join(
     __dirname,
     "../preload/notifications-inject.js",
@@ -10340,12 +10355,17 @@ function setupIpcHandlers(): void {
     try {
       const { event: name, payload } = data || {};
       const safeName = name || "fallback";
+      const isInPageFacebookActivityEvent =
+        typeof safeName === "string" &&
+        safeName.startsWith("In-page Facebook activity");
       pushNotificationDebugEvent({
         timestamp: Date.now(),
         source: "preload",
         event: safeName,
         webContentsId: event.sender.id,
-        url: event.sender.getURL(),
+        ...(isInPageFacebookActivityEvent
+          ? {}
+          : { url: event.sender.getURL() }),
         payload,
       });
       // Only log in dev mode to reduce noise, and wrap to handle EPIPE
