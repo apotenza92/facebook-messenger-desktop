@@ -584,13 +584,13 @@ jobs:
         shell: pwsh
         env:
           BRIDGE_CHANNELS: ${{ needs.resolve-legacy-updater-bridge.outputs.channels }}
+          RELEASE_CHANNEL: ${{ needs.validate-release.outputs.channel }}
         run: |
           New-Item -ItemType Directory -Force -Path artifacts/legacy-updater-bridge-build | Out-Null
-          $channels = if ($env:BRIDGE_CHANNELS) { @($env:BRIDGE_CHANNELS.Split(',')) } else { @() }
-          $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
-          @{ channels = $channels; version = $version } |
-            ConvertTo-Json -Compress |
-            Set-Content -NoNewline artifacts/legacy-updater-bridge-build/bridge-policy.json
+          node scripts/legacy-updater-bridge.mjs policy `
+            --channels "$env:BRIDGE_CHANNELS" `
+            --release-channel "$env:RELEASE_CHANNEL" `
+            --output artifacts/legacy-updater-bridge-build/bridge-policy.json
       - name: Upload exact bridge inputs
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:

@@ -162,6 +162,8 @@ export function assemblePublicRelease({
     const policy = JSON.parse(
       readRegularFile(policyPath, "legacy updater bridge policy"),
     );
+    if (!Array.isArray(policy.channels))
+      fail("Legacy updater bridge policy channels must be an array");
     const version = JSON.parse(
       readRegularFile(
         join(resolve(import.meta.dirname, ".."), "package.json"),
