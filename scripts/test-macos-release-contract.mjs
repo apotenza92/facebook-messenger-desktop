@@ -534,7 +534,7 @@ async function testLegacyUpdaterBridge() {
       releases: [completedBridge],
     }),
     ["beta"],
-    "An immutable-release rerun must reproduce the already-published bridge",
+    "A release rerun must reproduce the already-published bridge",
   );
   assert.deepEqual(
     await resolveLegacyBridgeChannels({
@@ -787,31 +787,6 @@ function testWorkflowContract() {
   );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
-  const releasePolicy = jobSource(workflow, "release-policy");
-  assert.match(releasePolicy, /environment:\s*release-policy/);
-  assert.match(releasePolicy, /permissions:\s*\n\s+contents:\s*read/);
-  assert.match(releasePolicy, /curl --fail/);
-  assert.match(
-    releasePolicy,
-    /repos\/\$\{GITHUB_REPOSITORY\}\/immutable-releases/,
-  );
-  assert.match(releasePolicy, /X-GitHub-Api-Version: 2026-03-10/);
-  assert.match(releasePolicy, /jq -e '\.enabled == true'/);
-  assert.doesNotMatch(releasePolicy, /--request|-X\s|gh api/);
-  assert.doesNotMatch(releasePolicy, /\$\{\{\s*github\.token\s*\}\}/);
-  assert.doesNotMatch(
-    releasePolicy,
-    /\$\{\{\s*secrets\.(?!IMMUTABLE_RELEASES_READ_TOKEN)/,
-  );
-  assert.equal(
-    (workflow.match(/secrets\.IMMUTABLE_RELEASES_READ_TOKEN/g) ?? []).length,
-    1,
-    "The immutable-release read token must be isolated to one policy step",
-  );
-  assert.match(
-    jobSource(workflow, "release"),
-    /needs:\s*\[[^\]]*release-policy/,
-  );
   assert.match(
     jobSource(workflow, "release"),
     /environment:\s*\n\s+name:\s*\$\{\{ needs\.validate-release\.outputs\.release_environment \}\}/,
@@ -952,7 +927,7 @@ function testWorkflowContract() {
     assert.match(
       jobSource(workflow, storeJob),
       /needs:\s*\[[^\]]*release[^\]]*\]/,
-      `${storeJob} must wait for the immutable public release boundary`,
+      `${storeJob} must wait for the public release boundary`,
     );
   }
   const homebrewCheckouts = workflow.match(

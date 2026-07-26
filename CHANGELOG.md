@@ -17,7 +17,7 @@
 - Keep Electron's signed automatic updater and stable/beta metadata macOS-only.
 - Preserve Windows and Linux update discovery through GitHub Releases while SHA-256 authenticating exact installers, DEB/RPM packages, and AppImages before execution, elevation, or handoff.
 - Build and test native Apple Silicon, Intel Mac, Windows ARM64/x64, and Linux ARM64/x64 packages on their matching hosted runners.
-- Harden releases with Developer ID signing, notarisation, stapling, Gatekeeper assessment, native macOS N-1 update tests, exact asset contracts, checksums, provenance, immutable-release policy checks, and protected publication environments.
+- Harden releases with Developer ID signing, notarisation, stapling, Gatekeeper assessment, native macOS N-1 update tests, exact asset contracts, checksums, provenance, and protected publication environments.
 - Publish a single exact-tag compatibility bridge for existing Windows and Linux auto-update clients, then keep subsequent non-macOS versions on the verified manual or package-manager path.
 
 ## [1.3.1-beta.40] - 2026-07-13
