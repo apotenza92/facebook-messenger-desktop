@@ -885,6 +885,11 @@ function testWorkflowContract() {
     /"--extract-certificates",\s*certificatePrefix/,
   );
   assert.match(windowsInstallerTest, /\$ProcessTimeoutMilliseconds = 300000/);
+  assert.match(
+    windowsInstallerTest,
+    /\$deadline = \[DateTime\]::UtcNow\.AddMilliseconds\(\$ProcessTimeoutMilliseconds\)/,
+  );
+  assert.match(windowsInstallerTest, /with remaining paths:/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);

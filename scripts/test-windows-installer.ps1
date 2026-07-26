@@ -120,12 +120,14 @@ foreach ($product in $products) {
   if (-not $uninstaller) { throw "NSIS uninstaller was not installed for $($product.Prefix)" }
   $installDirectory = $uninstaller.Directory.FullName
   [void](Start-ExactProcess $uninstaller.FullName @('/S') $environment $true)
-  $deadline = [DateTime]::UtcNow.AddSeconds(30)
+  $deadline = [DateTime]::UtcNow.AddMilliseconds($ProcessTimeoutMilliseconds)
   while ((Test-Path -LiteralPath $installDirectory) -and [DateTime]::UtcNow -lt $deadline) {
     Start-Sleep -Milliseconds 500
   }
   if (Test-Path -LiteralPath $installDirectory) {
-    throw "NSIS uninstall left install directory $installDirectory"
+    $remaining = Get-ChildItem -LiteralPath $installDirectory -Force -Recurse -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty FullName
+    throw "NSIS uninstall left install directory $installDirectory with remaining paths: $($remaining -join ', ')"
   }
   Write-Host "Verified NSIS install, native runtime launch, and uninstall: $($product.Prefix) $Arch"
 }
