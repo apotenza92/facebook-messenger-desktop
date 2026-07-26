@@ -801,6 +801,10 @@ function testWorkflowContract() {
     join(repositoryRoot, "scripts", "test-windows-installer.ps1"),
     "utf8",
   );
+  const linuxVmSmokeTest = readFileSync(
+    join(repositoryRoot, "scripts", "test-issue53-linux-vm-smoke.sh"),
+    "utf8",
+  );
   const afterPackScript = readFileSync(
     join(repositoryRoot, "scripts", "after-pack.js"),
     "utf8",
@@ -889,7 +893,15 @@ function testWorkflowContract() {
     windowsInstallerTest,
     /\$deadline = \[DateTime\]::UtcNow\.AddMilliseconds\(\$ProcessTimeoutMilliseconds\)/,
   );
+  assert(
+    windowsInstallerTest.includes(
+      `@('/S', "/D=$installDirectory")`,
+    ),
+    "Windows installer smoke must use an explicit isolated installation directory",
+  );
+  assert.doesNotMatch(windowsInstallerTest, /Join-Path \$environment\.LOCALAPPDATA 'Programs'/);
   assert.match(windowsInstallerTest, /with remaining paths:/);
+  assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak run --user/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);

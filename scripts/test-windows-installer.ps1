@@ -96,12 +96,12 @@ foreach ($product in $products) {
   $smokeRoot = Join-Path $env:RUNNER_TEMP "messenger-nsis-$($product.DataName)-$Arch"
   $profile = Join-Path $smokeRoot 'profile'
   $temporaryDirectory = Join-Path $smokeRoot 'tmp'
+  $installDirectory = Join-Path $smokeRoot 'installation'
   New-Item -ItemType Directory -Force -Path $profile, $temporaryDirectory | Out-Null
   $environment = New-ExactEnvironment $profile $temporaryDirectory
 
-  [void](Start-ExactProcess (Resolve-Path $installer) @('/S') $environment $true)
-  $programs = Join-Path $environment.LOCALAPPDATA 'Programs'
-  $application = Get-ChildItem $programs -Recurse -Filter $product.Executable |
+  [void](Start-ExactProcess (Resolve-Path $installer) @('/S', "/D=$installDirectory") $environment $true)
+  $application = Get-ChildItem $installDirectory -Recurse -Filter $product.Executable |
     Select-Object -First 1
   if (-not $application) { throw "NSIS did not install an application executable for $($product.Prefix)" }
   Test-PeMachine $application.FullName $expected
@@ -116,9 +116,8 @@ foreach ($product in $products) {
   }
   taskkill /PID $applicationProcess.Id /T /F | Out-Null
 
-  $uninstaller = Get-ChildItem $programs -Recurse -Filter 'Uninstall*.exe' | Select-Object -First 1
+  $uninstaller = Get-ChildItem $installDirectory -Recurse -Filter 'Uninstall*.exe' | Select-Object -First 1
   if (-not $uninstaller) { throw "NSIS uninstaller was not installed for $($product.Prefix)" }
-  $installDirectory = $uninstaller.Directory.FullName
   [void](Start-ExactProcess $uninstaller.FullName @('/S') $environment $true)
   $deadline = [DateTime]::UtcNow.AddMilliseconds($ProcessTimeoutMilliseconds)
   while ((Test-Path -LiteralPath $installDirectory) -and [DateTime]::UtcNow -lt $deadline) {

@@ -37,7 +37,7 @@ flatpak_smoke() {
       LANG=C.UTF-8 \
       PATH=/usr/local/bin:/usr/bin:/bin \
       TMPDIR="$smoke_tmp" \
-      flatpak run --user \
+      dbus-run-session -- flatpak run --user \
         --env=MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS=true \
         --env=SKIP_SINGLE_INSTANCE_LOCK=true \
         "$app_id"
