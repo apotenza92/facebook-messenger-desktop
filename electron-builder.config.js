@@ -126,11 +126,13 @@ const nsisConfig = {
   perMachine: false,
   runAfterFinish: false,
   differentialPackage: false,
+  // Avoid the NSIS 7z plugin's partial executable extraction on native
+  // Windows ARM64 runners while retaining the normal NSIS install flow.
+  useZip: true,
   deleteAppDataOnUninstall: true,
   include: 'scripts/uninstaller.nsh',
   installerIcon: icons.ico,
   uninstallerIcon: icons.ico,
-
 };
 
 // Linux configuration

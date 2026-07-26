@@ -917,6 +917,7 @@ function testWorkflowContract() {
   assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak uninstall --user/);
   assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak info --user/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
+  assert.equal(loadBuilderConfig({}, ["--win"]).nsis.useZip, true);
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);
   assert.match(afterPackScript, /RESOLVED=\$\(readlink -f -- "\$SELF"/);
