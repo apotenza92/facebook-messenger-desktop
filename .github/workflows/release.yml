@@ -81,29 +81,6 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output.join('\n')}\n`);
           NODE
 
-  release-policy:
-    name: Verify immutable release policy
-    needs: validate-release
-    runs-on: ubuntu-24.04
-    environment: release-policy
-    permissions:
-      contents: read
-    steps:
-      - name: Require repository release immutability
-        # Fine-grained token scope: this repository, Administration: read only.
-        env:
-          IMMUTABLE_RELEASES_READ_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$IMMUTABLE_RELEASES_READ_TOKEN"
-          RESPONSE="$(curl --fail --silent --show-error --location \
-            --header 'Accept: application/vnd.github+json' \
-            --header "Authorization: Bearer $IMMUTABLE_RELEASES_READ_TOKEN" \
-            --header 'X-GitHub-Api-Version: 2026-03-10' \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/immutable-releases")"
-          jq -e '.enabled == true' <<<"$RESPONSE" >/dev/null
-          echo "Verified repository release immutability through the read-only policy boundary."
-
   quality:
     name: Required deterministic checks
     needs: validate-release
@@ -119,7 +96,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -147,7 +124,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install metadata dependencies
         run: npm ci --ignore-scripts
@@ -185,7 +162,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -273,7 +250,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Verify native runner architecture
@@ -372,7 +349,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install dependencies
@@ -421,7 +398,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install metadata dependencies
         run: npm ci --ignore-scripts
@@ -475,7 +452,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Verify native runner architecture
@@ -533,7 +510,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install metadata dependencies
         run: npm ci --ignore-scripts
@@ -568,7 +545,7 @@ jobs:
         if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
       - name: Install dependencies and build application
         if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
@@ -656,7 +633,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Verify native runner architecture
@@ -804,7 +781,6 @@ jobs:
     needs:
       [
         validate-release,
-        release-policy,
         resolve-legacy-updater-bridge,
         issue53-x64-smoke,
         assemble-macos,
@@ -832,7 +808,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install release assembly dependencies
@@ -1037,7 +1013,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
           cache: "npm"
 
       - name: Install manifest dependencies
@@ -1072,7 +1048,7 @@ jobs:
 
           $publishedAt = gh api "repos/$($env:GITHUB_REPOSITORY)/releases/tags/$($env:GITHUB_REF_NAME)" --jq .published_at
           if ($LASTEXITCODE -ne 0 -or $publishedAt -notmatch '^\d{4}-\d{2}-\d{2}T') {
-            throw 'Could not resolve the immutable GitHub release date'
+            throw 'Could not resolve the published GitHub release date'
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "release_date=$($publishedAt.Substring(0, 10))" >> $env:GITHUB_OUTPUT

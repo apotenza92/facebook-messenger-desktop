@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
@@ -8,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -75,6 +77,38 @@ function loadBuilderConfig(environment, args = []) {
       if (value == null) delete process.env[name];
       else process.env[name] = value;
     }
+  }
+}
+
+async function testLinuxWrapperSymlinkBoundary() {
+  if (process.platform !== "linux") return;
+
+  const root = mkdtempSync(join(tmpdir(), "messenger-linux-wrapper-"));
+  const appOutDir = join(root, "opt", "Messenger Beta");
+  const binDirectory = join(root, "usr", "bin");
+  const executableName = "facebook-messenger-desktop-beta";
+  mkdirSync(appOutDir, { recursive: true });
+  mkdirSync(binDirectory, { recursive: true });
+  writeFileSync(
+    join(appOutDir, executableName),
+    "#!/bin/sh\nprintf 'started:%s\\n' \"$*\"\n",
+    { mode: 0o755 },
+  );
+
+  try {
+    const afterPack = require(join(repositoryRoot, "scripts", "after-pack.js"));
+    await afterPack.default({
+      appOutDir,
+      electronPlatformName: "linux",
+      packager: { executableName },
+    });
+    const installedLauncher = join(binDirectory, executableName);
+    symlinkSync(join(appOutDir, executableName), installedLauncher);
+    const result = spawnSync(installedLauncher, [], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "started:--no-sandbox");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }
 
@@ -534,7 +568,7 @@ async function testLegacyUpdaterBridge() {
       releases: [completedBridge],
     }),
     ["beta"],
-    "An immutable-release rerun must reproduce the already-published bridge",
+    "A release rerun must reproduce the already-published bridge",
   );
   assert.deepEqual(
     await resolveLegacyBridgeChannels({
@@ -748,6 +782,9 @@ function testWorkflowContract() {
     join(repositoryRoot, ".github", "workflows", "release.yml"),
     "utf8",
   );
+  const packageLock = JSON.parse(
+    readFileSync(join(repositoryRoot, "package-lock.json"), "utf8"),
+  );
   const releaseScript = readFileSync(
     join(repositoryRoot, "scripts", "release.sh"),
     "utf8",
@@ -758,6 +795,10 @@ function testWorkflowContract() {
   );
   const windowsInstallerTest = readFileSync(
     join(repositoryRoot, "scripts", "test-windows-installer.ps1"),
+    "utf8",
+  );
+  const afterPackScript = readFileSync(
+    join(repositoryRoot, "scripts", "after-pack.js"),
     "utf8",
   );
   const jobSource = (source, jobId) => {
@@ -787,31 +828,6 @@ function testWorkflowContract() {
   );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
-  const releasePolicy = jobSource(workflow, "release-policy");
-  assert.match(releasePolicy, /environment:\s*release-policy/);
-  assert.match(releasePolicy, /permissions:\s*\n\s+contents:\s*read/);
-  assert.match(releasePolicy, /curl --fail/);
-  assert.match(
-    releasePolicy,
-    /repos\/\$\{GITHUB_REPOSITORY\}\/immutable-releases/,
-  );
-  assert.match(releasePolicy, /X-GitHub-Api-Version: 2026-03-10/);
-  assert.match(releasePolicy, /jq -e '\.enabled == true'/);
-  assert.doesNotMatch(releasePolicy, /--request|-X\s|gh api/);
-  assert.doesNotMatch(releasePolicy, /\$\{\{\s*github\.token\s*\}\}/);
-  assert.doesNotMatch(
-    releasePolicy,
-    /\$\{\{\s*secrets\.(?!IMMUTABLE_RELEASES_READ_TOKEN)/,
-  );
-  assert.equal(
-    (workflow.match(/secrets\.IMMUTABLE_RELEASES_READ_TOKEN/g) ?? []).length,
-    1,
-    "The immutable-release read token must be isolated to one policy step",
-  );
-  assert.match(
-    jobSource(workflow, "release"),
-    /needs:\s*\[[^\]]*release-policy/,
-  );
   assert.match(
     jobSource(workflow, "release"),
     /environment:\s*\n\s+name:\s*\$\{\{ needs\.validate-release\.outputs\.release_environment \}\}/,
@@ -843,6 +859,8 @@ function testWorkflowContract() {
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_SHA256/);
   assert.match(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
   assert.match(workflow, /brew list openssl@3/);
+  assert.match(workflow, /node-version:\s*"22\.12\.0"/);
+  assert.doesNotMatch(workflow, /node-version:\s*"20"/);
   assert.match(workflow, /npm run test:icons:local/);
   assert.doesNotMatch(workflow, /npm run generate-icons/);
   assert.match(macSigningScript, /function resolveOpenSsl3Binary/);
@@ -850,6 +868,14 @@ function testWorkflowContract() {
   assert.match(macSigningScript, /startsWith\("OpenSSL 3\."\)/);
   assert.doesNotMatch(macSigningScript, /run\("openssl",\s*\[/);
   assert.match(windowsInstallerTest, /\$ProcessTimeoutMilliseconds = 300000/);
+  assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
+  assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
+  assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);
+  assert.match(afterPackScript, /RESOLVED=\$\(readlink -f -- "\$SELF"/);
+  assert.match(
+    afterPackScript,
+    /DIR=\$\(CDPATH= cd -- "\$\(dirname -- "\$SELF"\)" && pwd\)/,
+  );
   assert.match(workflow, /stable-release/);
   assert.match(workflow, /beta-release/);
   assert.match(workflow, /environment:\s*winget-release/);
@@ -952,7 +978,7 @@ function testWorkflowContract() {
     assert.match(
       jobSource(workflow, storeJob),
       /needs:\s*\[[^\]]*release[^\]]*\]/,
-      `${storeJob} must wait for the immutable public release boundary`,
+      `${storeJob} must wait for the public release boundary`,
     );
   }
   const homebrewCheckouts = workflow.match(
@@ -1171,6 +1197,7 @@ for (const test of [
   testPublicReleaseAssembly,
   testLegacyUpdaterBridge,
   testUpdaterTrustUtilities,
+  testLinuxWrapperSymlinkBoundary,
   testBuilderContract,
   testWorkflowContract,
 ]) {

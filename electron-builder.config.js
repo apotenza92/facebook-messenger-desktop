@@ -124,6 +124,7 @@ const winConfig = {
 const nsisConfig = {
   oneClick: true,
   perMachine: false,
+  runAfterFinish: false,
   differentialPackage: false,
   deleteAppDataOnUninstall: true,
   include: 'scripts/uninstaller.nsh',

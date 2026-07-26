@@ -5,7 +5,7 @@ Electron desktop app wrapping Facebook Messages with native integrations for mac
 ## Current stack
 
 - Electron 40, TypeScript, electron-builder, electron-updater
-- Node.js 20+
+- Node.js 22.12+
 - Playwright for GUI automation
 
 ## Start here

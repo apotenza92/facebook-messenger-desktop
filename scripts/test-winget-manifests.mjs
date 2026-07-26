@@ -138,7 +138,7 @@ for (const channel of ["stable", "beta"]) {
           ...options,
           x64Url: options.x64Url.replace("v1.3.2", "v1.3.1"),
         }),
-      /immutable release asset/,
+      /versioned release asset/,
     );
     assert.throws(
       () => createWingetManifests({ ...options, releaseDate: "2026-02-30" }),

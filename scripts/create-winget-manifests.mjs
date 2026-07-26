@@ -80,7 +80,7 @@ function assertHttpsReleaseUrl(url, expectedName, version) {
   const expectedPath =
     `/apotenza92/facebook-messenger-desktop/releases/download/v${version}/${expectedName}`.toLowerCase();
   if (decodeURIComponent(parsed.pathname).toLowerCase() !== expectedPath) {
-    fail(`Installer URL does not match the immutable release asset ${expectedName}`);
+    fail(`Installer URL does not match the versioned release asset ${expectedName}`);
   }
 }
 
