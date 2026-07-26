@@ -124,6 +124,39 @@ function decodeBase64(value, label) {
   return decoded;
 }
 
+function resolveOpenSsl3Binary() {
+  const candidates = [
+    process.env.MESSENGER_OPENSSL_BIN,
+    "/opt/homebrew/opt/openssl@3/bin/openssl",
+    "/usr/local/opt/openssl@3/bin/openssl",
+  ].filter(Boolean);
+  const brewPrefix = spawnSync("brew", ["--prefix", "openssl@3"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (brewPrefix.status === 0 && brewPrefix.stdout.trim()) {
+    candidates.push(join(brewPrefix.stdout.trim(), "bin", "openssl"));
+  }
+
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    const version = spawnSync(candidate, ["version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (
+      version.status === 0 &&
+      `${version.stdout}${version.stderr}`.startsWith("OpenSSL 3.")
+    ) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "OpenSSL 3 from Homebrew is required to import the release certificate.",
+  );
+}
+
 function parseKeychainList(output) {
   return output
     .split("\n")
@@ -258,7 +291,8 @@ try {
     { mode: 0o600 },
   );
 
-  run("openssl", [
+  const opensslBinary = resolveOpenSsl3Binary();
+  run(opensslBinary, [
     "pkcs12",
     "-legacy",
     "-in",
@@ -269,7 +303,7 @@ try {
     "-out",
     combinedPemPath,
   ]);
-  run("openssl", [
+  run(opensslBinary, [
     "pkcs12",
     "-legacy",
     "-export",

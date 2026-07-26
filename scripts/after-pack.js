@@ -75,7 +75,14 @@ function wrapLinuxExecutable(context) {
 
   const wrapper = `#!/bin/sh
 set -eu
-DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SELF="$0"
+if command -v readlink >/dev/null 2>&1; then
+  RESOLVED=$(readlink -f -- "$SELF" 2>/dev/null || true)
+  if [ -n "$RESOLVED" ]; then
+    SELF="$RESOLVED"
+  fi
+fi
+DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 
 for arg in "$@"; do
   if [ "$arg" = "--no-sandbox" ]; then

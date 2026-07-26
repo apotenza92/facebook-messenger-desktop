@@ -214,8 +214,8 @@ jobs:
           sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
           sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
 
-      - name: Generate icons
-        run: npm run generate-icons
+      - name: Verify tracked icon assets
+        run: npm run test:icons:local
 
       - name: Build application
         run: npm run build
@@ -285,8 +285,11 @@ jobs:
         run: npm ci
         timeout-minutes: 10
 
-      - name: Generate icons
-        run: npm run generate-icons
+      - name: Verify tracked icon assets
+        run: npm run test:icons:local
+
+      - name: Ensure OpenSSL 3 is available for certificate import
+        run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
 
       - name: Build application
         run: npm run build
@@ -486,8 +489,8 @@ jobs:
         run: npm ci
         timeout-minutes: 10
 
-      - name: Generate icons
-        run: npm run generate-icons
+      - name: Verify tracked icon assets
+        run: npm run test:icons:local
 
       - name: Build application
         run: npm run build
@@ -569,7 +572,7 @@ jobs:
           cache: "npm"
       - name: Install dependencies and build application
         if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
-        run: npm ci && npm run generate-icons && npm run build
+        run: npm ci && npm run test:icons:local && npm run build
         timeout-minutes: 20
       - name: Build exact universal compatibility installers
         if: needs.resolve-legacy-updater-bridge.outputs.enabled == 'true'
@@ -692,8 +695,8 @@ jobs:
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.electronjs.Electron2.BaseApp//24.08
 
-      - name: Generate icons
-        run: npm run generate-icons
+      - name: Verify tracked icon assets
+        run: npm run test:icons:local
 
       - name: Build application
         run: npm run build
