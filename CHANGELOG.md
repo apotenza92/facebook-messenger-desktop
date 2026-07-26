@@ -2,9 +2,25 @@
 
 ## Unreleased
 
+## [1.3.1-beta.42] - 2026-07-26
+
 ### Fixed
 
-- Repair hosted native packaging by using Node.js 22.12, a Windows ARM64-capable Sharp build, a non-launching silent NSIS installer, explicit Homebrew OpenSSL 3 certificate import, and symlink-safe Linux package launchers.
+- Repair hosted native packaging by using Node.js 22.12, a Windows ARM64-capable Sharp build, a non-launching silent NSIS installer, explicit Homebrew OpenSSL 3 certificate import, portable macOS certificate extraction, and symlink-safe Linux package launchers.
+- **Issue #62: suppress stale Facebook group-management cards inside Messenger** ([#62](https://github.com/apotenza92/facebook-messenger-desktop/issues/62))
+  - Detect group join, participation, and first-time-post review activity rendered as in-page Facebook notification cards, including cards revealed after sleep or inactivity.
+  - Hide only cards that match the shared group-management policy and an in-page notification shell, preserving ordinary Messenger message cards and chat text.
+  - Record privacy-safe structural diagnostics for in-page candidates: semantic roles, safe attribute names, route/action categories, opaque DOM/icon fingerprints, layout buckets, and wake/focus state without raw notification text, URLs, account IDs, thread IDs, classes, or attribute values.
+  - Add deterministic coverage for the reported participation-request shape and the ordinary-message boundaries.
+
+### Changed
+
+- Keep Electron's signed automatic updater and stable/beta metadata macOS-only.
+- Preserve Windows and Linux update discovery through GitHub Releases while SHA-256 authenticating exact installers, DEB/RPM packages, and AppImages before execution, elevation, or handoff.
+- Build and test native Apple Silicon, Intel Mac, Windows ARM64/x64, and Linux ARM64/x64 packages on their matching hosted runners.
+- Harden releases with Developer ID signing, notarisation, stapling, Gatekeeper assessment, native macOS N-1 update tests, exact asset contracts, checksums, provenance, and protected publication environments.
+- Publish a single exact-tag compatibility bridge for existing Windows and Linux auto-update clients, then keep subsequent non-macOS versions on the verified manual or package-manager path.
+- Supersede the unchanged `v1.3.1-beta.41` tag, which did not produce a GitHub release, without rewriting its history.
 
 ## [1.3.1-beta.41] - 2026-07-26
 
