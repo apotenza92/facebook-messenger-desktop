@@ -1016,6 +1016,16 @@ function testWorkflowContract() {
   assert.match(bridgeBuilder, /-LegacyBridge/);
   assert.match(bridgeBuilder, /legacy-updater-bridge\.mjs policy/);
   assert.doesNotMatch(bridgeBuilder, /ConvertTo-Json/);
+  assert.doesNotMatch(
+    bridgeBuilder,
+    /name:\s*Setup Node\.js\s*\n\s*if:/,
+    "The policy-only path must still set up the pinned Node.js runtime",
+  );
+  assert.match(
+    bridgeBuilder,
+    /name:\s*Install policy dependencies[\s\S]*?npm ci --ignore-scripts[\s\S]*?name:\s*Record exact bridge policy/,
+    "The empty-bridge policy path must install its metadata dependencies before recording policy",
+  );
   assert.match(
     bridgeBuilder,
     /needs\.resolve-legacy-updater-bridge\.outputs\.enabled == 'true'/,
