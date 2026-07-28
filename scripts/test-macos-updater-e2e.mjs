@@ -7,13 +7,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -355,6 +356,48 @@ function readEvents(resultPath) {
     .map((line) => JSON.parse(line));
 }
 
+export function parseExecutableProcesses(
+  processTable,
+  executablePath,
+  excludedPid = null,
+) {
+  return String(processTable)
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*(\d+)\s+(.+)$/))
+    .filter(Boolean)
+    .map((match) => ({
+      command: match[2],
+      pid: Number(match[1]),
+    }))
+    .filter(
+      ({ command, pid }) =>
+        pid !== excludedPid &&
+        (command === executablePath ||
+          command.startsWith(`${executablePath} `)),
+    );
+}
+
+function updaterMarkerPath(contract) {
+  return join(
+    homedir(),
+    "Library",
+    "Application Support",
+    contract.channel === "beta" ? "Messenger-Beta" : "Messenger",
+    "updater-e2e-marker.json",
+  );
+}
+
+function cleanupOwnedUpdaterMarker(markerPath, marker) {
+  if (!existsSync(markerPath)) return;
+  const storedMarker = String(
+    JSON.parse(readFileSync(markerPath, "utf8"))?.marker ?? "",
+  );
+  if (storedMarker !== marker) {
+    fail(`Refusing to remove an updater marker not owned by this test: ${markerPath}`);
+  }
+  rmSync(markerPath);
+}
+
 async function waitForEvent(resultPath, event, child, timeout = 180_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -367,6 +410,47 @@ async function waitForEvent(resultPath, event, child, timeout = 180_000) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
   fail(`Timed out waiting for ${event}`);
+}
+
+async function waitForAutomaticRelaunch({
+  appPath,
+  executablePath,
+  priorPid,
+  version,
+  timeout = 180_000,
+}) {
+  const deadline = Date.now() + timeout;
+  let observedVersion = null;
+  while (Date.now() < deadline) {
+    try {
+      observedVersion = readPlist(appPath, "CFBundleShortVersionString");
+    } catch {
+      observedVersion = null;
+    }
+    if (observedVersion === version) {
+      const processes = parseExecutableProcesses(
+        run("ps", ["-axo", "pid=,command="]),
+        executablePath,
+        priorPid,
+      );
+      if (processes.length === 1) {
+        return {
+          executablePath,
+          pid: processes[0].pid,
+          version: observedVersion,
+        };
+      }
+      if (processes.length > 1) {
+        fail(
+          `Automatic updater relaunch produced multiple app processes at ${executablePath}: ${processes.map(({ pid }) => pid).join(", ")}`,
+        );
+      }
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  }
+  fail(
+    `Timed out waiting for automatic updater relaunch at ${executablePath}; installed version=${observedVersion ?? "unavailable"}`,
+  );
 }
 
 function createLaunchEnvironment({
@@ -397,24 +481,6 @@ function createLaunchEnvironment({
   };
 }
 
-function prepareUserData(home, contract) {
-  const directory = join(
-    home,
-    "Library",
-    "Application Support",
-    contract.channel === "beta" ? "Messenger-Beta" : "Messenger",
-  );
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  writeFileSync(
-    join(directory, "move-to-applications-prompted.json"),
-    '{"prompted":true}\n',
-  );
-  writeFileSync(
-    join(directory, "update-frequency.json"),
-    '{"frequency":"never"}\n',
-  );
-}
-
 async function launchScenario({
   appPath,
   contract,
@@ -429,15 +495,15 @@ async function launchScenario({
   const home = join(workspace, `${name}-home`);
   const temporaryDirectory = join(workspace, `${name}-tmp`);
   const marker = `messenger-updater-${name}-marker`;
+  const markerPath = updaterMarkerPath(contract);
+  if (existsSync(markerPath)) {
+    fail(`Updater E2E marker already exists: ${markerPath}`);
+  }
   mkdirSync(home, { recursive: true, mode: 0o700 });
   mkdirSync(temporaryDirectory, { recursive: true, mode: 0o700 });
-  prepareUserData(home, contract);
   const { server, url } = await serve(feedDirectory);
-  const executablePath = join(
-    appPath,
-    "Contents",
-    "MacOS",
-    contract.executableName,
+  const executablePath = realpathSync(
+    join(appPath, "Contents", "MacOS", contract.executableName),
   );
   const environment = createLaunchEnvironment({
     feedUrl: url,
@@ -454,20 +520,27 @@ async function launchScenario({
     env: environment,
     stdio: "ignore",
   });
+  let preserveMarker = false;
   try {
     const result = await waitForEvent(resultPath, expectedEvent, child);
+    preserveMarker = expectedEvent === "update-downloaded";
     return {
+      appPath,
       child,
       environment,
       executablePath,
       home,
       marker,
+      markerPath,
       result,
       resultPath,
       temporaryDirectory,
     };
   } finally {
     server.close();
+    if (!preserveMarker) {
+      cleanupOwnedUpdaterMarker(markerPath, marker);
+    }
   }
 }
 
@@ -530,6 +603,9 @@ export async function main() {
   const currentTag = option("--current-tag");
   const candidate = resolve(option("--candidate"));
   const bootstrapTag = option("--bootstrap-tag", "");
+  const retainWorkspaceOnFailure = process.argv.includes(
+    "--retain-workspace-on-failure",
+  );
   if (!["stable", "beta"].includes(channel))
     fail("--channel must be stable or beta");
   if (!currentTag || !parseVersion(currentTag)) fail("--current-tag is required");
@@ -575,6 +651,7 @@ export async function main() {
   const workspace = mkdtempSync(join(tmpdir(), "messenger-updater-e2e-"));
   const certificateDirectory = join(workspace, "certificates");
   mkdirSync(certificateDirectory);
+  let succeeded = false;
   try {
     const previousZip = join(workspace, previous.asset.name);
     const checksumPath = join(workspace, "SHA256SUMS");
@@ -654,28 +731,34 @@ export async function main() {
     const valid = await launchScenario({
       appPath: validApp,
       contract,
-      expectedEvent: "updated-runtime-started",
+      expectedEvent: "update-downloaded",
       feedDirectory: validFeed,
       install: true,
       name: "valid",
       version,
       workspace,
     });
-    if (valid.result.detail.version !== version)
-      fail("Automatic relaunch did not use the updated runtime version");
-    if (valid.result.detail.executablePath !== valid.executablePath)
-      fail("Updater did not relaunch the same installed executable path");
-    if (valid.result.detail.marker !== valid.marker)
-      fail("Automatic relaunch did not preserve the user-data marker");
-    killVerifiedProcess(valid.result.detail.pid, valid.executablePath);
-    verifyTrustedApp(
-      validApp,
-      contract,
-      version,
-      currentExpectations,
-      certificateDirectory,
-    );
-    await proveManualRelaunch(valid, version);
+    try {
+      if (valid.result.detail !== version)
+        fail("Updater downloaded a package with the wrong version");
+      const automaticRelaunch = await waitForAutomaticRelaunch({
+        appPath: validApp,
+        executablePath: valid.executablePath,
+        priorPid: valid.child.pid,
+        version,
+      });
+      killVerifiedProcess(automaticRelaunch.pid, valid.executablePath);
+      verifyTrustedApp(
+        validApp,
+        contract,
+        version,
+        currentExpectations,
+        certificateDirectory,
+      );
+      await proveManualRelaunch(valid, version);
+    } finally {
+      cleanupOwnedUpdaterMarker(valid.markerPath, valid.marker);
+    }
 
     const corruptFeed = join(workspace, "corrupt-feed");
     mkdirSync(corruptFeed);
@@ -765,11 +848,16 @@ export async function main() {
     if (!/sign|code|authority|team/i.test(String(wrong.result.detail)))
       fail(`Wrong signature failed for an unexpected reason: ${wrong.result.detail}`);
     killVerifiedProcess(wrong.child.pid, wrong.executablePath);
+    succeeded = true;
     console.log(
       `macOS ${channel} ${arch} N-1 updater install E2E passed from ${previous.release.tag_name}`,
     );
   } finally {
-    rmSync(workspace, { recursive: true, force: true });
+    if (!succeeded && retainWorkspaceOnFailure) {
+      console.error(`Retained failed updater E2E workspace: ${workspace}`);
+    } else {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   }
 }
 

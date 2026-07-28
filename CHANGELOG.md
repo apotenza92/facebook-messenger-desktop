@@ -7,6 +7,7 @@
 ### Fixed
 
 - Record empty legacy-updater bridge policy with its pinned Node.js runtime and metadata dependencies before release publication.
+- Verify macOS N-1 automatic relaunch through the replaced app process rather than relying on test-only environment variables that macOS does not preserve across updater relaunches, then confirm the retained user-data marker through a controlled manual relaunch.
 - **Issue #75: release microphone access after a call ends** ([#75](https://github.com/apotenza92/facebook-messenger-desktop/issues/75))
   - Track local media streams obtained by the call window and stop them at the call-ended boundary.
   - Keep a structural post-call guard active while the ended-call window remains open so connecting or switching an audio device cannot silently reacquire the microphone.
