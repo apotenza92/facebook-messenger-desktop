@@ -944,7 +944,7 @@ function testWorkflowContract() {
   assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak info --user/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.useZip, true);
-  assert.equal(packageLock.packages["node_modules/sharp"].version, "0.34.5");
+  assert.equal(packageLock.packages["node_modules/sharp"].version, "0.35.3");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);
   assert.match(afterPackScript, /RESOLVED=\$\(readlink -f -- "\$SELF"/);
   assert.match(
@@ -964,7 +964,11 @@ function testWorkflowContract() {
   assert.match(workflow, /MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG/);
   assert.match(
     workflow,
-    /prepare-homebrew-publication:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew audit --cask --strict[\s\S]*?brew install --cask[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
+    /prepare-homebrew-publication:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew tap apotenza92\/tap[\s\S]*?brew audit --cask --strict "\$qualified_cask"[\s\S]*?brew install --cask "\$qualified_cask"[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /brew audit --cask --strict "\$(?:CASK_PATH|cask_path|TAP_CASK_PATH)"/,
   );
   assert.doesNotMatch(
     workflow,

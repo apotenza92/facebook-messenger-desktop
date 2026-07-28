@@ -9941,6 +9941,15 @@ function setupIpcHandlers(): void {
         activeControlLabels: Array.isArray(basePayload.activeControlLabels)
           ? basePayload.activeControlLabels
           : undefined,
+        mediaGuardState:
+          basePayload.mediaGuardState === "active" ||
+          basePayload.mediaGuardState === "ended"
+            ? basePayload.mediaGuardState
+            : undefined,
+        blockedPostCallMediaRequests:
+          typeof basePayload.blockedPostCallMediaRequests === "number"
+            ? basePayload.blockedPostCallMediaRequests
+            : undefined,
       },
     };
 

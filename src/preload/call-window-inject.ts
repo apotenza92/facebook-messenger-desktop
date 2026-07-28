@@ -15,13 +15,82 @@
   const activeStreams = new Set<MediaStream>();
   const activePeerConnections = new Set<RTCPeerConnection>();
   let hasSeenActiveCallUi = false;
+  let callHasEnded = false;
+  let postCallUserGestureUntil = 0;
+  let blockedPostCallMediaRequests = 0;
   let callWindowStateTimer: number | null = null;
   let lastCallWindowStateSignature = "";
 
-  // Store original getUserMedia for nuclear option
-  const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(
-    navigator.mediaDevices,
-  );
+  const mediaDevices = navigator.mediaDevices;
+  const originalGetUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
+
+  function stopStreamTracks(stream: MediaStream, reason: string): number {
+    let tracksStopped = 0;
+    stream.getTracks().forEach((track) => {
+      if (track.readyState !== "ended") {
+        track.stop();
+        tracksStopped++;
+      }
+    });
+    activeStreams.delete(stream);
+    if (tracksStopped > 0) {
+      console.log(
+        `[Call Window] Released ${tracksStopped} media tracks (${reason})`,
+      );
+    }
+    return tracksStopped;
+  }
+
+  async function guardedGetUserMedia(
+    constraints?: MediaStreamConstraints,
+  ): Promise<MediaStream> {
+    const userGestureMayStartNewCall =
+      callHasEnded && Date.now() <= postCallUserGestureUntil;
+
+    if (callHasEnded && !userGestureMayStartNewCall) {
+      blockedPostCallMediaRequests++;
+      scheduleCallWindowState("post-call-media-request-blocked");
+      const error = new Error(
+        "Media capture is unavailable after the call has ended",
+      );
+      error.name = "AbortError";
+      throw error;
+    }
+
+    if (userGestureMayStartNewCall) {
+      callHasEnded = false;
+      postCallUserGestureUntil = 0;
+      scheduleCallWindowState("user-started-next-call");
+    }
+
+    const stream = await originalGetUserMedia(constraints);
+    if (callHasEnded) {
+      blockedPostCallMediaRequests++;
+      stopStreamTracks(stream, "call ended while media request was pending");
+      scheduleCallWindowState("pending-media-request-stopped-after-call-end");
+      const error = new Error(
+        "Media capture completed after the call had already ended",
+      );
+      error.name = "AbortError";
+      throw error;
+    }
+
+    activeStreams.add(stream);
+    return stream;
+  }
+
+  try {
+    mediaDevices.getUserMedia = guardedGetUserMedia;
+  } catch {
+    try {
+      Object.defineProperty(mediaDevices, "getUserMedia", {
+        configurable: true,
+        value: guardedGetUserMedia,
+      });
+    } catch {
+      console.warn("[Call Window] Could not install media capture guard");
+    }
+  }
 
   function emitCallWindowState(reason: string): void {
     const controls = Array.from(
@@ -92,6 +161,8 @@
       popupVsMainWindow: "child-window",
       activeControlLabels,
       statusText,
+      mediaGuardState: callHasEnded ? "ended" : "active",
+      blockedPostCallMediaRequests,
       url: window.location.href,
       title: document.title,
       timestamp: Date.now(),
@@ -188,23 +259,13 @@
 
     // 1. Stop tracked streams from RTCPeerConnection
     activeStreams.forEach((stream) => {
-      stream.getTracks().forEach((track) => {
-        if (track.readyState !== "ended") {
-          track.stop();
-          tracksStopped++;
-        }
-      });
+      tracksStopped += stopStreamTracks(stream, _reason);
     });
     activeStreams.clear();
 
     // 2. Scan DOM for any streams we missed
     scanForMediaStreams().forEach((stream) => {
-      stream.getTracks().forEach((track) => {
-        if (track.readyState !== "ended") {
-          track.stop();
-          tracksStopped++;
-        }
-      });
+      tracksStopped += stopStreamTracks(stream, _reason);
     });
 
     // 3. Stop tracks directly from active peer connections.
@@ -226,21 +287,12 @@
       });
     });
 
-    // 4. Nuclear option: Get fresh mic access and immediately release
-    // This forces the browser to release any microphone that might be stuck
-    if (tracksStopped === 0) {
-      originalGetUserMedia({ audio: true })
-        .then((stream) => {
-          stream.getTracks().forEach((track) => {
-            console.log(`[Call Window] Releasing microphone: ${track.label}`);
-            track.stop();
-          });
-        })
-        .catch(() => {
-          // Fine - might mean no active audio or permission issue
-        });
-    } else {
+    if (tracksStopped > 0) {
       console.log(`[Call Window] Released ${tracksStopped} media tracks`);
+    } else {
+      console.log(
+        `[Call Window] No tracked media remained to release (${_reason})`,
+      );
     }
   }
 
@@ -277,6 +329,8 @@
     if (hasDetectedCallEnd) return;
     if (!hasSeenActiveCallUi) return;
     hasDetectedCallEnd = true;
+    callHasEnded = true;
+    postCallUserGestureUntil = 0;
 
     emitCallWindowState("call-ended");
     stopAllMediaTracks("call ended");
@@ -286,6 +340,29 @@
       hasDetectedCallEnd = false;
     }, 5000);
   }
+
+  mediaDevices.addEventListener("devicechange", () => {
+    if (!callHasEnded) return;
+
+    for (const delay of [0, 100, 500]) {
+      window.setTimeout(() => {
+        if (!callHasEnded) return;
+        stopAllMediaTracks("device changed after call ended");
+        scheduleCallWindowState("post-call-device-change");
+      }, delay);
+    }
+  });
+
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!callHasEnded || event.isTrusted === false) return;
+      // A short, user-gesture-scoped window lets the existing call surface
+      // start a deliberate redial without re-enabling device-change capture.
+      postCallUserGestureUntil = Date.now() + 3000;
+    },
+    { capture: true },
+  );
 
   // Observe DOM for call-ended indicators
   const observer = new MutationObserver((mutations) => {
