@@ -40,6 +40,7 @@ import {
 } from "./legacy-updater-bridge.mjs";
 import {
   compareVersions,
+  parseExecutableProcesses,
   resolveNativeMacArchitecture,
   resolveLegacyUpdaterBaseline,
   validateChecksumEntry,
@@ -723,6 +724,20 @@ function testUpdaterTrustUtilities() {
   assert(compareVersions("v1.3.1", "v1.3.0") > 0);
   assert.equal(resolveNativeMacArchitecture("x64"), "x86_64");
   assert.equal(resolveNativeMacArchitecture("arm64"), "arm64");
+  const executablePath =
+    "/private/tmp/Messenger Beta.app/Contents/MacOS/Messenger Beta";
+  assert.deepEqual(
+    parseExecutableProcesses(
+      [
+        `  41 ${executablePath}`,
+        `  42 ${executablePath} --automatic-relaunch`,
+        "  43 /private/tmp/Messenger Beta.app/Contents/Frameworks/Messenger Beta Helper",
+      ].join("\n"),
+      executablePath,
+      41,
+    ),
+    [{ command: `${executablePath} --automatic-relaunch`, pid: 42 }],
+  );
   const temporaryDirectory = mkdtempSync(
     join(tmpdir(), "messenger-checksum-test-"),
   );
@@ -1191,6 +1206,12 @@ function testWorkflowContract() {
   assert.match(updaterHarness, /"spctl"/);
   assert.match(updaterHarness, /updated-runtime-started/);
   assert.match(updaterHarness, /manual-runtime-started/);
+  assert.match(updaterHarness, /waitForAutomaticRelaunch/);
+  assert.match(updaterHarness, /cleanupOwnedUpdaterMarker/);
+  assert.doesNotMatch(
+    updaterHarness,
+    /expectedEvent:\s*"updated-runtime-started"/,
+  );
   assert.match(
     updaterHarness,
     /Bootstrap is forbidden because eligible prior release/,
