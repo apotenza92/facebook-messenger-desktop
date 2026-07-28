@@ -1129,20 +1129,27 @@ jobs:
           end
           EOF
 
+          brew tap apotenza92/tap
+          TAP_DIR="$(brew --repository apotenza92/tap)"
+          cp Casks/facebook-messenger-desktop.rb \
+            'Casks/facebook-messenger-desktop@beta.rb' \
+            "$TAP_DIR/Casks/"
+
           verify_cask() {
-            local cask_path="$1"
-            local cask_token="$2"
-            local app_path="$3"
-            local executable_path="$4"
-            local data_name="$5"
+            local cask_token="$1"
+            local app_path="$2"
+            local executable_path="$3"
+            local data_name="$4"
             local smoke_home="$RUNNER_TEMP/homebrew-smoke-$cask_token"
             local user_data="$smoke_home/Library/Application Support/$data_name"
             local smoke_log="$RUNNER_TEMP/homebrew-smoke-$cask_token.log"
+            local qualified_cask="apotenza92/tap/$cask_token"
+            local cask_path="$TAP_DIR/Casks/$cask_token.rb"
 
             brew style "$cask_path"
-            brew audit --cask --strict "$cask_path"
-            INSTALLED_CASK="$cask_token"
-            brew install --cask "$cask_path"
+            brew audit --cask --strict "$qualified_cask"
+            INSTALLED_CASK="$qualified_cask"
+            brew install --cask "$qualified_cask"
             xcrun stapler validate "$app_path"
             spctl --assess --type execute --verbose=4 "$app_path"
 
@@ -1166,18 +1173,16 @@ jobs:
             fi
             kill "$app_pid"
             wait "$app_pid" || true
-            brew uninstall --cask "$cask_token"
+            brew uninstall --cask "$qualified_cask"
             INSTALLED_CASK=""
           }
 
           verify_cask \
-            "$PWD/Casks/facebook-messenger-desktop.rb" \
             facebook-messenger-desktop \
             "/Applications/Messenger.app" \
             "/Applications/Messenger.app/Contents/MacOS/Messenger" \
             Messenger
           verify_cask \
-            "$PWD/Casks/facebook-messenger-desktop@beta.rb" \
             facebook-messenger-desktop@beta \
             "/Applications/Messenger Beta.app" \
             "/Applications/Messenger Beta.app/Contents/MacOS/Messenger Beta" \
@@ -1307,10 +1312,15 @@ jobs:
           EOF
 
           CASK_PATH="$PWD/Casks/facebook-messenger-desktop@beta.rb"
-          brew style "$CASK_PATH"
-          brew audit --cask --strict "$CASK_PATH"
-          INSTALLED_CASK=facebook-messenger-desktop@beta
-          brew install --cask "$CASK_PATH"
+          brew tap apotenza92/tap
+          TAP_DIR="$(brew --repository apotenza92/tap)"
+          TAP_CASK_PATH="$TAP_DIR/Casks/facebook-messenger-desktop@beta.rb"
+          cp "$CASK_PATH" "$TAP_CASK_PATH"
+          QUALIFIED_CASK=apotenza92/tap/facebook-messenger-desktop@beta
+          brew style "$TAP_CASK_PATH"
+          brew audit --cask --strict "$QUALIFIED_CASK"
+          INSTALLED_CASK="$QUALIFIED_CASK"
+          brew install --cask "$QUALIFIED_CASK"
           xcrun stapler validate "/Applications/Messenger Beta.app"
           spctl --assess --type execute --verbose=4 "/Applications/Messenger Beta.app"
 

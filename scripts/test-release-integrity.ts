@@ -128,10 +128,68 @@ function testUpdaterAuthenticationOrder(): void {
   );
 }
 
+function testUpdaterChangelogContract(): void {
+  const root = path.resolve(__dirname, "..");
+  const main = fs.readFileSync(path.join(root, "src", "main", "main.ts"), "utf8");
+  const workflow = fs.readFileSync(
+    path.join(root, ".github", "workflows", "release.yml"),
+    "utf8",
+  );
+  const changelogFlow = main.slice(
+    main.indexOf("function fetchChangelogFromGitHub"),
+    main.indexOf("function openGitHubPage"),
+  );
+  const updateDialog = main.slice(
+    main.indexOf("async function showCustomUpdateDialog"),
+    main.indexOf("async function showUpdateReadyDialog"),
+  );
+  assert.match(
+    changelogFlow,
+    /raw\.githubusercontent\.com\/apotenza92\/facebook-messenger-desktop\/main\/CHANGELOG\.md/,
+    "update dialogs must load the maintained changelog",
+  );
+  assert.match(
+    changelogFlow,
+    /entry\.version === newVersion/,
+    "update dialogs must select the exact target release entry",
+  );
+  assert.match(
+    updateDialog,
+    /await getChangelogForUpdate\(/,
+    "the update-available flow must wait for release notes",
+  );
+  assert.match(
+    updateDialog,
+    /What's New/,
+    "the update dialog must present release notes to users",
+  );
+  assert.match(
+    main,
+    /console\.log\("\[Update Frequency\] Using default setting: daily"\);\s+return "daily";/,
+    "automatic update checks must retain the documented daily default",
+  );
+  assert.match(
+    main,
+    /if \(shouldCheckForUpdates\(\)\) \{\s+performUpdateCheck\(\);\s+\}/,
+    "startup must evaluate whether an automatic update check is due",
+  );
+  assert.match(
+    main,
+    /startUpdateCheckSchedule\(\);/,
+    "long-running sessions must retain periodic update checks",
+  );
+  assert.match(
+    workflow,
+    /Prepare release notes[\s\S]*?CHANGELOG\.md[\s\S]*?--notes-file release_notes\.txt/,
+    "GitHub release notes must come from the same maintained changelog",
+  );
+}
+
 for (const test of [
   testPackageManagerIdentities,
   testReleaseChecksumValidation,
   testUpdaterAuthenticationOrder,
+  testUpdaterChangelogContract,
 ]) {
   test();
   console.log(`✓ ${test.name}`);

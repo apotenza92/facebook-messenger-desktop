@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## [1.3.1-beta.44] - 2026-07-28
+
+### Fixed
+
+- **Issue #75: release microphone access after a call ends** ([#75](https://github.com/apotenza92/facebook-messenger-desktop/issues/75))
+  - Track local media streams obtained by the call window and stop them at the call-ended boundary.
+  - Keep a structural post-call guard active while the ended-call window remains open so connecting or switching an audio device cannot silently reacquire the microphone.
+  - Preserve deliberate redial attempts through a short user-gesture-scoped allowance without relying on English button labels.
+  - Remove the previous fallback that requested fresh microphone access as a cleanup technique.
+  - Record privacy-safe media-guard state and blocked-request counts in exported diagnostics.
+- Repair Homebrew release validation for Homebrew 6 by auditing generated casks through their fully qualified tap names instead of disabled filesystem-path arguments.
+
+### Security
+
+- Update `electron-updater` to 6.8.9 and require the runtime-only dependency audit in deterministic CI.
+- Update Sharp/libvips to 0.35.3 while retaining native Windows ARM64, Windows x64, Linux ARM64/x64, and macOS package support.
+
+### Changed
+
+- Update the TypeScript ESLint 8.x toolchain to 8.65.0.
+- Add a deterministic call-window media lifecycle harness covering call end, post-call media requests, and audio-device changes.
+
 ## [1.3.1-beta.43] - 2026-07-26
 
 ### Fixed
