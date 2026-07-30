@@ -1249,7 +1249,14 @@ function testWorkflowContract() {
   assert.match(updaterHarness, /updated-runtime-started/);
   assert.match(updaterHarness, /manual-runtime-started/);
   assert.match(updaterHarness, /waitForAutomaticRelaunch/);
+  assert.match(updaterHarness, /proveRejectedReplacement/);
   assert.match(updaterHarness, /cleanupOwnedUpdaterMarker/);
+  assert.match(updaterHarness, /MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA/);
+  assert.match(updaterHarness, /observed events=/);
+  assert.match(
+    updaterHarness,
+    /expectedEvent:\s*"update-downloaded"[\s\S]*?name:\s*"wrong-signature"/,
+  );
   assert.doesNotMatch(
     updaterHarness,
     /expectedEvent:\s*"updated-runtime-started"/,

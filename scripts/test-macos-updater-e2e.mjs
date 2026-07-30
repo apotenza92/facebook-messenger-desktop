@@ -409,7 +409,9 @@ async function waitForEvent(resultPath, event, child, timeout = 180_000) {
       fail(`App exited before ${event} (${child.exitCode})`);
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
-  fail(`Timed out waiting for ${event}`);
+  fail(
+    `Timed out waiting for ${event}; observed events=${JSON.stringify(readEvents(resultPath))}`,
+  );
 }
 
 async function waitForAutomaticRelaunch({
@@ -546,7 +548,11 @@ async function launchScenario({
 
 function killVerifiedProcess(pid, executablePath) {
   if (!Number.isInteger(pid) || pid <= 1) fail(`Invalid process ID ${pid}`);
-  const command = run("ps", ["-p", String(pid), "-o", "command="]).trim();
+  const probe = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+    encoding: "utf8",
+  });
+  if (probe.status !== 0) return;
+  const command = probe.stdout.trim();
   if (!command.startsWith(executablePath))
     fail(`Refusing to kill PID ${pid}; command is ${command}`);
   process.kill(pid, "SIGTERM");
@@ -566,6 +572,7 @@ async function proveManualRelaunch(scenario, version) {
     detached: true,
     env: {
       ...scenario.environment,
+      MESSENGER_UPDATE_E2E_EXPECTED_VERSION: version,
       MESSENGER_UPDATE_E2E_INSTALL: "0",
       MESSENGER_UPDATE_E2E_MANUAL_LAUNCH: "1",
     },
@@ -589,6 +596,56 @@ async function proveManualRelaunch(scenario, version) {
   fail("Manual relaunch did not start the updated runtime");
 }
 
+async function waitForProcessExit(child, executablePath, timeout = 60_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const processes = parseExecutableProcesses(
+      run("ps", ["-axo", "pid=,command="]),
+      executablePath,
+    );
+    if (
+      child.exitCode != null ||
+      !processes.some(({ pid }) => pid === child.pid)
+    ) {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  fail(`Updater did not terminate the prior runtime at ${executablePath}`);
+}
+
+function stopVerifiedProcesses(executablePath) {
+  const processes = parseExecutableProcesses(
+    run("ps", ["-axo", "pid=,command="]),
+    executablePath,
+  );
+  for (const processEntry of processes) {
+    killVerifiedProcess(processEntry.pid, executablePath);
+  }
+}
+
+async function proveRejectedReplacement({
+  scenario,
+  previousVersion,
+  timeout = 30_000,
+}) {
+  await waitForProcessExit(scenario.child, scenario.executablePath);
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const installedVersion = readPlist(
+      scenario.appPath,
+      "CFBundleShortVersionString",
+    );
+    if (installedVersion !== previousVersion) {
+      fail(
+        `Wrong-signature updater changed the installed version to ${installedVersion}`,
+      );
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  }
+  stopVerifiedProcesses(scenario.executablePath);
+}
+
 function copyPriorApp(baselineApp, destinationDirectory, contract) {
   mkdirSync(destinationDirectory, { recursive: true });
   const destination = join(destinationDirectory, contract.appName);
@@ -598,6 +655,14 @@ function copyPriorApp(baselineApp, destinationDirectory, contract) {
 
 export async function main() {
   if (process.platform !== "darwin") fail("macOS updater E2E requires macOS");
+  if (
+    process.env.CI !== "true" &&
+    process.env.MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA !== "1"
+  ) {
+    fail(
+      "macOS updater E2E uses the disposable runner profile; local execution requires MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA=1",
+    );
+  }
   const channel = option("--channel");
   const arch = option("--arch", process.arch);
   const currentTag = option("--current-tag");
@@ -838,16 +903,30 @@ export async function main() {
     const wrong = await launchScenario({
       appPath: wrongApp,
       contract,
-      expectedEvent: "error",
+      expectedEvent: "update-downloaded",
       feedDirectory: wrongFeed,
-      install: false,
+      install: true,
       name: "wrong-signature",
       version,
       workspace,
     });
-    if (!/sign|code|authority|team/i.test(String(wrong.result.detail)))
-      fail(`Wrong signature failed for an unexpected reason: ${wrong.result.detail}`);
-    killVerifiedProcess(wrong.child.pid, wrong.executablePath);
+    try {
+      await proveRejectedReplacement({
+        scenario: wrong,
+        previousVersion,
+      });
+      verifyTrustedApp(
+        wrongApp,
+        contract,
+        previousVersion,
+        priorExpectations,
+        certificateDirectory,
+      );
+      await proveManualRelaunch(wrong, previousVersion);
+    } finally {
+      stopVerifiedProcesses(wrong.executablePath);
+      cleanupOwnedUpdaterMarker(wrong.markerPath, wrong.marker);
+    }
     succeeded = true;
     console.log(
       `macOS ${channel} ${arch} N-1 updater install E2E passed from ${previous.release.tag_name}`,
