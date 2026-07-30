@@ -411,6 +411,32 @@ function cleanupOwnedUpdaterMarker(markerPath, marker) {
   rmSync(markerPath);
 }
 
+function installSourceCachePath(markerPath) {
+  return join(resolve(markerPath, ".."), INSTALL_SOURCE_CACHE_FILE);
+}
+
+const INSTALL_SOURCE_CACHE_FILE = "install-source.json";
+
+function seedInstallSourceCache(markerPath, installedVersion) {
+  const cachePath = installSourceCachePath(markerPath);
+  const previous = existsSync(cachePath) ? readFileSync(cachePath) : null;
+  mkdirSync(resolve(cachePath, ".."), { recursive: true, mode: 0o700 });
+  writeFileSync(
+    cachePath,
+    `${JSON.stringify({ source: "homebrew", version: installedVersion })}\n`,
+    { mode: 0o600 },
+  );
+  return { cachePath, previous };
+}
+
+function restoreInstallSourceCache({ cachePath, previous }) {
+  if (previous) {
+    writeFileSync(cachePath, previous, { mode: 0o600 });
+  } else {
+    rmSync(cachePath, { force: true });
+  }
+}
+
 async function waitForEvent(
   resultPath,
   event,
@@ -482,7 +508,6 @@ async function waitForAutomaticRelaunch({
 
 function createLaunchEnvironment({
   feedUrl,
-  home,
   install,
   manual,
   marker,
@@ -490,8 +515,22 @@ function createLaunchEnvironment({
   temporaryDirectory,
   version,
 }) {
+  const allowed = [
+    "CI",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "USER",
+  ];
   return {
-    HOME: home,
+    ...Object.fromEntries(
+      allowed.flatMap((name) =>
+        process.env[name] ? [[name, process.env[name]]] : [],
+      ),
+    ),
     LANG: "en_US.UTF-8",
     LC_ALL: "en_US.UTF-8",
     MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
@@ -514,6 +553,7 @@ async function launchScenario({
   expectedEvent,
   feedDirectory,
   install,
+  installedVersion,
   name,
   version,
   workspace,
@@ -522,22 +562,23 @@ async function launchScenario({
   const requestLogPath = join(workspace, `${name}-feed-requests.log`);
   const stderrPath = join(workspace, `${name}-stderr.log`);
   const stdoutPath = join(workspace, `${name}-stdout.log`);
-  const home = join(workspace, `${name}-home`);
   const temporaryDirectory = join(workspace, `${name}-tmp`);
   const marker = `messenger-updater-${name}-marker`;
   const markerPath = updaterMarkerPath(contract);
   if (existsSync(markerPath)) {
     fail(`Updater E2E marker already exists: ${markerPath}`);
   }
-  mkdirSync(home, { recursive: true, mode: 0o700 });
   mkdirSync(temporaryDirectory, { recursive: true, mode: 0o700 });
+  const installSourceCache = seedInstallSourceCache(
+    markerPath,
+    installedVersion,
+  );
   const { server, url } = await serve(feedDirectory, requestLogPath);
   const executablePath = realpathSync(
     join(appPath, "Contents", "MacOS", contract.executableName),
   );
   const environment = createLaunchEnvironment({
     feedUrl: url,
-    home,
     install,
     manual: false,
     marker,
@@ -571,7 +612,6 @@ async function launchScenario({
       child,
       environment,
       executablePath,
-      home,
       marker,
       markerPath,
       result,
@@ -582,6 +622,7 @@ async function launchScenario({
     };
   } finally {
     server.close();
+    restoreInstallSourceCache(installSourceCache);
     if (!preserveMarker) {
       cleanupOwnedUpdaterMarker(markerPath, marker);
     }
@@ -841,6 +882,7 @@ export async function main() {
       expectedEvent: "update-downloaded",
       feedDirectory: validFeed,
       install: true,
+      installedVersion: previousVersion,
       name: "valid",
       version,
       workspace,
@@ -900,6 +942,7 @@ export async function main() {
       expectedEvent: "error",
       feedDirectory: corruptFeed,
       install: false,
+      installedVersion: previousVersion,
       name: "corrupt",
       version,
       workspace,
@@ -948,6 +991,7 @@ export async function main() {
       expectedEvent: "update-downloaded",
       feedDirectory: wrongFeed,
       install: true,
+      installedVersion: previousVersion,
       name: "wrong-signature",
       version,
       workspace,
