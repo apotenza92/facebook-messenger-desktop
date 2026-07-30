@@ -198,6 +198,29 @@ function run(command, args, options = {}) {
   }
 }
 
+function mergeEnvironment(
+  base,
+  overrides,
+  caseInsensitive = process.platform === "win32",
+) {
+  const normalize = (key) => (caseInsensitive ? key.toUpperCase() : key);
+  const overriddenKeys = new Set(
+    Object.entries(overrides)
+      .filter(([, value]) => value !== undefined)
+      .map(([key]) => normalize(key)),
+  );
+  const environment = Object.fromEntries(
+    Object.entries(base).filter(
+      ([key, value]) =>
+        value !== undefined && !overriddenKeys.has(normalize(key)),
+    ),
+  );
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) environment[key] = value;
+  }
+  return environment;
+}
+
 function readEvents(resultPath) {
   if (!fs.existsSync(resultPath)) return [];
   return fs
@@ -477,36 +500,24 @@ async function testPublishedBaselineMigration({
   fs.mkdirSync(homeDirectory, { recursive: true });
   fs.mkdirSync(tempDirectory, { recursive: true });
 
-  const runtimeEnvironment = {
-    ...process.env,
-    APPDATA:
-      process.platform === "win32"
-        ? appDataRoot
-        : process.env.APPDATA,
-    LOCALAPPDATA:
-      process.platform === "win32"
-        ? localAppDataRoot
-        : process.env.LOCALAPPDATA,
-    HOME:
-      process.platform === "linux"
-        ? homeDirectory
-        : process.env.HOME,
-    TMPDIR:
-      process.platform === "linux"
-        ? tempDirectory
-        : process.env.TMPDIR,
-    XDG_CACHE_HOME:
-      process.platform === "linux"
-        ? path.join(migrationRoot, "cache")
-        : process.env.XDG_CACHE_HOME,
-    XDG_CONFIG_HOME:
-      process.platform === "linux"
-        ? appDataRoot
-        : process.env.XDG_CONFIG_HOME,
+  const platformEnvironment =
+    process.platform === "win32"
+      ? {
+          APPDATA: appDataRoot,
+          LOCALAPPDATA: localAppDataRoot,
+        }
+      : {
+          HOME: homeDirectory,
+          TMPDIR: tempDirectory,
+          XDG_CACHE_HOME: path.join(migrationRoot, "cache"),
+          XDG_CONFIG_HOME: appDataRoot,
+        };
+  const runtimeEnvironment = mergeEnvironment(process.env, {
+    ...platformEnvironment,
     MESSENGER_FORKED: "1",
     MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
     SKIP_SINGLE_INSTANCE_LOCK: "true",
-  };
+  });
 
   try {
     let installedBaselineVersion;
@@ -778,20 +789,17 @@ async function main(argv = process.argv.slice(2)) {
       const resultPath = path.join(scenarioRoot, "events.json");
       const logPath = path.join(scenarioRoot, "runtime.log");
       const userDataDirectory = path.join(scenarioRoot, "userdata");
-      const env = {
-        ...process.env,
-        APPDATA:
-          process.platform === "win32"
-            ? path.join(scenarioRoot, "appdata")
-            : process.env.APPDATA,
-        LOCALAPPDATA:
-          process.platform === "win32"
-            ? path.join(scenarioRoot, "localappdata")
-            : process.env.LOCALAPPDATA,
-        XDG_CONFIG_HOME:
-          process.platform === "linux"
-            ? path.join(scenarioRoot, "config")
-            : process.env.XDG_CONFIG_HOME,
+      const platformEnvironment =
+        process.platform === "win32"
+          ? {
+              APPDATA: path.join(scenarioRoot, "appdata"),
+              LOCALAPPDATA: path.join(scenarioRoot, "localappdata"),
+            }
+          : {
+              XDG_CONFIG_HOME: path.join(scenarioRoot, "config"),
+            };
+      const env = mergeEnvironment(process.env, {
+        ...platformEnvironment,
         MESSENGER_FORKED: "1",
         MESSENGER_UPDATE_E2E: "1",
         MESSENGER_UPDATE_E2E_EXPECTED_VERSION: candidateVersion,
@@ -800,7 +808,7 @@ async function main(argv = process.argv.slice(2)) {
         MESSENGER_UPDATE_E2E_APP_DATA_ROOT: scenarioRoot,
         MESSENGER_UPDATE_E2E_RESULT_PATH: resultPath,
         MESSENGER_UPDATE_E2E_TUF_REPOSITORY_URL: `${server.baseUrl}/tuf`,
-      };
+      });
       if (process.platform === "linux") {
         env.APPIMAGE = previousArtifact;
       }
@@ -952,7 +960,11 @@ async function main(argv = process.argv.slice(2)) {
   if (primaryError) throw primaryError;
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.stack || error.message}\n`);
-  process.exitCode = 1;
-});
+module.exports = { mergeEnvironment };
+
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${error.stack || error.message}\n`);
+    process.exitCode = 1;
+  });
+}

@@ -56,6 +56,28 @@ import {
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
+const { mergeEnvironment } = require("./test-nonmac-update.cjs");
+
+assert.deepEqual(
+  mergeEnvironment(
+    {
+      AppData: "old-roaming",
+      LOCALAPPDATA: "old-local",
+      Path: "system-path",
+    },
+    {
+      APPDATA: "isolated-roaming",
+      LocalAppData: "isolated-local",
+    },
+    true,
+  ),
+  {
+    APPDATA: "isolated-roaming",
+    LocalAppData: "isolated-local",
+    Path: "system-path",
+  },
+  "Windows launch environments must replace mixed-case profile keys",
+);
 
 function loadBuilderConfig(environment, args = []) {
   const configPath = join(repositoryRoot, "electron-builder.config.js");
