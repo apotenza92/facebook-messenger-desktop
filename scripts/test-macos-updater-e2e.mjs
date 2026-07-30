@@ -683,6 +683,7 @@ async function launchScenario({
       executablePath,
       marker,
       markerPath,
+      requestLogPath,
       result,
       resultPath,
       stderrPath,
@@ -750,24 +751,6 @@ async function proveManualRelaunch(scenario, version) {
   fail("Manual relaunch did not start the updated runtime");
 }
 
-async function waitForProcessExit(child, executablePath, timeout = 60_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const processes = parseExecutableProcesses(
-      run("ps", ["-axo", "pid=,command="]),
-      executablePath,
-    );
-    if (
-      child.exitCode != null ||
-      !processes.some(({ pid }) => pid === child.pid)
-    ) {
-      return;
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
-  }
-  fail(`Updater did not terminate the prior runtime at ${executablePath}`);
-}
-
 function stopVerifiedProcesses(executablePath) {
   const processes = parseExecutableProcesses(
     run("ps", ["-axo", "pid=,command="]),
@@ -781,11 +764,13 @@ function stopVerifiedProcesses(executablePath) {
 async function proveRejectedReplacement({
   scenario,
   previousVersion,
-  timeout = 30_000,
+  timeout = 60_000,
 }) {
-  await waitForProcessExit(scenario.child, scenario.executablePath);
   const deadline = Date.now() + timeout;
+  let rejection = null;
   while (Date.now() < deadline) {
+    const events = readEvents(scenario.resultPath);
+    rejection = events.find((entry) => entry.event === "error") ?? null;
     const installedVersion = readPlist(
       scenario.appPath,
       "CFBundleShortVersionString",
@@ -795,7 +780,51 @@ async function proveRejectedReplacement({
         `Wrong-signature updater changed the installed version to ${installedVersion}`,
       );
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    if (events.some((entry) => entry.event === "updated-runtime-started")) {
+      fail("Wrong-signature updater launched the untrusted runtime");
+    }
+    if (rejection) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  if (!rejection) {
+    fail(
+      [
+        "Wrong-signature updater did not report an explicit rejection",
+        `observed events=${JSON.stringify(readEvents(scenario.resultPath))}`,
+        `feed requests=${JSON.stringify(readLogTail(scenario.requestLogPath))}`,
+        `stdout tail=${JSON.stringify(readLogTail(scenario.stdoutPath))}`,
+        `stderr tail=${JSON.stringify(readLogTail(scenario.stderrPath))}`,
+      ].join("; "),
+    );
+  }
+  if (
+    !/signature|signed|code object|code requirement|designated requirement/i.test(
+      String(rejection.detail),
+    )
+  ) {
+    fail(
+      `Wrong-signature updater failed for an unexpected reason: ${rejection.detail}`,
+    );
+  }
+  const rejectionDwellDeadline = Date.now() + 5_000;
+  while (Date.now() < rejectionDwellDeadline) {
+    const installedVersion = readPlist(
+      scenario.appPath,
+      "CFBundleShortVersionString",
+    );
+    if (installedVersion !== previousVersion) {
+      fail(
+        `Wrong-signature updater changed the installed version to ${installedVersion} after rejection`,
+      );
+    }
+    if (
+      readEvents(scenario.resultPath).some(
+        (entry) => entry.event === "updated-runtime-started",
+      )
+    ) {
+      fail("Wrong-signature updater launched the untrusted runtime after rejection");
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
   }
   stopVerifiedProcesses(scenario.executablePath);
 }
