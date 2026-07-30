@@ -745,11 +745,24 @@ jobs:
             test -n "$package_name"
             sudo apt-get install -y "$PWD/$deb"
             executable="/usr/bin/$package_name"
+            desktop_file="/usr/share/applications/$package_name.desktop"
             test -x "$executable"
+            test -f "$desktop_file"
+            grep -Fqx 'Categories=Network;InstantMessaging;Chat;' "$desktop_file"
+            grep -Eq "^Exec=.*${package_name}" "$desktop_file"
+            grep -Eq '^Icon=.+$' "$desktop_file"
+            find /usr/share/icons/hicolor \
+              -path "*/apps/$package_name.png" -type f -print -quit |
+              grep -q .
             ISSUE53_SMOKE_LOG_DIR="$PWD/issue53-smoke-logs" \
               ./scripts/test-issue53-linux-vm-smoke.sh executable "$executable"
             sudo apt-get remove -y "$package_name"
             test ! -e "$executable"
+            test ! -e "$desktop_file"
+            test -z "$(
+              find /usr/share/icons/hicolor \
+                -path "*/apps/$package_name.png" -type f -print -quit
+            )"
           done
 
       - name: Install, launch, and uninstall native RPM packages

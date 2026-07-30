@@ -1158,8 +1158,39 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /release\/(?:latest|beta)-linux/);
   assert.match(workflow, /Assemble exact unsigned Windows installers/);
   assert.match(workflow, /Install, launch, and uninstall native DEB packages/);
+  assert.match(
+    workflow,
+    /desktop_file="\/usr\/share\/applications\/\$package_name\.desktop"/,
+  );
+  assert.match(
+    workflow,
+    /Categories=Network;InstantMessaging;Chat;/,
+  );
+  assert.match(
+    workflow,
+    /path "\*\/apps\/\$package_name\.png"/,
+  );
   assert.match(workflow, /test-rpm-package\.sh/);
   assert.match(workflow, /test-issue53-linux-vm-smoke\.sh flatpak/);
+  const rpmPackageAudit = readFileSync(
+    join(repositoryRoot, "scripts", "test-rpm-package.sh"),
+    "utf8",
+  );
+  assert.match(
+    rpmPackageAudit,
+    /desktop_file="\/usr\/share\/applications\/\$package_name\.desktop"/,
+  );
+  assert.match(rpmPackageAudit, /Categories=Network;InstantMessaging;Chat;/);
+  assert.match(rpmPackageAudit, /path "\*\/apps\/\$package_name\.png"/);
+  const linuxVmSmoke = readFileSync(
+    join(repositoryRoot, "scripts", "test-issue53-linux-vm-smoke.sh"),
+    "utf8",
+  );
+  assert.match(
+    linuxVmSmoke,
+    /flatpak\/exports\/share\/applications\/\$app_id\.desktop/,
+  );
+  assert.match(linuxVmSmoke, /\^Exec=\.\*flatpak run\.\*\$\{app_id\}/);
   assert.match(workflow, /FLATPAK_GNUPGHOME/);
   assert.match(workflow, /rm -rf "\$GNUPGHOME"/);
   assert.match(
@@ -1421,6 +1452,21 @@ function testWorkflowContract() {
   assert.match(nonmacWorkflow, /ubuntu-24\.04-arm/);
   assert.match(nonmacWorkflow, /ubuntu-24\.04/);
   assert.match(nonmacWorkflow, /Create disposable loopback-only TUF trust/);
+  assert.match(
+    nonmacWorkflow,
+    /Download source-pinned published beta baseline/,
+  );
+  assert.match(nonmacWorkflow, /v1\.3\.1-beta\.43/);
+  for (const digest of [
+    "80509a609d4ad3dafece1ff80834c3e29565b8d65d7d66db09e702f20ef8f7bd",
+    "f4195ab0351088d4b941b0f2ead6e6f50783ef2b5c94164409deb7bf022325d7",
+    "c5febaa940ee9744b2b9562ff10028e8ac97410e29783af26ae9636a0757c81e",
+    "57d02554c3971a98e29cad889bada0127f023656b096f2c47111ce81f0668263",
+  ]) {
+    assert.match(nonmacWorkflow, new RegExp(digest));
+  }
+  assert.match(nonmacWorkflow, /--published-baseline-artifact/);
+  assert.match(nonmacWorkflow, /--published-baseline-tag/);
   assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
   assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
   assert.match(workflow, /pattern:\s*macos-input-\*/);
@@ -1463,7 +1509,20 @@ function testWorkflowContract() {
   );
   assert.match(
     nonmacHarness,
-    /Uninstall: completed and removed install directory/,
+    /Uninstall: synthetic and published-baseline installs completed and removed their install directories/,
+  );
+  assert.match(nonmacHarness, /testPublishedBaselineMigration/);
+  assert.match(
+    nonmacHarness,
+    /Published baseline did not use expected user-data directory/,
+  );
+  assert.match(
+    nonmacHarness,
+    /Published baseline migration: native launch, replacement, relaunch, and retained user data passed/,
+  );
+  assert.match(
+    nonmacHarness,
+    /started\.detail\?\.version !== candidateVersion/,
   );
   assert.match(
     nonmacHarness,

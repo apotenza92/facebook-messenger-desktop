@@ -201,6 +201,44 @@ jobs:
           test "$(node -p 'require("./package.json").version')" = \
             "$CANDIDATE_VERSION"
 
+      - name: Download source-pinned published beta baseline
+        if: inputs.channel == 'beta'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=v1.3.1-beta.43
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          mkdir -p ci-updater/published
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            NAME="Messenger-Beta-windows-$ARCH-setup.exe"
+            if [[ "$ARCH" == arm64 ]]; then
+              EXPECTED_SHA256=80509a609d4ad3dafece1ff80834c3e29565b8d65d7d66db09e702f20ef8f7bd
+            else
+              EXPECTED_SHA256=f4195ab0351088d4b941b0f2ead6e6f50783ef2b5c94164409deb7bf022325d7
+            fi
+          else
+            LINUX_ARCH="$(
+              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+            )"
+            NAME="facebook-messenger-desktop-beta-$LINUX_ARCH.AppImage"
+            if [[ "$ARCH" == arm64 ]]; then
+              EXPECTED_SHA256=c5febaa940ee9744b2b9562ff10028e8ac97410e29783af26ae9636a0757c81e
+            else
+              EXPECTED_SHA256=57d02554c3971a98e29cad889bada0127f023656b096f2c47111ce81f0668263
+            fi
+          fi
+          BASELINE="ci-updater/published/$NAME"
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-all-errors \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$NAME" \
+            --output "$BASELINE"
+          ACTUAL_SHA256="$(
+            node -e \
+              'const {createHash}=require("node:crypto");const fs=require("node:fs");process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' \
+              "$BASELINE"
+          )"
+          test "$ACTUAL_SHA256" = "$EXPECTED_SHA256"
+
       - name: Inspect AppImage architecture and native dependency closure
         if: startsWith(inputs.target, 'linux-')
         shell: bash
@@ -228,6 +266,23 @@ jobs:
             PRODUCT_PREFIX=Messenger-Beta
             PACKAGE_PREFIX=facebook-messenger-desktop-beta
           fi
+          PUBLISHED_BASELINE_ARGS=()
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+              PUBLISHED_BASELINE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+            else
+              LINUX_ARCH="$(
+                [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+              )"
+              PUBLISHED_BASELINE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+            fi
+            PUBLISHED_BASELINE_ARGS=(
+              --published-baseline-artifact
+              "ci-updater/published/$PUBLISHED_BASELINE"
+              --published-baseline-tag
+              v1.3.1-beta.43
+            )
+          fi
           EVIDENCE='${{ runner.temp }}/messenger-updater-evidence'
           ROOT=build/update-trust/root.json
           PRIVATE='${{ runner.temp }}/messenger-updater-trust/private.json'
@@ -245,7 +300,8 @@ jobs:
               --target-name latest.yml \
               --root "$ROOT" \
               --private-key-bundle "$PRIVATE" \
-              --evidence "$EVIDENCE"
+              --evidence "$EVIDENCE" \
+              "${PUBLISHED_BASELINE_ARGS[@]}"
           else
             LINUX_ARCH="$(
               [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
@@ -266,7 +322,8 @@ jobs:
               --target-name "$TARGET" \
               --root "$ROOT" \
               --private-key-bundle "$PRIVATE" \
-              --evidence "$EVIDENCE"
+              --evidence "$EVIDENCE" \
+              "${PUBLISHED_BASELINE_ARGS[@]}"
           fi
 
       - name: Upload review evidence

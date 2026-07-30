@@ -290,6 +290,52 @@ function installedVersion(executable) {
   return JSON.parse(asar.extractFile(archivePath, "package.json")).version;
 }
 
+function appImageVersion(appImage, extractionRoot) {
+  fs.mkdirSync(extractionRoot, { recursive: true });
+  run(appImage, ["--appimage-extract", "resources/app.asar"], {
+    cwd: extractionRoot,
+    stdio: "ignore",
+  });
+  const archivePath = path.join(
+    extractionRoot,
+    "squashfs-root",
+    "resources",
+    "app.asar",
+  );
+  if (!fs.statSync(archivePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Published AppImage omitted resources/app.asar.`);
+  }
+  asar.uncache(archivePath);
+  return JSON.parse(asar.extractFile(archivePath, "package.json")).version;
+}
+
+async function waitForLogMarkers(
+  logPath,
+  child,
+  markers,
+  timeoutMs = 120_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const log = fs.existsSync(logPath)
+      ? fs.readFileSync(logPath, "utf8")
+      : "";
+    if (markers.every((marker) => log.includes(marker))) return;
+    if (child.exitCode !== null) {
+      throw new Error(
+        `Published baseline exited before launch proof (code ${child.exitCode}).\n${log.slice(-4_000)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const log = fs.existsSync(logPath)
+    ? fs.readFileSync(logPath, "utf8")
+    : "";
+  throw new Error(
+    `Timed out waiting for published baseline launch proof.\n${log.slice(-4_000)}`,
+  );
+}
+
 async function waitForReplacement({
   candidateArtifact,
   candidateAppAsar,
@@ -329,13 +375,246 @@ function launch(executable, env, logPath, userDataDirectory) {
   const args =
     process.platform === "linux"
       ? ["--no-sandbox"]
-      : [`--user-data-dir=${userDataDirectory}`];
+      : userDataDirectory
+        ? [`--user-data-dir=${userDataDirectory}`]
+        : [];
   const log = fs.openSync(logPath, "a", 0o600);
   return spawn(executable, args, {
     env,
     stdio: ["ignore", log, log],
     windowsHide: true,
   }).once("exit", () => fs.closeSync(log));
+}
+
+async function testPublishedBaselineMigration({
+  arch,
+  baselineArtifact,
+  baselineTag,
+  candidateAppAsar,
+  candidateArtifact,
+  candidateVersion,
+  channel,
+  evidenceDirectory,
+  observedPids,
+  productName,
+  temporary,
+}) {
+  const baselineVersion = baselineTag.replace(/^v/, "");
+  if (
+    baselineTag !== `v${baselineVersion}` ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(baselineVersion)
+  ) {
+    throw new Error(`Invalid published baseline tag: ${baselineTag}.`);
+  }
+  if (baselineVersion === candidateVersion) {
+    throw new Error("Published baseline must differ from the candidate.");
+  }
+
+  const migrationRoot = path.join(temporary, "published-baseline-migration");
+  const appDataRoot = path.join(
+    migrationRoot,
+    process.platform === "win32" ? "appdata" : "config",
+  );
+  const localAppDataRoot = path.join(migrationRoot, "localappdata");
+  const homeDirectory = path.join(migrationRoot, "home");
+  const tempDirectory = path.join(migrationRoot, "tmp");
+  const appDirectoryName =
+    channel === "beta" ? "Messenger-Beta" : "Messenger";
+  const userDataDirectory = path.join(appDataRoot, appDirectoryName);
+  const baselineLogPath = path.join(migrationRoot, "baseline-runtime.log");
+  const candidateLogPath = path.join(migrationRoot, "candidate-runtime.log");
+  const resultPath = path.join(migrationRoot, "candidate-events.jsonl");
+  const marker = randomUUID();
+  let executable;
+  let installDirectory = null;
+  let baselineChild = null;
+  let candidateChild = null;
+  fs.mkdirSync(migrationRoot, { recursive: true });
+  fs.mkdirSync(homeDirectory, { recursive: true });
+  fs.mkdirSync(tempDirectory, { recursive: true });
+
+  const runtimeEnvironment = {
+    ...process.env,
+    APPDATA:
+      process.platform === "win32"
+        ? appDataRoot
+        : process.env.APPDATA,
+    LOCALAPPDATA:
+      process.platform === "win32"
+        ? localAppDataRoot
+        : process.env.LOCALAPPDATA,
+    HOME:
+      process.platform === "linux"
+        ? homeDirectory
+        : process.env.HOME,
+    TMPDIR:
+      process.platform === "linux"
+        ? tempDirectory
+        : process.env.TMPDIR,
+    XDG_CACHE_HOME:
+      process.platform === "linux"
+        ? path.join(migrationRoot, "cache")
+        : process.env.XDG_CACHE_HOME,
+    XDG_CONFIG_HOME:
+      process.platform === "linux"
+        ? appDataRoot
+        : process.env.XDG_CONFIG_HOME,
+    MESSENGER_FORKED: "1",
+    MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
+    SKIP_SINGLE_INSTANCE_LOCK: "true",
+  };
+
+  try {
+    let installedBaselineVersion;
+    if (process.platform === "win32") {
+      installDirectory = path.join(migrationRoot, "installed");
+      run(baselineArtifact, ["/S", `/D=${installDirectory}`]);
+      executable = path.join(installDirectory, `${productName}.exe`);
+      if (!fs.statSync(executable, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error(
+          `Published baseline Windows executable missing: ${executable}`,
+        );
+      }
+      installedBaselineVersion = installedVersion(executable);
+    } else {
+      executable = path.join(migrationRoot, path.basename(baselineArtifact));
+      fs.copyFileSync(baselineArtifact, executable);
+      fs.chmodSync(executable, 0o755);
+      runtimeEnvironment.APPIMAGE = executable;
+      installedBaselineVersion = appImageVersion(
+        executable,
+        path.join(migrationRoot, "baseline-extract"),
+      );
+    }
+    if (installedBaselineVersion !== baselineVersion) {
+      throw new Error(
+        `Published baseline contains ${installedBaselineVersion}, expected ${baselineVersion}.`,
+      );
+    }
+
+    baselineChild = launch(
+      executable,
+      runtimeEnvironment,
+      baselineLogPath,
+      null,
+    );
+    observedPids.add(baselineChild.pid);
+    await waitForLogMarkers(baselineLogPath, baselineChild, [
+      "[App] Starting",
+      "[SingleInstance] Lock acquired: true",
+    ]);
+    await stopProcess(baselineChild);
+    baselineChild = null;
+
+    if (!fs.statSync(userDataDirectory, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(
+        `Published baseline did not use expected user-data directory: ${userDataDirectory}`,
+      );
+    }
+    fs.writeFileSync(
+      path.join(userDataDirectory, "updater-e2e-marker.json"),
+      `${JSON.stringify({ marker })}\n`,
+      { mode: 0o600 },
+    );
+
+    if (process.platform === "win32") {
+      run(candidateArtifact, ["/S", `/D=${installDirectory}`]);
+      if (
+        installedVersion(executable) !== candidateVersion ||
+        digest(path.join(installDirectory, "resources", "app.asar")) !==
+          digest(candidateAppAsar)
+      ) {
+        throw new Error(
+          "Candidate installer did not replace the published Windows baseline.",
+        );
+      }
+    } else {
+      fs.copyFileSync(candidateArtifact, executable);
+      fs.chmodSync(executable, 0o755);
+      if (digest(executable) !== digest(candidateArtifact)) {
+        throw new Error(
+          "Candidate AppImage did not replace the published baseline bytes.",
+        );
+      }
+    }
+
+    candidateChild = launch(
+      executable,
+      {
+        ...runtimeEnvironment,
+        MESSENGER_UPDATE_E2E: "1",
+        MESSENGER_UPDATE_E2E_EXPECTED_VERSION: candidateVersion,
+        MESSENGER_UPDATE_E2E_MANUAL_LAUNCH: "1",
+        MESSENGER_UPDATE_E2E_MARKER: marker,
+        MESSENGER_UPDATE_E2E_RESULT_PATH: resultPath,
+        MESSENGER_UPDATE_E2E_TUF_REPOSITORY_URL:
+          "http://127.0.0.1:9/tuf",
+      },
+      candidateLogPath,
+      null,
+    );
+    observedPids.add(candidateChild.pid);
+    const started = await waitForEvent(
+      resultPath,
+      new Set(["manual-runtime-started"]),
+    );
+    if (
+      started.detail?.marker !== marker ||
+      started.detail?.version !== candidateVersion
+    ) {
+      throw new Error(
+        "Candidate did not retain the published baseline user-data marker.",
+      );
+    }
+    await stopProcess(candidateChild);
+    candidateChild = null;
+
+    if (
+      JSON.parse(
+        fs.readFileSync(
+          path.join(userDataDirectory, "updater-e2e-marker.json"),
+          "utf8",
+        ),
+      ).marker !== marker
+    ) {
+      throw new Error(
+        "Published baseline user data changed after candidate launch.",
+      );
+    }
+    fs.copyFileSync(
+      baselineLogPath,
+      path.join(evidenceDirectory, "published-baseline-runtime.log"),
+    );
+    fs.copyFileSync(
+      candidateLogPath,
+      path.join(evidenceDirectory, "published-migration-runtime.log"),
+    );
+    fs.copyFileSync(
+      resultPath,
+      path.join(evidenceDirectory, "published-migration-events.jsonl"),
+    );
+  } finally {
+    await stopProcess(baselineChild);
+    await stopProcess(candidateChild);
+    if (
+      process.platform === "win32" &&
+      installDirectory &&
+      fs.statSync(
+        path.join(installDirectory, `Uninstall ${productName}.exe`),
+        { throwIfNoEntry: false },
+      )?.isFile()
+    ) {
+      stopWindowsProcesses(observedPids);
+      await uninstallWindowsPackage(installDirectory, productName);
+    }
+  }
+
+  return {
+    artifact: path.basename(baselineArtifact),
+    bytes: fs.statSync(baselineArtifact).size,
+    sha256: digest(baselineArtifact),
+    tag: baselineTag,
+  };
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -352,6 +631,19 @@ async function main(argv = process.argv.slice(2)) {
   const candidateAppAsarValue = option(argv, "--candidate-app-asar");
   const candidateAppAsar = candidateAppAsarValue
     ? path.resolve(candidateAppAsarValue)
+    : null;
+  const publishedBaselineArtifactValue = option(
+    argv,
+    "--published-baseline-artifact",
+  );
+  const publishedBaselineTag = option(argv, "--published-baseline-tag");
+  if (Boolean(publishedBaselineArtifactValue) !== Boolean(publishedBaselineTag)) {
+    throw new Error(
+      "Published baseline artifact and tag must be provided together.",
+    );
+  }
+  const publishedBaselineArtifact = publishedBaselineArtifactValue
+    ? path.resolve(publishedBaselineArtifactValue)
     : null;
   const candidateDirectory = path.resolve(
     option(argv, "--candidate-directory"),
@@ -386,6 +678,7 @@ async function main(argv = process.argv.slice(2)) {
   let executable = previousArtifact;
   let installDirectory = null;
   let primaryError = null;
+  let publishedMigration = null;
   const observedPids = new Set();
   const productName = channel === "beta" ? "Messenger Beta" : "Messenger";
   try {
@@ -524,6 +817,22 @@ async function main(argv = process.argv.slice(2)) {
     if (process.platform === "win32") {
       stopWindowsProcesses(observedPids);
       await uninstallWindowsPackage(installDirectory, productName);
+      installDirectory = null;
+    }
+    if (publishedBaselineArtifact) {
+      publishedMigration = await testPublishedBaselineMigration({
+        arch,
+        baselineArtifact: publishedBaselineArtifact,
+        baselineTag: publishedBaselineTag,
+        candidateAppAsar,
+        candidateArtifact,
+        candidateVersion,
+        channel,
+        evidenceDirectory,
+        observedPids,
+        productName,
+        temporary,
+      });
     }
     fs.writeFileSync(
       path.join(evidenceDirectory, "RESULT.txt"),
@@ -538,8 +847,19 @@ async function main(argv = process.argv.slice(2)) {
         "Corrupt target: rejected without replacement",
         "Wrong signature: rejected without replacement",
         "Valid update: replaced and preserved user data",
+        ...(publishedMigration
+          ? [
+              `Published baseline: ${publishedMigration.tag}`,
+              `Published baseline artifact: ${publishedMigration.artifact}`,
+              `Published baseline SHA-256: ${publishedMigration.sha256}`,
+              `Published baseline bytes: ${publishedMigration.bytes}`,
+              "Published baseline migration: native launch, replacement, relaunch, and retained user data passed",
+            ]
+          : []),
         ...(process.platform === "win32"
-          ? ["Uninstall: completed and removed install directory"]
+          ? [
+              "Uninstall: synthetic and published-baseline installs completed and removed their install directories",
+            ]
           : []),
         "",
       ].join("\n"),
