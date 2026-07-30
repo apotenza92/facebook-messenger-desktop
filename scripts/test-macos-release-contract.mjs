@@ -1526,6 +1526,9 @@ function testWorkflowContract() {
     nonmacHarness,
     /Published baseline did not use expected user-data directory/,
   );
+  assert.match(nonmacHarness, /fs\.mkdirSync\(appDataRoot/);
+  assert.match(nonmacHarness, /fs\.mkdirSync\(localAppDataRoot/);
+  assert.match(nonmacHarness, /published-baseline-layout\.txt/);
   assert.match(
     nonmacHarness,
     /Published baseline migration: native launch, replacement, relaunch, and retained user data passed/,

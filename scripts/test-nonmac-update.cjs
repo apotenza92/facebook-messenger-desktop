@@ -334,6 +334,22 @@ function appImageVersion(appImage, extractionRoot) {
   return JSON.parse(asar.extractFile(archivePath, "package.json")).version;
 }
 
+function directoryLayout(root) {
+  if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+    return ["(missing)"];
+  }
+  const entries = [];
+  const visit = (directory, depth) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      entries.push(path.relative(root, entryPath));
+      if (entry.isDirectory() && depth < 3) visit(entryPath, depth + 1);
+    }
+  };
+  visit(root, 0);
+  return entries.length > 0 ? entries.sort() : ["(empty)"];
+}
+
 async function waitForLogMarkers(
   logPath,
   child,
@@ -456,6 +472,8 @@ async function testPublishedBaselineMigration({
   let baselineChild = null;
   let candidateChild = null;
   fs.mkdirSync(migrationRoot, { recursive: true });
+  fs.mkdirSync(appDataRoot, { recursive: true });
+  fs.mkdirSync(localAppDataRoot, { recursive: true });
   fs.mkdirSync(homeDirectory, { recursive: true });
   fs.mkdirSync(tempDirectory, { recursive: true });
 
@@ -531,6 +549,22 @@ async function testPublishedBaselineMigration({
     ]);
     await stopProcess(baselineChild);
     baselineChild = null;
+    fs.copyFileSync(
+      baselineLogPath,
+      path.join(evidenceDirectory, "published-baseline-runtime.log"),
+    );
+    fs.writeFileSync(
+      path.join(evidenceDirectory, "published-baseline-layout.txt"),
+      [
+        `Expected user data: ${userDataDirectory}`,
+        "APPDATA layout:",
+        ...directoryLayout(appDataRoot).map((entry) => `  ${entry}`),
+        "LOCALAPPDATA layout:",
+        ...directoryLayout(localAppDataRoot).map((entry) => `  ${entry}`),
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
 
     if (!fs.statSync(userDataDirectory, { throwIfNoEntry: false })?.isDirectory()) {
       throw new Error(
@@ -607,10 +641,6 @@ async function testPublishedBaselineMigration({
         "Published baseline user data changed after candidate launch.",
       );
     }
-    fs.copyFileSync(
-      baselineLogPath,
-      path.join(evidenceDirectory, "published-baseline-runtime.log"),
-    );
     fs.copyFileSync(
       candidateLogPath,
       path.join(evidenceDirectory, "published-migration-runtime.log"),
