@@ -533,7 +533,7 @@ async function main(argv = process.argv.slice(2)) {
     try {
       await removeDirectoryWithRetries(temporary);
     } catch (cleanupError) {
-      if (!primaryError) {
+      if (!primaryError && process.platform !== "win32") {
         primaryError = cleanupError;
       } else {
         process.stderr.write(

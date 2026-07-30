@@ -1350,6 +1350,11 @@ function testWorkflowContract() {
   );
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
   assert.match(nonmacHarness, /removeDirectoryWithRetries\(temporary\)/);
+  assert.match(
+    nonmacHarness,
+    /!primaryError && process\.platform !== "win32"/,
+    "Windows cleanup locks must not mask a completed native updater audit",
+  );
   assert.match(nonmacHarness, /if \(primaryError\) throw primaryError/);
 
   const refreshWorkflow = readFileSync(
