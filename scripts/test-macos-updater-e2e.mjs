@@ -591,7 +591,6 @@ async function launchScenario({
   let child;
   try {
     child = spawn(executablePath, [], {
-      detached: true,
       env: environment,
       stdio: ["ignore", stdoutFile, stderrFile],
     });
@@ -652,7 +651,6 @@ function killVerifiedProcess(pid, executablePath) {
 async function proveManualRelaunch(scenario, version) {
   const eventsBefore = readEvents(scenario.resultPath).length;
   const child = spawn(scenario.executablePath, [], {
-    detached: true,
     env: {
       ...scenario.environment,
       MESSENGER_UPDATE_E2E_EXPECTED_VERSION: version,

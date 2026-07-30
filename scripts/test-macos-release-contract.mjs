@@ -1264,6 +1264,7 @@ function testWorkflowContract() {
   assert.match(updaterHarness, /observed events=/);
   assert.match(updaterHarness, /feed requests=/);
   assert.match(updaterHarness, /stderr tail=/);
+  assert.doesNotMatch(updaterHarness, /detached:\s*true/);
   assert.match(
     updaterHarness,
     /expectedEvent:\s*"update-downloaded"[\s\S]*?name:\s*"wrong-signature"/,
