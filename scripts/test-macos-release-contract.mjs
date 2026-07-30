@@ -1371,6 +1371,16 @@ function testWorkflowContract() {
     "Native updater scenarios must use separate app data roots",
   );
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
+  assert.match(nonmacHarness, /await uninstallWindowsPackage\(installDirectory, productName\)/);
+  assert.match(
+    nonmacHarness,
+    /Windows uninstall left install directory/,
+    "Windows native updater evidence must fail if uninstall leaves the app installed",
+  );
+  assert.match(
+    nonmacHarness,
+    /Uninstall: completed and removed install directory/,
+  );
   assert.match(nonmacHarness, /removeDirectoryWithRetries\(temporary\)/);
   assert.match(
     nonmacHarness,

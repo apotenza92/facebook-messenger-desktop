@@ -259,6 +259,27 @@ async function removeDirectoryWithRetries(directory) {
   throw lastError;
 }
 
+async function waitForDirectoryRemoval(directory, timeoutMs = 240_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!fs.existsSync(directory)) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Windows uninstall left install directory: ${directory}`);
+}
+
+async function uninstallWindowsPackage(installDirectory, productName) {
+  const uninstaller = path.join(
+    installDirectory,
+    `Uninstall ${productName}.exe`,
+  );
+  if (!fs.statSync(uninstaller, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Windows uninstaller is missing: ${uninstaller}`);
+  }
+  run(uninstaller, ["/S"], { stdio: "ignore" });
+  await waitForDirectoryRemoval(installDirectory);
+}
+
 function installedVersion(executable) {
   const archivePath = path.join(
     path.dirname(executable),
@@ -500,6 +521,10 @@ async function main(argv = process.argv.slice(2)) {
         );
       }
     }
+    if (process.platform === "win32") {
+      stopWindowsProcesses(observedPids);
+      await uninstallWindowsPackage(installDirectory, productName);
+    }
     fs.writeFileSync(
       path.join(evidenceDirectory, "RESULT.txt"),
       [
@@ -510,6 +535,9 @@ async function main(argv = process.argv.slice(2)) {
         "Corrupt target: rejected without replacement",
         "Wrong signature: rejected without replacement",
         "Valid update: replaced and preserved user data",
+        ...(process.platform === "win32"
+          ? ["Uninstall: completed and removed install directory"]
+          : []),
         "",
       ].join("\n"),
     );
