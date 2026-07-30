@@ -915,9 +915,9 @@ function testWorkflowContract() {
     "Stable/beta publication approval must gate only the final release job",
   );
   assert.match(workflow, /environment:\s*release-signing/);
-  assert.match(validateRelease, /runner:\s*'macos-26'/);
-  assert.match(validateRelease, /runner:\s*'macos-26-intel'/);
-  assert.doesNotMatch(validateRelease, /runner:\s*'macos-15(?:-intel)?'/);
+  assert.match(validateRelease, /runner:\s*'macos-15'/);
+  assert.match(validateRelease, /runner:\s*'macos-15-intel'/);
+  assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
   assert.match(buildMacos, /runner:\s*macos-26\b/);
   assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
@@ -1123,6 +1123,8 @@ function testWorkflowContract() {
     "CI must remain manual-only",
   );
   assert.match(ciWorkflow, /scope:[\s\S]*?options:\s*\n\s+- full\s*\n\s+- macos/);
+  assert.match(ciWorkflow, /runner:\s*"macos-15"/);
+  assert.match(ciWorkflow, /runner:\s*"macos-15-intel"/);
   assert.match(
     ciWorkflow,
     /nonmac-updater-e2e:[\s\S]*?if:\s*inputs\.scope == 'full'[\s\S]*?uses:\s*\.\/\.github\/workflows\/nonmac-updater-audit\.yml/,
@@ -1133,6 +1135,8 @@ function testWorkflowContract() {
     /environment:\s*release-signing/,
     "Manual CI must use the protected macOS signing environment",
   );
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26\b/);
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26-intel\b/);
   assert.match(
     ciWorkflow,
     /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,

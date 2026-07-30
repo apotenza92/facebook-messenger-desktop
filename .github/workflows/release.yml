@@ -63,11 +63,11 @@ jobs:
           }
           const updaterMatrix = [
             ...(stable ? [
-              { channel: 'stable', arch: 'arm64', runner: 'macos-26' },
-              { channel: 'stable', arch: 'x64', runner: 'macos-26-intel' },
+              { channel: 'stable', arch: 'arm64', runner: 'macos-15' },
+              { channel: 'stable', arch: 'x64', runner: 'macos-15-intel' },
             ] : []),
-            { channel: 'beta', arch: 'arm64', runner: 'macos-26' },
-            { channel: 'beta', arch: 'x64', runner: 'macos-26-intel' },
+            { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
+            { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
           ];
           const previousVersion = (() => {
             if (prerelease) {
