@@ -47,7 +47,10 @@ import {
   decideWindowOpenActionForContext,
   type WindowOpenAction,
 } from "./url-policy";
-import { decideMessengerReload } from "./reload-policy";
+import {
+  decideMessengerReload,
+  decideMessengerTopLevelNavigation,
+} from "./reload-policy";
 import {
   ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
   shouldAllowAboutBlankChildBootstrapNavigation,
@@ -5806,6 +5809,29 @@ function createWindow(source: string = "unknown"): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     contentView.webContents.on("will-navigate", (event, url) => {
       console.log("[ContentView] will-navigate:", url);
+      const currentUrl = contentView?.webContents.getURL() || "";
+      const navigationDecision = decideMessengerTopLevelNavigation({
+        currentUrl,
+        nextUrl: url,
+      });
+      if (!navigationDecision.allowed) {
+        event.preventDefault();
+        pushReloadDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "navigation-suppressed",
+          label: "Messenger content view",
+          webContentsId: contentView?.webContents.id,
+          url: currentUrl,
+          nextUrl: url,
+          reason: navigationDecision.reason,
+        });
+        console.log("[ContentView] Suppressed redundant thread navigation", {
+          reason: navigationDecision.reason,
+        });
+        return;
+      }
+
       if (isExternalAuthProviderFallbackResumeUrl(url)) {
         event.preventDefault();
         resumeExternalAuthProviderFallback(
@@ -6959,6 +6985,29 @@ function createWindow(source: string = "unknown"): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     mainWindow.webContents.on("will-navigate", (event, url) => {
       console.log("[MainWindow] will-navigate:", url);
+      const currentUrl = mainWindow?.webContents.getURL() || "";
+      const navigationDecision = decideMessengerTopLevelNavigation({
+        currentUrl,
+        nextUrl: url,
+      });
+      if (!navigationDecision.allowed) {
+        event.preventDefault();
+        pushReloadDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "navigation-suppressed",
+          label: "Main window",
+          webContentsId: mainWindow?.webContents.id,
+          url: currentUrl,
+          nextUrl: url,
+          reason: navigationDecision.reason,
+        });
+        console.log("[MainWindow] Suppressed redundant thread navigation", {
+          reason: navigationDecision.reason,
+        });
+        return;
+      }
+
       if (isExternalAuthProviderFallbackResumeUrl(url)) {
         event.preventDefault();
         resumeExternalAuthProviderFallback(
