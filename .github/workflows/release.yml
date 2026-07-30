@@ -71,7 +71,7 @@ jobs:
           ];
           const previousVersion = (() => {
             if (prerelease) {
-              const match = packageJson.version.match(/^(.*-beta\\.)([1-9]\\d*)$/);
+              const match = packageJson.version.match(/^(.*-beta\.)([1-9]\d*)$/);
               if (!match || Number(match[2]) <= 1) {
                 throw new Error('The updater gate requires an explicit predecessor for beta.1.');
               }
