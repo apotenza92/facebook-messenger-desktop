@@ -518,6 +518,7 @@ async function testPublishedBaselineMigration({
   let installDirectory = null;
   let baselineChild = null;
   let candidateChild = null;
+  let priorUserDataBackup = null;
   fs.mkdirSync(migrationRoot, { recursive: true });
   fs.mkdirSync(isolatedAppDataRoot, { recursive: true });
   fs.mkdirSync(localAppDataRoot, { recursive: true });
@@ -527,9 +528,9 @@ async function testPublishedBaselineMigration({
     process.platform === "win32" &&
     fs.statSync(userDataDirectory, { throwIfNoEntry: false })
   ) {
-    throw new Error(
-      `Windows runner profile was not clean before the published baseline: ${userDataDirectory}`,
-    );
+    priorUserDataBackup =
+      `${userDataDirectory}.updater-audit-backup-${randomUUID()}`;
+    fs.renameSync(userDataDirectory, priorUserDataBackup);
   }
 
   const platformEnvironment =
@@ -695,16 +696,25 @@ async function testPublishedBaselineMigration({
         fs.copyFileSync(source, path.join(evidenceDirectory, name));
       }
     }
-    if (
-      process.platform === "win32" &&
-      installDirectory &&
-      fs.statSync(
-        path.join(installDirectory, `Uninstall ${productName}.exe`),
-        { throwIfNoEntry: false },
-      )?.isFile()
-    ) {
-      stopWindowsProcesses(observedPids);
-      await uninstallWindowsPackage(installDirectory, productName);
+    try {
+      if (
+        process.platform === "win32" &&
+        installDirectory &&
+        fs.statSync(
+          path.join(installDirectory, `Uninstall ${productName}.exe`),
+          { throwIfNoEntry: false },
+        )?.isFile()
+      ) {
+        stopWindowsProcesses(observedPids);
+        await uninstallWindowsPackage(installDirectory, productName);
+      }
+    } finally {
+      if (process.platform === "win32") {
+        await removeDirectoryWithRetries(userDataDirectory);
+      }
+      if (priorUserDataBackup) {
+        fs.renameSync(priorUserDataBackup, userDataDirectory);
+      }
     }
   }
 

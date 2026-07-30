@@ -1527,7 +1527,12 @@ function testWorkflowContract() {
     /windowsKnownFolder\("ApplicationData"\)/,
     "Published Windows baselines must use the actual OS roaming profile",
   );
-  assert.match(nonmacHarness, /Windows runner profile was not clean/);
+  assert.match(nonmacHarness, /\.updater-audit-backup-/);
+  assert.match(
+    nonmacHarness,
+    /fs\.renameSync\(priorUserDataBackup, userDataDirectory\)/,
+    "Published Windows migration must restore a pre-existing runner profile",
+  );
   assert.match(nonmacHarness, /published-migration-runtime\.log/);
   assert.match(nonmacHarness, /published-migration-events\.jsonl/);
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
