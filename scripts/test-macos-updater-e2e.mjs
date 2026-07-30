@@ -10,6 +10,7 @@ import {
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -459,6 +460,51 @@ function restoreInstallSourceCache({
   }
 }
 
+function resolveUpdaterCacheDirectory(appPath) {
+  const configurationPath = join(
+    appPath,
+    "Contents",
+    "Resources",
+    "app-update.yml",
+  );
+  const configuration = yaml.load(readFileSync(configurationPath, "utf8"));
+  const directoryName = String(configuration?.updaterCacheDirName ?? "");
+  if (
+    !/^[A-Za-z0-9._-]+$/.test(directoryName) ||
+    directoryName === "." ||
+    directoryName === ".."
+  ) {
+    fail(`Unsafe updater cache directory name in ${configurationPath}`);
+  }
+  return join(homedir(), "Library", "Caches", directoryName);
+}
+
+function isolateUpdaterCache(appPath, workspace) {
+  const cachePath = resolveUpdaterCacheDirectory(appPath);
+  const backupPath = join(workspace, "original-updater-cache");
+  const hadExistingCache = existsSync(cachePath);
+  if (hadExistingCache) {
+    renameSync(cachePath, backupPath);
+  }
+  return { backupPath, cachePath, hadExistingCache };
+}
+
+function clearTestUpdaterCache({ cachePath }) {
+  rmSync(cachePath, { recursive: true, force: true });
+}
+
+function restoreUpdaterCache(boundary) {
+  if (!boundary) return;
+  clearTestUpdaterCache(boundary);
+  if (boundary.hadExistingCache) {
+    mkdirSync(resolve(boundary.cachePath, ".."), {
+      recursive: true,
+      mode: 0o700,
+    });
+    renameSync(boundary.backupPath, boundary.cachePath);
+  }
+}
+
 async function waitForEvent(
   resultPath,
   event,
@@ -621,12 +667,14 @@ async function launchScenario({
     closeSync(stderrFile);
   }
   let preserveMarker = false;
+  let completed = false;
   try {
     const result = await waitForEvent(resultPath, expectedEvent, child, {
       requestLogPath,
       stderrPath,
       stdoutPath,
     });
+    completed = true;
     preserveMarker = expectedEvent === "update-downloaded";
     return {
       appPath,
@@ -644,6 +692,9 @@ async function launchScenario({
   } finally {
     server.close();
     restoreInstallSourceCache(installSourceCache);
+    if (!completed) {
+      stopVerifiedProcesses(executablePath);
+    }
     if (!preserveMarker) {
       cleanupOwnedUpdaterMarker(markerPath, marker);
     }
@@ -820,6 +871,7 @@ export async function main() {
   const certificateDirectory = join(workspace, "certificates");
   mkdirSync(certificateDirectory);
   let succeeded = false;
+  let updaterCacheBoundary = null;
   try {
     const previousZip = join(workspace, previous.asset.name);
     const checksumPath = join(workspace, "SHA256SUMS");
@@ -878,6 +930,16 @@ export async function main() {
       currentExpectations,
       certificateDirectory,
     );
+    const baselineUpdaterCache = resolveUpdaterCacheDirectory(baselineApp);
+    const candidateUpdaterCache = resolveUpdaterCacheDirectory(
+      join(candidateDirectory, contract.appName),
+    );
+    if (baselineUpdaterCache !== candidateUpdaterCache) {
+      fail(
+        `Updater cache migration is not supported: ${baselineUpdaterCache} -> ${candidateUpdaterCache}`,
+      );
+    }
+    updaterCacheBoundary = isolateUpdaterCache(baselineApp, workspace);
 
     const validFeed = join(workspace, "valid-feed");
     mkdirSync(validFeed);
@@ -928,6 +990,7 @@ export async function main() {
     } finally {
       cleanupOwnedUpdaterMarker(valid.markerPath, valid.marker);
     }
+    clearTestUpdaterCache(updaterCacheBoundary);
 
     const corruptFeed = join(workspace, "corrupt-feed");
     mkdirSync(corruptFeed);
@@ -970,6 +1033,7 @@ export async function main() {
     if (!/sha|checksum|size|integrity/i.test(String(corrupt.result.detail)))
       fail(`Corrupt package failed for an unexpected reason: ${corrupt.result.detail}`);
     killVerifiedProcess(corrupt.child.pid, corrupt.executablePath);
+    clearTestUpdaterCache(updaterCacheBoundary);
 
     const wrongFeed = join(workspace, "wrong-signature-feed");
     const wrongExtract = join(workspace, "wrong-signature-app");
@@ -1033,11 +1097,13 @@ export async function main() {
       stopVerifiedProcesses(wrong.executablePath);
       cleanupOwnedUpdaterMarker(wrong.markerPath, wrong.marker);
     }
+    clearTestUpdaterCache(updaterCacheBoundary);
     succeeded = true;
     console.log(
       `macOS ${channel} ${arch} N-1 updater install E2E passed from ${previous.release.tag_name}`,
     );
   } finally {
+    restoreUpdaterCache(updaterCacheBoundary);
     if (!succeeded && retainWorkspaceOnFailure) {
       console.error(`Retained failed updater E2E workspace: ${workspace}`);
     } else {
