@@ -8794,6 +8794,7 @@ function startContentViewBoundsMonitoring(): void {
 
     applyContentViewBoundsHandler?.();
   }, CONTENT_VIEW_BOUNDS_MONITOR_INTERVAL_MS);
+  contentViewBoundsMonitorInterval.unref();
 }
 
 function stopContentViewBoundsMonitoring(): void {
@@ -12797,6 +12798,7 @@ app.on("before-quit", () => {
 
   // Stop menu bar hover detection
   stopMenuBarHoverDetection();
+  stopContentViewBoundsMonitoring();
 
   // Stop any active incoming-call notification reminders
   stopIncomingCallNotificationReminder(false);

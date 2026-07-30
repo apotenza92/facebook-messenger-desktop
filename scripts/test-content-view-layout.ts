@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   getContentViewBounds,
   reconcileContentViewBounds,
@@ -13,6 +14,23 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
 }
 
 function run(): void {
+  const mainSource = readFileSync("src/main/main.ts", "utf8");
+
+  if (!mainSource.includes("contentViewBoundsMonitorInterval.unref();")) {
+    throw new Error(
+      "The content-view monitor must not keep Electron alive during an updater restart",
+    );
+  }
+  if (
+    !/app\.on\("before-quit",[\s\S]*?stopContentViewBoundsMonitoring\(\);/.test(
+      mainSource,
+    )
+  ) {
+    throw new Error(
+      "The content-view monitor must be stopped before Electron quits",
+    );
+  }
+
   assertEqual(
     getContentViewBounds({ width: 900, height: 600 }, 56),
     { x: 0, y: -56, width: 900, height: 656 },
