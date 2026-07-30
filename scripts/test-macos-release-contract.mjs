@@ -1316,6 +1316,9 @@ function testWorkflowContract() {
   assert.match(nonmacWorkflow, /ubuntu-24\.04/);
   assert.match(nonmacWorkflow, /Create disposable loopback-only TUF trust/);
   assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
+  assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
+  assert.match(workflow, /pattern:\s*macos-input-\*/);
+  assert.doesNotMatch(workflow, /ci-macos-input-/);
   assert.match(
     jobSource(workflow, "release"),
     /needs:[\s\S]*?nonmac-updater-e2e/,

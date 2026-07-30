@@ -209,7 +209,7 @@ jobs:
       - name: Upload native package evidence
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: ci-macos-input-${{ matrix.arch }}
+          name: macos-input-${{ matrix.arch }}
           path: |
             release/*.zip
             release/*.blockmap
@@ -245,7 +245,7 @@ jobs:
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts/macos
-          pattern: ci-macos-input-*
+          pattern: macos-input-*
 
       - name: Assemble and validate updater metadata
         run: |
