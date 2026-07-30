@@ -1258,6 +1258,7 @@ function testWorkflowContract() {
   assert.match(updaterHarness, /cleanupOwnedUpdaterMarker/);
   assert.match(updaterHarness, /MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA/);
   assert.match(updaterHarness, /seedInstallSourceCache/);
+  assert.match(updaterHarness, /move-to-applications-prompted\.json/);
   assert.match(updaterHarness, /"LOGNAME"/);
   assert.match(updaterHarness, /"SHELL"/);
   assert.match(updaterHarness, /"USER"/);

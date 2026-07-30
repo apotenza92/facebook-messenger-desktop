@@ -420,20 +420,42 @@ const INSTALL_SOURCE_CACHE_FILE = "install-source.json";
 function seedInstallSourceCache(markerPath, installedVersion) {
   const cachePath = installSourceCachePath(markerPath);
   const previous = existsSync(cachePath) ? readFileSync(cachePath) : null;
+  const movePromptPath = join(
+    resolve(markerPath, ".."),
+    "move-to-applications-prompted.json",
+  );
+  const previousMovePrompt = existsSync(movePromptPath)
+    ? readFileSync(movePromptPath)
+    : null;
   mkdirSync(resolve(cachePath, ".."), { recursive: true, mode: 0o700 });
   writeFileSync(
     cachePath,
     `${JSON.stringify({ source: "homebrew", version: installedVersion })}\n`,
     { mode: 0o600 },
   );
-  return { cachePath, previous };
+  writeFileSync(
+    movePromptPath,
+    `${JSON.stringify({ prompted: true, date: new Date(0).toISOString() })}\n`,
+    { mode: 0o600 },
+  );
+  return { cachePath, movePromptPath, previous, previousMovePrompt };
 }
 
-function restoreInstallSourceCache({ cachePath, previous }) {
+function restoreInstallSourceCache({
+  cachePath,
+  movePromptPath,
+  previous,
+  previousMovePrompt,
+}) {
   if (previous) {
     writeFileSync(cachePath, previous, { mode: 0o600 });
   } else {
     rmSync(cachePath, { force: true });
+  }
+  if (previousMovePrompt) {
+    writeFileSync(movePromptPath, previousMovePrompt, { mode: 0o600 });
+  } else {
+    rmSync(movePromptPath, { force: true });
   }
 }
 
