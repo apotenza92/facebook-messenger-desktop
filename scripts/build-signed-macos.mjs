@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdtempSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,8 @@ import {
   MESSENGER_APPLE_TEAM_ID,
   normalizeFingerprint,
   resolveMacReleaseContract,
+  validateDistributableNotarizationRecord,
+  validateNotarizationRecord,
 } from "./macos-release-contract.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -230,6 +233,90 @@ function writeChecksum(filePath) {
   });
 }
 
+function parseJson(result, label) {
+  for (const value of [result.stdout, result.stderr]) {
+    if (!value?.trim()) continue;
+    try {
+      return JSON.parse(value);
+    } catch {
+      // notarytool can place non-JSON diagnostics on either stream.
+    }
+  }
+  throw new Error(`${label} did not return valid JSON`);
+}
+
+function notarizeFinalDistributable(artifactPath, outputPath, apiKeyPath) {
+  const authorization = [
+    "--key",
+    apiKeyPath,
+    "--key-id",
+    credentials.APPLE_NOTARYTOOL_KEY_ID,
+    "--issuer",
+    credentials.APPLE_NOTARYTOOL_ISSUER_ID,
+  ];
+  const submission = parseJson(
+    run(
+      "xcrun",
+      [
+        "notarytool",
+        "submit",
+        artifactPath,
+        ...authorization,
+        "--wait",
+        "--output-format",
+        "json",
+      ],
+      { capture: true },
+    ),
+    "Final distributable notarization submission",
+  );
+  if (typeof submission.id !== "string") {
+    throw new Error(
+      `Final distributable notarization did not return an ID: ${JSON.stringify(submission)}`,
+    );
+  }
+  const log = parseJson(
+    run(
+      "xcrun",
+      [
+        "notarytool",
+        "log",
+        submission.id,
+        ...authorization,
+        "--output-format",
+        "json",
+      ],
+      { capture: true },
+    ),
+    `Final distributable notarization log ${submission.id}`,
+  );
+  const artifact = {
+    name: basename(artifactPath),
+    sha256: run("shasum", ["-a", "256", artifactPath], { capture: true })
+      .stdout.trim()
+      .split(/\s+/)[0],
+    size: statSync(artifactPath).size,
+  };
+  const record = validateDistributableNotarizationRecord(
+    { artifact, submission, log },
+    {
+      artifactName: artifact.name,
+      sha256: artifact.sha256,
+      size: artifact.size,
+    },
+  );
+  for (const issue of Array.isArray(log.issues) ? log.issues : []) {
+    const severity = String(issue?.severity ?? "unknown").toLowerCase();
+    const issuePath = issue?.path ? ` (${issue.path})` : "";
+    console.warn(
+      `Final distributable notarization ${severity}${issuePath}: ${issue?.message ?? "No message"}`,
+    );
+  }
+  writeFileSync(outputPath, `${JSON.stringify(record, null, 2)}\n`, {
+    mode: 0o644,
+  });
+}
+
 if (!skipBuild) run("npm", ["run", "build"]);
 
 const signingDirectory = mkdtempSync(join(tmpdir(), "messenger-signing-"));
@@ -378,6 +465,7 @@ try {
     contract.artifactName,
     contract.blockmapName,
     contract.notarizationName,
+    contract.distributableNotarizationName,
     `${contract.artifactName}.sha256`,
   ]) {
     rmSync(join(releaseDirectory, fileName), { force: true });
@@ -398,6 +486,11 @@ try {
   );
 
   const artifactPath = join(releaseDirectory, contract.artifactName);
+  notarizeFinalDistributable(
+    artifactPath,
+    join(releaseDirectory, contract.distributableNotarizationName),
+    apiKeyPath,
+  );
   writeChecksum(artifactPath);
   run(
     "node",

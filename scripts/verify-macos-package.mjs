@@ -35,6 +35,7 @@ import {
   normalizeFingerprint,
   parseCodesignMetadata,
   resolveMacReleaseContract,
+  validateDistributableNotarizationRecord,
   validateNotarizationRecord,
   validateSignatureMetadata,
 } from "./macos-release-contract.mjs";
@@ -573,11 +574,16 @@ export async function main() {
   const blockmapPath = join(releaseDirectory, contract.blockmapName);
   const metadataPath = join(releaseDirectory, contract.metadataName);
   const notarizationPath = join(releaseDirectory, contract.notarizationName);
+  const distributableNotarizationPath = join(
+    releaseDirectory,
+    contract.distributableNotarizationName,
+  );
   for (const requiredPath of [
     artifactPath,
     blockmapPath,
     metadataPath,
     notarizationPath,
+    distributableNotarizationPath,
   ]) {
     if (!existsSync(requiredPath))
       fail(`Required macOS release output is missing: ${requiredPath}`);
@@ -593,6 +599,14 @@ export async function main() {
   validateUpdateMetadata(metadataPath, artifactPath, version);
   validateNotarizationRecord(
     JSON.parse(readFileSync(notarizationPath, "utf8")),
+  );
+  validateDistributableNotarizationRecord(
+    JSON.parse(readFileSync(distributableNotarizationPath, "utf8")),
+    {
+      artifactName: basename(artifactPath),
+      sha256: hashFile(artifactPath, "sha256", "hex"),
+      size: statSync(artifactPath).size,
+    },
   );
 
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "messenger-verify-"));

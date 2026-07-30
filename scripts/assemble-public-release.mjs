@@ -66,6 +66,7 @@ export function expectedPublicReleaseContract(
       macInternal.push(
         `${contract.artifactName}.sha256`,
         contract.notarizationName,
+        contract.distributableNotarizationName,
       );
     }
     macPublic.push(resolveMacReleaseContract(channel, "x64").metadataName);

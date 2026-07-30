@@ -20,6 +20,7 @@ import {
   parseCodesignMetadata,
   resolvePriorSigningFingerprints,
   resolveMacReleaseContract,
+  validateDistributableNotarizationRecord,
   validateNotarizationRecord,
   validateSignatureMetadata,
 } from "./macos-release-contract.mjs";
@@ -128,6 +129,8 @@ function testContracts() {
     executableName: "Messenger",
     metadataName: "latest-mac.yml",
     notarizationName: "notarization-stable-macos-arm64.json",
+    distributableNotarizationName:
+      "notarization-distributable-stable-macos-arm64.json",
     packageName: "facebook-messenger-desktop",
     productName: "Messenger",
     updaterChannel: "latest",
@@ -211,6 +214,40 @@ function testSigningValidation() {
         log: { jobId: "different-id", status: "Accepted", issues: [] },
       }),
     /job ID/,
+  );
+  assert.doesNotThrow(() =>
+    validateDistributableNotarizationRecord(
+      {
+        artifact: { name: "Messenger.zip", sha256: fingerprint, size: 42 },
+        submission: { id: "distributable-id", status: "Accepted" },
+        log: {
+          archiveFilename: "Messenger.zip",
+          jobId: "distributable-id",
+          sha256: fingerprint,
+          status: "Accepted",
+          issues: [],
+        },
+      },
+      { artifactName: "Messenger.zip", sha256: fingerprint, size: 42 },
+    ),
+  );
+  assert.throws(
+    () =>
+      validateDistributableNotarizationRecord(
+        {
+          artifact: { name: "Messenger.zip", sha256: fingerprint, size: 42 },
+          submission: { id: "distributable-id", status: "Accepted" },
+          log: {
+            archiveFilename: "Messenger.zip",
+            jobId: "distributable-id",
+            sha256: "cd".repeat(32),
+            status: "Accepted",
+            issues: [],
+          },
+        },
+        { artifactName: "Messenger.zip", sha256: fingerprint, size: 42 },
+      ),
+    /Apple notarization log/,
   );
 }
 
@@ -371,6 +408,27 @@ function testMetadataAssembly() {
         }),
       );
       writeFileSync(
+        join(sourceDirectory, contract.distributableNotarizationName),
+        JSON.stringify({
+          artifact: {
+            name: contract.artifactName,
+            sha256,
+            size: artifact.length,
+          },
+          submission: {
+            id: `distributable-fixture-${arch}`,
+            status: "Accepted",
+          },
+          log: {
+            archiveFilename: contract.artifactName,
+            jobId: `distributable-fixture-${arch}`,
+            sha256,
+            status: "Accepted",
+            issues: [],
+          },
+        }),
+      );
+      writeFileSync(
         join(sourceDirectory, contract.metadataName),
         yaml.dump({
           version,
@@ -400,6 +458,23 @@ function testMetadataAssembly() {
     assert.match(
       readFileSync(join(outputDirectory, "SHA256SUMS-macos.txt"), "utf8"),
       /Messenger-Beta-macos-arm64\.zip/,
+    );
+    const arm64Contract = resolveMacReleaseContract("beta", "arm64");
+    rmSync(
+      join(
+        inputDirectory,
+        "macos-input-arm64",
+        arm64Contract.distributableNotarizationName,
+      ),
+    );
+    assert.throws(
+      () =>
+        assembleMacRelease({
+          inputDirectory,
+          outputDirectory,
+          releaseChannel: "beta",
+        }),
+      /Missing macOS input.*notarization-distributable-beta-macos-arm64/,
     );
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -861,6 +936,15 @@ function testWorkflowContract() {
   const macUpdaterScript = readFileSync(
     join(repositoryRoot, "scripts", "test-macos-updater-e2e.mjs"),
     "utf8",
+  );
+  assert.match(
+    macSigningScript,
+    /notarizeFinalDistributable\(\s*artifactPath,/,
+    "The immutable final ZIP must receive its own notarization submission",
+  );
+  assert.match(
+    macSigningScript,
+    /contract\.distributableNotarizationName/,
   );
   const windowsInstallerTest = readFileSync(
     join(repositoryRoot, "scripts", "test-windows-installer.ps1"),
