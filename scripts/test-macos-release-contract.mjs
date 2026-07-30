@@ -1333,6 +1333,14 @@ function testWorkflowContract() {
   assert.match(nonmacHarness, /readFileSync\(resultPath,\s*"utf8"\)/);
   assert.doesNotMatch(nonmacHarness, /\$\{resultPath\}\.jsonl/);
   assert.match(nonmacHarness, /\$\{mode\}-runtime\.log/);
+  assert.match(
+    nonmacHarness,
+    /--user-data-dir=\$\{userDataDirectory\}/,
+    "Windows updater scenarios must use separate Electron profiles",
+  );
+  assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
+  assert.match(nonmacHarness, /removeDirectoryWithRetries\(temporary\)/);
+  assert.match(nonmacHarness, /if \(primaryError\) throw primaryError/);
 
   const refreshWorkflow = readFileSync(
     join(workflowDirectory, "tuf-metadata-refresh.yml"),

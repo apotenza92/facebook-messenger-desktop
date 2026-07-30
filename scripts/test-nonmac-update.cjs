@@ -235,6 +235,30 @@ async function stopProcess(child) {
   ]);
 }
 
+function stopWindowsProcesses(pids) {
+  if (process.platform !== "win32") return;
+  for (const pid of pids) {
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+    });
+  }
+}
+
+async function removeDirectoryWithRetries(directory) {
+  let lastError;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw lastError;
+}
+
 function installedVersion(executable) {
   const archivePath = path.join(
     path.dirname(executable),
@@ -280,11 +304,11 @@ async function waitForReplacement({
   throw new Error("Timed out waiting for native candidate replacement.");
 }
 
-function launch(executable, env, logPath) {
+function launch(executable, env, logPath, userDataDirectory) {
   const args =
     process.platform === "linux"
       ? ["--no-sandbox"]
-      : [];
+      : [`--user-data-dir=${userDataDirectory}`];
   const log = fs.openSync(logPath, "a", 0o600);
   return spawn(executable, args, {
     env,
@@ -340,6 +364,8 @@ async function main(argv = process.argv.slice(2)) {
 
   let executable = previousArtifact;
   let installDirectory = null;
+  let primaryError = null;
+  const observedPids = new Set();
   const productName = channel === "beta" ? "Messenger Beta" : "Messenger";
   try {
     if (process.platform === "win32") {
@@ -381,6 +407,7 @@ async function main(argv = process.argv.slice(2)) {
       fs.mkdirSync(scenarioRoot, { recursive: true });
       const resultPath = path.join(scenarioRoot, "events.json");
       const logPath = path.join(scenarioRoot, "runtime.log");
+      const userDataDirectory = path.join(scenarioRoot, "userdata");
       const env = {
         ...process.env,
         APPDATA:
@@ -406,7 +433,7 @@ async function main(argv = process.argv.slice(2)) {
       if (process.platform === "linux") {
         env.APPIMAGE = previousArtifact;
       }
-      let child = launch(executable, env, logPath);
+      let child = launch(executable, env, logPath, userDataDirectory);
       try {
         if (mode !== "valid") {
           await waitForEvent(resultPath, new Set(["error"]));
@@ -436,6 +463,7 @@ async function main(argv = process.argv.slice(2)) {
               MESSENGER_UPDATE_E2E_MANUAL_LAUNCH: "1",
             },
             logPath,
+            userDataDirectory,
           );
           const started = await waitForEvent(
             resultPath,
@@ -449,6 +477,11 @@ async function main(argv = process.argv.slice(2)) {
         await stopProcess(child);
         await server.close();
         if (fs.existsSync(resultPath)) {
+          for (const event of readEvents(resultPath)) {
+            if (Number.isSafeInteger(event.detail?.pid)) {
+              observedPids.add(event.detail.pid);
+            }
+          }
           fs.copyFileSync(
             resultPath,
             path.join(evidenceDirectory, `${mode}-events.jsonl`),
@@ -479,7 +512,10 @@ async function main(argv = process.argv.slice(2)) {
         "",
       ].join("\n"),
     );
+  } catch (error) {
+    primaryError = error;
   } finally {
+    stopWindowsProcesses(observedPids);
     if (
       process.platform === "win32" &&
       installDirectory &&
@@ -493,8 +529,19 @@ async function main(argv = process.argv.slice(2)) {
         { stdio: "ignore" },
       );
     }
-    fs.rmSync(temporary, { recursive: true, force: true });
+    try {
+      await removeDirectoryWithRetries(temporary);
+    } catch (cleanupError) {
+      if (!primaryError) {
+        primaryError = cleanupError;
+      } else {
+        process.stderr.write(
+          `Cleanup warning: ${cleanupError.stack || cleanupError.message}\n`,
+        );
+      }
+    }
   }
+  if (primaryError) throw primaryError;
 }
 
 main().catch((error) => {
