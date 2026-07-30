@@ -1122,9 +1122,10 @@ function testWorkflowContract() {
     /^\s*(?:push|pull_request|pull_request_target|workflow_run|schedule):/m,
     "CI must remain manual-only",
   );
+  assert.match(ciWorkflow, /scope:[\s\S]*?options:\s*\n\s+- full\s*\n\s+- macos/);
   assert.match(
     ciWorkflow,
-    /nonmac-updater-e2e:[\s\S]*?uses:\s*\.\/\.github\/workflows\/nonmac-updater-audit\.yml/,
+    /nonmac-updater-e2e:[\s\S]*?if:\s*inputs\.scope == 'full'[\s\S]*?uses:\s*\.\/\.github\/workflows\/nonmac-updater-audit\.yml/,
     "Manual CI must retain all native Windows and AppImage updater gates",
   );
   assert.match(
@@ -1253,6 +1254,8 @@ function testWorkflowContract() {
   assert.match(updaterHarness, /cleanupOwnedUpdaterMarker/);
   assert.match(updaterHarness, /MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA/);
   assert.match(updaterHarness, /observed events=/);
+  assert.match(updaterHarness, /feed requests=/);
+  assert.match(updaterHarness, /stderr tail=/);
   assert.match(
     updaterHarness,
     /expectedEvent:\s*"update-downloaded"[\s\S]*?name:\s*"wrong-signature"/,

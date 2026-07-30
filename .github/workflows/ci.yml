@@ -2,6 +2,15 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Native readiness scope
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - macos
 
 permissions:
   contents: read
@@ -103,6 +112,7 @@ jobs:
 
   nonmac-updater-e2e:
     name: Native ${{ matrix.target }} updater readiness
+    if: inputs.scope == 'full'
     needs: [prepare, deterministic]
     strategy:
       fail-fast: false

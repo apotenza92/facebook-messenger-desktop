@@ -2,10 +2,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -325,10 +327,15 @@ function writeMetadata(
   );
 }
 
-async function serve(directory) {
+async function serve(directory, requestLogPath) {
   const server = createServer((request, response) => {
     const name = basename(new URL(request.url, "http://127.0.0.1").pathname);
     const filePath = join(directory, name);
+    appendFileSync(
+      requestLogPath,
+      `${request.method ?? "UNKNOWN"} ${request.url ?? "/"} ${existsSync(filePath) ? 200 : 404}\n`,
+      { mode: 0o600 },
+    );
     if (!existsSync(filePath)) {
       response.writeHead(404).end();
       return;
@@ -354,6 +361,12 @@ function readEvents(resultPath) {
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function readLogTail(filePath, maximumCharacters = 12_000) {
+  if (!existsSync(filePath)) return "";
+  const contents = readFileSync(filePath, "utf8");
+  return contents.slice(-maximumCharacters);
 }
 
 export function parseExecutableProcesses(
@@ -398,7 +411,13 @@ function cleanupOwnedUpdaterMarker(markerPath, marker) {
   rmSync(markerPath);
 }
 
-async function waitForEvent(resultPath, event, child, timeout = 180_000) {
+async function waitForEvent(
+  resultPath,
+  event,
+  child,
+  diagnostics,
+  timeout = 180_000,
+) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const match = readEvents(resultPath).find((entry) => entry.event === event);
@@ -410,7 +429,13 @@ async function waitForEvent(resultPath, event, child, timeout = 180_000) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
   fail(
-    `Timed out waiting for ${event}; observed events=${JSON.stringify(readEvents(resultPath))}`,
+    [
+      `Timed out waiting for ${event}`,
+      `observed events=${JSON.stringify(readEvents(resultPath))}`,
+      `feed requests=${JSON.stringify(readLogTail(diagnostics.requestLogPath))}`,
+      `stdout tail=${JSON.stringify(readLogTail(diagnostics.stdoutPath))}`,
+      `stderr tail=${JSON.stringify(readLogTail(diagnostics.stderrPath))}`,
+    ].join("; "),
   );
 }
 
@@ -494,6 +519,9 @@ async function launchScenario({
   workspace,
 }) {
   const resultPath = join(workspace, `${name}.jsonl`);
+  const requestLogPath = join(workspace, `${name}-feed-requests.log`);
+  const stderrPath = join(workspace, `${name}-stderr.log`);
+  const stdoutPath = join(workspace, `${name}-stdout.log`);
   const home = join(workspace, `${name}-home`);
   const temporaryDirectory = join(workspace, `${name}-tmp`);
   const marker = `messenger-updater-${name}-marker`;
@@ -503,7 +531,7 @@ async function launchScenario({
   }
   mkdirSync(home, { recursive: true, mode: 0o700 });
   mkdirSync(temporaryDirectory, { recursive: true, mode: 0o700 });
-  const { server, url } = await serve(feedDirectory);
+  const { server, url } = await serve(feedDirectory, requestLogPath);
   const executablePath = realpathSync(
     join(appPath, "Contents", "MacOS", contract.executableName),
   );
@@ -517,14 +545,26 @@ async function launchScenario({
     temporaryDirectory,
     version,
   });
-  const child = spawn(executablePath, [], {
-    detached: true,
-    env: environment,
-    stdio: "ignore",
-  });
+  const stdoutFile = openSync(stdoutPath, "w", 0o600);
+  const stderrFile = openSync(stderrPath, "w", 0o600);
+  let child;
+  try {
+    child = spawn(executablePath, [], {
+      detached: true,
+      env: environment,
+      stdio: ["ignore", stdoutFile, stderrFile],
+    });
+  } finally {
+    closeSync(stdoutFile);
+    closeSync(stderrFile);
+  }
   let preserveMarker = false;
   try {
-    const result = await waitForEvent(resultPath, expectedEvent, child);
+    const result = await waitForEvent(resultPath, expectedEvent, child, {
+      requestLogPath,
+      stderrPath,
+      stdoutPath,
+    });
     preserveMarker = expectedEvent === "update-downloaded";
     return {
       appPath,
@@ -536,6 +576,8 @@ async function launchScenario({
       markerPath,
       result,
       resultPath,
+      stderrPath,
+      stdoutPath,
       temporaryDirectory,
     };
   } finally {
