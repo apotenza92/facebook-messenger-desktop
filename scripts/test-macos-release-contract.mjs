@@ -1005,6 +1005,12 @@ function testWorkflowContract() {
     ),
     "Hosted release grammar must accept only numbered beta prereleases",
   );
+  assert(
+    validateRelease.includes(
+      "const match = packageJson.version.match(/^(.*-beta\\.)([1-9]\\d*)$/);",
+    ),
+    "Hosted beta predecessor parsing must use an executable JavaScript regex",
+  );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
   assert.match(
