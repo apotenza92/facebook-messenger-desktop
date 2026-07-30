@@ -109,6 +109,7 @@ jobs:
             sudo apt-get install -y libfuse2t64
 
       - name: Install dependencies and build
+        shell: bash
         run: |
           set -euo pipefail
           npm ci
