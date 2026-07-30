@@ -28,9 +28,13 @@ flatpak_smoke() {
   smoke_root="$(mktemp -d)"
   smoke_home="$smoke_root/home"
   smoke_tmp="$smoke_root/tmp"
+  local desktop_file="$smoke_home/.local/share/flatpak/exports/share/applications/$app_id.desktop"
   mkdir -p "$smoke_home" "$smoke_tmp" "$log_dir"
   env -i HOME="$smoke_home" PATH=/usr/local/bin:/usr/bin:/bin \
     dbus-run-session -- flatpak install --user --noninteractive "$bundle"
+  test -f "$desktop_file"
+  grep -Eq "^Exec=.*flatpak run.*${app_id}" "$desktop_file"
+  grep -Eq '^Icon=.+$' "$desktop_file"
   run_with_timeout "$log_dir/issue53-flatpak-${app_id}.log" \
     env -i \
       HOME="$smoke_home" \
@@ -48,6 +52,7 @@ flatpak_smoke() {
     echo "Flatpak uninstall left $app_id installed" >&2
     exit 1
   fi
+  test ! -e "$desktop_file"
   echo "Flatpak install, launch, and uninstall passed: $bundle"
 }
 

@@ -4,6 +4,11 @@ type NotificationDisplayTitleInput = {
   maxAlternateNames?: number;
 };
 
+type QuickSwitcherContactDisplay = {
+  name: string;
+  participants: string;
+};
+
 type NotificationNameCacheEntryInput = {
   realName?: string | null;
   realNames?: Array<string | null | undefined>;
@@ -91,6 +96,7 @@ function isGenericNotificationDisplayName(
     /^unknown caller$/,
     /^profile(?: picture)?$/,
     /^picture$/,
+    /^(?:gif|sticker|photo|video)(?: image)?$/,
   ].some((pattern) => pattern.test(normalized));
 }
 
@@ -200,6 +206,21 @@ function formatNotificationDisplayTitle(
   return normalizeDisplayName(input.title);
 }
 
+function formatQuickSwitcherContact(
+  input: NotificationDisplayTitleInput,
+): QuickSwitcherContactDisplay {
+  const name = normalizeDisplayName(input.title);
+  const nameKey = normalizeDisplayKey(name);
+  const participants = sanitizeNotificationAlternateNames(
+    input.alternateNames || [],
+  ).filter((participant) => normalizeDisplayKey(participant) !== nameKey);
+
+  return {
+    name,
+    participants: participants.join(", "),
+  };
+}
+
 const notificationDisplayPolicy = {
   hasWordLikeDisplaySignal,
   inspectNotificationDisplayName,
@@ -209,6 +230,7 @@ const notificationDisplayPolicy = {
   sanitizeNotificationAlternateNames,
   sanitizeNotificationNameCache,
   formatNotificationDisplayTitle,
+  formatQuickSwitcherContact,
 };
 
 (globalThis as any).__mdNotificationDisplayPolicy = notificationDisplayPolicy;

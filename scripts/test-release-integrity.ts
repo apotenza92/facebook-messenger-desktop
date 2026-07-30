@@ -77,54 +77,46 @@ function testUpdaterAuthenticationOrder(): void {
     path.resolve(__dirname, "..", "src", "main", "main.ts"),
     "utf8",
   );
-  const windowsDownload = main.slice(
-    main.indexOf("async function downloadWindowsUpdate"),
-    main.indexOf("async function checkAndFixShortcutsAfterUpdate"),
+  const feedSetup = main.slice(
+    main.indexOf("async function configureUpdateFeed"),
+    main.indexOf("async function closeVerifiedUpdateFeed"),
   );
-  const linuxDownload = main.slice(
-    main.indexOf("async function downloadLinuxPackage"),
-    main.indexOf("async function installLinuxPackage"),
-  );
-  for (const source of [windowsDownload, linuxDownload]) {
-    assert(source.includes("await authenticateDownloadedReleaseAsset("));
-    assert(
-      source.indexOf("await new Promise<void>") <
-        source.indexOf("await authenticateDownloadedReleaseAsset("),
-      "download must complete before checksum authentication",
-    );
-  }
+  assert.match(feedSetup, /await createTufVerifiedUpdateFeed\(/);
   assert(
-    linuxDownload.includes('packageType: "AppImage" | "deb" | "rpm"'),
-    "Direct Linux AppImage updates must use the checksum-authenticated downloader",
+    feedSetup.indexOf("await createTufVerifiedUpdateFeed(") <
+      feedSetup.lastIndexOf("autoUpdater.setFeedURL"),
+    "TUF must authenticate non-macOS metadata before electron-updater sees it",
   );
+  assert.match(feedSetup, /embeddedRootPath:[\s\S]*?update-trust[\s\S]*?root\.json/);
+  assert.match(feedSetup, /disableWebInstaller/);
 
-  const releaseDiscovery = main.slice(
+  const updateCheck = main.slice(
     main.indexOf("async function checkForUpdates"),
     main.indexOf("function openGitHubPage"),
   );
-  assert.match(
-    releaseDiscovery,
-    /if \(process\.platform !== "darwin"\) \{\s+await showUpdateAvailableDialog\(targetRelease\.version\);\s+return;\s+\}/,
-    "Windows and Linux must use GitHub release discovery without electron-updater metadata",
-  );
   assert(
-    releaseDiscovery.indexOf('if (process.platform !== "darwin")') <
-      releaseDiscovery.indexOf("autoUpdater.setFeedURL"),
-    "The non-macOS manual update path must return before electron-updater feed setup",
+    updateCheck.indexOf("await verifiedUpdateFeed?.refresh()") <
+      updateCheck.indexOf("await autoUpdater.checkForUpdates()"),
+    "TUF refresh must complete before electron-updater checks metadata",
   );
 
   const updateDialog = main.slice(
     main.indexOf("async function showUpdateAvailableDialog"),
+    main.indexOf("async function showUpdateReadyDialog"),
+  );
+  assert.match(updateDialog, /await downloadUpdateWithProgress\(version\)/);
+  assert.doesNotMatch(updateDialog, /downloadLinuxPackage|installLinuxPackage/);
+  assert.doesNotMatch(updateDialog, /downloadWindowsUpdate|shell\.openPath/);
+  assert.doesNotMatch(main, /sudo -S|zenity --password|kdialog --password/);
+
+  const readyDialog = main.slice(
+    main.indexOf("async function showUpdateReadyDialog"),
+    main.indexOf("function setupAutoUpdater"),
   );
   assert(
-    updateDialog.indexOf("await downloadLinuxPackage(") <
-      updateDialog.indexOf("await installLinuxPackage("),
-    "Linux checksum-authenticated download must precede elevated installation",
-  );
-  assert(
-    updateDialog.indexOf("await downloadWindowsUpdate(") <
-      updateDialog.indexOf("shell.openPath(filePath)"),
-    "Windows checksum-authenticated download must precede execution",
+    readyDialog.indexOf("await closeVerifiedUpdateFeed()") <
+      readyDialog.indexOf("autoUpdater.quitAndInstall"),
+    "the loopback feed must close before installation begins",
   );
 }
 

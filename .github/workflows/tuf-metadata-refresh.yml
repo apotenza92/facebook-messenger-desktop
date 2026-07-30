@@ -1,0 +1,203 @@
+name: Refresh authenticated update metadata
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Channels to refresh
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - beta
+      confirmation:
+        description: Type refresh authenticated update metadata
+        required: true
+        type: string
+
+concurrency:
+  group: messenger-update-metadata
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate deliberate refresh
+    runs-on: ubuntu-24.04
+    outputs:
+      release_channel: ${{ steps.scope.outputs.release_channel }}
+    steps:
+      - name: Require main and exact confirmation
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "${{ inputs.confirmation }}" = \
+            'refresh authenticated update metadata'
+          if [[ "${{ inputs.scope }}" == beta ]]; then
+            echo 'release_channel=beta' >> "$GITHUB_OUTPUT"
+          else
+            echo 'release_channel=stable' >> "$GITHUB_OUTPUT"
+          fi
+
+  seal:
+    name: Refresh signed metadata
+    needs: validate
+    runs-on: ubuntu-24.04
+    environment: update-signing
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout main without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Read the current update repository
+        run: |
+          set -euo pipefail
+          git ls-remote --exit-code origin refs/heads/updates >/dev/null
+          git fetch --no-tags --depth=1 origin \
+            refs/heads/updates:refs/remotes/origin/updates
+          mkdir -p artifacts/previous-updates
+          git archive refs/remotes/origin/updates |
+            tar -x -C artifacts/previous-updates
+
+      - name: Recover only the currently authenticated targets
+        run: |
+          set -euo pipefail
+          node scripts/prepare-update-feed-refresh.cjs \
+            --previous artifacts/previous-updates \
+            --output artifacts/refresh-input \
+            --release-channel "${{ needs.validate.outputs.release_channel }}"
+
+      - name: Increment and sign expiring metadata
+        env:
+          MESSENGER_TUF_SNAPSHOT_PRIVATE_KEY_PEM: ${{ secrets.MESSENGER_TUF_SNAPSHOT_PRIVATE_KEY_PEM }}
+          MESSENGER_TUF_TARGETS_PRIVATE_KEY_PEM: ${{ secrets.MESSENGER_TUF_TARGETS_PRIVATE_KEY_PEM }}
+          MESSENGER_TUF_TIMESTAMP_PRIVATE_KEY_PEM: ${{ secrets.MESSENGER_TUF_TIMESTAMP_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          node scripts/seal-update-feeds.cjs \
+            --input artifacts/refresh-input \
+            --output artifacts/refreshed-update-feed \
+            --previous artifacts/previous-updates \
+            --release-channel "${{ needs.validate.outputs.release_channel }}" \
+            --refresh-metadata
+
+      - name: Verify private material was not emitted
+        run: |
+          set -euo pipefail
+          if grep -R --binary-files=without-match --line-number \
+            --fixed-strings 'PRIVATE KEY' artifacts/refreshed-update-feed; then
+            exit 1
+          fi
+          test -z "$(
+            find artifacts/refreshed-update-feed -type l -print -quit
+          )"
+
+      - name: Upload refreshed metadata
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: refreshed-update-feed
+          path: artifacts/refreshed-update-feed
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: Publish refreshed metadata
+    needs: [validate, seal]
+    runs-on: ubuntu-24.04
+    environment: update-publication
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Install verification dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download refreshed metadata
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: refreshed-update-feed
+          path: artifacts/refreshed-update-feed
+
+      - name: Fast-forward the update repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLISH_DIR="$RUNNER_TEMP/messenger-update-refresh-publish"
+          rm -rf "${PUBLISH_DIR:?}"
+          git clone --depth=1 --single-branch --branch updates \
+            "https://github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH_DIR"
+
+          CHANNELS=(beta)
+          if [[ "${{ needs.validate.outputs.release_channel }}" == stable ]]; then
+            CHANNELS=(stable beta)
+          fi
+          for channel in "${CHANNELS[@]}"; do
+            rm -rf "${PUBLISH_DIR:?}/$channel"
+            cp -R "artifacts/refreshed-update-feed/$channel" \
+              "$PUBLISH_DIR/$channel"
+          done
+          cp artifacts/refreshed-update-feed/.nojekyll \
+            "$PUBLISH_DIR/.nojekyll"
+          cp artifacts/refreshed-update-feed/feed-manifest.json \
+            "$PUBLISH_DIR/feed-manifest.json"
+
+          git -C "$PUBLISH_DIR" config user.name github-actions
+          git -C "$PUBLISH_DIR" config user.email \
+            41898282+github-actions[bot]@users.noreply.github.com
+          git -C "$PUBLISH_DIR" add --all
+          git -C "$PUBLISH_DIR" diff --cached --quiet &&
+            { echo 'Refresh produced no metadata change.' >&2; exit 1; }
+          git -C "$PUBLISH_DIR" commit -m \
+            'maintenance: refresh authenticated update metadata'
+
+          AUTH_HEADER="$(
+            printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64
+          )"
+          git -C "$PUBLISH_DIR" \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
+            push origin HEAD:updates
+          unset AUTH_HEADER GITHUB_TOKEN
+
+      - name: Verify live refreshed metadata
+        run: |
+          set -euo pipefail
+          node -r ./scripts/register-ts.js \
+            scripts/verify-published-update-feeds.ts \
+            --base-url \
+            "https://raw.githubusercontent.com/${{ github.repository }}/updates" \
+            --release-channel "${{ needs.validate.outputs.release_channel }}" \
+            --repository "${{ github.repository }}"

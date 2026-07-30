@@ -19,6 +19,7 @@ import {
 import { spawn, exec } from "child_process";
 import { promisify } from "util";
 import * as https from "https";
+import { tmpdir } from "os";
 
 const execAsync = promisify(exec);
 import * as path from "path";
@@ -47,7 +48,10 @@ import {
   decideWindowOpenActionForContext,
   type WindowOpenAction,
 } from "./url-policy";
-import { decideMessengerReload } from "./reload-policy";
+import {
+  decideMessengerReload,
+  decideMessengerTopLevelNavigation,
+} from "./reload-policy";
 import {
   ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS,
   shouldAllowAboutBlankChildBootstrapNavigation,
@@ -85,7 +89,26 @@ import {
 import { withLinuxNoSandboxArg } from "./linux-sandbox-policy";
 import { autoUpdater } from "electron-updater";
 import { resolvePackageManagerContract } from "./package-manager-contract";
-import { verifyReleaseAssetChecksum } from "./release-integrity";
+import {
+  createTufVerifiedUpdateFeed,
+  type TufVerifiedUpdateFeed,
+} from "./tuf-update-feed";
+import { reconcileContentViewBounds } from "./content-view-layout";
+
+type ReleaseContract = {
+  feedUrl: string;
+};
+type ReleaseContractModule = {
+  metadataFileName: (platform: string, arch: string) => string;
+  releaseContract: (input: {
+    arch: string;
+    channel: string;
+    platform: string;
+  }) => ReleaseContract;
+};
+const { metadataFileName, releaseContract } = require(
+  "../../release-contract.cjs",
+) as ReleaseContractModule;
 
 const FACEBOOK_LOGIN_MESSAGES_URL =
   "https://www.facebook.com/login?next=https%3A%2F%2Fwww.facebook.com%2Fmessages%2F";
@@ -252,8 +275,10 @@ const INCOMING_CALL_FIRST_TOAST_CALLER_GRACE_MS = 6_000;
 type MenuBarMode = "always" | "hover" | "never";
 let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
+let contentViewBoundsMonitorInterval: NodeJS.Timeout | null = null;
 let debugLogExportUiActive = false;
 const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar show
+const CONTENT_VIEW_BOUNDS_MONITOR_INTERVAL_MS = 50;
 const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
 const MIN_MESSAGES_TOP_CROP = 56;
@@ -2173,7 +2198,25 @@ if (process.platform === "win32") {
   app.setAppUserModelId(appModelId);
 }
 
+const updaterE2EAppDataRoot = (() => {
+  const configured = process.env.MESSENGER_UPDATE_E2E_APP_DATA_ROOT;
+  if (process.env.MESSENGER_UPDATE_E2E !== "1" || !configured) return null;
+  const resolved = path.resolve(configured);
+  const relativeToTemporary = path.relative(path.resolve(tmpdir()), resolved);
+  if (
+    !relativeToTemporary ||
+    relativeToTemporary === ".." ||
+    relativeToTemporary.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToTemporary)
+  ) {
+    throw new Error(
+      "Updater E2E app data must use a child of the system temporary directory.",
+    );
+  }
+  return resolved;
+})();
 const appDataRoot =
+  updaterE2EAppDataRoot ||
   process.env.SNAP_USER_COMMON ||
   process.env.SNAP_USER_DATA ||
   app.getPath("appData");
@@ -4495,16 +4538,16 @@ function setMenuBarMode(mode: MenuBarMode): void {
   switch (mode) {
     case "always":
       mainWindow.setAutoHideMenuBar(false);
-      mainWindow.setMenuBarVisibility(true);
+      setMainWindowMenuBarVisibility(true);
       break;
     case "hover":
       mainWindow.setAutoHideMenuBar(true);
-      mainWindow.setMenuBarVisibility(false);
+      setMainWindowMenuBarVisibility(false);
       startMenuBarHoverDetection();
       break;
     case "never":
       mainWindow.setAutoHideMenuBar(true);
-      mainWindow.setMenuBarVisibility(false);
+      setMainWindowMenuBarVisibility(false);
       break;
   }
 
@@ -4828,12 +4871,7 @@ function createWindow(source: string = "unknown"): void {
         DEFAULT_MESSAGES_TOP_CROP)
       : 0;
 
-    contentView.setBounds({
-      x: 0,
-      y: -crop,
-      width: bounds.width,
-      height: bounds.height + crop,
-    });
+    reconcileContentViewBounds(contentView, bounds, crop);
   };
   applyContentViewBoundsHandler = applyContentViewBounds;
 
@@ -4870,6 +4908,8 @@ function createWindow(source: string = "unknown"): void {
       height: initialViewBounds.height,
     });
     contentView.setAutoResize({ width: true, height: true });
+    applyContentViewBounds();
+    startContentViewBoundsMonitoring();
 
     // Set up permission handler on content view's session
     contentView.webContents.session.setPermissionRequestHandler(
@@ -5806,6 +5846,29 @@ function createWindow(source: string = "unknown"): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     contentView.webContents.on("will-navigate", (event, url) => {
       console.log("[ContentView] will-navigate:", url);
+      const currentUrl = contentView?.webContents.getURL() || "";
+      const navigationDecision = decideMessengerTopLevelNavigation({
+        currentUrl,
+        nextUrl: url,
+      });
+      if (!navigationDecision.allowed) {
+        event.preventDefault();
+        pushReloadDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "navigation-suppressed",
+          label: "Messenger content view",
+          webContentsId: contentView?.webContents.id,
+          url: currentUrl,
+          nextUrl: url,
+          reason: navigationDecision.reason,
+        });
+        console.log("[ContentView] Suppressed redundant thread navigation", {
+          reason: navigationDecision.reason,
+        });
+        return;
+      }
+
       if (isExternalAuthProviderFallbackResumeUrl(url)) {
         event.preventDefault();
         resumeExternalAuthProviderFallback(
@@ -6959,6 +7022,29 @@ function createWindow(source: string = "unknown"): void {
     // This fixes issue #24 - Marketplace chat links were opening inside the app
     mainWindow.webContents.on("will-navigate", (event, url) => {
       console.log("[MainWindow] will-navigate:", url);
+      const currentUrl = mainWindow?.webContents.getURL() || "";
+      const navigationDecision = decideMessengerTopLevelNavigation({
+        currentUrl,
+        nextUrl: url,
+      });
+      if (!navigationDecision.allowed) {
+        event.preventDefault();
+        pushReloadDebugEvent({
+          timestamp: Date.now(),
+          source: "main",
+          event: "navigation-suppressed",
+          label: "Main window",
+          webContentsId: mainWindow?.webContents.id,
+          url: currentUrl,
+          nextUrl: url,
+          reason: navigationDecision.reason,
+        });
+        console.log("[MainWindow] Suppressed redundant thread navigation", {
+          reason: navigationDecision.reason,
+        });
+        return;
+      }
+
       if (isExternalAuthProviderFallbackResumeUrl(url)) {
         event.preventDefault();
         resumeExternalAuthProviderFallback(
@@ -7138,6 +7224,7 @@ function createWindow(source: string = "unknown"): void {
       mainWindowWebContentsId,
     );
     stopIncomingCallOverlayWatchdog();
+    stopContentViewBoundsMonitoring();
     // Window is already destroyed at this point, just clean up references
     contentView = null;
     applyContentViewBoundsHandler = null;
@@ -7176,16 +7263,16 @@ function createWindow(source: string = "unknown"): void {
     switch (menuBarMode) {
       case "always":
         mainWindow.setAutoHideMenuBar(false);
-        mainWindow.setMenuBarVisibility(true);
+        setMainWindowMenuBarVisibility(true);
         break;
       case "hover":
         mainWindow.setAutoHideMenuBar(true);
-        mainWindow.setMenuBarVisibility(false);
+        setMainWindowMenuBarVisibility(false);
         startMenuBarHoverDetection();
         break;
       case "never":
         mainWindow.setAutoHideMenuBar(true);
-        mainWindow.setMenuBarVisibility(false);
+        setMainWindowMenuBarVisibility(false);
         break;
     }
     console.log(
@@ -8682,6 +8769,41 @@ function toggleMenuBarMode(): void {
   setMenuBarMode(nextMode);
 }
 
+function setMainWindowMenuBarVisibility(visible: boolean): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.setMenuBarVisibility(visible);
+  applyContentViewBoundsHandler?.();
+  setImmediate(() => applyContentViewBoundsHandler?.());
+}
+
+function startContentViewBoundsMonitoring(): void {
+  if (
+    process.platform === "darwin" ||
+    contentViewBoundsMonitorInterval !== null
+  ) {
+    return;
+  }
+
+  contentViewBoundsMonitorInterval = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
+      return;
+    }
+
+    applyContentViewBoundsHandler?.();
+  }, CONTENT_VIEW_BOUNDS_MONITOR_INTERVAL_MS);
+  contentViewBoundsMonitorInterval.unref();
+}
+
+function stopContentViewBoundsMonitoring(): void {
+  if (contentViewBoundsMonitorInterval !== null) {
+    clearInterval(contentViewBoundsMonitorInterval);
+    contentViewBoundsMonitorInterval = null;
+  }
+}
+
 // Start polling cursor position to show menu bar on hover (Windows/Linux only)
 function startMenuBarHoverDetection(): void {
   if (
@@ -8721,7 +8843,7 @@ function startMenuBarHoverDetection(): void {
 
       if (inHoverZone && !lastInHoverZone) {
         // Entered hover zone - show menu bar immediately
-        mainWindow.setMenuBarVisibility(true);
+        setMainWindowMenuBarVisibility(true);
         lastInHoverZone = true;
       } else if (!inHoverZone && lastInHoverZone) {
         // Left hover zone - hide menu bar quickly
@@ -8743,7 +8865,7 @@ function startMenuBarHoverDetection(): void {
               newDistFromTop <= MENU_BAR_HOVER_ZONE + 25; // Extended zone for menu
 
             if (!stillInZone) {
-              mainWindow.setMenuBarVisibility(false);
+              setMainWindowMenuBarVisibility(false);
             }
           }
         }, 50); // 50ms delay - just enough for menu clicks
@@ -10990,6 +11112,117 @@ function showSnapDesktopIntegrationHelp(): void {
 let pendingUpdateVersion: string | null = null;
 let originalWindowTitle: string = APP_DISPLAY_NAME;
 let isDownloading = false;
+let verifiedUpdateFeed: TufVerifiedUpdateFeed | null = null;
+let updateFeedConfigured = false;
+
+function updaterArchitecture(): "arm64" | "x64" {
+  if (process.arch === "arm64" || process.arch === "x64") {
+    return process.arch;
+  }
+  throw new Error(`Unsupported updater architecture: ${process.arch}`);
+}
+
+function isPackageManagerUpdate(): boolean {
+  return process.platform === "linux" && !process.env.APPIMAGE;
+}
+
+function validateLoopbackUpdaterUrl(value: string): string {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== "http:" ||
+    !["127.0.0.1", "::1", "localhost"].includes(parsed.hostname)
+  ) {
+    throw new Error("Updater test URLs must use loopback-only HTTP.");
+  }
+  return parsed.toString().replace(/\/$/, "");
+}
+
+async function configureUpdateFeed(): Promise<boolean> {
+  if (isPackageManagerUpdate()) return false;
+  if (updateFeedConfigured) return true;
+
+  const platform =
+    process.platform === "darwin"
+      ? "darwin"
+      : process.platform === "win32"
+        ? "win32"
+        : "linux";
+  const arch = updaterArchitecture();
+  const channel = isBetaVersion ? "beta" : "stable";
+  const contract = releaseContract({ arch, channel, platform });
+  const updaterE2E = process.env.MESSENGER_UPDATE_E2E === "1";
+
+  if (platform === "darwin") {
+    const configuredUrl =
+      updaterE2E && process.env.MESSENGER_UPDATE_E2E_FEED_URL
+        ? validateLoopbackUpdaterUrl(
+            process.env.MESSENGER_UPDATE_E2E_FEED_URL,
+          )
+        : contract.feedUrl;
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: configuredUrl,
+      channel: "latest",
+    });
+  } else {
+    const testRepositoryUrl =
+      updaterE2E && process.env.MESSENGER_UPDATE_E2E_TUF_REPOSITORY_URL
+        ? validateLoopbackUpdaterUrl(
+            process.env.MESSENGER_UPDATE_E2E_TUF_REPOSITORY_URL,
+          )
+        : null;
+    verifiedUpdateFeed = await createTufVerifiedUpdateFeed({
+      allowLoopbackHttp: Boolean(testRepositoryUrl),
+      embeddedRootPath: path.join(
+        process.resourcesPath,
+        "update-trust",
+        "root.json",
+      ),
+      repositoryUrl: testRepositoryUrl || contract.feedUrl,
+      targetName: metadataFileName(platform, arch),
+      trustDir: path.join(app.getPath("userData"), "update-trust"),
+    });
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: verifiedUpdateFeed.feedUrl,
+      channel: "latest",
+    });
+    if (platform === "win32") {
+      (
+        autoUpdater as typeof autoUpdater & {
+          disableWebInstaller?: boolean;
+        }
+      ).disableWebInstaller = true;
+    }
+  }
+
+  autoUpdater.channel = "latest";
+  autoUpdater.allowPrerelease = isBetaVersion;
+  updateFeedConfigured = true;
+  console.log(
+    `[AutoUpdater] Configured ${channel}/${platform}/${arch} update trust`,
+  );
+  return true;
+}
+
+async function closeVerifiedUpdateFeed(): Promise<void> {
+  if (!verifiedUpdateFeed) return;
+  const feed = verifiedUpdateFeed;
+  verifiedUpdateFeed = null;
+  updateFeedConfigured = false;
+  await feed.close();
+}
+
+async function downloadUpdateWithProgress(version: string): Promise<void> {
+  pendingUpdateVersion = version;
+  showDownloadProgress();
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (error) {
+    hideDownloadProgress();
+    throw error;
+  }
+}
 
 function showDownloadProgress(): void {
   isDownloading = true;
@@ -11348,31 +11581,21 @@ async function findTargetRelease(
   });
 }
 
-// Check for updates with proper beta channel support
-// Works around electron-updater's GitHub provider bug with allowPrerelease
+// Check the immutable channel feed. Windows and AppImage metadata is first
+// authenticated by TUF and then exposed to electron-updater over loopback.
 async function checkForUpdates(): Promise<void> {
-  const isBeta = isBetaOptedIn();
   const currentVersion = app.getVersion();
 
   console.log(
-    `[AutoUpdater] Checking for updates (current: ${currentVersion}, betaOptIn: ${isBeta})`,
+    `[AutoUpdater] Checking for updates (current: ${currentVersion}, channel: ${
+      isBetaVersion ? "beta" : "stable"
+    })`,
   );
 
-  // Find the target release based on beta preference
-  const targetRelease = await findTargetRelease(isBeta);
-
-  if (!targetRelease) {
-    console.log("[AutoUpdater] No releases found, skipping update check");
-    return;
-  }
-
-  // Check if target is newer than current
-  const comparison = compareVersions(targetRelease.version, currentVersion);
-  if (comparison <= 0) {
-    console.log(
-      `[AutoUpdater] Current version ${currentVersion} is up to date (latest: ${targetRelease.version})`,
-    );
-    if (process.platform !== "darwin") {
+  if (isPackageManagerUpdate()) {
+    const targetRelease = await findTargetRelease(isBetaVersion);
+    if (!targetRelease) return;
+    if (compareVersions(targetRelease.version, currentVersion) <= 0) {
       if (manualUpdateCheckInProgress) {
         await dialog.showMessageBox({
           type: "info",
@@ -11384,39 +11607,12 @@ async function checkForUpdates(): Promise<void> {
       }
       return;
     }
-    // macOS uses signed electron-updater metadata and emits the normal
-    // update-not-available event for manual checks.
-    autoUpdater.allowPrerelease = isBeta;
-    await autoUpdater.checkForUpdates();
-    return;
-  }
-
-  console.log(
-    `[AutoUpdater] Update available: ${currentVersion} -> ${targetRelease.version}`,
-  );
-
-  // Windows and Linux use the GitHub release API only for discovery. Their
-  // exact installer/package downloads are authenticated against SHA256SUMS
-  // before execution or elevation, and never consume electron-updater feeds.
-  if (process.platform !== "darwin") {
     await showUpdateAvailableDialog(targetRelease.version);
     return;
   }
 
-  // Set up autoUpdater to look at the specific release
-  // Use setFeedURL to point to a specific release URL pattern
-  // Beta apps use "beta" channel which reads beta-*.yml files (pointing to beta-named artifacts)
-  // Stable apps use default channel which reads latest-*.yml files (pointing to stable artifacts)
-  autoUpdater.setFeedURL({
-    provider: "github",
-    owner: "apotenza92",
-    repo: "facebook-messenger-desktop",
-    channel: isBetaVersion ? "beta" : undefined,
-  });
-
-  // Force allowPrerelease based on whether target is a prerelease
-  autoUpdater.allowPrerelease = targetRelease.version.includes("-");
-
+  await configureUpdateFeed();
+  await verifiedUpdateFeed?.refresh();
   await autoUpdater.checkForUpdates();
 }
 
@@ -11424,206 +11620,6 @@ function openGitHubPage(): void {
   shell.openExternal(GITHUB_REPO_URL).catch((err) => {
     console.error("[GitHub] Failed to open URL:", err);
   });
-}
-
-const MAX_RELEASE_CHECKSUM_BYTES = 1024 * 1024;
-
-function downloadReleaseChecksums(
-  version: string,
-): Promise<string> {
-  const checksumUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${version}/SHA256SUMS`;
-  return downloadReleaseChecksumsFromUrl(checksumUrl, 0);
-}
-
-function downloadReleaseChecksumsFromUrl(
-  url: string,
-  redirectCount: number,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const request = https.get(url, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        const redirectUrl = response.headers.location;
-        response.resume();
-        if (!redirectUrl) {
-          reject(new Error("SHA256SUMS redirect is missing a location"));
-          return;
-        }
-        if (redirectCount >= 5) {
-          reject(new Error("Too many SHA256SUMS redirects"));
-          return;
-        }
-        const nextUrl = new URL(redirectUrl, url);
-        if (nextUrl.protocol !== "https:") {
-          reject(new Error("SHA256SUMS redirect must use HTTPS"));
-          return;
-        }
-        downloadReleaseChecksumsFromUrl(
-          nextUrl.toString(),
-          redirectCount + 1,
-        ).then(resolve, reject);
-        return;
-      }
-      if (response.statusCode !== 200) {
-        response.resume();
-        reject(
-          new Error(
-            `SHA256SUMS download failed with status: ${response.statusCode}`,
-          ),
-        );
-        return;
-      }
-
-      let size = 0;
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > MAX_RELEASE_CHECKSUM_BYTES) {
-          request.destroy(new Error("SHA256SUMS exceeds the size limit"));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    });
-    request.on("error", reject);
-  });
-}
-
-async function authenticateDownloadedReleaseAsset(
-  version: string,
-  fileName: string,
-  filePath: string,
-): Promise<void> {
-  try {
-    const checksums = await downloadReleaseChecksums(version);
-    verifyReleaseAssetChecksum(checksums, fileName, filePath);
-    console.log(`[AutoUpdater] SHA-256 verified: ${fileName}`);
-  } catch (error) {
-    try {
-      fs.unlinkSync(filePath);
-    } catch {
-      // Ignore cleanup errors; the untrusted file will never be executed here.
-    }
-    throw error;
-  }
-}
-
-// Windows direct download function - downloads installer to Downloads folder and runs it
-async function downloadWindowsUpdate(version: string): Promise<string> {
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  // Use the correct artifact name based on whether we're running the beta app
-  // This ensures beta users update through the beta installer (same app ID/shortcuts)
-  // even when updating to a stable version, and stable users use stable installer
-  const appPrefix = isBetaVersion ? "Messenger-Beta" : "Messenger";
-  const fileName = `${appPrefix}-windows-${arch}-setup.exe`;
-  const downloadUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${version}/${fileName}`;
-
-  // Get user's Downloads folder
-  const downloadsPath = app.getPath("downloads");
-  const filePath = path.join(downloadsPath, fileName);
-
-  console.log(`[AutoUpdater] Starting Windows direct download: ${downloadUrl}`);
-  console.log(`[AutoUpdater] Saving to: ${filePath}`);
-
-  showDownloadProgress();
-
-  await new Promise<void>((resolve, reject) => {
-    // Function to handle the actual download (after redirects)
-    const downloadFromUrl = (url: string, redirectCount = 0): void => {
-      if (redirectCount > 5) {
-        hideDownloadProgress();
-        reject(new Error("Too many redirects"));
-        return;
-      }
-
-      const request = https.get(url, (response) => {
-        // Handle redirects (GitHub uses 302 redirects to the actual file)
-        if (response.statusCode === 301 || response.statusCode === 302) {
-          const redirectUrl = response.headers.location;
-          if (redirectUrl) {
-            console.log(`[AutoUpdater] Following redirect to: ${redirectUrl}`);
-            downloadFromUrl(redirectUrl, redirectCount + 1);
-            return;
-          }
-        }
-
-        if (response.statusCode !== 200) {
-          hideDownloadProgress();
-          reject(
-            new Error(`Download failed with status: ${response.statusCode}`),
-          );
-          return;
-        }
-
-        const totalSize = parseInt(
-          response.headers["content-length"] || "0",
-          10,
-        );
-        let downloadedSize = 0;
-        const startTime = Date.now();
-
-        // Delete existing file if present
-        try {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        } catch (e) {
-          console.warn("[AutoUpdater] Could not delete existing file:", e);
-        }
-
-        const fileStream = fs.createWriteStream(filePath);
-
-        response.on("data", (chunk: Buffer) => {
-          downloadedSize += chunk.length;
-
-          // Calculate progress
-          const percent =
-            totalSize > 0 ? Math.round((downloadedSize / totalSize) * 100) : 0;
-          const elapsedSeconds = (Date.now() - startTime) / 1000;
-          const speedBps =
-            elapsedSeconds > 0 ? downloadedSize / elapsedSeconds : 0;
-          const speedKB = Math.round(speedBps / 1024);
-          const speedDisplay =
-            speedKB > 1024
-              ? `${(speedKB / 1024).toFixed(1)} MB/s`
-              : `${speedKB} KB/s`;
-          const downloaded = formatBytes(downloadedSize);
-          const total = formatBytes(totalSize);
-
-          updateDownloadProgress(percent, speedDisplay, downloaded, total);
-        });
-
-        response.pipe(fileStream);
-
-        fileStream.on("finish", () => {
-          fileStream.close();
-          hideDownloadProgress();
-          console.log(`[AutoUpdater] Download complete: ${filePath}`);
-          resolve();
-        });
-
-        fileStream.on("error", (err) => {
-          hideDownloadProgress();
-          // Clean up partial file
-          try {
-            fs.unlinkSync(filePath);
-          } catch {
-            // Ignore cleanup errors
-          }
-          reject(err);
-        });
-      });
-
-      request.on("error", (err) => {
-        hideDownloadProgress();
-        reject(err);
-      });
-    };
-
-    downloadFromUrl(downloadUrl);
-  });
-  await authenticateDownloadedReleaseAsset(version, fileName, filePath);
-  return filePath;
 }
 
 // Check if we just updated and run shortcut fix if needed (Windows only)
@@ -11788,228 +11784,6 @@ async function runWindowsShortcutFix(): Promise<ShortcutFixResult> {
       }
 
       resolve({ success: true, updated, found, output });
-    });
-  });
-}
-
-// Linux manual download function. Every package is authenticated against the
-// release's SHA256SUMS before it is exposed to the user or package manager.
-async function downloadLinuxPackage(
-  version: string,
-  packageType: "AppImage" | "deb" | "rpm",
-): Promise<string> {
-  // Map Node.js arch to Linux package arch naming conventions
-  // RPM uses: x86_64 / aarch64
-  // DEB uses: amd64 / arm64
-  let archName: string;
-  if (packageType === "rpm") {
-    archName = process.arch === "arm64" ? "aarch64" : "x86_64";
-  } else if (packageType === "AppImage") {
-    archName = process.arch === "arm64" ? "arm64" : "x86_64";
-  } else {
-    archName = process.arch === "arm64" ? "arm64" : "amd64";
-  }
-  // Use the correct package name based on whether we're running the beta app
-  // This ensures beta users update through the beta package (same app installation)
-  const packageName = isBetaVersion
-    ? "facebook-messenger-desktop-beta"
-    : "facebook-messenger-desktop";
-  const fileName = `${packageName}-${archName}.${packageType}`;
-  const downloadUrl = `https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v${version}/${fileName}`;
-
-  // Get user's Downloads folder
-  const downloadsPath = app.getPath("downloads");
-  const filePath = path.join(downloadsPath, fileName);
-
-  console.log(
-    `[AutoUpdater] Starting Linux ${packageType} download: ${downloadUrl}`,
-  );
-  console.log(`[AutoUpdater] Saving to: ${filePath}`);
-
-  showDownloadProgress();
-
-  await new Promise<void>((resolve, reject) => {
-    // Function to handle the actual download (after redirects)
-    const downloadFromUrl = (url: string, redirectCount = 0): void => {
-      if (redirectCount > 5) {
-        hideDownloadProgress();
-        reject(new Error("Too many redirects"));
-        return;
-      }
-
-      const request = https.get(url, (response) => {
-        // Handle redirects (GitHub uses 302 redirects to the actual file)
-        if (response.statusCode === 301 || response.statusCode === 302) {
-          const redirectUrl = response.headers.location;
-          if (redirectUrl) {
-            console.log(`[AutoUpdater] Following redirect to: ${redirectUrl}`);
-            downloadFromUrl(redirectUrl, redirectCount + 1);
-            return;
-          }
-        }
-
-        if (response.statusCode !== 200) {
-          hideDownloadProgress();
-          reject(
-            new Error(`Download failed with status: ${response.statusCode}`),
-          );
-          return;
-        }
-
-        const totalSize = parseInt(
-          response.headers["content-length"] || "0",
-          10,
-        );
-        let downloadedSize = 0;
-        const startTime = Date.now();
-
-        // Delete existing file if present
-        try {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        } catch (e) {
-          console.warn("[AutoUpdater] Could not delete existing file:", e);
-        }
-
-        const fileStream = fs.createWriteStream(filePath);
-
-        response.on("data", (chunk: Buffer) => {
-          downloadedSize += chunk.length;
-
-          // Calculate progress
-          const percent =
-            totalSize > 0 ? Math.round((downloadedSize / totalSize) * 100) : 0;
-          const elapsedSeconds = (Date.now() - startTime) / 1000;
-          const speedBps =
-            elapsedSeconds > 0 ? downloadedSize / elapsedSeconds : 0;
-          const speedKB = Math.round(speedBps / 1024);
-          const speedDisplay =
-            speedKB > 1024
-              ? `${(speedKB / 1024).toFixed(1)} MB/s`
-              : `${speedKB} KB/s`;
-          const downloaded = formatBytes(downloadedSize);
-          const total = formatBytes(totalSize);
-
-          updateDownloadProgress(percent, speedDisplay, downloaded, total);
-        });
-
-        response.pipe(fileStream);
-
-        fileStream.on("finish", () => {
-          fileStream.close();
-          hideDownloadProgress();
-          console.log(`[AutoUpdater] Download complete: ${filePath}`);
-          resolve();
-        });
-
-        fileStream.on("error", (err) => {
-          hideDownloadProgress();
-          // Clean up partial file
-          try {
-            fs.unlinkSync(filePath);
-          } catch {
-            // Ignore cleanup errors
-          }
-          reject(err);
-        });
-      });
-
-      request.on("error", (err) => {
-        hideDownloadProgress();
-        reject(err);
-      });
-    };
-
-    downloadFromUrl(downloadUrl);
-  });
-  await authenticateDownloadedReleaseAsset(version, fileName, filePath);
-  return filePath;
-}
-
-// Install a Linux package using zenity/kdialog for password prompt (with pkexec fallback)
-async function installLinuxPackage(
-  filePath: string,
-  packageType: "deb" | "rpm",
-): Promise<void> {
-  console.log(`[AutoUpdater] Installing ${packageType} package: ${filePath}`);
-
-  const installCmd =
-    packageType === "deb"
-      ? `/usr/bin/apt install -y "${filePath}"`
-      : `/usr/bin/dnf install -y "${filePath}"`;
-
-  // Build install script using zenity/kdialog for password prompt
-  // This is more reliable than pkexec which requires a polkit authentication agent
-  const installScript = `
-    INSTALL_EXIT=1
-
-    # Method 1: Try zenity for password prompt (GNOME/GTK desktops)
-    if command -v zenity >/dev/null 2>&1; then
-      PASSWORD=$(zenity --password --title="Authentication Required" --text="Enter password to install update:" 2>/dev/null)
-      if [ -n "$PASSWORD" ]; then
-        echo "$PASSWORD" | sudo -S ${installCmd} 2>/dev/null
-        INSTALL_EXIT=$?
-      fi
-    fi
-
-    # Method 2: Try kdialog for password prompt (KDE desktops)
-    if [ $INSTALL_EXIT -ne 0 ] && command -v kdialog >/dev/null 2>&1; then
-      PASSWORD=$(kdialog --password "Enter password to install update:" --title "Authentication Required" 2>/dev/null)
-      if [ -n "$PASSWORD" ]; then
-        echo "$PASSWORD" | sudo -S ${installCmd} 2>/dev/null
-        INSTALL_EXIT=$?
-      fi
-    fi
-
-    # Method 3: Fall back to pkexec (if polkit agent is running)
-    if [ $INSTALL_EXIT -ne 0 ] && command -v pkexec >/dev/null 2>&1; then
-      /usr/bin/pkexec /bin/sh -c "${installCmd}" 2>/dev/null
-      INSTALL_EXIT=$?
-    fi
-
-    exit $INSTALL_EXIT
-  `;
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn("/bin/sh", ["-c", installScript], {
-      stdio: "pipe",
-      env: {
-        ...process.env,
-        DISPLAY: process.env.DISPLAY || ":0",
-      },
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout?.on("data", (data) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr?.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0) {
-        console.log(`[AutoUpdater] Package installed successfully`);
-        resolve();
-      } else {
-        console.error(`[AutoUpdater] Package install failed with code ${code}`);
-        console.error(`[AutoUpdater] stdout: ${stdout}`);
-        console.error(`[AutoUpdater] stderr: ${stderr}`);
-        reject(
-          new Error(
-            `Installation failed: ${stderr || stdout || `exit code ${code}`}`,
-          ),
-        );
-      }
-    });
-
-    proc.on("error", (err) => {
-      console.error(`[AutoUpdater] Failed to spawn install script:`, err);
-      reject(err);
     });
   });
 }
@@ -12457,129 +12231,30 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
     includeBeta,
   );
 
-  // On Linux, electron-updater only supports AppImage for auto-updates.
-  // For deb/rpm, we download and install the package directly.
-  // For snap/flatpak, they have their own update mechanisms.
+  // AppImage uses the authenticated updater. DEB, RPM, Snap, and Flatpak
+  // remain owned by their package managers.
   if (process.platform === "linux") {
     const cached = readInstallSourceCache();
     const source = cached?.source;
 
-    // Handle deb/rpm - download and install directly
     if (source === "deb" || source === "rpm") {
-      const packageType = source;
-      const packageManagerName = source === "deb" ? "apt (deb)" : "dnf (rpm)";
-
       console.log(
-        `[AutoUpdater] Linux ${packageType} install detected, offering direct download`,
+        `[AutoUpdater] Linux ${source} install detected; package manager owns updates`,
       );
-
-      const installInstructions = `The update will be downloaded and installed using ${packageManagerName}. You'll be prompted for your password.`;
+      const packageCommand =
+        source === "deb"
+          ? "Install the new package with your configured APT software source."
+          : "Install the new package with your configured DNF software source.";
       const result = await showCustomUpdateDialog(
         version,
         changelog || "",
         "linux",
-        installInstructions,
+        `${packageCommand}\nMessenger will not download or elevate a package-manager update itself.`,
       );
-
       if (result === "download") {
-        try {
-          // Download the package
-          const filePath = await downloadLinuxPackage(version, packageType);
-
-          // Show confirmation before installing
-          const installResult = await dialog.showMessageBox({
-            type: "info",
-            title: "Download Complete",
-            message: "Update downloaded successfully",
-            detail: `The update has been downloaded to:\n${filePath}\n\nClick "Install Now" to install the update. You'll be prompted for your password.\n\nMessenger will restart after installation.`,
-            buttons: ["Install Now", "Open Downloads Folder", "Later"],
-            defaultId: 0,
-            cancelId: 2,
-          });
-
-          if (installResult.response === 0) {
-            // Install the package
-            console.log("[AutoUpdater] Starting package installation...");
-            try {
-              await installLinuxPackage(filePath, packageType);
-
-              // Installation succeeded - restart the app
-              await dialog.showMessageBox({
-                type: "info",
-                title: "Update Installed",
-                message: "Update installed successfully",
-                detail: `${APP_DISPLAY_NAME} will now restart to apply the update.`,
-                buttons: ["OK"],
-              });
-
-              isQuitting = true;
-              app.relaunch();
-              app.exit(0);
-            } catch (installErr) {
-              console.error(
-                "[AutoUpdater] Package installation failed:",
-                installErr,
-              );
-              const errorMsg =
-                installErr instanceof Error
-                  ? installErr.message
-                  : String(installErr);
-
-              // Check if user cancelled the pkexec prompt
-              if (
-                errorMsg.includes("126") ||
-                errorMsg.includes("dismissed") ||
-                errorMsg.includes("cancelled")
-              ) {
-                await dialog.showMessageBox({
-                  type: "info",
-                  title: "Installation Cancelled",
-                  message: "Installation was cancelled",
-                  detail:
-                    "The update has been saved to your Downloads folder. You can install it manually later.",
-                  buttons: ["OK"],
-                });
-              } else {
-                await dialog.showMessageBox({
-                  type: "error",
-                  title: "Installation Failed",
-                  message: "Could not install the update",
-                  detail: `${errorMsg}\n\nThe update has been saved to:\n${filePath}\n\nYou can install it manually with:\nsudo ${packageType === "deb" ? "apt install" : "dnf install"} "${filePath}"`,
-                  buttons: ["OK"],
-                });
-              }
-              shell.showItemInFolder(filePath);
-            }
-          } else if (installResult.response === 1) {
-            shell.showItemInFolder(filePath);
-          }
-        } catch (err) {
-          console.error("[AutoUpdater] Linux package download failed:", err);
-          const errorMsg = err instanceof Error ? err.message : String(err);
-
-          const fallbackResult = await dialog.showMessageBox({
-            type: "error",
-            title: "Download Failed",
-            message: "Could not download the update",
-            detail: `${errorMsg}\n\nWould you like to open the download page instead?`,
-            buttons: ["Open Download Page", "Cancel"],
-            defaultId: 0,
-            cancelId: 1,
-          });
-
-          if (fallbackResult.response === 0) {
-            shell
-              .openExternal(
-                "https://apotenza92.github.io/facebook-messenger-desktop/",
-              )
-              .catch((shellErr) => {
-                console.error(
-                  "[AutoUpdater] Failed to open download page:",
-                  shellErr,
-                );
-              });
-          }
-        }
+        await shell.openExternal(
+          `https://github.com/apotenza92/facebook-messenger-desktop/releases/tag/v${version}`,
+        );
       }
       return;
     }
@@ -12622,30 +12297,16 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
       }
       return;
     }
-    // Direct Linux installations use a checksum-authenticated AppImage
-    // download. The user chooses where and when to replace the running app.
     if (source === "direct") {
       const result = await showCustomUpdateDialog(
         version,
         changelog || "",
         "linux",
-        "The new AppImage will be downloaded and SHA-256 verified. Replace your current AppImage manually after quitting Messenger.",
+        "The AppImage and its metadata were authenticated by the embedded update trust root.",
       );
       if (result === "download") {
         try {
-          const filePath = await downloadLinuxPackage(version, "AppImage");
-          fs.chmodSync(filePath, 0o755);
-          await dialog.showMessageBox({
-            type: "info",
-            title: "Download Complete",
-            message: "Verified AppImage downloaded",
-            detail: `The update was saved to:\n${filePath}\n\nQuit Messenger, then replace your current AppImage with this verified file.`,
-            buttons: ["Show in Downloads", "Later"],
-            defaultId: 0,
-            cancelId: 1,
-          }).then(({ response }) => {
-            if (response === 0) shell.showItemInFolder(filePath);
-          });
+          await downloadUpdateWithProgress(version);
         } catch (err) {
           console.error("[AutoUpdater] AppImage download failed:", err);
           await dialog.showMessageBox({
@@ -12674,90 +12335,27 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
     return;
   }
 
-  // On Windows, download directly and run installer
-  // This is a temporary workaround until code signing is set up
-  // Without signing, auto-updates get blocked by Windows Application Control
   if (process.platform === "win32") {
-    const windowsInstructions =
-      "⚠️ If SmartScreen appears: click 'More info' → 'Run anyway'";
     const result = await showCustomUpdateDialog(
       version,
       changelog || "",
       "windows",
-      windowsInstructions,
+      "The installer and its metadata were authenticated by the embedded update trust root.",
     );
 
     if (result === "download") {
-      console.log("[AutoUpdater] Windows user starting direct download");
-
       try {
-        const filePath = await downloadWindowsUpdate(version);
-
-        // Show success dialog and offer to run installer
-        const installResult = await dialog.showMessageBox({
-          type: "info",
-          title: "Download Complete",
-          message: "Update downloaded successfully",
-          detail: `The installer has been saved to:\n${filePath}\n\nClick "Install Now" to run the installer. Messenger will close automatically.\n\nIf Windows blocks the file, right-click → Properties → Unblock.`,
-          buttons: ["Install Now", "Open Downloads Folder", "Later"],
-          defaultId: 0,
-          cancelId: 2,
-        });
-
-        if (installResult.response === 0) {
-          // Run the installer and quit the app immediately (no extra confirmation dialog)
-          console.log("[AutoUpdater] Opening installer and quitting...");
-          const openError = await shell.openPath(filePath);
-
-          if (openError) {
-            console.error("[AutoUpdater] Failed to open installer:", openError);
-            // Show error and fall back to showing in explorer
-            await dialog.showMessageBox({
-              type: "error",
-              title: "Could Not Open Installer",
-              message: "The installer could not be opened automatically",
-              detail: `Error: ${openError}\n\nThe file has been saved to your Downloads folder. Please run it manually.\n\nIf the file is blocked: right-click → Properties → check "Unblock" → OK.`,
-              buttons: ["Show in Downloads"],
-            });
-            shell.showItemInFolder(filePath);
-          } else {
-            // Quit immediately to allow installer to run - no additional dialog needed
-            console.log("[AutoUpdater] Installer launched, quitting app...");
-            isQuitting = true;
-            app.quit();
-          }
-        } else if (installResult.response === 1) {
-          // Open the Downloads folder with the file selected
-          shell.showItemInFolder(filePath);
-        }
-        // If "Later", do nothing
+        await downloadUpdateWithProgress(version);
       } catch (err) {
-        console.error("[AutoUpdater] Windows direct download failed:", err);
+        console.error("[AutoUpdater] Windows update download failed:", err);
         const errorMsg = err instanceof Error ? err.message : String(err);
-
-        // Fall back to opening download page
-        const fallbackResult = await dialog.showMessageBox({
+        await dialog.showMessageBox({
           type: "error",
           title: "Download Failed",
-          message: "Could not download the update automatically",
-          detail: `${errorMsg}\n\nWould you like to open the download page instead?`,
-          buttons: ["Open Download Page", "Cancel"],
-          defaultId: 0,
-          cancelId: 1,
+          message: "Could not download the authenticated update",
+          detail: errorMsg,
+          buttons: ["OK"],
         });
-
-        if (fallbackResult.response === 0) {
-          shell
-            .openExternal(
-              "https://apotenza92.github.io/facebook-messenger-desktop/",
-            )
-            .catch((shellErr) => {
-              console.error(
-                "[AutoUpdater] Failed to open download page:",
-                shellErr,
-              );
-            });
-        }
       }
     }
     return;
@@ -12772,11 +12370,8 @@ async function showUpdateAvailableDialog(version: string): Promise<void> {
 
   if (result === "download") {
     console.log("[AutoUpdater] User chose to download");
-    pendingUpdateVersion = version;
-    showDownloadProgress();
-    autoUpdater.downloadUpdate().catch((err) => {
+    downloadUpdateWithProgress(version).catch((err) => {
       console.error("[AutoUpdater] Download failed:", err);
-      hideDownloadProgress();
       const errorMsg = err instanceof Error ? err.message : String(err);
       dialog
         .showMessageBox({
@@ -12806,6 +12401,22 @@ async function showUpdateReadyDialog(version: string): Promise<void> {
 
   if (result.response === 0) {
     console.log("[AutoUpdater] User chose to restart");
+    try {
+      await closeVerifiedUpdateFeed();
+    } catch (error) {
+      console.error(
+        "[AutoUpdater] Could not close the verified update feed:",
+        error,
+      );
+      await dialog.showMessageBox({
+        type: "error",
+        title: "Could Not Restart",
+        message: "Messenger could not safely prepare the update.",
+        detail: error instanceof Error ? error.message : String(error),
+        buttons: ["OK"],
+      });
+      return;
+    }
     isQuitting = true;
 
     // On Linux, quitAndInstall() can terminate abruptly causing crash messages.
@@ -12855,18 +12466,24 @@ async function showUpdateReadyDialog(version: string): Promise<void> {
   }
 }
 
-function setupAutoUpdater(): void {
+async function setupAutoUpdater(): Promise<void> {
   try {
     const updaterE2EFeedUrl = process.env.MESSENGER_UPDATE_E2E_FEED_URL;
+    const updaterE2ETufRepositoryUrl =
+      process.env.MESSENGER_UPDATE_E2E_TUF_REPOSITORY_URL;
     const updaterE2EResultPath = process.env.MESSENGER_UPDATE_E2E_RESULT_PATH;
     const updaterE2EEnabled =
-      process.platform === "darwin" &&
       !isDev &&
       process.env.MESSENGER_UPDATE_E2E === "1" &&
-      Boolean(updaterE2EFeedUrl && updaterE2EResultPath);
+      Boolean(
+        updaterE2EResultPath &&
+          (process.platform === "darwin"
+            ? updaterE2EFeedUrl
+            : updaterE2ETufRepositoryUrl),
+      );
 
     autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.logger = console;
 
     if (updaterE2EEnabled) {
@@ -12907,20 +12524,23 @@ function setupAutoUpdater(): void {
       recordResult("prior-runtime-started", runtimeDetail);
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = false;
-      autoUpdater.channel = isBetaVersion ? "beta" : "latest";
-      autoUpdater.allowPrerelease = isBetaVersion;
-      autoUpdater.setFeedURL({
-        provider: "generic",
-        url: updaterE2EFeedUrl as string,
-      });
+      try {
+        await configureUpdateFeed();
+      } catch (error) {
+        recordResult("error", (error as Error)?.message || error);
+        return;
+      }
       autoUpdater.on("update-available", (info) =>
         recordResult("update-available", info?.version),
       );
-      autoUpdater.on("update-downloaded", (info) => {
+      autoUpdater.on("update-downloaded", async (info) => {
         recordResult("update-downloaded", info?.version);
         if (process.env.MESSENGER_UPDATE_E2E_INSTALL === "1") {
           isQuitting = true;
-          setImmediate(() => autoUpdater.quitAndInstall(false, true));
+          await closeVerifiedUpdateFeed();
+          setImmediate(() =>
+            autoUpdater.quitAndInstall(process.platform === "win32", true),
+          );
         }
       });
       autoUpdater.on("update-not-available", () =>
@@ -12929,7 +12549,12 @@ function setupAutoUpdater(): void {
       autoUpdater.on("error", (error) =>
         recordResult("error", (error as Error)?.message || error),
       );
-      void autoUpdater.checkForUpdates().catch((error) =>
+      const e2eCheck = verifiedUpdateFeed
+        ? verifiedUpdateFeed
+            .refresh()
+            .then(() => autoUpdater.checkForUpdates())
+        : autoUpdater.checkForUpdates();
+      void e2eCheck.catch((error) =>
         recordResult("error", (error as Error)?.message || error),
       );
       return;
@@ -13064,7 +12689,7 @@ app.whenReady().then(async () => {
       '[AutoUpdater] Skipped for Flatpak installation (use "flatpak update" instead)',
     );
   } else {
-    setupAutoUpdater();
+    await setupAutoUpdater();
   }
 
   // Show snap desktop integration help on first run (Linux snap only)
@@ -13173,6 +12798,7 @@ app.on("before-quit", () => {
 
   // Stop menu bar hover detection
   stopMenuBarHoverDetection();
+  stopContentViewBoundsMonitoring();
 
   // Stop any active incoming-call notification reminders
   stopIncomingCallNotificationReminder(false);
@@ -13180,13 +12806,9 @@ app.on("before-quit", () => {
   // Close download progress window if open
   hideDownloadProgress();
 
-  // Note: If an update was downloaded, autoInstallOnAppQuit (set to true in setupAutoUpdater)
-  // will automatically install the update when the app quits.
-  // We don't call quitAndInstall() here because that can cause "app can't be closed" errors
-  // on Windows when the installer tries to start while the app is still closing.
   if (updateDownloadedAndReady) {
     console.log(
-      "[AutoUpdater] Update will be installed on quit via autoInstallOnAppQuit",
+      "[AutoUpdater] Downloaded update remains pending until Restart Now is chosen",
     );
   }
 });

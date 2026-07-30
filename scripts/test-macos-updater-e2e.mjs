@@ -2,12 +2,15 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -325,10 +328,15 @@ function writeMetadata(
   );
 }
 
-async function serve(directory) {
+async function serve(directory, requestLogPath) {
   const server = createServer((request, response) => {
     const name = basename(new URL(request.url, "http://127.0.0.1").pathname);
     const filePath = join(directory, name);
+    appendFileSync(
+      requestLogPath,
+      `${request.method ?? "UNKNOWN"} ${request.url ?? "/"} ${existsSync(filePath) ? 200 : 404}\n`,
+      { mode: 0o600 },
+    );
     if (!existsSync(filePath)) {
       response.writeHead(404).end();
       return;
@@ -354,6 +362,12 @@ function readEvents(resultPath) {
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function readLogTail(filePath, maximumCharacters = 12_000) {
+  if (!existsSync(filePath)) return "";
+  const contents = readFileSync(filePath, "utf8");
+  return contents.slice(-maximumCharacters);
 }
 
 export function parseExecutableProcesses(
@@ -398,7 +412,106 @@ function cleanupOwnedUpdaterMarker(markerPath, marker) {
   rmSync(markerPath);
 }
 
-async function waitForEvent(resultPath, event, child, timeout = 180_000) {
+function installSourceCachePath(markerPath) {
+  return join(resolve(markerPath, ".."), INSTALL_SOURCE_CACHE_FILE);
+}
+
+const INSTALL_SOURCE_CACHE_FILE = "install-source.json";
+
+function seedInstallSourceCache(markerPath, installedVersion) {
+  const cachePath = installSourceCachePath(markerPath);
+  const previous = existsSync(cachePath) ? readFileSync(cachePath) : null;
+  const movePromptPath = join(
+    resolve(markerPath, ".."),
+    "move-to-applications-prompted.json",
+  );
+  const previousMovePrompt = existsSync(movePromptPath)
+    ? readFileSync(movePromptPath)
+    : null;
+  mkdirSync(resolve(cachePath, ".."), { recursive: true, mode: 0o700 });
+  writeFileSync(
+    cachePath,
+    `${JSON.stringify({ source: "homebrew", version: installedVersion })}\n`,
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    movePromptPath,
+    `${JSON.stringify({ prompted: true, date: new Date(0).toISOString() })}\n`,
+    { mode: 0o600 },
+  );
+  return { cachePath, movePromptPath, previous, previousMovePrompt };
+}
+
+function restoreInstallSourceCache({
+  cachePath,
+  movePromptPath,
+  previous,
+  previousMovePrompt,
+}) {
+  if (previous) {
+    writeFileSync(cachePath, previous, { mode: 0o600 });
+  } else {
+    rmSync(cachePath, { force: true });
+  }
+  if (previousMovePrompt) {
+    writeFileSync(movePromptPath, previousMovePrompt, { mode: 0o600 });
+  } else {
+    rmSync(movePromptPath, { force: true });
+  }
+}
+
+function resolveUpdaterCacheDirectory(appPath) {
+  const configurationPath = join(
+    appPath,
+    "Contents",
+    "Resources",
+    "app-update.yml",
+  );
+  const configuration = yaml.load(readFileSync(configurationPath, "utf8"));
+  const directoryName = String(configuration?.updaterCacheDirName ?? "");
+  if (
+    !/^[A-Za-z0-9._-]+$/.test(directoryName) ||
+    directoryName === "." ||
+    directoryName === ".."
+  ) {
+    fail(`Unsafe updater cache directory name in ${configurationPath}`);
+  }
+  return join(homedir(), "Library", "Caches", directoryName);
+}
+
+function isolateUpdaterCache(appPath, workspace) {
+  const cachePath = resolveUpdaterCacheDirectory(appPath);
+  const backupPath = join(workspace, "original-updater-cache");
+  const hadExistingCache = existsSync(cachePath);
+  if (hadExistingCache) {
+    renameSync(cachePath, backupPath);
+  }
+  return { backupPath, cachePath, hadExistingCache };
+}
+
+function clearTestUpdaterCache({ cachePath }) {
+  rmSync(cachePath, { recursive: true, force: true });
+}
+
+function restoreUpdaterCache(boundary) {
+  if (!boundary) return;
+  clearTestUpdaterCache(boundary);
+  if (boundary.hadExistingCache) {
+    mkdirSync(resolve(boundary.cachePath, ".."), {
+      recursive: true,
+      mode: 0o700,
+    });
+    renameSync(boundary.backupPath, boundary.cachePath);
+  }
+}
+
+async function waitForEvent(
+  resultPath,
+  event,
+  child,
+  diagnostics,
+  timeout = 180_000,
+) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const match = readEvents(resultPath).find((entry) => entry.event === event);
@@ -409,7 +522,15 @@ async function waitForEvent(resultPath, event, child, timeout = 180_000) {
       fail(`App exited before ${event} (${child.exitCode})`);
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
-  fail(`Timed out waiting for ${event}`);
+  fail(
+    [
+      `Timed out waiting for ${event}`,
+      `observed events=${JSON.stringify(readEvents(resultPath))}`,
+      `feed requests=${JSON.stringify(readLogTail(diagnostics.requestLogPath))}`,
+      `stdout tail=${JSON.stringify(readLogTail(diagnostics.stdoutPath))}`,
+      `stderr tail=${JSON.stringify(readLogTail(diagnostics.stderrPath))}`,
+    ].join("; "),
+  );
 }
 
 async function waitForAutomaticRelaunch({
@@ -455,7 +576,6 @@ async function waitForAutomaticRelaunch({
 
 function createLaunchEnvironment({
   feedUrl,
-  home,
   install,
   manual,
   marker,
@@ -463,8 +583,22 @@ function createLaunchEnvironment({
   temporaryDirectory,
   version,
 }) {
+  const allowed = [
+    "CI",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "USER",
+  ];
   return {
-    HOME: home,
+    ...Object.fromEntries(
+      allowed.flatMap((name) =>
+        process.env[name] ? [[name, process.env[name]]] : [],
+      ),
+    ),
     LANG: "en_US.UTF-8",
     LC_ALL: "en_US.UTF-8",
     MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
@@ -487,27 +621,32 @@ async function launchScenario({
   expectedEvent,
   feedDirectory,
   install,
+  installedVersion,
   name,
   version,
   workspace,
 }) {
   const resultPath = join(workspace, `${name}.jsonl`);
-  const home = join(workspace, `${name}-home`);
+  const requestLogPath = join(workspace, `${name}-feed-requests.log`);
+  const stderrPath = join(workspace, `${name}-stderr.log`);
+  const stdoutPath = join(workspace, `${name}-stdout.log`);
   const temporaryDirectory = join(workspace, `${name}-tmp`);
   const marker = `messenger-updater-${name}-marker`;
   const markerPath = updaterMarkerPath(contract);
   if (existsSync(markerPath)) {
     fail(`Updater E2E marker already exists: ${markerPath}`);
   }
-  mkdirSync(home, { recursive: true, mode: 0o700 });
   mkdirSync(temporaryDirectory, { recursive: true, mode: 0o700 });
-  const { server, url } = await serve(feedDirectory);
+  const installSourceCache = seedInstallSourceCache(
+    markerPath,
+    installedVersion,
+  );
+  const { server, url } = await serve(feedDirectory, requestLogPath);
   const executablePath = realpathSync(
     join(appPath, "Contents", "MacOS", contract.executableName),
   );
   const environment = createLaunchEnvironment({
     feedUrl: url,
-    home,
     install,
     manual: false,
     marker,
@@ -515,29 +654,48 @@ async function launchScenario({
     temporaryDirectory,
     version,
   });
-  const child = spawn(executablePath, [], {
-    detached: true,
-    env: environment,
-    stdio: "ignore",
-  });
-  let preserveMarker = false;
+  const stdoutFile = openSync(stdoutPath, "w", 0o600);
+  const stderrFile = openSync(stderrPath, "w", 0o600);
+  let child;
   try {
-    const result = await waitForEvent(resultPath, expectedEvent, child);
+    child = spawn(executablePath, [], {
+      env: environment,
+      stdio: ["ignore", stdoutFile, stderrFile],
+    });
+  } finally {
+    closeSync(stdoutFile);
+    closeSync(stderrFile);
+  }
+  let preserveMarker = false;
+  let completed = false;
+  try {
+    const result = await waitForEvent(resultPath, expectedEvent, child, {
+      requestLogPath,
+      stderrPath,
+      stdoutPath,
+    });
+    completed = true;
     preserveMarker = expectedEvent === "update-downloaded";
     return {
       appPath,
       child,
       environment,
       executablePath,
-      home,
       marker,
       markerPath,
+      requestLogPath,
       result,
       resultPath,
+      stderrPath,
+      stdoutPath,
       temporaryDirectory,
     };
   } finally {
     server.close();
+    restoreInstallSourceCache(installSourceCache);
+    if (!completed) {
+      stopVerifiedProcesses(executablePath);
+    }
     if (!preserveMarker) {
       cleanupOwnedUpdaterMarker(markerPath, marker);
     }
@@ -546,7 +704,11 @@ async function launchScenario({
 
 function killVerifiedProcess(pid, executablePath) {
   if (!Number.isInteger(pid) || pid <= 1) fail(`Invalid process ID ${pid}`);
-  const command = run("ps", ["-p", String(pid), "-o", "command="]).trim();
+  const probe = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+    encoding: "utf8",
+  });
+  if (probe.status !== 0) return;
+  const command = probe.stdout.trim();
   if (!command.startsWith(executablePath))
     fail(`Refusing to kill PID ${pid}; command is ${command}`);
   process.kill(pid, "SIGTERM");
@@ -563,9 +725,9 @@ function killVerifiedProcess(pid, executablePath) {
 async function proveManualRelaunch(scenario, version) {
   const eventsBefore = readEvents(scenario.resultPath).length;
   const child = spawn(scenario.executablePath, [], {
-    detached: true,
     env: {
       ...scenario.environment,
+      MESSENGER_UPDATE_E2E_EXPECTED_VERSION: version,
       MESSENGER_UPDATE_E2E_INSTALL: "0",
       MESSENGER_UPDATE_E2E_MANUAL_LAUNCH: "1",
     },
@@ -589,6 +751,84 @@ async function proveManualRelaunch(scenario, version) {
   fail("Manual relaunch did not start the updated runtime");
 }
 
+function stopVerifiedProcesses(executablePath) {
+  const processes = parseExecutableProcesses(
+    run("ps", ["-axo", "pid=,command="]),
+    executablePath,
+  );
+  for (const processEntry of processes) {
+    killVerifiedProcess(processEntry.pid, executablePath);
+  }
+}
+
+async function proveRejectedReplacement({
+  scenario,
+  previousVersion,
+  timeout = 60_000,
+}) {
+  const deadline = Date.now() + timeout;
+  let rejection = null;
+  while (Date.now() < deadline) {
+    const events = readEvents(scenario.resultPath);
+    rejection = events.find((entry) => entry.event === "error") ?? null;
+    const installedVersion = readPlist(
+      scenario.appPath,
+      "CFBundleShortVersionString",
+    );
+    if (installedVersion !== previousVersion) {
+      fail(
+        `Wrong-signature updater changed the installed version to ${installedVersion}`,
+      );
+    }
+    if (events.some((entry) => entry.event === "updated-runtime-started")) {
+      fail("Wrong-signature updater launched the untrusted runtime");
+    }
+    if (rejection) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  if (!rejection) {
+    fail(
+      [
+        "Wrong-signature updater did not report an explicit rejection",
+        `observed events=${JSON.stringify(readEvents(scenario.resultPath))}`,
+        `feed requests=${JSON.stringify(readLogTail(scenario.requestLogPath))}`,
+        `stdout tail=${JSON.stringify(readLogTail(scenario.stdoutPath))}`,
+        `stderr tail=${JSON.stringify(readLogTail(scenario.stderrPath))}`,
+      ].join("; "),
+    );
+  }
+  if (
+    !/signature|signed|code object|code requirement|designated requirement/i.test(
+      String(rejection.detail),
+    )
+  ) {
+    fail(
+      `Wrong-signature updater failed for an unexpected reason: ${rejection.detail}`,
+    );
+  }
+  const rejectionDwellDeadline = Date.now() + 5_000;
+  while (Date.now() < rejectionDwellDeadline) {
+    const installedVersion = readPlist(
+      scenario.appPath,
+      "CFBundleShortVersionString",
+    );
+    if (installedVersion !== previousVersion) {
+      fail(
+        `Wrong-signature updater changed the installed version to ${installedVersion} after rejection`,
+      );
+    }
+    if (
+      readEvents(scenario.resultPath).some(
+        (entry) => entry.event === "updated-runtime-started",
+      )
+    ) {
+      fail("Wrong-signature updater launched the untrusted runtime after rejection");
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  stopVerifiedProcesses(scenario.executablePath);
+}
+
 function copyPriorApp(baselineApp, destinationDirectory, contract) {
   mkdirSync(destinationDirectory, { recursive: true });
   const destination = join(destinationDirectory, contract.appName);
@@ -598,6 +838,14 @@ function copyPriorApp(baselineApp, destinationDirectory, contract) {
 
 export async function main() {
   if (process.platform !== "darwin") fail("macOS updater E2E requires macOS");
+  if (
+    process.env.CI !== "true" &&
+    process.env.MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA !== "1"
+  ) {
+    fail(
+      "macOS updater E2E uses the disposable runner profile; local execution requires MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA=1",
+    );
+  }
   const channel = option("--channel");
   const arch = option("--arch", process.arch);
   const currentTag = option("--current-tag");
@@ -652,6 +900,7 @@ export async function main() {
   const certificateDirectory = join(workspace, "certificates");
   mkdirSync(certificateDirectory);
   let succeeded = false;
+  let updaterCacheBoundary = null;
   try {
     const previousZip = join(workspace, previous.asset.name);
     const checksumPath = join(workspace, "SHA256SUMS");
@@ -710,6 +959,16 @@ export async function main() {
       currentExpectations,
       certificateDirectory,
     );
+    const baselineUpdaterCache = resolveUpdaterCacheDirectory(baselineApp);
+    const candidateUpdaterCache = resolveUpdaterCacheDirectory(
+      join(candidateDirectory, contract.appName),
+    );
+    if (baselineUpdaterCache !== candidateUpdaterCache) {
+      fail(
+        `Updater cache migration is not supported: ${baselineUpdaterCache} -> ${candidateUpdaterCache}`,
+      );
+    }
+    updaterCacheBoundary = isolateUpdaterCache(baselineApp, workspace);
 
     const validFeed = join(workspace, "valid-feed");
     mkdirSync(validFeed);
@@ -734,6 +993,7 @@ export async function main() {
       expectedEvent: "update-downloaded",
       feedDirectory: validFeed,
       install: true,
+      installedVersion: previousVersion,
       name: "valid",
       version,
       workspace,
@@ -759,6 +1019,7 @@ export async function main() {
     } finally {
       cleanupOwnedUpdaterMarker(valid.markerPath, valid.marker);
     }
+    clearTestUpdaterCache(updaterCacheBoundary);
 
     const corruptFeed = join(workspace, "corrupt-feed");
     mkdirSync(corruptFeed);
@@ -793,6 +1054,7 @@ export async function main() {
       expectedEvent: "error",
       feedDirectory: corruptFeed,
       install: false,
+      installedVersion: previousVersion,
       name: "corrupt",
       version,
       workspace,
@@ -800,6 +1062,7 @@ export async function main() {
     if (!/sha|checksum|size|integrity/i.test(String(corrupt.result.detail)))
       fail(`Corrupt package failed for an unexpected reason: ${corrupt.result.detail}`);
     killVerifiedProcess(corrupt.child.pid, corrupt.executablePath);
+    clearTestUpdaterCache(updaterCacheBoundary);
 
     const wrongFeed = join(workspace, "wrong-signature-feed");
     const wrongExtract = join(workspace, "wrong-signature-app");
@@ -838,21 +1101,38 @@ export async function main() {
     const wrong = await launchScenario({
       appPath: wrongApp,
       contract,
-      expectedEvent: "error",
+      expectedEvent: "update-downloaded",
       feedDirectory: wrongFeed,
-      install: false,
+      install: true,
+      installedVersion: previousVersion,
       name: "wrong-signature",
       version,
       workspace,
     });
-    if (!/sign|code|authority|team/i.test(String(wrong.result.detail)))
-      fail(`Wrong signature failed for an unexpected reason: ${wrong.result.detail}`);
-    killVerifiedProcess(wrong.child.pid, wrong.executablePath);
+    try {
+      await proveRejectedReplacement({
+        scenario: wrong,
+        previousVersion,
+      });
+      verifyTrustedApp(
+        wrongApp,
+        contract,
+        previousVersion,
+        priorExpectations,
+        certificateDirectory,
+      );
+      await proveManualRelaunch(wrong, previousVersion);
+    } finally {
+      stopVerifiedProcesses(wrong.executablePath);
+      cleanupOwnedUpdaterMarker(wrong.markerPath, wrong.marker);
+    }
+    clearTestUpdaterCache(updaterCacheBoundary);
     succeeded = true;
     console.log(
       `macOS ${channel} ${arch} N-1 updater install E2E passed from ${previous.release.tag_name}`,
     );
   } finally {
+    restoreUpdaterCache(updaterCacheBoundary);
     if (!succeeded && retainWorkspaceOnFailure) {
       console.error(`Retained failed updater E2E workspace: ${workspace}`);
     } else {

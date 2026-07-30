@@ -6,6 +6,10 @@
  */
 
 const packageJson = require('./package.json');
+const {
+  DEFAULT_UPDATE_FEED_BASE_URL,
+  MINIMUM_MACOS_VERSION,
+} = require('./release-contract.cjs');
 const version = packageJson.version;
 
 // Detect if this is a beta/prerelease version
@@ -56,6 +60,7 @@ const baseFiles = [
   'dist/**/*',
   'assets/icons/**/*',
   'assets/tray/**/*',
+  'release-contract.cjs',
 ];
 
 // Only include Windows-specific files for Windows builds
@@ -64,26 +69,30 @@ if (isWindowsBuild) {
 }
 
 // Base configuration (shared between stable and beta)
+const updateChannel = isBeta ? 'beta' : 'stable';
+const updateFeedBaseUrl = (
+  process.env.MESSENGER_UPDATE_FEED_BASE_URL || DEFAULT_UPDATE_FEED_BASE_URL
+).replace(/\/$/, '');
 const publishConfig = {
-  provider: 'github',
-  owner: 'apotenza92',
-  repo: 'facebook-messenger-desktop',
+  provider: 'generic',
+  url: `${updateFeedBaseUrl}/${updateChannel}`,
+  channel: isBeta ? 'beta' : 'latest',
 };
-
-// Beta builds use 'beta' channel for updates
-// This ensures beta apps only receive beta updates and use beta-branded artifacts
-if (isBeta) {
-  publishConfig.channel = 'beta';
-}
 
 const baseConfig = {
   afterPack: './scripts/after-pack.js',
   afterSign: './scripts/notarize-macos.cjs',
   forceCodeSigning: requireReleaseSigning,
-  ...(isMacBuild ? { publish: [publishConfig] } : {}),
+  publish: [publishConfig],
   directories: {
     output: 'release',
   },
+  extraResources: [
+    {
+      from: 'build/update-trust/root.json',
+      to: 'update-trust/root.json',
+    },
+  ],
   files: baseFiles,
   asar: true,
   compression: 'maximum',
@@ -96,6 +105,7 @@ const appDisplayName = isBeta ? 'Messenger Beta' : 'Messenger';
 const macConfig = {
   category: 'public.app-category.social-networking',
   target: 'zip',
+  minimumSystemVersion: MINIMUM_MACOS_VERSION,
   hardenedRuntime: true,
   ...(requireReleaseSigning ? { identity: releaseSigningIdentity } : {}),
   // The layered Icon Composer asset is compiled into Assets.car so macOS can

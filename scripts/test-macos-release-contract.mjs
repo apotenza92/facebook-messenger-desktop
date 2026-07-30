@@ -20,6 +20,7 @@ import {
   parseCodesignMetadata,
   resolvePriorSigningFingerprints,
   resolveMacReleaseContract,
+  validateDistributableNotarizationRecord,
   validateNotarizationRecord,
   validateSignatureMetadata,
 } from "./macos-release-contract.mjs";
@@ -46,13 +47,37 @@ import {
   validateChecksumEntry,
 } from "./test-macos-updater-e2e.mjs";
 import {
+  compareMacosVersions,
   createMacLaunchEnvironment,
+  parseMachOMinimumVersions,
   validateBlockmap,
   validateZipEntries,
 } from "./verify-macos-package.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
+const { mergeEnvironment } = require("./test-nonmac-update.cjs");
+
+assert.deepEqual(
+  mergeEnvironment(
+    {
+      AppData: "old-roaming",
+      LOCALAPPDATA: "old-local",
+      Path: "system-path",
+    },
+    {
+      APPDATA: "isolated-roaming",
+      LocalAppData: "isolated-local",
+    },
+    true,
+  ),
+  {
+    APPDATA: "isolated-roaming",
+    LocalAppData: "isolated-local",
+    Path: "system-path",
+  },
+  "Windows launch environments must replace mixed-case profile keys",
+);
 
 function loadBuilderConfig(environment, args = []) {
   const configPath = join(repositoryRoot, "electron-builder.config.js");
@@ -126,6 +151,8 @@ function testContracts() {
     executableName: "Messenger",
     metadataName: "latest-mac.yml",
     notarizationName: "notarization-stable-macos-arm64.json",
+    distributableNotarizationName:
+      "notarization-distributable-stable-macos-arm64.json",
     packageName: "facebook-messenger-desktop",
     productName: "Messenger",
     updaterChannel: "latest",
@@ -209,6 +236,40 @@ function testSigningValidation() {
         log: { jobId: "different-id", status: "Accepted", issues: [] },
       }),
     /job ID/,
+  );
+  assert.doesNotThrow(() =>
+    validateDistributableNotarizationRecord(
+      {
+        artifact: { name: "Messenger.zip", sha256: fingerprint, size: 42 },
+        submission: { id: "distributable-id", status: "Accepted" },
+        log: {
+          archiveFilename: "Messenger.zip",
+          jobId: "distributable-id",
+          sha256: fingerprint,
+          status: "Accepted",
+          issues: [],
+        },
+      },
+      { artifactName: "Messenger.zip", sha256: fingerprint, size: 42 },
+    ),
+  );
+  assert.throws(
+    () =>
+      validateDistributableNotarizationRecord(
+        {
+          artifact: { name: "Messenger.zip", sha256: fingerprint, size: 42 },
+          submission: { id: "distributable-id", status: "Accepted" },
+          log: {
+            archiveFilename: "Messenger.zip",
+            jobId: "distributable-id",
+            sha256: "cd".repeat(32),
+            status: "Accepted",
+            issues: [],
+          },
+        },
+        { artifactName: "Messenger.zip", sha256: fingerprint, size: 42 },
+      ),
+    /Apple notarization log/,
   );
 }
 
@@ -369,6 +430,27 @@ function testMetadataAssembly() {
         }),
       );
       writeFileSync(
+        join(sourceDirectory, contract.distributableNotarizationName),
+        JSON.stringify({
+          artifact: {
+            name: contract.artifactName,
+            sha256,
+            size: artifact.length,
+          },
+          submission: {
+            id: `distributable-fixture-${arch}`,
+            status: "Accepted",
+          },
+          log: {
+            archiveFilename: contract.artifactName,
+            jobId: `distributable-fixture-${arch}`,
+            sha256,
+            status: "Accepted",
+            issues: [],
+          },
+        }),
+      );
+      writeFileSync(
         join(sourceDirectory, contract.metadataName),
         yaml.dump({
           version,
@@ -398,6 +480,23 @@ function testMetadataAssembly() {
     assert.match(
       readFileSync(join(outputDirectory, "SHA256SUMS-macos.txt"), "utf8"),
       /Messenger-Beta-macos-arm64\.zip/,
+    );
+    const arm64Contract = resolveMacReleaseContract("beta", "arm64");
+    rmSync(
+      join(
+        inputDirectory,
+        "macos-input-arm64",
+        arm64Contract.distributableNotarizationName,
+      ),
+    );
+    assert.throws(
+      () =>
+        assembleMacRelease({
+          inputDirectory,
+          outputDirectory,
+          releaseChannel: "beta",
+        }),
+      /Missing macOS input.*notarization-distributable-beta-macos-arm64/,
     );
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -797,28 +896,47 @@ function testBuilderContract() {
   assert.equal(signed.forceCodeSigning, true);
   assert.equal(signed.mac.identity, "Example (TEAM123456)");
   assert.equal(signed.mac.hardenedRuntime, true);
+  assert.equal(signed.mac.minimumSystemVersion, "12.0.0");
   assert.equal(signed.mac.notarize, false);
   assert.equal(signed.appId, "com.facebook.messenger.desktop.beta");
   assert.equal(signed.productName, "Messenger Beta");
   assert.equal(signed.mac.artifactName, "Messenger-Beta-macos-${arch}.${ext}");
   assert.deepEqual(signed.publish, [
     {
-      provider: "github",
-      owner: "apotenza92",
-      repo: "facebook-messenger-desktop",
+      provider: "generic",
+      url: "https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/updates/beta",
       channel: "beta",
     },
   ]);
-  assert.equal(
+  assert.deepEqual(
     loadBuilderConfig({}, ["--win"]).publish,
-    undefined,
-    "Windows packages must not embed or generate electron-updater publication metadata",
+    signed.publish,
+    "Windows packages must generate metadata for the authenticated static feed",
   );
-  assert.equal(
+  assert.deepEqual(
     loadBuilderConfig({}, ["--linux"]).publish,
-    undefined,
-    "Linux packages must not embed or generate electron-updater publication metadata",
+    signed.publish,
+    "AppImage packages must generate metadata for the authenticated static feed",
   );
+  assert.deepEqual(signed.extraResources, [
+    {
+      from: "build/update-trust/root.json",
+      to: "update-trust/root.json",
+    },
+  ]);
+  assert(signed.files.includes("release-contract.cjs"));
+  assert.deepEqual(
+    parseMachOMinimumVersions(`
+      cmd LC_BUILD_VERSION
+    minos 12.0
+      cmd LC_VERSION_MIN_MACOSX
+  version 11.0
+    `),
+    ["12.0", "11.0"],
+  );
+  assert.equal(compareMacosVersions("12.0", "12.0.0"), 0);
+  assert.equal(compareMacosVersions("11.7", "12.0"), -1);
+  assert.equal(compareMacosVersions("13.0", "12.0"), 1);
 }
 
 function testWorkflowContract() {
@@ -840,6 +958,15 @@ function testWorkflowContract() {
   const macUpdaterScript = readFileSync(
     join(repositoryRoot, "scripts", "test-macos-updater-e2e.mjs"),
     "utf8",
+  );
+  assert.match(
+    macSigningScript,
+    /notarizeFinalDistributable\(\s*artifactPath,/,
+    "The immutable final ZIP must receive its own notarization submission",
+  );
+  assert.match(
+    macSigningScript,
+    /contract\.distributableNotarizationName/,
   );
   const windowsInstallerTest = readFileSync(
     join(repositoryRoot, "scripts", "test-windows-installer.ps1"),
@@ -894,9 +1021,9 @@ function testWorkflowContract() {
     "Stable/beta publication approval must gate only the final release job",
   );
   assert.match(workflow, /environment:\s*release-signing/);
-  assert.match(validateRelease, /runner:\s*'macos-26'/);
-  assert.match(validateRelease, /runner:\s*'macos-26-intel'/);
-  assert.doesNotMatch(validateRelease, /runner:\s*'macos-15(?:-intel)?'/);
+  assert.match(validateRelease, /runner:\s*'macos-15'/);
+  assert.match(validateRelease, /runner:\s*'macos-15-intel'/);
+  assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
   assert.match(buildMacos, /runner:\s*macos-26\b/);
   assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
@@ -1053,8 +1180,39 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /release\/(?:latest|beta)-linux/);
   assert.match(workflow, /Assemble exact unsigned Windows installers/);
   assert.match(workflow, /Install, launch, and uninstall native DEB packages/);
+  assert.match(
+    workflow,
+    /desktop_file="\/usr\/share\/applications\/\$package_name\.desktop"/,
+  );
+  assert.match(
+    workflow,
+    /Categories=Network;InstantMessaging;Chat;/,
+  );
+  assert.match(
+    workflow,
+    /path "\*\/apps\/\$package_name\.png"/,
+  );
   assert.match(workflow, /test-rpm-package\.sh/);
   assert.match(workflow, /test-issue53-linux-vm-smoke\.sh flatpak/);
+  const rpmPackageAudit = readFileSync(
+    join(repositoryRoot, "scripts", "test-rpm-package.sh"),
+    "utf8",
+  );
+  assert.match(
+    rpmPackageAudit,
+    /desktop_file="\/usr\/share\/applications\/\$package_name\.desktop"/,
+  );
+  assert.match(rpmPackageAudit, /Categories=Network;InstantMessaging;Chat;/);
+  assert.match(rpmPackageAudit, /path "\*\/apps\/\$package_name\.png"/);
+  const linuxVmSmoke = readFileSync(
+    join(repositoryRoot, "scripts", "test-issue53-linux-vm-smoke.sh"),
+    "utf8",
+  );
+  assert.match(
+    linuxVmSmoke,
+    /flatpak\/exports\/share\/applications\/\$app_id\.desktop/,
+  );
+  assert.match(linuxVmSmoke, /\^Exec=\.\*flatpak run\.\*\$\{app_id\}/);
   assert.match(workflow, /FLATPAK_GNUPGHOME/);
   assert.match(workflow, /rm -rf "\$GNUPGHOME"/);
   assert.match(
@@ -1101,6 +1259,26 @@ function testWorkflowContract() {
     /^\s*(?:push|pull_request|pull_request_target|workflow_run|schedule):/m,
     "CI must remain manual-only",
   );
+  assert.match(ciWorkflow, /scope:[\s\S]*?options:\s*\n\s+- full\s*\n\s+- macos/);
+  assert.match(ciWorkflow, /runner:\s*"macos-15"/);
+  assert.match(ciWorkflow, /runner:\s*"macos-15-intel"/);
+  assert.match(
+    ciWorkflow,
+    /nonmac-updater-e2e:[\s\S]*?if:\s*inputs\.scope == 'full'[\s\S]*?uses:\s*\.\/\.github\/workflows\/nonmac-updater-audit\.yml/,
+    "Manual CI must retain all native Windows and AppImage updater gates",
+  );
+  assert.match(
+    jobSource(ciWorkflow, "build-macos"),
+    /environment:\s*release-signing/,
+    "Manual CI must use the protected macOS signing environment",
+  );
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26\b/);
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26-intel\b/);
+  assert.match(
+    ciWorkflow,
+    /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,
+    "Manual CI must retain signed macOS updater readiness gates",
+  );
   assert.doesNotMatch(
     maintainedWorkflows,
     /^\s*schedule:/m,
@@ -1124,6 +1302,8 @@ function testWorkflowContract() {
     const allowedEvents =
       name === "release.yml"
         ? new Set(["push"])
+        : name === "nonmac-updater-audit.yml"
+          ? new Set(["workflow_call", "workflow_dispatch"])
         : new Set(["workflow_dispatch"]);
     assert(events.length > 0, `${name} must declare an explicit trusted event`);
     for (const event of events) {
@@ -1140,7 +1320,11 @@ function testWorkflowContract() {
   }
   for (const line of maintainedWorkflows
     .split(/\r?\n/)
-    .filter((candidate) => candidate.trim().startsWith("uses:"))) {
+    .filter(
+      (candidate) =>
+        candidate.trim().startsWith("uses:") &&
+        !candidate.trim().startsWith("uses: ./"),
+    )) {
     assert.match(
       line,
       /@[a-f0-9]{40}(?:\s+#|\s*$)/,
@@ -1207,7 +1391,24 @@ function testWorkflowContract() {
   assert.match(updaterHarness, /updated-runtime-started/);
   assert.match(updaterHarness, /manual-runtime-started/);
   assert.match(updaterHarness, /waitForAutomaticRelaunch/);
+  assert.match(updaterHarness, /proveRejectedReplacement/);
   assert.match(updaterHarness, /cleanupOwnedUpdaterMarker/);
+  assert.match(updaterHarness, /MESSENGER_MAC_UPDATER_ALLOW_REAL_USER_DATA/);
+  assert.match(updaterHarness, /seedInstallSourceCache/);
+  assert.match(updaterHarness, /move-to-applications-prompted\.json/);
+  assert.match(updaterHarness, /isolateUpdaterCache/);
+  assert.match(updaterHarness, /restoreUpdaterCache/);
+  assert.match(updaterHarness, /"LOGNAME"/);
+  assert.match(updaterHarness, /"SHELL"/);
+  assert.match(updaterHarness, /"USER"/);
+  assert.match(updaterHarness, /observed events=/);
+  assert.match(updaterHarness, /feed requests=/);
+  assert.match(updaterHarness, /stderr tail=/);
+  assert.doesNotMatch(updaterHarness, /detached:\s*true/);
+  assert.match(
+    updaterHarness,
+    /expectedEvent:\s*"update-downloaded"[\s\S]*?name:\s*"wrong-signature"/,
+  );
   assert.doesNotMatch(
     updaterHarness,
     /expectedEvent:\s*"updated-runtime-started"/,
@@ -1243,12 +1444,163 @@ function testWorkflowContract() {
   );
   assert.match(
     mainProcess,
-    /MESSENGER_UPDATE_E2E_INSTALL[\s\S]*?autoUpdater\.quitAndInstall\(false, true\)/,
+    /MESSENGER_UPDATE_E2E_INSTALL[\s\S]*?autoUpdater\.quitAndInstall\(process\.platform === "win32", true\)/,
   );
   assert.match(mainProcess, /updater-e2e-marker\.json/);
   assert.match(mainProcess, /updated-runtime-started/);
   assert.match(mainProcess, /manual-runtime-started/);
+  assert.match(mainProcess, /MESSENGER_UPDATE_E2E_APP_DATA_ROOT/);
+  assert.match(mainProcess, /path\.relative\(path\.resolve\(tmpdir\(\)\), resolved\)/);
   assert.doesNotMatch(mainProcess, /io\.github\.apotenza92\.messenger/);
+
+  const nonmacWorkflow = readFileSync(
+    join(workflowDirectory, "nonmac-updater-audit.yml"),
+    "utf8",
+  );
+  for (const target of [
+    "win32-arm64",
+    "win32-x64",
+    "linux-arm64",
+    "linux-x64",
+  ]) {
+    assert.match(
+      nonmacWorkflow,
+      new RegExp(`- ${target.replace("-", "\\-")}`),
+      `Native updater audit must retain ${target}`,
+    );
+  }
+  assert.match(nonmacWorkflow, /windows-11-arm/);
+  assert.match(nonmacWorkflow, /windows-2025/);
+  assert.match(nonmacWorkflow, /ubuntu-24\.04-arm/);
+  assert.match(nonmacWorkflow, /ubuntu-24\.04/);
+  assert.match(nonmacWorkflow, /Create disposable loopback-only TUF trust/);
+  assert.match(
+    nonmacWorkflow,
+    /Download source-pinned published beta baseline/,
+  );
+  assert.match(nonmacWorkflow, /v1\.3\.1-beta\.43/);
+  for (const digest of [
+    "80509a609d4ad3dafece1ff80834c3e29565b8d65d7d66db09e702f20ef8f7bd",
+    "f4195ab0351088d4b941b0f2ead6e6f50783ef2b5c94164409deb7bf022325d7",
+    "c5febaa940ee9744b2b9562ff10028e8ac97410e29783af26ae9636a0757c81e",
+    "57d02554c3971a98e29cad889bada0127f023656b096f2c47111ce81f0668263",
+  ]) {
+    assert.match(nonmacWorkflow, new RegExp(digest));
+  }
+  assert.match(nonmacWorkflow, /--published-baseline-artifact/);
+  assert.match(nonmacWorkflow, /--published-baseline-tag/);
+  assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
+  assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
+  assert.match(workflow, /pattern:\s*macos-input-\*/);
+  assert.doesNotMatch(workflow, /ci-macos-input-/);
+  assert.match(
+    jobSource(workflow, "release"),
+    /needs:[\s\S]*?nonmac-updater-e2e/,
+    "Publication must wait for all native Windows and AppImage updater gates",
+  );
+  const nonmacHarness = readFileSync(
+    join(repositoryRoot, "scripts", "test-nonmac-update.cjs"),
+    "utf8",
+  );
+  for (const scenario of ["corrupt-target", "wrong-signature", "valid"]) {
+    assert.match(nonmacHarness, new RegExp(`"${scenario}"`));
+  }
+  assert.match(nonmacHarness, /installedVersion\(executable\) === candidateVersion/);
+  assert.match(nonmacHarness, /digest\(candidateAppAsar\)/);
+  assert.match(nonmacHarness, /digest\(previousArtifact\) === expectedDigest/);
+  assert.match(nonmacHarness, /Updater did not preserve the user-data marker/);
+  assert.match(nonmacHarness, /readFileSync\(resultPath,\s*"utf8"\)/);
+  assert.doesNotMatch(nonmacHarness, /\$\{resultPath\}\.jsonl/);
+  assert.match(nonmacHarness, /\$\{mode\}-runtime\.log/);
+  assert.match(
+    nonmacHarness,
+    /--user-data-dir=\$\{userDataDirectory\}/,
+    "Windows updater scenarios must use separate Electron profiles",
+  );
+  assert.match(
+    nonmacHarness,
+    /MESSENGER_UPDATE_E2E_APP_DATA_ROOT: scenarioRoot/,
+    "Native updater scenarios must use separate app data roots",
+  );
+  assert.match(
+    nonmacHarness,
+    /windowsKnownFolder\("ApplicationData"\)/,
+    "Published Windows baselines must use the actual OS roaming profile",
+  );
+  assert.match(nonmacHarness, /\.updater-audit-backup-/);
+  assert.match(
+    nonmacHarness,
+    /fs\.renameSync\(priorUserDataBackup, userDataDirectory\)/,
+    "Published Windows migration must restore a pre-existing runner profile",
+  );
+  assert.match(nonmacHarness, /published-migration-runtime\.log/);
+  assert.match(nonmacHarness, /published-migration-events\.jsonl/);
+  assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
+  assert.match(
+    nonmacHarness,
+    /detached: process\.platform === "linux"/,
+    "Linux updater processes must use an owned process group",
+  );
+  assert.match(
+    nonmacHarness,
+    /process\.kill\(-child\.pid, "SIGKILL"\)|stopProcessGroup\("SIGKILL"\)/,
+    "Linux updater cleanup must terminate child processes before replacement",
+  );
+  assert.match(nonmacHarness, /await uninstallWindowsPackage\(installDirectory, productName\)/);
+  assert.match(
+    nonmacHarness,
+    /Windows uninstall left install directory/,
+    "Windows native updater evidence must fail if uninstall leaves the app installed",
+  );
+  assert.match(
+    nonmacHarness,
+    /Uninstall: synthetic and published-baseline installs completed and removed their install directories/,
+  );
+  assert.match(nonmacHarness, /testPublishedBaselineMigration/);
+  assert.match(
+    nonmacHarness,
+    /Published baseline did not use expected user-data directory/,
+  );
+  assert.match(nonmacHarness, /fs\.mkdirSync\(isolatedAppDataRoot/);
+  assert.match(nonmacHarness, /fs\.mkdirSync\(localAppDataRoot/);
+  assert.match(nonmacHarness, /published-baseline-layout\.txt/);
+  assert.match(
+    nonmacHarness,
+    /Published baseline migration: native launch, replacement, relaunch, and retained user data passed/,
+  );
+  assert.match(
+    nonmacHarness,
+    /started\.detail\?\.version !== candidateVersion/,
+  );
+  assert.match(
+    nonmacHarness,
+    /Candidate artifact: \$\{path\.basename\(candidateArtifact\)\}/,
+  );
+  assert.match(
+    nonmacHarness,
+    /Candidate SHA-256: \$\{digest\(candidateArtifact\)\}/,
+  );
+  assert.match(
+    nonmacHarness,
+    /Candidate bytes: \$\{fs\.statSync\(candidateArtifact\)\.size\}/,
+  );
+  assert.match(nonmacHarness, /removeDirectoryWithRetries\(temporary\)/);
+  assert.match(
+    nonmacHarness,
+    /!primaryError && process\.platform !== "win32"/,
+    "Windows cleanup locks must not mask a completed native updater audit",
+  );
+  assert.match(nonmacHarness, /if \(primaryError\) throw primaryError/);
+
+  const refreshWorkflow = readFileSync(
+    join(workflowDirectory, "tuf-metadata-refresh.yml"),
+    "utf8",
+  );
+  assert.match(refreshWorkflow, /^on:\n  workflow_dispatch:/m);
+  assert.doesNotMatch(refreshWorkflow, /^\s*schedule:/m);
+  assert.match(refreshWorkflow, /environment:\s*update-signing/);
+  assert.match(refreshWorkflow, /environment:\s*update-publication/);
+  assert.match(refreshWorkflow, /--refresh-metadata/);
 
   const downloadPage = readFileSync(
     join(repositoryRoot, "docs", "index.html"),
@@ -1271,6 +1623,11 @@ function testWorkflowContract() {
   assert.match(
     packageVerifier,
     /map\(\(filePath\) => realpathSync\(filePath\)\)/,
+  );
+  assert.match(
+    packageVerifier,
+    /run\("otool", \["-l", "-m", machOPath\]\)/,
+    "Mach-O minimum-version inspection must disable archive(member) parsing",
   );
 
   const maintainedReleaseSources = [

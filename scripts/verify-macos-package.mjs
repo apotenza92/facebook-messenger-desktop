@@ -35,6 +35,7 @@ import {
   normalizeFingerprint,
   parseCodesignMetadata,
   resolveMacReleaseContract,
+  validateDistributableNotarizationRecord,
   validateNotarizationRecord,
   validateSignatureMetadata,
 } from "./macos-release-contract.mjs";
@@ -42,6 +43,10 @@ import {
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const { extractFile: extractAsarFile } = require("@electron/asar");
+const {
+  DEFAULT_UPDATE_FEED_BASE_URL,
+  MINIMUM_MACOS_VERSION,
+} = require("../release-contract.cjs");
 const machOMagic = new Set([
   "feedface",
   "feedfacf",
@@ -240,6 +245,73 @@ function collectCodeObjects(appPath) {
   };
 }
 
+function versionParts(value) {
+  if (!/^\d+(?:\.\d+){0,2}$/.test(String(value))) {
+    fail(`Invalid macOS version: ${value}`);
+  }
+  return String(value)
+    .split(".")
+    .map(Number)
+    .concat([0, 0])
+    .slice(0, 3);
+}
+
+export function compareMacosVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+export function parseMachOMinimumVersions(output) {
+  const versions = [];
+  let command = null;
+  for (const rawLine of String(output).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "cmd LC_BUILD_VERSION") {
+      command = "build";
+    } else if (line === "cmd LC_VERSION_MIN_MACOSX") {
+      command = "legacy";
+    } else if (command === "build" && line.startsWith("minos ")) {
+      versions.push(line.slice("minos ".length).trim());
+      command = null;
+    } else if (command === "legacy" && line.startsWith("version ")) {
+      versions.push(line.slice("version ".length).trim());
+      command = null;
+    }
+  }
+  return versions;
+}
+
+function validateMinimumMacosVersion(plistPath, machOFiles) {
+  const declared = readPlistValue(
+    plistPath,
+    "LSMinimumSystemVersion",
+  );
+  if (declared !== MINIMUM_MACOS_VERSION) {
+    fail(
+      `LSMinimumSystemVersion is ${declared}, expected ${MINIMUM_MACOS_VERSION}`,
+    );
+  }
+  for (const machOPath of machOFiles) {
+    const versions = parseMachOMinimumVersions(
+      run("otool", ["-l", "-m", machOPath]).stdout,
+    );
+    if (versions.length === 0) {
+      fail(`Mach-O file has no minimum macOS load command: ${machOPath}`);
+    }
+    for (const version of versions) {
+      if (compareMacosVersions(version, MINIMUM_MACOS_VERSION) > 0) {
+        fail(
+          `${machOPath} requires macOS ${version}, above declared minimum ${MINIMUM_MACOS_VERSION}`,
+        );
+      }
+    }
+  }
+}
+
 function parseEntitlements(targetPath) {
   const result = run("codesign", [
     "-d",
@@ -368,13 +440,18 @@ function validateEmbeddedUpdater(appPath, contract, version) {
   const updateConfig = yaml.load(
     readFileSync(join(resourcesPath, "app-update.yml"), "utf8"),
   );
+  const expectedFeedBaseUrl = (
+    process.env.MESSENGER_UPDATE_FEED_BASE_URL ||
+    DEFAULT_UPDATE_FEED_BASE_URL
+  ).replace(/\/$/, "");
+  const expectedFeedUrl =
+    `${expectedFeedBaseUrl}/${contract.channel}`;
   if (
-    updateConfig?.provider !== "github" ||
-    updateConfig.owner !== "apotenza92" ||
-    updateConfig.repo !== "facebook-messenger-desktop"
+    updateConfig?.provider !== "generic" ||
+    updateConfig.url !== expectedFeedUrl
   ) {
     fail(
-      "Packaged updater does not use the maintained Messenger GitHub release provider",
+      `Packaged updater feed ${updateConfig?.url ?? "missing"} does not match ${expectedFeedUrl}`,
     );
   }
   const actualChannel = updateConfig.channel ?? "latest";
@@ -497,11 +574,16 @@ export async function main() {
   const blockmapPath = join(releaseDirectory, contract.blockmapName);
   const metadataPath = join(releaseDirectory, contract.metadataName);
   const notarizationPath = join(releaseDirectory, contract.notarizationName);
+  const distributableNotarizationPath = join(
+    releaseDirectory,
+    contract.distributableNotarizationName,
+  );
   for (const requiredPath of [
     artifactPath,
     blockmapPath,
     metadataPath,
     notarizationPath,
+    distributableNotarizationPath,
   ]) {
     if (!existsSync(requiredPath))
       fail(`Required macOS release output is missing: ${requiredPath}`);
@@ -517,6 +599,14 @@ export async function main() {
   validateUpdateMetadata(metadataPath, artifactPath, version);
   validateNotarizationRecord(
     JSON.parse(readFileSync(notarizationPath, "utf8")),
+  );
+  validateDistributableNotarizationRecord(
+    JSON.parse(readFileSync(distributableNotarizationPath, "utf8")),
+    {
+      artifactName: basename(artifactPath),
+      sha256: hashFile(artifactPath, "sha256", "hex"),
+      size: statSync(artifactPath).size,
+    },
   );
 
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "messenger-verify-"));
@@ -554,6 +644,7 @@ export async function main() {
     const codeObjects = collectCodeObjects(appPath);
     if (codeObjects.machOFiles.length === 0)
       fail("Packaged app contains no Mach-O files");
+    validateMinimumMacosVersion(plistPath, codeObjects.machOFiles);
     const context = {
       appPath,
       certificateDirectory,

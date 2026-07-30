@@ -1,0 +1,344 @@
+name: Native Windows and AppImage updater audit
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Stable or beta application identity
+        required: true
+        type: string
+      target:
+        description: Native target
+        required: true
+        type: string
+      previous_version:
+        description: Synthetic N-1 version
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Stable or beta application identity
+        required: true
+        type: choice
+        default: beta
+        options:
+          - stable
+          - beta
+      target:
+        description: Native target
+        required: true
+        type: choice
+        default: win32-x64
+        options:
+          - win32-arm64
+          - win32-x64
+          - linux-arm64
+          - linux-x64
+      previous_version:
+        description: Synthetic N-1 version
+        required: true
+        type: string
+        default: 1.3.1-beta.44
+
+concurrency:
+  group: messenger-nonmac-updater-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  updater:
+    name: Native updater (${{ inputs.target }})
+    runs-on: ${{ inputs.target == 'win32-arm64' && 'windows-11-arm' || inputs.target == 'win32-x64' && 'windows-2025' || inputs.target == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    env:
+      MESSENGER_AUDIT_PLATFORM: ${{ startsWith(inputs.target, 'win32-') && 'win32' || 'linux' }}
+      MESSENGER_AUDIT_CHANNEL: ${{ inputs.channel }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - name: Checkout public source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Require the matching native runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          test "$(node -p 'process.arch')" = "$EXPECTED_ARCH"
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            test "$(node -p 'process.platform')" = win32
+          else
+            test "$(node -p 'process.platform')" = linux
+          fi
+          [[ "$MESSENGER_AUDIT_CHANNEL" == stable ||
+            "$MESSENGER_AUDIT_CHANNEL" == beta ]]
+
+      - name: Install Linux launch dependencies
+        if: startsWith(inputs.target, 'linux-')
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            squashfs-tools \
+            xvfb \
+            xauth \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxkbcommon0 \
+            libxrandr2 \
+            libxss1
+          sudo apt-get install -y libasound2 ||
+            sudo apt-get install -y libasound2t64
+          sudo apt-get install -y libfuse2 ||
+            sudo apt-get install -y libfuse2t64
+
+      - name: Install dependencies and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Create disposable loopback-only TUF trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRUST_DIR='${{ runner.temp }}/messenger-updater-trust'
+          mkdir -p "$TRUST_DIR"
+          mv build/update-trust/root.json "$TRUST_DIR/production-root.json"
+          node scripts/create-tuf-production-trust.cjs \
+            --root build/update-trust/root.json \
+            --private-key-bundle "$TRUST_DIR/private.json"
+
+      - name: Build synthetic N-1 and candidate packages
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          CANDIDATE_VERSION="$(node -p 'require("./package.json").version')"
+          PREVIOUS_VERSION='${{ inputs.previous_version }}'
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          else
+            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          fi
+          test "$PREVIOUS_VERSION" != "$CANDIDATE_VERSION"
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PRODUCT_PREFIX=Messenger
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PRODUCT_PREFIX=Messenger-Beta
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          mkdir -p ci-updater/previous ci-updater/candidate
+
+          npm pkg set "version=$PREVIOUS_VERSION"
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta &&
+            "$PREVIOUS_VERSION" != *-beta.* ]]; then
+            export FORCE_BETA_BUILD=true
+          fi
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            npx --no-install electron-builder \
+              --config electron-builder.config.js \
+              --win nsis "--$ARCH" --publish=never
+            cp "release/$PRODUCT_PREFIX-windows-$ARCH-setup.exe" \
+              ci-updater/previous/
+          else
+            npx --no-install electron-builder \
+              --config electron-builder.config.js \
+              --linux AppImage "--$ARCH" --publish=never
+            LINUX_ARCH="$(
+              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+            )"
+            cp "release/$PACKAGE_PREFIX-$LINUX_ARCH.AppImage" \
+              ci-updater/previous/
+          fi
+
+          rm -rf release
+          npm pkg set "version=$CANDIDATE_VERSION"
+          unset FORCE_BETA_BUILD
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            npx --no-install electron-builder \
+              --config electron-builder.config.js \
+              --win nsis "--$ARCH" --publish=never
+            CANDIDATE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+            cp "release/$CANDIDATE" ci-updater/candidate/
+            UNPACKED=win-unpacked
+            if [[ "$ARCH" == arm64 ]]; then UNPACKED=win-arm64-unpacked; fi
+            cp "release/$UNPACKED/resources/app.asar" \
+              ci-updater/candidate/app.asar
+          else
+            npx --no-install electron-builder \
+              --config electron-builder.config.js \
+              --linux AppImage "--$ARCH" --publish=never
+            LINUX_ARCH="$(
+              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+            )"
+            CANDIDATE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+            cp "release/$CANDIDATE" ci-updater/candidate/
+          fi
+          node scripts/create-update-metadata.mjs \
+            --artifact "ci-updater/candidate/$CANDIDATE" \
+            --output ci-updater/candidate/update.yml \
+            --version "$CANDIDATE_VERSION"
+          test "$(node -p 'require("./package.json").version')" = \
+            "$CANDIDATE_VERSION"
+
+      - name: Download source-pinned published beta baseline
+        if: inputs.channel == 'beta'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=v1.3.1-beta.43
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          mkdir -p ci-updater/published
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            NAME="Messenger-Beta-windows-$ARCH-setup.exe"
+            if [[ "$ARCH" == arm64 ]]; then
+              EXPECTED_SHA256=80509a609d4ad3dafece1ff80834c3e29565b8d65d7d66db09e702f20ef8f7bd
+            else
+              EXPECTED_SHA256=f4195ab0351088d4b941b0f2ead6e6f50783ef2b5c94164409deb7bf022325d7
+            fi
+          else
+            LINUX_ARCH="$(
+              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+            )"
+            NAME="facebook-messenger-desktop-beta-$LINUX_ARCH.AppImage"
+            if [[ "$ARCH" == arm64 ]]; then
+              EXPECTED_SHA256=c5febaa940ee9744b2b9562ff10028e8ac97410e29783af26ae9636a0757c81e
+            else
+              EXPECTED_SHA256=57d02554c3971a98e29cad889bada0127f023656b096f2c47111ce81f0668263
+            fi
+          fi
+          BASELINE="ci-updater/published/$NAME"
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-all-errors \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$NAME" \
+            --output "$BASELINE"
+          ACTUAL_SHA256="$(
+            node -e \
+              'const {createHash}=require("node:crypto");const fs=require("node:fs");process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' \
+              "$BASELINE"
+          )"
+          test "$ACTUAL_SHA256" = "$EXPECTED_SHA256"
+
+      - name: Inspect AppImage architecture and native dependency closure
+        if: startsWith(inputs.target, 'linux-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          LINUX_ARCH="$(
+            [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+          )"
+          npm run test:linux-artifacts -- \
+            "ci-updater/candidate/$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+
+      - name: Exercise corrupt, wrong-signature, and valid replacement
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PRODUCT_PREFIX=Messenger
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PRODUCT_PREFIX=Messenger-Beta
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          PUBLISHED_BASELINE_ARGS=()
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+              PUBLISHED_BASELINE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+            else
+              LINUX_ARCH="$(
+                [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+              )"
+              PUBLISHED_BASELINE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+            fi
+            PUBLISHED_BASELINE_ARGS=(
+              --published-baseline-artifact
+              "ci-updater/published/$PUBLISHED_BASELINE"
+              --published-baseline-tag
+              v1.3.1-beta.43
+            )
+          fi
+          EVIDENCE='${{ runner.temp }}/messenger-updater-evidence'
+          ROOT=build/update-trust/root.json
+          PRIVATE='${{ runner.temp }}/messenger-updater-trust/private.json'
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            CANDIDATE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+            node scripts/test-nonmac-update.cjs \
+              --arch "$ARCH" \
+              --previous-artifact \
+              "ci-updater/previous/$PRODUCT_PREFIX-windows-$ARCH-setup.exe" \
+              --candidate-artifact "ci-updater/candidate/$CANDIDATE" \
+              --candidate-app-asar ci-updater/candidate/app.asar \
+              --candidate-directory ci-updater/candidate \
+              --candidate-metadata ci-updater/candidate/update.yml \
+              --channel "$MESSENGER_AUDIT_CHANNEL" \
+              --target-name latest.yml \
+              --root "$ROOT" \
+              --private-key-bundle "$PRIVATE" \
+              --evidence "$EVIDENCE" \
+              "${PUBLISHED_BASELINE_ARGS[@]}"
+          else
+            LINUX_ARCH="$(
+              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+            )"
+            CANDIDATE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+            TARGET=latest-linux.yml
+            if [[ "$ARCH" == arm64 ]]; then
+              TARGET=latest-linux-arm64.yml
+            fi
+            xvfb-run -a node scripts/test-nonmac-update.cjs \
+              --arch "$ARCH" \
+              --previous-artifact \
+              "ci-updater/previous/$PACKAGE_PREFIX-$LINUX_ARCH.AppImage" \
+              --candidate-artifact "ci-updater/candidate/$CANDIDATE" \
+              --candidate-directory ci-updater/candidate \
+              --candidate-metadata ci-updater/candidate/update.yml \
+              --channel "$MESSENGER_AUDIT_CHANNEL" \
+              --target-name "$TARGET" \
+              --root "$ROOT" \
+              --private-key-bundle "$PRIVATE" \
+              --evidence "$EVIDENCE" \
+              "${PUBLISHED_BASELINE_ARGS[@]}"
+          fi
+
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: messenger-${{ inputs.target }}-updater-evidence
+          path: ${{ runner.temp }}/messenger-updater-evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove disposable trust and packages
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf '${{ runner.temp }}/messenger-updater-trust'
+          rm -rf ci-updater release

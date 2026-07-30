@@ -2,6 +2,16 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Native readiness scope
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - macos
+          - nonmac
 
 permissions:
   contents: read
@@ -11,8 +21,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: Resolve release-readiness inputs
+    runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.contract.outputs.channel }}
+      current_tag: ${{ steps.contract.outputs.current_tag }}
+      previous_version: ${{ steps.contract.outputs.previous_version }}
+      updater_matrix: ${{ steps.contract.outputs.updater_matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve the candidate contract
+        id: contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const { version } = require("./package.json");
+          const beta = version.match(/^(.*-beta\.)([1-9]\d*)$/);
+          const stable = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+          if (!beta && !stable) {
+            throw new Error(`Unsupported release-readiness version ${version}`);
+          }
+          let previousVersion;
+          if (beta) {
+            if (Number(beta[2]) <= 1) {
+              throw new Error("beta.1 requires an explicit updater bootstrap");
+            }
+            previousVersion = `${beta[1]}${Number(beta[2]) - 1}`;
+          } else {
+            const [, majorText, minorText, patchText] = stable;
+            const major = Number(majorText);
+            const minor = Number(minorText);
+            const patch = Number(patchText);
+            if (patch > 0) previousVersion = `${major}.${minor}.${patch - 1}`;
+            else if (minor > 0) previousVersion = `${major}.${minor - 1}.0`;
+            else if (major > 0) previousVersion = `${major - 1}.0.0`;
+            else throw new Error("0.0.0 has no synthetic predecessor");
+          }
+          const channel = beta ? "beta" : "stable";
+          const updaterMatrix = [
+            ...(stable
+              ? [
+                  { channel: "stable", arch: "arm64", runner: "macos-15" },
+                  { channel: "stable", arch: "x64", runner: "macos-15-intel" },
+                ]
+              : []),
+            { channel: "beta", arch: "arm64", runner: "macos-15" },
+            { channel: "beta", arch: "x64", runner: "macos-15-intel" },
+          ];
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `channel=${channel}`,
+              `current_tag=v${version}`,
+              `previous_version=${previousVersion}`,
+              `updater_matrix=${JSON.stringify(updaterMatrix)}`,
+              "",
+            ].join("\n"),
+          );
+          NODE
+
   deterministic:
     name: Static checks and deterministic tests
+    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -33,3 +110,221 @@ jobs:
 
       - name: Run required checks
         run: npm run test:ci
+
+  nonmac-updater-e2e:
+    name: Native ${{ matrix.target }} updater readiness
+    if: inputs.scope == 'full' || inputs.scope == 'nonmac'
+    needs: [prepare, deterministic]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - win32-arm64
+          - win32-x64
+          - linux-arm64
+          - linux-x64
+    uses: ./.github/workflows/nonmac-updater-audit.yml
+    with:
+      channel: ${{ needs.prepare.outputs.channel }}
+      target: ${{ matrix.target }}
+      previous_version: ${{ needs.prepare.outputs.previous_version }}
+
+  build-macos:
+    name: Signed macOS ${{ matrix.arch }} readiness
+    if: inputs.scope != 'nonmac'
+    needs: [prepare, deterministic]
+    runs-on: ${{ matrix.runner }}
+    environment: release-signing
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+            native_arch: arm64
+          - arch: x64
+            runner: macos-26-intel
+            native_arch: x86_64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Verify native runner architecture
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.native_arch }}"
+
+      - name: Install dependencies
+        run: npm ci
+        timeout-minutes: 10
+
+      - name: Build application
+        run: npm run build
+        timeout-minutes: 5
+
+      - name: Build, sign, notarize, staple, and verify native package
+        timeout-minutes: 120
+        env:
+          APPLE_NOTARYTOOL_ISSUER_ID: ${{ vars.APPLE_NOTARYTOOL_ISSUER_ID }}
+          APPLE_NOTARYTOOL_KEY_ID: ${{ vars.APPLE_NOTARYTOOL_KEY_ID }}
+          APPLE_NOTARYTOOL_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARYTOOL_KEY_P8_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_P12_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          npm run release:mac:signed -- \
+            --channel "${{ needs.prepare.outputs.channel }}" \
+            --arch "${{ matrix.arch }}" \
+            --skip-build \
+            --skip-launch
+          if [[ "${{ needs.prepare.outputs.channel }}" == stable ]]; then
+            npm run release:mac:signed -- \
+              --channel beta \
+              --arch "${{ matrix.arch }}" \
+              --skip-build \
+              --skip-launch
+          fi
+
+      - name: Reverify without release credentials
+        env:
+          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          node scripts/verify-macos-package.mjs \
+            --channel "${{ needs.prepare.outputs.channel }}" \
+            --arch "${{ matrix.arch }}" \
+            --release-dir release \
+            --require-checksum
+          if [[ "${{ needs.prepare.outputs.channel }}" == stable ]]; then
+            node scripts/verify-macos-package.mjs \
+              --channel beta \
+              --arch "${{ matrix.arch }}" \
+              --release-dir release \
+              --require-checksum
+          fi
+
+      - name: Upload native package evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos-input-${{ matrix.arch }}
+          path: |
+            release/*.zip
+            release/*.blockmap
+            release/*-mac.yml
+            release/*.sha256
+            release/notarization-*.json
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+  assemble-macos:
+    name: Assemble signed macOS readiness candidate
+    needs: [prepare, build-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download native macOS inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: artifacts/macos
+          pattern: macos-input-*
+
+      - name: Assemble and validate updater metadata
+        run: |
+          node scripts/assemble-macos-release.mjs \
+            --input-dir artifacts/macos \
+            --output-dir artifacts/macos-assembled \
+            --release-channel "${{ needs.prepare.outputs.channel }}"
+
+      - name: Upload assembled candidate
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ci-macos-build
+          path: artifacts/macos-assembled
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+  macos-updater-e2e:
+    name: macOS ${{ matrix.channel }} ${{ matrix.arch }} updater readiness
+    needs: [prepare, assemble-macos]
+    runs-on: ${{ matrix.runner }}
+    environment: ${{ matrix.channel }}-updater-verification
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.updater_matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download assembled macOS candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ci-macos-build
+          path: artifacts/macos
+
+      - name: Exercise valid, corrupt, and wrong-signature updates
+        env:
+          APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG: ${{ vars.MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG }}
+        run: |
+          set -euo pipefail
+          PRODUCT_PREFIX=Messenger
+          if [[ "${{ matrix.channel }}" == beta ]]; then
+            PRODUCT_PREFIX=Messenger-Beta
+          fi
+          node scripts/test-macos-updater-e2e.mjs \
+            --channel "${{ matrix.channel }}" \
+            --arch "${{ matrix.arch }}" \
+            --current-tag "${{ needs.prepare.outputs.current_tag }}" \
+            --bootstrap-tag "$MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG" \
+            --candidate \
+            "artifacts/macos/${PRODUCT_PREFIX}-macos-${{ matrix.arch }}.zip"

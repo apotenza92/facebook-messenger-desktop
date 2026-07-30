@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import yaml from "js-yaml";
 import {
   resolveMacReleaseContract,
+  validateDistributableNotarizationRecord,
   validateNotarizationRecord,
 } from "./macos-release-contract.mjs";
 
@@ -94,6 +95,7 @@ export function assembleMacRelease({
         contract.blockmapName,
         `${contract.artifactName}.sha256`,
         contract.notarizationName,
+        contract.distributableNotarizationName,
         contract.metadataName,
       ];
       for (const fileName of requiredNames) {
@@ -101,7 +103,7 @@ export function assembleMacRelease({
           fail(`Missing macOS input: ${arch}/${fileName}`);
       }
 
-      for (const fileName of requiredNames.slice(0, 4)) {
+      for (const fileName of requiredNames.slice(0, 5)) {
         const sourcePath = join(sourceDirectory, fileName);
         const destinationPath = join(outputDirectory, fileName);
         if (existsSync(destinationPath))
@@ -118,6 +120,19 @@ export function assembleMacRelease({
         ),
       );
       const actualSha256 = hashFile(artifactPath, "sha256", "hex");
+      validateDistributableNotarizationRecord(
+        JSON.parse(
+          readFileSync(
+            join(sourceDirectory, contract.distributableNotarizationName),
+            "utf8",
+          ),
+        ),
+        {
+          artifactName: contract.artifactName,
+          sha256: actualSha256,
+          size: statSync(artifactPath).size,
+        },
+      );
       const checksum = readFileSync(`${artifactPath}.sha256`, "utf8").trim();
       if (checksum !== `${actualSha256}  ${contract.artifactName}`) {
         fail(`${contract.artifactName}.sha256 does not match its ZIP`);

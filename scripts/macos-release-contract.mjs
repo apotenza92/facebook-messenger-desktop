@@ -30,6 +30,7 @@ export function resolveMacReleaseContract(channel, arch) {
     executableName: productName,
     metadataName: beta ? "beta-mac.yml" : "latest-mac.yml",
     notarizationName: `notarization-${channel}-macos-${arch}.json`,
+    distributableNotarizationName: `notarization-distributable-${channel}-macos-${arch}.json`,
     packageName: beta
       ? "facebook-messenger-desktop-beta"
       : "facebook-messenger-desktop",
@@ -129,6 +130,39 @@ export function validateNotarizationRecord(record) {
     )
   ) {
     throw new Error("Notarization log contains error issues");
+  }
+  return record;
+}
+
+export function validateDistributableNotarizationRecord(
+  record,
+  { artifactName, sha256, size },
+) {
+  validateNotarizationRecord(record);
+  if (
+    typeof artifactName !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(sha256) ||
+    !Number.isSafeInteger(size) ||
+    size <= 0
+  ) {
+    throw new Error("Invalid distributable notarization expectations");
+  }
+  if (
+    record.artifact?.name !== artifactName ||
+    record.artifact?.sha256 !== sha256 ||
+    record.artifact?.size !== size
+  ) {
+    throw new Error(
+      "Distributable notarization record does not match the release artifact",
+    );
+  }
+  if (
+    record.log.archiveFilename !== artifactName ||
+    String(record.log.sha256 ?? "").toLowerCase() !== sha256.toLowerCase()
+  ) {
+    throw new Error(
+      "Apple notarization log does not match the release artifact",
+    );
   }
   return record;
 }
