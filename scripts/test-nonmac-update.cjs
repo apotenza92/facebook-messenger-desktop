@@ -516,6 +516,8 @@ async function testPublishedBaselineMigration({
     ...platformEnvironment,
     MESSENGER_FORKED: "1",
     MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
+    MESSENGER_UPDATE_E2E: "1",
+    MESSENGER_UPDATE_E2E_APP_DATA_ROOT: appDataRoot,
     SKIP_SINGLE_INSTANCE_LOCK: "true",
   });
 

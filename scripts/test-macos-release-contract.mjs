@@ -1522,6 +1522,11 @@ function testWorkflowContract() {
     /MESSENGER_UPDATE_E2E_APP_DATA_ROOT: scenarioRoot/,
     "Native updater scenarios must use separate app data roots",
   );
+  assert.match(
+    nonmacHarness,
+    /const runtimeEnvironment = mergeEnvironment[\s\S]*MESSENGER_UPDATE_E2E: "1",[\s\S]*MESSENGER_UPDATE_E2E_APP_DATA_ROOT: appDataRoot/,
+    "Published updater baselines must use the guarded app-owned profile root",
+  );
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
   assert.match(
     nonmacHarness,
