@@ -221,13 +221,38 @@ async function waitForEvent(resultPath, names, timeoutMs = 240_000) {
 }
 
 async function stopProcess(child) {
-  if (!child || child.exitCode !== null) return;
+  if (!child) return;
   if (process.platform === "win32") {
-    spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
-    });
+    if (child.exitCode === null) {
+      spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
+    }
   } else {
-    child.kill("SIGTERM");
+    const processGroupExists = () => {
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch (error) {
+        if (error.code === "ESRCH") return false;
+        throw error;
+      }
+    };
+    const stopProcessGroup = async (signal) => {
+      if (!processGroupExists()) return;
+      process.kill(-child.pid, signal);
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline && processGroupExists()) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
+    await stopProcessGroup("SIGTERM");
+    await stopProcessGroup("SIGKILL");
+    if (processGroupExists()) {
+      throw new Error(
+        `Linux updater process group ${child.pid} remained alive.`,
+      );
+    }
   }
   await Promise.race([
     once(child, "exit").catch(() => {}),
@@ -380,6 +405,7 @@ function launch(executable, env, logPath, userDataDirectory) {
         : [];
   const log = fs.openSync(logPath, "a", 0o600);
   return spawn(executable, args, {
+    detached: process.platform === "linux",
     env,
     stdio: ["ignore", log, log],
     windowsHide: true,

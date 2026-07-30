@@ -1501,6 +1501,16 @@ function testWorkflowContract() {
     "Native updater scenarios must use separate app data roots",
   );
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
+  assert.match(
+    nonmacHarness,
+    /detached: process\.platform === "linux"/,
+    "Linux updater processes must use an owned process group",
+  );
+  assert.match(
+    nonmacHarness,
+    /process\.kill\(-child\.pid, "SIGKILL"\)|stopProcessGroup\("SIGKILL"\)/,
+    "Linux updater cleanup must terminate child processes before replacement",
+  );
   assert.match(nonmacHarness, /await uninstallWindowsPackage\(installDirectory, productName\)/);
   assert.match(
     nonmacHarness,
