@@ -200,6 +200,22 @@ jobs:
           test "$(node -p 'require("./package.json").version')" = \
             "$CANDIDATE_VERSION"
 
+      - name: Inspect AppImage architecture and native dependency closure
+        if: startsWith(inputs.target, 'linux-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          LINUX_ARCH="$(
+            [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
+          )"
+          npm run test:linux-artifacts -- \
+            "ci-updater/candidate/$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+
       - name: Exercise corrupt, wrong-signature, and valid replacement
         shell: bash
         run: |

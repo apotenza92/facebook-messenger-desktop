@@ -1122,6 +1122,21 @@ function testWorkflowContract() {
     /^\s*(?:push|pull_request|pull_request_target|workflow_run|schedule):/m,
     "CI must remain manual-only",
   );
+  assert.match(
+    ciWorkflow,
+    /nonmac-updater-e2e:[\s\S]*?uses:\s*\.\/\.github\/workflows\/nonmac-updater-audit\.yml/,
+    "Manual CI must retain all native Windows and AppImage updater gates",
+  );
+  assert.match(
+    jobSource(ciWorkflow, "build-macos"),
+    /environment:\s*release-signing/,
+    "Manual CI must use the protected macOS signing environment",
+  );
+  assert.match(
+    ciWorkflow,
+    /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,
+    "Manual CI must retain signed macOS updater readiness gates",
+  );
   assert.doesNotMatch(
     maintainedWorkflows,
     /^\s*schedule:/m,
