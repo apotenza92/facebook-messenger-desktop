@@ -1465,6 +1465,18 @@ function testWorkflowContract() {
     nonmacHarness,
     /Uninstall: completed and removed install directory/,
   );
+  assert.match(
+    nonmacHarness,
+    /Candidate artifact: \$\{path\.basename\(candidateArtifact\)\}/,
+  );
+  assert.match(
+    nonmacHarness,
+    /Candidate SHA-256: \$\{digest\(candidateArtifact\)\}/,
+  );
+  assert.match(
+    nonmacHarness,
+    /Candidate bytes: \$\{fs\.statSync\(candidateArtifact\)\.size\}/,
+  );
   assert.match(nonmacHarness, /removeDirectoryWithRetries\(temporary\)/);
   assert.match(
     nonmacHarness,
