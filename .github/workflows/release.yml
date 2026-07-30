@@ -2,6 +2,7 @@ name: Build and Release
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MESSENGER_UPDATE_FEED_BASE_URL: ${{ vars.MESSENGER_UPDATE_FEED_BASE_URL }}
 
 permissions:
   contents: read
@@ -23,6 +24,7 @@ jobs:
       channel: ${{ steps.release.outputs.channel }}
       prerelease: ${{ steps.release.outputs.prerelease }}
       release_environment: ${{ steps.release.outputs.release_environment }}
+      nonmac_previous_version: ${{ steps.release.outputs.nonmac_previous_version }}
       updater_matrix: ${{ steps.release.outputs.updater_matrix }}
     steps:
       - name: Checkout code
@@ -67,10 +69,25 @@ jobs:
             { channel: 'beta', arch: 'arm64', runner: 'macos-26' },
             { channel: 'beta', arch: 'x64', runner: 'macos-26-intel' },
           ];
+          const previousVersion = (() => {
+            if (prerelease) {
+              const match = packageJson.version.match(/^(.*-beta\\.)([1-9]\\d*)$/);
+              if (!match || Number(match[2]) <= 1) {
+                throw new Error('The updater gate requires an explicit predecessor for beta.1.');
+              }
+              return `${match[1]}${Number(match[2]) - 1}`;
+            }
+            const [major, minor, patch] = packageJson.version.split('.').map(Number);
+            if (patch > 0) return `${major}.${minor}.${patch - 1}`;
+            if (minor > 0) return `${major}.${minor - 1}.0`;
+            if (major > 0) return `${major - 1}.0.0`;
+            throw new Error('The updater gate cannot derive a predecessor for 0.0.0.');
+          })();
           const output = [
             `channel=${stable ? 'stable' : 'beta'}`,
             `prerelease=${prerelease}`,
             `release_environment=${stable ? 'stable-release' : 'beta-release'}`,
+            `nonmac_previous_version=${previousVersion}`,
             `updater_matrix=${JSON.stringify(updaterMatrix)}`,
           ];
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output.join('\n')}\n`);
@@ -101,6 +118,23 @@ jobs:
       - name: Run required deterministic checks
         run: npm run test:ci
         timeout-minutes: 30
+
+  nonmac-updater-e2e:
+    name: Native ${{ matrix.target }} updater gate
+    needs: [validate-release, quality]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - win32-arm64
+          - win32-x64
+          - linux-arm64
+          - linux-x64
+    uses: ./.github/workflows/nonmac-updater-audit.yml
+    with:
+      channel: ${{ needs.validate-release.outputs.channel }}
+      target: ${{ matrix.target }}
+      previous_version: ${{ needs.validate-release.outputs.nonmac_previous_version }}
 
   resolve-legacy-updater-bridge:
     name: Resolve one-release legacy updater bridge
@@ -769,6 +803,110 @@ jobs:
   # which automatically builds snaps when you push to the repo.
   # See: https://snapcraft.io/facebook-messenger-desktop/builds
 
+  seal-update-feeds:
+    name: Seal authenticated update feeds
+    needs:
+      [
+        validate-release,
+        resolve-legacy-updater-bridge,
+        assemble-macos,
+        assemble-windows,
+        build-windows-legacy-bridge,
+        build-linux,
+      ]
+    runs-on: ubuntu-24.04
+    environment: update-signing
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code without persistent credentials
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+          cache: "npm"
+
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download exact build outputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: artifacts/inputs
+          pattern: "*-build*"
+
+      - name: Reassemble the exact release boundary
+        run: |
+          set -euo pipefail
+          node scripts/assemble-public-release.mjs \
+            --input-dir artifacts/inputs \
+            --output-dir artifacts/release \
+            --release-channel "${{ needs.validate-release.outputs.channel }}" \
+            --legacy-bridge-channels "${{ needs.resolve-legacy-updater-bridge.outputs.channels }}"
+
+      - name: Assemble deterministic channel projections
+        run: |
+          set -euo pipefail
+          node scripts/assemble-release-update-feeds.mjs \
+            --release-dir artifacts/release \
+            --output artifacts/update-feed-input \
+            --audit-output artifacts/update-feed-audit \
+            --temporary artifacts/update-feed-temporary \
+            --release-channel "${{ needs.validate-release.outputs.channel }}" \
+            --repository "${{ github.repository }}" \
+            --tag "${{ github.ref_name }}"
+
+      - name: Read previous authenticated metadata history
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/previous-updates
+          if git ls-remote --exit-code origin refs/heads/updates >/dev/null 2>&1; then
+            git fetch --no-tags --depth=1 origin \
+              refs/heads/updates:refs/remotes/origin/updates
+            git archive refs/remotes/origin/updates |
+              tar -x -C artifacts/previous-updates
+          fi
+
+      - name: Sign Windows and AppImage metadata
+        env:
+          MESSENGER_TUF_SNAPSHOT_PRIVATE_KEY_PEM: ${{ secrets.MESSENGER_TUF_SNAPSHOT_PRIVATE_KEY_PEM }}
+          MESSENGER_TUF_TARGETS_PRIVATE_KEY_PEM: ${{ secrets.MESSENGER_TUF_TARGETS_PRIVATE_KEY_PEM }}
+          MESSENGER_TUF_TIMESTAMP_PRIVATE_KEY_PEM: ${{ secrets.MESSENGER_TUF_TIMESTAMP_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          node scripts/seal-update-feeds.cjs \
+            --input artifacts/update-feed-input \
+            --output artifacts/update-feed-sealed \
+            --previous artifacts/previous-updates \
+            --release-channel "${{ needs.validate-release.outputs.channel }}"
+
+      - name: Verify sealed output contains no private material
+        run: |
+          set -euo pipefail
+          test -f artifacts/update-feed-sealed/.nojekyll
+          test -f artifacts/update-feed-sealed/feed-manifest.json
+          if grep -R --binary-files=without-match --line-number \
+            --fixed-strings 'PRIVATE KEY' artifacts/update-feed-sealed; then
+            echo 'Private key material entered the sealed update feed.' >&2
+            exit 1
+          fi
+          test -z "$(find artifacts/update-feed-sealed -type l -print -quit)"
+
+      - name: Upload sealed update feeds
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: sealed-update-feeds
+          path: artifacts/update-feed-sealed
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
   # ============================================
   # PHASE 2: Create GitHub Release
   # (Runs after all builds complete)
@@ -780,12 +918,14 @@ jobs:
       [
         validate-release,
         resolve-legacy-updater-bridge,
+        nonmac-updater-e2e,
         issue53-x64-smoke,
         assemble-macos,
         macos-updater-e2e,
         assemble-windows,
         build-windows-legacy-bridge,
         build-linux,
+        seal-update-feeds,
       ]
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
@@ -818,6 +958,12 @@ jobs:
           path: artifacts/inputs
           pattern: "*-build*"
 
+      - name: Download sealed update feeds
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: sealed-update-feeds
+          path: artifacts/update-feed
+
       - name: Assemble exact collision-free public release assets
         run: |
           set -euo pipefail
@@ -846,7 +992,9 @@ jobs:
       - name: Attest release assets
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
-          subject-path: artifacts/release/**/*
+          subject-path: |
+            artifacts/release/**/*
+            artifacts/update-feed/**/*
 
       - name: Extract version from tag
         id: tag_version
@@ -986,7 +1134,87 @@ jobs:
             curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
               --range 0-0 --output /dev/null "$asset_url"
           done < <(jq -r '.assets[].browser_download_url' public-release.json)
-          echo "Verified exact unauthenticated public release classification and asset access."
+
+          rm -rf public-release-assets
+          mkdir public-release-assets
+          while IFS=$'\t' read -r asset_name asset_url; do
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors \
+              --output "public-release-assets/$asset_name" "$asset_url"
+            cmp "artifacts/release/$asset_name" \
+              "public-release-assets/$asset_name"
+          done < <(
+            jq -r '.assets[] | [.name, .browser_download_url] | @tsv' \
+              public-release.json
+          )
+          (
+            cd public-release-assets
+            shasum -a 256 --check SHA256SUMS
+          )
+          echo "Verified exact unauthenticated public release bytes and classification."
+
+      - name: Publish the authenticated channel feeds atomically
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLISH_DIR="$RUNNER_TEMP/messenger-update-feed-publish"
+          test -n "$PUBLISH_DIR"
+          rm -rf "${PUBLISH_DIR:?}"
+
+          if git ls-remote --exit-code origin refs/heads/updates >/dev/null 2>&1; then
+            git clone --depth=1 --single-branch --branch updates \
+              "https://github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH_DIR"
+          else
+            mkdir -p "$PUBLISH_DIR"
+            git -C "$PUBLISH_DIR" init
+            git -C "$PUBLISH_DIR" checkout -b updates
+            git -C "$PUBLISH_DIR" remote add origin \
+              "https://github.com/${GITHUB_REPOSITORY}.git"
+          fi
+
+          CHANNELS=(beta)
+          if [[ "${{ needs.validate-release.outputs.channel }}" == stable ]]; then
+            CHANNELS=(stable beta)
+          fi
+          for channel in "${CHANNELS[@]}"; do
+            rm -rf "${PUBLISH_DIR:?}/$channel"
+            cp -R "artifacts/update-feed/$channel" "$PUBLISH_DIR/$channel"
+          done
+          cp artifacts/update-feed/.nojekyll "$PUBLISH_DIR/.nojekyll"
+          cp artifacts/update-feed/feed-manifest.json \
+            "$PUBLISH_DIR/feed-manifest.json"
+
+          git -C "$PUBLISH_DIR" config user.name github-actions
+          git -C "$PUBLISH_DIR" config user.email \
+            41898282+github-actions[bot]@users.noreply.github.com
+          git -C "$PUBLISH_DIR" add --all
+          if git -C "$PUBLISH_DIR" diff --cached --quiet; then
+            echo 'Authenticated update feed already matches this release.'
+          else
+            git -C "$PUBLISH_DIR" commit -m \
+              "release: publish ${{ github.ref_name }} update feeds"
+          fi
+
+          AUTH_HEADER="$(
+            printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64
+          )"
+          git -C "$PUBLISH_DIR" \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
+            push origin HEAD:updates
+          unset AUTH_HEADER GITHUB_TOKEN
+
+      - name: Verify live authenticated update feeds
+        run: |
+          set -euo pipefail
+          node -r ./scripts/register-ts.js \
+            scripts/verify-published-update-feeds.ts \
+            --base-url \
+            "https://raw.githubusercontent.com/${{ github.repository }}/updates" \
+            --release-channel "${{ needs.validate-release.outputs.channel }}" \
+            --repository "${{ github.repository }}" \
+            --tag "${{ github.ref_name }}"
 
   prepare-homebrew-publication:
     name: Prepare Homebrew publication (Stable)

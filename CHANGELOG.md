@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## [1.3.1-beta.45] - 2026-07-30
+
+### Fixed
+
+- **Issue #79: suppress same-thread Messenger route downgrades that caused unexplained refreshes** ([#79](https://github.com/apotenza92/facebook-messenger-desktop/issues/79))
+  - Use the structured thread identifier and route category to block only an E2EE-to-legacy navigation for the same conversation.
+  - Preserve deliberate navigation to another conversation, legacy-to-E2EE upgrades, same-route reloads, and external navigation.
+  - Record the suppression as privacy-safe structural diagnostics without message text, account identifiers, or thread identifiers.
+
+### Security
+
+- Authenticate Windows and AppImage update metadata with a project-specific TUF trust root before exposing it to `electron-updater`.
+- Keep the offline root key solely in 1Password and scope the targets, snapshot, and timestamp keys to a protected signing environment.
+- Reject updater metadata redirects, cross-origin fetches, path traversal, invalid signatures, expired metadata, rollback attempts, and tampered targets.
+- Persist advanced client trust roots so an application update cannot silently replace a rotated root with an older embedded root.
+- Separate credential-free package builds, protected update signing, final approved release publication, and atomic update-feed publication.
+
+### Changed
+
+- Keep the established stable and beta application identities, package names, icons, and user-data directories independent on every platform.
+- Move macOS to the static per-channel feed while retaining Developer ID signing, hardened runtime, secure timestamps, notarisation, stapling, Gatekeeper verification, and native N-1 updater tests.
+- Restore automatic full-package updates for Windows and AppImage installations through authenticated metadata; DEB, RPM, Snap, and Flatpak updates remain owned by their package managers.
+- Preserve the existing one-release beta migration bridge: beta.43 and other legacy clients discover beta.45 through their current release flow, while beta.45 establishes the authenticated feed for later updates.
+- Add a manual-only workflow for refreshing expiring TUF metadata without changing authenticated release targets.
+
 ## [1.3.1-beta.44] - 2026-07-28
 
 ### Fixed

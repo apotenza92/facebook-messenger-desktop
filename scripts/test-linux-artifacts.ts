@@ -6,6 +6,7 @@ import path from 'node:path';
 
 const projectRoot = path.resolve(__dirname, '..');
 const releaseDir = path.join(projectRoot, 'release');
+const MAX_SUPPORTED_GLIBC = [2, 39] as const;
 
 function listFiles(dir: string, predicate: (name: string) => boolean): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -61,14 +62,106 @@ function executableNameForArtifact(file: string): string {
     : 'facebook-messenger-desktop';
 }
 
+function isElf(file: string): boolean {
+  if (!fs.statSync(file).isFile()) return false;
+  const descriptor = fs.openSync(file, 'r');
+  try {
+    const header = Buffer.alloc(4);
+    return (
+      fs.readSync(descriptor, header, 0, header.length, 0) === header.length &&
+      header.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+    );
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function walk(directory: string): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const candidate = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) return [];
+    if (entry.isDirectory()) return walk(candidate);
+    return entry.isFile() ? [candidate] : [];
+  });
+}
+
+function glibcVersion(value: string): [number, number] {
+  const match = value.match(/^(\d+)\.(\d+)$/);
+  assert(match, `Invalid GLIBC version ${value}`);
+  return [Number(match[1]), Number(match[2])];
+}
+
+function compareVersion(
+  left: readonly [number, number],
+  right: readonly [number, number],
+): number {
+  return left[0] === right[0] ? left[1] - right[1] : left[0] - right[0];
+}
+
+function assertNativeDependencyClosure(
+  outDir: string,
+  wrappedBinary: string,
+): void {
+  const files = walk(outDir);
+  const elfFiles = files.filter(isElf);
+  assert(elfFiles.length > 0, 'AppImage contains no ELF files');
+  const requiredGlibc = new Set<string>();
+  for (const elf of elfFiles) {
+    let versionInfo = '';
+    try {
+      versionInfo = execFileSync('readelf', ['--version-info', elf], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      continue;
+    }
+    for (const match of versionInfo.matchAll(/\bGLIBC_(\d+\.\d+)\b/g)) {
+      requiredGlibc.add(match[1]);
+    }
+  }
+  const highest = [...requiredGlibc]
+    .map(glibcVersion)
+    .sort(compareVersion)
+    .at(-1);
+  assert(highest, 'AppImage ELF files expose no GLIBC version contract');
+  assert(
+    compareVersion(highest, MAX_SUPPORTED_GLIBC) <= 0,
+    `AppImage requires GLIBC ${highest.join('.')}, above supported baseline ${MAX_SUPPORTED_GLIBC.join('.')}`,
+  );
+
+  const libraryDirectories = [...new Set(
+    files
+      .filter((file) => /\.so(?:\.|$)/.test(path.basename(file)))
+      .map(path.dirname),
+  )];
+  const closureTargets = [
+    wrappedBinary,
+    ...files.filter((file) => file.endsWith('.node')),
+  ];
+  for (const target of closureTargets) {
+    const output = execFileSync('ldd', [target], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        LD_LIBRARY_PATH: libraryDirectories.join(':'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.doesNotMatch(
+      output,
+      /=>\s+not found\b/,
+      `${path.relative(outDir, target)} has unresolved native dependencies`,
+    );
+  }
+  console.log(
+    `✓ Native dependency closure and GLIBC <= ${MAX_SUPPORTED_GLIBC.join('.')} verified`,
+  );
+}
+
 function assertAppImage(file: string): void {
   const executableName = executableNameForArtifact(file);
-  const outDir = extractSquashfs(file, [
-    'AppRun',
-    `${executableName}.desktop`,
-    executableName,
-    `${executableName}.bin`,
-  ]);
+  const outDir = extractSquashfs(file, []);
 
   try {
     const appRun = fs.readFileSync(path.join(outDir, 'AppRun'), 'utf8');
@@ -101,6 +194,7 @@ function assertAppImage(file: string): void {
       true,
       `${path.basename(file)} must contain the renamed Electron binary`,
     );
+    assertNativeDependencyClosure(outDir, wrappedBinary);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }

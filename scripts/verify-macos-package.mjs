@@ -42,6 +42,7 @@ import {
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const { extractFile: extractAsarFile } = require("@electron/asar");
+const { MINIMUM_MACOS_VERSION } = require("../release-contract.cjs");
 const machOMagic = new Set([
   "feedface",
   "feedfacf",
@@ -238,6 +239,73 @@ function collectCodeObjects(appPath) {
       ...new Set(machOFiles.map((filePath) => realpathSync(filePath))),
     ].sort(),
   };
+}
+
+function versionParts(value) {
+  if (!/^\d+(?:\.\d+){0,2}$/.test(String(value))) {
+    fail(`Invalid macOS version: ${value}`);
+  }
+  return String(value)
+    .split(".")
+    .map(Number)
+    .concat([0, 0])
+    .slice(0, 3);
+}
+
+export function compareMacosVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+export function parseMachOMinimumVersions(output) {
+  const versions = [];
+  let command = null;
+  for (const rawLine of String(output).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "cmd LC_BUILD_VERSION") {
+      command = "build";
+    } else if (line === "cmd LC_VERSION_MIN_MACOSX") {
+      command = "legacy";
+    } else if (command === "build" && line.startsWith("minos ")) {
+      versions.push(line.slice("minos ".length).trim());
+      command = null;
+    } else if (command === "legacy" && line.startsWith("version ")) {
+      versions.push(line.slice("version ".length).trim());
+      command = null;
+    }
+  }
+  return versions;
+}
+
+function validateMinimumMacosVersion(plistPath, machOFiles) {
+  const declared = readPlistValue(
+    plistPath,
+    "LSMinimumSystemVersion",
+  );
+  if (declared !== MINIMUM_MACOS_VERSION) {
+    fail(
+      `LSMinimumSystemVersion is ${declared}, expected ${MINIMUM_MACOS_VERSION}`,
+    );
+  }
+  for (const machOPath of machOFiles) {
+    const versions = parseMachOMinimumVersions(
+      run("otool", ["-l", machOPath]).stdout,
+    );
+    if (versions.length === 0) {
+      fail(`Mach-O file has no minimum macOS load command: ${machOPath}`);
+    }
+    for (const version of versions) {
+      if (compareMacosVersions(version, MINIMUM_MACOS_VERSION) > 0) {
+        fail(
+          `${machOPath} requires macOS ${version}, above declared minimum ${MINIMUM_MACOS_VERSION}`,
+        );
+      }
+    }
+  }
 }
 
 function parseEntitlements(targetPath) {
@@ -554,6 +622,7 @@ export async function main() {
     const codeObjects = collectCodeObjects(appPath);
     if (codeObjects.machOFiles.length === 0)
       fail("Packaged app contains no Mach-O files");
+    validateMinimumMacosVersion(plistPath, codeObjects.machOFiles);
     const context = {
       appPath,
       certificateDirectory,
