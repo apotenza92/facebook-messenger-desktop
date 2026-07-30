@@ -19,6 +19,7 @@ import {
 import { spawn, exec } from "child_process";
 import { promisify } from "util";
 import * as https from "https";
+import { tmpdir } from "os";
 
 const execAsync = promisify(exec);
 import * as path from "path";
@@ -2194,7 +2195,25 @@ if (process.platform === "win32") {
   app.setAppUserModelId(appModelId);
 }
 
+const updaterE2EAppDataRoot = (() => {
+  const configured = process.env.MESSENGER_UPDATE_E2E_APP_DATA_ROOT;
+  if (process.env.MESSENGER_UPDATE_E2E !== "1" || !configured) return null;
+  const resolved = path.resolve(configured);
+  const relativeToTemporary = path.relative(path.resolve(tmpdir()), resolved);
+  if (
+    !relativeToTemporary ||
+    relativeToTemporary === ".." ||
+    relativeToTemporary.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToTemporary)
+  ) {
+    throw new Error(
+      "Updater E2E app data must use a child of the system temporary directory.",
+    );
+  }
+  return resolved;
+})();
 const appDataRoot =
+  updaterE2EAppDataRoot ||
   process.env.SNAP_USER_COMMON ||
   process.env.SNAP_USER_DATA ||
   app.getPath("appData");

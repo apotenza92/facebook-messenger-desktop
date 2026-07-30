@@ -1290,6 +1290,8 @@ function testWorkflowContract() {
   assert.match(mainProcess, /updater-e2e-marker\.json/);
   assert.match(mainProcess, /updated-runtime-started/);
   assert.match(mainProcess, /manual-runtime-started/);
+  assert.match(mainProcess, /MESSENGER_UPDATE_E2E_APP_DATA_ROOT/);
+  assert.match(mainProcess, /path\.relative\(path\.resolve\(tmpdir\(\)\), resolved\)/);
   assert.doesNotMatch(mainProcess, /io\.github\.apotenza92\.messenger/);
 
   const nonmacWorkflow = readFileSync(
@@ -1337,6 +1339,11 @@ function testWorkflowContract() {
     nonmacHarness,
     /--user-data-dir=\$\{userDataDirectory\}/,
     "Windows updater scenarios must use separate Electron profiles",
+  );
+  assert.match(
+    nonmacHarness,
+    /MESSENGER_UPDATE_E2E_APP_DATA_ROOT: scenarioRoot/,
+    "Native updater scenarios must use separate app data roots",
   );
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
   assert.match(nonmacHarness, /removeDirectoryWithRetries\(temporary\)/);

@@ -427,6 +427,7 @@ async function main(argv = process.argv.slice(2)) {
         MESSENGER_UPDATE_E2E_EXPECTED_VERSION: candidateVersion,
         MESSENGER_UPDATE_E2E_INSTALL: mode === "valid" ? "1" : "0",
         MESSENGER_UPDATE_E2E_MARKER: marker,
+        MESSENGER_UPDATE_E2E_APP_DATA_ROOT: scenarioRoot,
         MESSENGER_UPDATE_E2E_RESULT_PATH: resultPath,
         MESSENGER_UPDATE_E2E_TUF_REPOSITORY_URL: `${server.baseUrl}/tuf`,
       };
