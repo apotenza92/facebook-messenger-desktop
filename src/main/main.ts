@@ -93,6 +93,7 @@ import {
   createTufVerifiedUpdateFeed,
   type TufVerifiedUpdateFeed,
 } from "./tuf-update-feed";
+import { reconcileContentViewBounds } from "./content-view-layout";
 
 type ReleaseContract = {
   feedUrl: string;
@@ -274,8 +275,10 @@ const INCOMING_CALL_FIRST_TOAST_CALLER_GRACE_MS = 6_000;
 type MenuBarMode = "always" | "hover" | "never";
 let menuBarMode: MenuBarMode = "always"; // Track menu bar visibility mode
 let menuBarHoverInterval: NodeJS.Timeout | null = null; // Interval for checking cursor position
+let contentViewBoundsMonitorInterval: NodeJS.Timeout | null = null;
 let debugLogExportUiActive = false;
 const MENU_BAR_HOVER_ZONE = 30; // Pixels from top of window to trigger menu bar show
+const CONTENT_VIEW_BOUNDS_MONITOR_INTERVAL_MS = 50;
 const OFFLINE_PAGE_MARKER = "#md-offline";
 const DEFAULT_MESSAGES_TOP_CROP = 56;
 const MIN_MESSAGES_TOP_CROP = 56;
@@ -4535,16 +4538,16 @@ function setMenuBarMode(mode: MenuBarMode): void {
   switch (mode) {
     case "always":
       mainWindow.setAutoHideMenuBar(false);
-      mainWindow.setMenuBarVisibility(true);
+      setMainWindowMenuBarVisibility(true);
       break;
     case "hover":
       mainWindow.setAutoHideMenuBar(true);
-      mainWindow.setMenuBarVisibility(false);
+      setMainWindowMenuBarVisibility(false);
       startMenuBarHoverDetection();
       break;
     case "never":
       mainWindow.setAutoHideMenuBar(true);
-      mainWindow.setMenuBarVisibility(false);
+      setMainWindowMenuBarVisibility(false);
       break;
   }
 
@@ -4868,12 +4871,7 @@ function createWindow(source: string = "unknown"): void {
         DEFAULT_MESSAGES_TOP_CROP)
       : 0;
 
-    contentView.setBounds({
-      x: 0,
-      y: -crop,
-      width: bounds.width,
-      height: bounds.height + crop,
-    });
+    reconcileContentViewBounds(contentView, bounds, crop);
   };
   applyContentViewBoundsHandler = applyContentViewBounds;
 
@@ -4910,6 +4908,8 @@ function createWindow(source: string = "unknown"): void {
       height: initialViewBounds.height,
     });
     contentView.setAutoResize({ width: true, height: true });
+    applyContentViewBounds();
+    startContentViewBoundsMonitoring();
 
     // Set up permission handler on content view's session
     contentView.webContents.session.setPermissionRequestHandler(
@@ -7224,6 +7224,7 @@ function createWindow(source: string = "unknown"): void {
       mainWindowWebContentsId,
     );
     stopIncomingCallOverlayWatchdog();
+    stopContentViewBoundsMonitoring();
     // Window is already destroyed at this point, just clean up references
     contentView = null;
     applyContentViewBoundsHandler = null;
@@ -7262,16 +7263,16 @@ function createWindow(source: string = "unknown"): void {
     switch (menuBarMode) {
       case "always":
         mainWindow.setAutoHideMenuBar(false);
-        mainWindow.setMenuBarVisibility(true);
+        setMainWindowMenuBarVisibility(true);
         break;
       case "hover":
         mainWindow.setAutoHideMenuBar(true);
-        mainWindow.setMenuBarVisibility(false);
+        setMainWindowMenuBarVisibility(false);
         startMenuBarHoverDetection();
         break;
       case "never":
         mainWindow.setAutoHideMenuBar(true);
-        mainWindow.setMenuBarVisibility(false);
+        setMainWindowMenuBarVisibility(false);
         break;
     }
     console.log(
@@ -8768,6 +8769,40 @@ function toggleMenuBarMode(): void {
   setMenuBarMode(nextMode);
 }
 
+function setMainWindowMenuBarVisibility(visible: boolean): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.setMenuBarVisibility(visible);
+  applyContentViewBoundsHandler?.();
+  setImmediate(() => applyContentViewBoundsHandler?.());
+}
+
+function startContentViewBoundsMonitoring(): void {
+  if (
+    process.platform === "darwin" ||
+    contentViewBoundsMonitorInterval !== null
+  ) {
+    return;
+  }
+
+  contentViewBoundsMonitorInterval = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
+      return;
+    }
+
+    applyContentViewBoundsHandler?.();
+  }, CONTENT_VIEW_BOUNDS_MONITOR_INTERVAL_MS);
+}
+
+function stopContentViewBoundsMonitoring(): void {
+  if (contentViewBoundsMonitorInterval !== null) {
+    clearInterval(contentViewBoundsMonitorInterval);
+    contentViewBoundsMonitorInterval = null;
+  }
+}
+
 // Start polling cursor position to show menu bar on hover (Windows/Linux only)
 function startMenuBarHoverDetection(): void {
   if (
@@ -8807,7 +8842,7 @@ function startMenuBarHoverDetection(): void {
 
       if (inHoverZone && !lastInHoverZone) {
         // Entered hover zone - show menu bar immediately
-        mainWindow.setMenuBarVisibility(true);
+        setMainWindowMenuBarVisibility(true);
         lastInHoverZone = true;
       } else if (!inHoverZone && lastInHoverZone) {
         // Left hover zone - hide menu bar quickly
@@ -8829,7 +8864,7 @@ function startMenuBarHoverDetection(): void {
               newDistFromTop <= MENU_BAR_HOVER_ZONE + 25; // Extended zone for menu
 
             if (!stillInZone) {
-              mainWindow.setMenuBarVisibility(false);
+              setMainWindowMenuBarVisibility(false);
             }
           }
         }, 50); // 50ms delay - just enough for menu clicks

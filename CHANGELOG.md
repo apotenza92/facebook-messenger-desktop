@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-## [1.3.1-beta.45] - 2026-07-30
+## [1.3.1-beta.45] - 2026-07-31
 
 ### Fixed
 
+- Stop ordinary chats with a large inline image and one generic Back/Previous control from being misclassified as a media viewer, preventing the Messenger top bar from repeatedly flashing in and out.
+- Replace stretched quick-switcher initials with a text-only result layout that shows participants on a separate line and truncates long conversation names and participant lists with an ellipsis.
+- Resize Messenger content when the Windows or Linux menu bar is shown or hidden, including native Alt and automatic-hide transitions, so the window does not expose a blank strip.
 - **Issue #79: suppress same-thread Messenger route downgrades that caused unexplained refreshes** ([#79](https://github.com/apotenza92/facebook-messenger-desktop/issues/79))
   - Use the structured thread identifier and route category to block only an E2EE-to-legacy navigation for the same conversation.
   - Preserve deliberate navigation to another conversation, legacy-to-E2EE upgrades, same-route reloads, and external navigation.

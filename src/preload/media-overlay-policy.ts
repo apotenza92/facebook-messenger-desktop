@@ -26,9 +26,12 @@ export function evaluateMediaOverlayVisible(
     return false;
   }
 
+  // A real navigation-only viewer exposes both edge controls. One generic
+  // Previous/Back match can also appear beside large inline media in a chat.
   return (
     (signals.hasDismissAction &&
       signals.hasNavigationAction &&
+      signals.navigationCount >= 2 &&
       signals.hasLargeMedia) ||
     (signals.hasDownloadAction && signals.hasLargeMedia)
   );

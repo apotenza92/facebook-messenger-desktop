@@ -4965,6 +4965,13 @@
       alternateNames?: Array<string | null | undefined>;
       maxAlternateNames?: number;
     }) => string;
+    formatQuickSwitcherContact?: (input: {
+      title: string;
+      alternateNames?: Array<string | null | undefined>;
+    }) => {
+      name: string;
+      participants: string;
+    };
   };
 
   const getNotificationDisplayPolicy =
@@ -5472,16 +5479,56 @@
       return;
     }
 
-    // Format display name: show "Nickname (Real Name, Real Name, ...)" if different
+    // Keep the conversation name and inferred participants on separate,
+    // independently truncated lines.
     const formatDisplayName = (c: {
       name: string;
       realNames?: string[];
     }): string => {
-      if (c.realNames && c.realNames.length > 0) {
-        const namesStr = c.realNames.map((n) => escapeHtml(n)).join(", ");
-        return `${escapeHtml(c.name)} <span style="color: ${currentPaletteTheme.textMuted};">(${namesStr})</span>`;
-      }
-      return escapeHtml(c.name);
+      const policy = getNotificationDisplayPolicy();
+      const display =
+        typeof policy?.formatQuickSwitcherContact === "function"
+          ? policy.formatQuickSwitcherContact({
+              title: c.name,
+              alternateNames: c.realNames,
+            })
+          : {
+              name: normalizePotentialRealName(c.name),
+              participants: sanitizeRealNames(c.realNames || [])
+                .filter(
+                  (name) =>
+                    name.toLowerCase() !==
+                    normalizePotentialRealName(c.name).toLowerCase(),
+                )
+                .join(", "),
+            };
+      const participants = display.participants
+        ? `
+          <div data-palette-participants style="
+            color: ${currentPaletteTheme.textMuted};
+            font-size: 13px;
+            line-height: 18px;
+            margin-top: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          ">${escapeHtml(display.participants)}</div>
+        `
+        : "";
+
+      return `
+        <div style="min-width: 0; width: 100%;">
+          <div data-palette-name style="
+            color: ${currentPaletteTheme.text};
+            font-size: 15px;
+            line-height: 20px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          ">${escapeHtml(display.name)}</div>
+          ${participants}
+        </div>
+      `;
     };
 
     paletteResultsEl.innerHTML = results
@@ -5492,23 +5539,12 @@
         cursor: pointer;
         display: flex;
         align-items: center;
-        gap: 12px;
+        min-height: 36px;
+        min-width: 0;
         background: ${i === paletteSelectedIndex ? currentPaletteTheme.backgroundHover : "transparent"};
         color: ${currentPaletteTheme.text};
       ">
-        <div style="
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          background: #0084ff;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 600;
-          font-size: 14px;
-          color: white;
-        ">${(r.realNames?.[0] || r.name).charAt(0).toUpperCase()}</div>
-        <span style="font-size: 15px;">${formatDisplayName(r)}</span>
+        ${formatDisplayName(r)}
       </div>
     `,
       )

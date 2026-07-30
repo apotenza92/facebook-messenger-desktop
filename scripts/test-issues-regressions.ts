@@ -2594,6 +2594,24 @@ const runMediaOverlayPolicyTests = () => {
       dismissCount: 1,
       hasDownloadAction: false,
       downloadCount: 0,
+      hasShareAction: true,
+      shareCount: 1,
+      hasNavigationAction: true,
+      navigationCount: 1,
+      hasLargeMedia: true,
+    }),
+    false,
+    "ordinary chats with one generic Back/Previous control and large inline media should not enter media mode",
+  );
+  assertEqual(
+    evaluateMediaOverlayVisible({
+      path: "/messages/t/123",
+      modeFromPath: "chat",
+      threadSubtabRoute: false,
+      hasDismissAction: true,
+      dismissCount: 1,
+      hasDownloadAction: false,
+      downloadCount: 0,
       hasShareAction: false,
       shareCount: 0,
       hasNavigationAction: true,
@@ -5876,6 +5894,10 @@ const runNotificationDisplayPolicyTests = () => {
     "notification display policy missing formatNotificationDisplayTitle",
   );
   assert(
+    typeof notificationDisplayPolicy.formatQuickSwitcherContact === "function",
+    "notification display policy missing quick-switcher contact formatting",
+  );
+  assert(
     typeof notificationTextPolicy.normalizeNotificationImageAltText ===
       "function",
     "notification text policy missing normalizeNotificationImageAltText",
@@ -5933,6 +5955,23 @@ const runNotificationDisplayPolicyTests = () => {
     }),
     "Person A",
     "#50 notification title pass-through should ignore avatar-derived alternate names",
+  );
+  assertEqual(
+    JSON.stringify(
+      notificationDisplayPolicy.formatQuickSwitcherContact({
+        title: "Weekend Plans",
+        alternateNames: [
+          "Person Alpha",
+          "GIF image",
+          "Taylor Example",
+        ],
+      }),
+    ),
+    JSON.stringify({
+      name: "Weekend Plans",
+      participants: "Person Alpha, Taylor Example",
+    }),
+    "quick-switcher group results should put sanitized participants on a separate unbracketed line",
   );
 
   assertEqual(
@@ -6333,6 +6372,13 @@ const runNotificationDisplayPolicyTests = () => {
       'sendNotification(\n          String(title),\n          String(body),\n          "NATIVE"',
     ),
     "#50 native Facebook notifications should pass title/body through without sidebar-derived title rewriting",
+  );
+  assert(
+    notificationInjectSource.includes("data-palette-name") &&
+      notificationInjectSource.includes("data-palette-participants") &&
+      notificationInjectSource.includes("text-overflow: ellipsis") &&
+      !notificationInjectSource.includes("background: #0084ff"),
+    "quick-switcher results should be text-only with separately truncated name and participant lines",
   );
   assert(
     notificationInjectSource.includes(
