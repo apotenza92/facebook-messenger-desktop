@@ -296,7 +296,7 @@ function validateMinimumMacosVersion(plistPath, machOFiles) {
   }
   for (const machOPath of machOFiles) {
     const versions = parseMachOMinimumVersions(
-      run("otool", ["-l", machOPath]).stdout,
+      run("otool", ["-l", "--", machOPath]).stdout,
     );
     if (versions.length === 0) {
       fail(`Mach-O file has no minimum macOS load command: ${machOPath}`);

@@ -1366,6 +1366,11 @@ function testWorkflowContract() {
     packageVerifier,
     /map\(\(filePath\) => realpathSync\(filePath\)\)/,
   );
+  assert.match(
+    packageVerifier,
+    /run\("otool", \["-l", "--", machOPath\]\)/,
+    "Mach-O minimum-version inspection must handle helper names with parentheses",
+  );
 
   const maintainedReleaseSources = [
     ".github/workflows/release.yml",
