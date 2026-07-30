@@ -11,6 +11,7 @@ on:
         options:
           - full
           - macos
+          - nonmac
 
 permissions:
   contents: read
@@ -112,7 +113,7 @@ jobs:
 
   nonmac-updater-e2e:
     name: Native ${{ matrix.target }} updater readiness
-    if: inputs.scope == 'full'
+    if: inputs.scope == 'full' || inputs.scope == 'nonmac'
     needs: [prepare, deterministic]
     strategy:
       fail-fast: false
@@ -130,6 +131,7 @@ jobs:
 
   build-macos:
     name: Signed macOS ${{ matrix.arch }} readiness
+    if: inputs.scope != 'nonmac'
     needs: [prepare, deterministic]
     runs-on: ${{ matrix.runner }}
     environment: release-signing

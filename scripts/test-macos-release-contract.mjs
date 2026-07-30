@@ -1524,9 +1524,12 @@ function testWorkflowContract() {
   );
   assert.match(
     nonmacHarness,
-    /const runtimeEnvironment = mergeEnvironment[\s\S]*MESSENGER_UPDATE_E2E: "1",[\s\S]*MESSENGER_UPDATE_E2E_APP_DATA_ROOT: appDataRoot/,
-    "Published updater baselines must use the guarded app-owned profile root",
+    /windowsKnownFolder\("ApplicationData"\)/,
+    "Published Windows baselines must use the actual OS roaming profile",
   );
+  assert.match(nonmacHarness, /Windows runner profile was not clean/);
+  assert.match(nonmacHarness, /published-migration-runtime\.log/);
+  assert.match(nonmacHarness, /published-migration-events\.jsonl/);
   assert.match(nonmacHarness, /stopWindowsProcesses\(observedPids\)/);
   assert.match(
     nonmacHarness,
@@ -1553,7 +1556,7 @@ function testWorkflowContract() {
     nonmacHarness,
     /Published baseline did not use expected user-data directory/,
   );
-  assert.match(nonmacHarness, /fs\.mkdirSync\(appDataRoot/);
+  assert.match(nonmacHarness, /fs\.mkdirSync\(isolatedAppDataRoot/);
   assert.match(nonmacHarness, /fs\.mkdirSync\(localAppDataRoot/);
   assert.match(nonmacHarness, /published-baseline-layout\.txt/);
   assert.match(

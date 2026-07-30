@@ -221,6 +221,26 @@ function mergeEnvironment(
   return environment;
 }
 
+function windowsKnownFolder(name) {
+  const result = spawnSync(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `[Environment]::GetFolderPath('${name}')`,
+    ],
+    { encoding: "utf8", windowsHide: true },
+  );
+  const folder = result.stdout?.trim();
+  if (result.error) throw result.error;
+  if (result.status !== 0 || !folder || !path.isAbsolute(folder)) {
+    throw new Error(`Could not resolve Windows known folder ${name}.`);
+  }
+  return path.resolve(folder);
+}
+
 function readEvents(resultPath) {
   if (!fs.existsSync(resultPath)) return [];
   return fs
@@ -476,10 +496,14 @@ async function testPublishedBaselineMigration({
   }
 
   const migrationRoot = path.join(temporary, "published-baseline-migration");
-  const appDataRoot = path.join(
+  const isolatedAppDataRoot = path.join(
     migrationRoot,
     process.platform === "win32" ? "appdata" : "config",
   );
+  const appDataRoot =
+    process.platform === "win32"
+      ? windowsKnownFolder("ApplicationData")
+      : isolatedAppDataRoot;
   const localAppDataRoot = path.join(migrationRoot, "localappdata");
   const homeDirectory = path.join(migrationRoot, "home");
   const tempDirectory = path.join(migrationRoot, "tmp");
@@ -495,10 +519,18 @@ async function testPublishedBaselineMigration({
   let baselineChild = null;
   let candidateChild = null;
   fs.mkdirSync(migrationRoot, { recursive: true });
-  fs.mkdirSync(appDataRoot, { recursive: true });
+  fs.mkdirSync(isolatedAppDataRoot, { recursive: true });
   fs.mkdirSync(localAppDataRoot, { recursive: true });
   fs.mkdirSync(homeDirectory, { recursive: true });
   fs.mkdirSync(tempDirectory, { recursive: true });
+  if (
+    process.platform === "win32" &&
+    fs.statSync(userDataDirectory, { throwIfNoEntry: false })
+  ) {
+    throw new Error(
+      `Windows runner profile was not clean before the published baseline: ${userDataDirectory}`,
+    );
+  }
 
   const platformEnvironment =
     process.platform === "win32"
@@ -516,8 +548,6 @@ async function testPublishedBaselineMigration({
     ...platformEnvironment,
     MESSENGER_FORKED: "1",
     MESSENGER_TEST_SKIP_STARTUP_PERMISSIONS: "true",
-    MESSENGER_UPDATE_E2E: "1",
-    MESSENGER_UPDATE_E2E_APP_DATA_ROOT: appDataRoot,
     SKIP_SINGLE_INSTANCE_LOCK: "true",
   });
 
@@ -570,8 +600,8 @@ async function testPublishedBaselineMigration({
       path.join(evidenceDirectory, "published-baseline-layout.txt"),
       [
         `Expected user data: ${userDataDirectory}`,
-        "APPDATA layout:",
-        ...directoryLayout(appDataRoot).map((entry) => `  ${entry}`),
+        "User-data layout:",
+        ...directoryLayout(userDataDirectory).map((entry) => `  ${entry}`),
         "LOCALAPPDATA layout:",
         ...directoryLayout(localAppDataRoot).map((entry) => `  ${entry}`),
         "",
@@ -654,17 +684,17 @@ async function testPublishedBaselineMigration({
         "Published baseline user data changed after candidate launch.",
       );
     }
-    fs.copyFileSync(
-      candidateLogPath,
-      path.join(evidenceDirectory, "published-migration-runtime.log"),
-    );
-    fs.copyFileSync(
-      resultPath,
-      path.join(evidenceDirectory, "published-migration-events.jsonl"),
-    );
   } finally {
     await stopProcess(baselineChild);
     await stopProcess(candidateChild);
+    for (const [source, name] of [
+      [candidateLogPath, "published-migration-runtime.log"],
+      [resultPath, "published-migration-events.jsonl"],
+    ]) {
+      if (fs.statSync(source, { throwIfNoEntry: false })?.isFile()) {
+        fs.copyFileSync(source, path.join(evidenceDirectory, name));
+      }
+    }
     if (
       process.platform === "win32" &&
       installDirectory &&
