@@ -1376,8 +1376,8 @@ function testWorkflowContract() {
   );
   assert.match(
     packageVerifier,
-    /run\("otool", \["-l", "--", machOPath\]\)/,
-    "Mach-O minimum-version inspection must handle helper names with parentheses",
+    /run\("otool", \["-l", "-m", machOPath\]\)/,
+    "Mach-O minimum-version inspection must disable archive(member) parsing",
   );
 
   const maintainedReleaseSources = [
