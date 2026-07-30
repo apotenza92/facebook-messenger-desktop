@@ -1330,6 +1330,9 @@ function testWorkflowContract() {
   assert.match(nonmacHarness, /digest\(candidateAppAsar\)/);
   assert.match(nonmacHarness, /digest\(previousArtifact\) === expectedDigest/);
   assert.match(nonmacHarness, /Updater did not preserve the user-data marker/);
+  assert.match(nonmacHarness, /readFileSync\(resultPath,\s*"utf8"\)/);
+  assert.doesNotMatch(nonmacHarness, /\$\{resultPath\}\.jsonl/);
+  assert.match(nonmacHarness, /\$\{mode\}-runtime\.log/);
 
   const refreshWorkflow = readFileSync(
     join(workflowDirectory, "tuf-metadata-refresh.yml"),

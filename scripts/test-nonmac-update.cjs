@@ -199,10 +199,9 @@ function run(command, args, options = {}) {
 }
 
 function readEvents(resultPath) {
-  const history = `${resultPath}.jsonl`;
-  if (!fs.existsSync(history)) return [];
+  if (!fs.existsSync(resultPath)) return [];
   return fs
-    .readFileSync(history, "utf8")
+    .readFileSync(resultPath, "utf8")
     .trim()
     .split("\n")
     .filter(Boolean)
@@ -281,16 +280,17 @@ async function waitForReplacement({
   throw new Error("Timed out waiting for native candidate replacement.");
 }
 
-function launch(executable, env) {
+function launch(executable, env, logPath) {
   const args =
     process.platform === "linux"
       ? ["--no-sandbox"]
       : [];
+  const log = fs.openSync(logPath, "a", 0o600);
   return spawn(executable, args, {
     env,
-    stdio: "ignore",
+    stdio: ["ignore", log, log],
     windowsHide: true,
-  });
+  }).once("exit", () => fs.closeSync(log));
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -380,6 +380,7 @@ async function main(argv = process.argv.slice(2)) {
       const scenarioRoot = path.join(temporary, mode);
       fs.mkdirSync(scenarioRoot, { recursive: true });
       const resultPath = path.join(scenarioRoot, "events.json");
+      const logPath = path.join(scenarioRoot, "runtime.log");
       const env = {
         ...process.env,
         APPDATA:
@@ -405,7 +406,7 @@ async function main(argv = process.argv.slice(2)) {
       if (process.platform === "linux") {
         env.APPIMAGE = previousArtifact;
       }
-      let child = launch(executable, env);
+      let child = launch(executable, env, logPath);
       try {
         if (mode !== "valid") {
           await waitForEvent(resultPath, new Set(["error"]));
@@ -428,10 +429,14 @@ async function main(argv = process.argv.slice(2)) {
             previousArtifact,
           });
           await stopProcess(child);
-          child = launch(executable, {
-            ...env,
-            MESSENGER_UPDATE_E2E_MANUAL_LAUNCH: "1",
-          });
+          child = launch(
+            executable,
+            {
+              ...env,
+              MESSENGER_UPDATE_E2E_MANUAL_LAUNCH: "1",
+            },
+            logPath,
+          );
           const started = await waitForEvent(
             resultPath,
             new Set(["manual-runtime-started", "updated-runtime-started"]),
@@ -443,15 +448,23 @@ async function main(argv = process.argv.slice(2)) {
       } finally {
         await stopProcess(child);
         await server.close();
+        if (fs.existsSync(resultPath)) {
+          fs.copyFileSync(
+            resultPath,
+            path.join(evidenceDirectory, `${mode}-events.jsonl`),
+          );
+        }
+        if (fs.existsSync(logPath)) {
+          fs.copyFileSync(
+            logPath,
+            path.join(evidenceDirectory, `${mode}-runtime.log`),
+          );
+        }
+        fs.writeFileSync(
+          path.join(evidenceDirectory, `${mode}-requests.txt`),
+          `${server.requests.join("\n")}\n`,
+        );
       }
-      fs.writeFileSync(
-        path.join(evidenceDirectory, `${mode}-events.jsonl`),
-        fs.readFileSync(`${resultPath}.jsonl`),
-      );
-      fs.writeFileSync(
-        path.join(evidenceDirectory, `${mode}-requests.txt`),
-        `${server.requests.join("\n")}\n`,
-      );
     }
     fs.writeFileSync(
       path.join(evidenceDirectory, "RESULT.txt"),

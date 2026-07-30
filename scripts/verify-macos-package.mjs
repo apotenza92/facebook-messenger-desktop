@@ -42,7 +42,10 @@ import {
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const { extractFile: extractAsarFile } = require("@electron/asar");
-const { MINIMUM_MACOS_VERSION } = require("../release-contract.cjs");
+const {
+  DEFAULT_UPDATE_FEED_BASE_URL,
+  MINIMUM_MACOS_VERSION,
+} = require("../release-contract.cjs");
 const machOMagic = new Set([
   "feedface",
   "feedfacf",
@@ -436,13 +439,18 @@ function validateEmbeddedUpdater(appPath, contract, version) {
   const updateConfig = yaml.load(
     readFileSync(join(resourcesPath, "app-update.yml"), "utf8"),
   );
+  const expectedFeedBaseUrl = (
+    process.env.MESSENGER_UPDATE_FEED_BASE_URL ||
+    DEFAULT_UPDATE_FEED_BASE_URL
+  ).replace(/\/$/, "");
+  const expectedFeedUrl =
+    `${expectedFeedBaseUrl}/${contract.channel}`;
   if (
-    updateConfig?.provider !== "github" ||
-    updateConfig.owner !== "apotenza92" ||
-    updateConfig.repo !== "facebook-messenger-desktop"
+    updateConfig?.provider !== "generic" ||
+    updateConfig.url !== expectedFeedUrl
   ) {
     fail(
-      "Packaged updater does not use the maintained Messenger GitHub release provider",
+      `Packaged updater feed ${updateConfig?.url ?? "missing"} does not match ${expectedFeedUrl}`,
     );
   }
   const actualChannel = updateConfig.channel ?? "latest";
