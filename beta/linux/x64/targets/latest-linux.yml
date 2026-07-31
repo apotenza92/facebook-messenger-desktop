@@ -1,0 +1,7 @@
+version: 1.3.1-beta.45
+files:
+  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.3.1-beta.45/facebook-messenger-desktop-beta-x86_64.AppImage
+    sha512: iuvj6/Joclmrekg43779rmyrELv8UoKbxL1u+DfOBVD1xH9RPCHHwzpT/2cz4bUf7mgX2GOVXLr8wM3nWgTjWQ==
+    size: 92362979
+path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.3.1-beta.45/facebook-messenger-desktop-beta-x86_64.AppImage
+sha512: iuvj6/Joclmrekg43779rmyrELv8UoKbxL1u+DfOBVD1xH9RPCHHwzpT/2cz4bUf7mgX2GOVXLr8wM3nWgTjWQ==
