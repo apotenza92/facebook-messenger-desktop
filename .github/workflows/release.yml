@@ -1211,7 +1211,7 @@ jobs:
           fi
 
           AUTH_HEADER="$(
-            printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64
+            printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\r\n'
           )"
           git -C "$PUBLISH_DIR" \
             -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH_HEADER" \
