@@ -1013,9 +1013,15 @@ function testWorkflowContract() {
   );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
+  const releaseJob = jobSource(workflow, "release");
   assert.match(
-    jobSource(workflow, "release"),
+    releaseJob,
     /environment:\s*\n\s+name:\s*\$\{\{ needs\.validate-release\.outputs\.release_environment \}\}/,
+  );
+  assert.match(
+    releaseJob,
+    /printf 'x-access-token:%s' "\$GITHUB_TOKEN" \| base64 \| tr -d '\\r\\n'/,
+    "GitHub authorization must remain a single HTTP header even when base64 wraps long tokens",
   );
   assert.equal(
     (
