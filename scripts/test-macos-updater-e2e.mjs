@@ -300,7 +300,7 @@ function containsUpdaterE2EHook(appPath) {
   );
 }
 
-function writeMetadata(
+export function writeMacUpdaterTestMetadata(
   directory,
   contract,
   version,
@@ -310,8 +310,10 @@ function writeMetadata(
 ) {
   const artifactName = basename(artifactPath);
   const digest = metadataHash ?? hash(artifactPath, "sha512", "base64");
+  // Runtime feeds are already isolated by stable/beta URL, so both channels
+  // request electron-updater's canonical latest-mac.yml filename.
   writeFileSync(
-    join(directory, contract.metadataName),
+    join(directory, "latest-mac.yml"),
     yaml.dump({
       version,
       files: [
@@ -974,7 +976,7 @@ export async function main() {
     mkdirSync(validFeed);
     const validArtifact = join(validFeed, basename(candidate));
     copyFileSync(candidate, validArtifact);
-    writeMetadata(validFeed, contract, version, validArtifact);
+    writeMacUpdaterTestMetadata(validFeed, contract, version, validArtifact);
     const validApp = copyPriorApp(
       baselineApp,
       join(workspace, "valid-install"),
@@ -1028,7 +1030,7 @@ export async function main() {
     const validHash = hash(candidate, "sha512", "base64");
     const validSize = statSync(candidate).size;
     appendFileSync(corruptArtifact, "corrupt");
-    writeMetadata(
+    writeMacUpdaterTestMetadata(
       corruptFeed,
       contract,
       version,
@@ -1085,7 +1087,7 @@ export async function main() {
       join(wrongExtract, contract.appName),
       wrongArtifact,
     ]);
-    writeMetadata(wrongFeed, contract, version, wrongArtifact);
+    writeMacUpdaterTestMetadata(wrongFeed, contract, version, wrongArtifact);
     const wrongApp = copyPriorApp(
       baselineApp,
       join(workspace, "wrong-signature-install"),
