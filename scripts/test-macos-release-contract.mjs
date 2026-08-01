@@ -908,15 +908,32 @@ function testBuilderContract() {
       channel: "beta",
     },
   ]);
+  const stablePublish = [
+    {
+      provider: "generic",
+      url: "https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/updates/stable",
+      channel: "latest",
+    },
+  ];
   assert.deepEqual(
     loadBuilderConfig({}, ["--win"]).publish,
+    stablePublish,
+    "Stable Windows packages must generate metadata for the stable authenticated feed",
+  );
+  assert.deepEqual(
+    loadBuilderConfig({ FORCE_BETA_BUILD: "true" }, ["--win"]).publish,
     signed.publish,
-    "Windows packages must generate metadata for the authenticated static feed",
+    "Beta-branded Windows packages from a stable release must generate beta metadata",
   );
   assert.deepEqual(
     loadBuilderConfig({}, ["--linux"]).publish,
+    stablePublish,
+    "Stable AppImage packages must generate metadata for the stable authenticated feed",
+  );
+  assert.deepEqual(
+    loadBuilderConfig({ FORCE_BETA_BUILD: "true" }, ["--linux"]).publish,
     signed.publish,
-    "AppImage packages must generate metadata for the authenticated static feed",
+    "Beta-branded AppImages from a stable release must generate beta metadata",
   );
   assert.deepEqual(signed.extraResources, [
     {

@@ -2,6 +2,91 @@
 
 ## Unreleased
 
+## [1.4.0] - 2026-08-01
+
+This is the first stable release since 1.3.0 and consolidates the complete
+1.3.1 beta series. Every previously published beta entry remains below for the
+full change history.
+
+### Added
+
+- Add privacy-safer diagnostics for reload attribution, authentication handoffs,
+  notifications, calls, media lifecycle, and Messenger layout decisions, with a
+  ready-to-attach zip export that excludes message text and account identifiers.
+- Add native release and updater verification across Apple Silicon and Intel
+  Mac, Windows ARM64/x64, and Linux ARM64/x64, including install, launch,
+  uninstall, architecture, dependency, signature, and negative-update checks.
+
+### Changed
+
+- Replace the previous app artwork with a custom stable-blue and beta-orange
+  chat bubble across macOS, Windows, and Linux. macOS now uses native layered
+  Icon Composer artwork for system light, dark, clear, and tinted appearances.
+- Keep stable and beta installations fully isolated by application identity,
+  package name, icon, updater feed, and user-data directory on every platform.
+- Restore full-package automatic updates for Windows and AppImage installations
+  through authenticated metadata. macOS retains signed, notarised per-channel
+  updates; DEB, RPM, Snap, and Flatpak remain package-manager owned.
+- Build and test supported packages on matching native runners, with exact public
+  asset contracts, checksums, attestations, protected publication environments,
+  and hardened Homebrew stable/beta publication.
+
+### Fixed
+
+- **Messenger navigation and layout** ([#49](https://github.com/apotenza92/facebook-messenger-desktop/issues/49), [#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50), [#52](https://github.com/apotenza92/facebook-messenger-desktop/issues/52), [#79](https://github.com/apotenza92/facebook-messenger-desktop/issues/79))
+  - Preserve Marketplace continuity through delayed rerenders, route changes,
+    wake/reconnect cycles, and ordinary-chat detours without leaking Marketplace
+    chrome into unrelated conversations.
+  - Keep Back controls available in Archived chats, Message requests, Restricted
+    accounts, and similar Messenger subviews, including after opening a thread or
+    Facebook expanding the Back hit region.
+  - Prevent ordinary inline images from being mistaken for the media viewer,
+    stop redundant same-thread E2EE-to-legacy navigation from refreshing the
+    composer, and resize content correctly when Windows/Linux menu bars change.
+- **Notifications and calls** ([#50](https://github.com/apotenza92/facebook-messenger-desktop/issues/50), [#51](https://github.com/apotenza92/facebook-messenger-desktop/issues/51), [#55](https://github.com/apotenza92/facebook-messenger-desktop/issues/55), [#62](https://github.com/apotenza92/facebook-messenger-desktop/issues/62))
+  - Suppress muted-message races, stale wake/reconnect replays, Facebook group or
+    admin activity, call-history/status rows, and Marketplace call false positives
+    while preserving proven direct and group-message notifications.
+  - Restore Messenger contact photos for message notifications, improve first-ring
+    caller evidence, and hide stale in-page Facebook group-management cards
+    without suppressing ordinary chat content.
+- **Authentication** ([#54](https://github.com/apotenza92/facebook-messenger-desktop/issues/54))
+  - Keep Facebook login, checkpoint, two-factor, and remember-device steps tied
+    to the app session; hand Google verification to the system browser and resume
+    the preserved in-app authentication transaction afterward.
+- **Linux startup and packaging** ([#53](https://github.com/apotenza92/facebook-messenger-desktop/issues/53))
+  - Stage Electron runtime dependencies, use writable Snap data paths, create
+    required directories before the single-instance lock, and pass the required
+    no-sandbox launch argument through Snap and AppImage startup paths.
+  - Add installed-package and runtime smoke coverage for AppImage, Snap, DEB,
+    RPM, and Flatpak artifacts, including native ARM64 and x64 dependency checks.
+- **Call privacy** ([#75](https://github.com/apotenza92/facebook-messenger-desktop/issues/75))
+  - Stop local media streams when a call ends and prevent audio-device changes
+    from silently reacquiring the microphone while preserving deliberate redial.
+- Replace stretched quick-switcher initials with a readable text-first layout for
+  conversation names and participant lists.
+
+### Security
+
+- Authenticate Windows and AppImage update metadata and targets with a
+  project-specific TUF trust root, rollback protection, expiry checks, strict
+  origin/path validation, and persistent trusted-root rotation state.
+- Separate credential-free package builds, protected metadata signing, approved
+  release publication, and atomic updater-feed publication; keep the offline root
+  key outside the repository and online signing keys in a protected environment.
+- Require signed and notarised macOS packages with hardened runtime, secure
+  timestamps, stapling, Gatekeeper validation, and native N-1 updater tests.
+- Update the runtime updater and image-processing dependencies while preserving
+  the supported native platform and architecture matrix.
+
+### Notes
+
+- Targeted fixes for [#53](https://github.com/apotenza92/facebook-messenger-desktop/issues/53),
+  [#54](https://github.com/apotenza92/facebook-messenger-desktop/issues/54),
+  and [#79](https://github.com/apotenza92/facebook-messenger-desktop/issues/79)
+  are included and covered by deterministic or native packaging validation. The
+  issues remain open pending confirmation from the affected reporters.
+
 ## [1.3.1-beta.45] - 2026-07-31
 
 ### Fixed
