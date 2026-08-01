@@ -4,10 +4,6 @@
 
 ## [1.4.0] - 2026-08-01
 
-This is the first stable release since 1.3.0 and consolidates the complete
-1.3.1 beta series. Every previously published beta entry remains below for the
-full change history.
-
 ### Added
 
 - Add privacy-safer diagnostics for reload attribution, authentication handoffs,
