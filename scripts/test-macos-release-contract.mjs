@@ -45,6 +45,7 @@ import {
   resolveNativeMacArchitecture,
   resolveLegacyUpdaterBaseline,
   validateChecksumEntry,
+  writeMacUpdaterTestMetadata,
 } from "./test-macos-updater-e2e.mjs";
 import {
   compareMacosVersions,
@@ -173,6 +174,30 @@ function testContracts() {
     () => resolveMacReleaseContract("stable", "universal"),
     /arm64 or x64/,
   );
+}
+
+function testUpdaterHarnessMetadata() {
+  const root = mkdtempSync(join(tmpdir(), "messenger-mac-updater-metadata-"));
+  const artifactPath = join(root, "Messenger-Beta-macos-arm64.zip");
+  writeFileSync(artifactPath, "candidate");
+  try {
+    writeMacUpdaterTestMetadata(
+      root,
+      resolveMacReleaseContract("beta", "arm64"),
+      "1.4.0",
+      artifactPath,
+    );
+    assert(
+      existsSync(join(root, "latest-mac.yml")),
+      "Channel-specific macOS feeds must expose electron-updater's latest-mac.yml filename",
+    );
+    assert(
+      !existsSync(join(root, "beta-mac.yml")),
+      "The loopback updater feed must match the published feed layout, not release-asset metadata names",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 function testSigningValidation() {
@@ -1678,6 +1703,7 @@ function testWorkflowContract() {
 
 for (const test of [
   testContracts,
+  testUpdaterHarnessMetadata,
   testLegacyUpdaterBaselines,
   testSigningValidation,
   testArchiveValidation,
