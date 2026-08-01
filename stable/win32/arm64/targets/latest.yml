@@ -1,0 +1,7 @@
+version: 1.4.0
+files:
+  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.0/Messenger-windows-arm64-setup.exe
+    sha512: HJXSZGnlxHkd65ye3A6v3qrAUUGIQVh9U0M35bpAIO/lZu4ICfwzUUlV1DvE6w2jxOAUUF9Lt/GmbcrOIxiraw==
+    size: 136837451
+path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.0/Messenger-windows-arm64-setup.exe
+sha512: HJXSZGnlxHkd65ye3A6v3qrAUUGIQVh9U0M35bpAIO/lZu4ICfwzUUlV1DvE6w2jxOAUUF9Lt/GmbcrOIxiraw==
