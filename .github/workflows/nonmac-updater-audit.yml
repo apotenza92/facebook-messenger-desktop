@@ -135,7 +135,7 @@ jobs:
           CANDIDATE_VERSION="$(node -p 'require("./package.json").version')"
           PREVIOUS_VERSION='${{ inputs.previous_version }}'
           if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
-            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]
           else
             [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           fi
