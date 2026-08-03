@@ -1,11 +1,11 @@
-version: 1.4.0
+version: 1.4.1-beta.1
 files:
-  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.0/Messenger-Beta-macos-x64.zip
-    sha512: qnXkD6O6Hhx7USXnhoIxLtZr2I/CekMt/Vv43DOScUVCnel79PYtQGIniTgiLwskXfdFh9+iadjx6k+g03kSWw==
-    size: 123768433
-  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.0/Messenger-Beta-macos-arm64.zip
-    sha512: P95on9Dhv8kR9/9ECULe5zHX1Gs94w0g0od1DmZW52tRpziGTFCXPgGl9VPnZWIkH2hHgiYd29ZY1OEve6Fbcw==
-    size: 116058566
-path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.0/Messenger-Beta-macos-x64.zip
-sha512: qnXkD6O6Hhx7USXnhoIxLtZr2I/CekMt/Vv43DOScUVCnel79PYtQGIniTgiLwskXfdFh9+iadjx6k+g03kSWw==
-releaseDate: '2026-08-01T14:46:07.105Z'
+  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1-beta.1/Messenger-Beta-macos-x64.zip
+    sha512: YJYpw7JYOSRIXPhTloSVTfJLQyn0nKHTsHPm3JWUFpHc/2g8kbst8moFzxfHPDMs73x+SSEcLw8MLI9pZCPPzQ==
+    size: 123768887
+  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1-beta.1/Messenger-Beta-macos-arm64.zip
+    sha512: 7HnoZb/bgAlEz9O7br+fFOCVtek6QZBnXTrdyMPf2MNxtm9/Vw1Nn4tiw9khW3PWUdGshNQNadDJ4/Bnfrqh8Q==
+    size: 116059000
+path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1-beta.1/Messenger-Beta-macos-x64.zip
+sha512: YJYpw7JYOSRIXPhTloSVTfJLQyn0nKHTsHPm3JWUFpHc/2g8kbst8moFzxfHPDMs73x+SSEcLw8MLI9pZCPPzQ==
+releaseDate: '2026-08-03T10:45:18.897Z'
