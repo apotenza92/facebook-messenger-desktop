@@ -8,6 +8,8 @@
 
 - Stop Messenger from replaying native notifications for older messages when an
   infrequently used computer catches up after startup or wakes from sleep.
+- Keep the Restricted Accounts Back control visible on Windows when Facebook
+  expands its hit region across the left pane.
 - Allow the first beta after a stable release to validate its explicit native
   Windows and Linux updater predecessor.
 

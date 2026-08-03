@@ -688,6 +688,16 @@ const runMessengerThreadSubviewPolicyTests = () => {
   assertEqual(
     shouldAcceptMessengerThreadSubviewHeaderPair({
       freshPairMatched: false,
+      headerKind: "restricted-accounts",
+      candidateBackBand: { top: 56, bottom: 870, left: 0, right: 360 },
+      candidateHeaderBand: { top: 76, bottom: 93, left: 24, right: 249 },
+    }),
+    true,
+    "#50 Windows Restricted accounts Back should survive when its hit region expands to the left pane",
+  );
+  assertEqual(
+    shouldAcceptMessengerThreadSubviewHeaderPair({
+      freshPairMatched: false,
       headerKind: "archived-chats",
       candidateBackBand: { top: 220, bottom: 252, left: 16, right: 48 },
       candidateHeaderBand: { top: 76, bottom: 94, left: 56, right: 224 },

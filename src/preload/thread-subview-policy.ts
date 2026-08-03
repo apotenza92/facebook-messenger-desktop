@@ -186,7 +186,10 @@ export function shouldAcceptMessengerThreadSubviewHeaderPair(input: {
     return true;
   }
 
-  if (input.headerKind !== "archived-chats") {
+  if (
+    input.headerKind !== "archived-chats" &&
+    input.headerKind !== "restricted-accounts"
+  ) {
     return false;
   }
 
