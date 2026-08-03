@@ -2037,8 +2037,11 @@ ipcRenderer.on(
       );
     }
     if (subviewHeaderPairDetected && !acceptedSubviewHeaderPair) {
+      const relaxedHeaderKindSupported =
+        subviewHeaderKind === "archived-chats" ||
+        subviewHeaderKind === "restricted-accounts";
       state.messengerThreadSubviewHeaderPairRejectionReason =
-        subviewHeaderKind === "archived-chats"
+        relaxedHeaderKindSupported
           ? "relaxed-band-rejected"
           : "relaxed-acceptance-unsupported-kind";
       matchedSignals.add(
@@ -2084,9 +2087,7 @@ ipcRenderer.on(
       matchedSignals.add(
         freshSubviewPairMatched
           ? `header-back+${subviewKind}`
-          : subviewKind === "archived-chats"
-            ? `header-back+${subviewKind}-relaxed`
-          : `header-title+${subviewKind}`,
+          : `header-back+${subviewKind}-relaxed`,
       );
       return;
     }

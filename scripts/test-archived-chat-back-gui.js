@@ -25,7 +25,7 @@ function parseArgs(argv) {
       : "",
     outputDir: path.join(
       process.cwd(),
-      "output",
+      ".tmp",
       "playwright",
       `messenger-subview-back-${ts()}`,
     ),
@@ -165,6 +165,7 @@ async function evaluatePageState(app, targetLabel = "Archived chats") {
         `(() => {
           const targetLabel = ${JSON.stringify(payload.targetLabel)};
           const targetPattern = new RegExp(${JSON.stringify(payload.targetPatternSource)}, 'i');
+          const targetIsRestrictedAccounts = /\\brestricted accounts?\\b/i.test(targetLabel);
           const visible = (node) => {
             if (!(node instanceof HTMLElement)) return false;
             if (node.closest('[hidden]') || node.closest('[aria-hidden="true"]')) return false;
@@ -213,7 +214,7 @@ async function evaluatePageState(app, targetLabel = "Archived chats") {
             const href = item.node.href || item.node.getAttribute('href') || '';
             return /facebook\\.com\\/?$/i.test(href) || href === '/' || href === '';
           });
-          const thread =
+          const thread = targetIsRestrictedAccounts ? null :
             Array.from(document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"], a[href^="/t/"], a[href^="/e2ee/t/"]'))
             .filter(visible)
             .map((node) => ({ node, label: labelOf(node), href: node.href || node.getAttribute('href') || '', ...centerOf(node) }))
