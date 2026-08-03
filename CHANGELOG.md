@@ -8,6 +8,8 @@
 
 - Stop Messenger from replaying native notifications for older messages when an
   infrequently used computer catches up after startup or wakes from sleep.
+- Allow the first beta after a stable release to validate its explicit native
+  Windows and Linux updater predecessor.
 
 ## [1.4.0] - 2026-08-01
 

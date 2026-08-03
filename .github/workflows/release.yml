@@ -52,6 +52,7 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const packageJson = require('./package.json');
+          const { resolveNonMacUpdaterPredecessor } = require('./release-contract.cjs');
           const tag = process.env.GITHUB_REF_NAME;
           const stable = /^v\d+\.\d+\.\d+$/.test(tag);
           const prerelease = /^v\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(tag);
@@ -69,20 +70,7 @@ jobs:
             { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
             { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
           ];
-          const previousVersion = (() => {
-            if (prerelease) {
-              const match = packageJson.version.match(/^(.*-beta\.)([1-9]\d*)$/);
-              if (!match || Number(match[2]) <= 1) {
-                throw new Error('The updater gate requires an explicit predecessor for beta.1.');
-              }
-              return `${match[1]}${Number(match[2]) - 1}`;
-            }
-            const [major, minor, patch] = packageJson.version.split('.').map(Number);
-            if (patch > 0) return `${major}.${minor}.${patch - 1}`;
-            if (minor > 0) return `${major}.${minor - 1}.0`;
-            if (major > 0) return `${major - 1}.0.0`;
-            throw new Error('The updater gate cannot derive a predecessor for 0.0.0.');
-          })();
+          const previousVersion = resolveNonMacUpdaterPredecessor(packageJson.version);
           const output = [
             `channel=${stable ? 'stable' : 'beta'}`,
             `prerelease=${prerelease}`,
