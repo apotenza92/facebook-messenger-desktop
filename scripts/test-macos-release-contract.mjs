@@ -58,6 +58,7 @@ import {
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const { mergeEnvironment } = require("./test-nonmac-update.cjs");
+const { resolveNonMacUpdaterPredecessor } = require("../release-contract.cjs");
 
 assert.deepEqual(
   mergeEnvironment(
@@ -147,6 +148,16 @@ async function testLinuxWrapperSymlinkBoundary() {
 }
 
 function testContracts() {
+  assert.equal(resolveNonMacUpdaterPredecessor("1.4.1-beta.1"), "1.4.0");
+  assert.equal(
+    resolveNonMacUpdaterPredecessor("1.4.1-beta.2"),
+    "1.4.1-beta.1",
+  );
+  assert.equal(resolveNonMacUpdaterPredecessor("1.4.1"), "1.4.0");
+  assert.throws(
+    () => resolveNonMacUpdaterPredecessor("1.5.0-beta.1"),
+    /explicit predecessor/,
+  );
   assert.deepEqual(resolveMacReleaseContract("stable", "arm64"), {
     appName: "Messenger.app",
     arch: "arm64",
@@ -1062,11 +1073,10 @@ function testWorkflowContract() {
     ),
     "Hosted release grammar must accept only numbered beta prereleases",
   );
-  assert(
-    validateRelease.includes(
-      "const match = packageJson.version.match(/^(.*-beta\\.)([1-9]\\d*)$/);",
-    ),
-    "Hosted beta predecessor parsing must use an executable JavaScript regex",
+  assert.match(
+    validateRelease,
+    /resolveNonMacUpdaterPredecessor\(packageJson\.version\)/,
+    "Hosted releases must resolve the updater predecessor through the shared release contract",
   );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
