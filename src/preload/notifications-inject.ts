@@ -1866,6 +1866,18 @@
                 );
                 return;
               }
+
+              if (!isMessageFresh(matchedRow)) {
+                log(
+                  "Native notification matched stale conversation - suppressing",
+                  {
+                    title,
+                    href: normalizedHref,
+                    timestamp: extractTimestamp(matchedRow),
+                  },
+                );
+                return;
+              }
             }
           }
         } else {

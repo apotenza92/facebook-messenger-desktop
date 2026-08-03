@@ -80,8 +80,11 @@ assert.deepEqual(
   "Windows launch environments must replace mixed-case profile keys",
 );
 
-function loadBuilderConfig(environment, args = []) {
+function loadBuilderConfig(environment, args = [], version = "1.4.0") {
   const configPath = join(repositoryRoot, "electron-builder.config.js");
+  const packageJsonPath = join(repositoryRoot, "package.json");
+  const packageJson = require(packageJsonPath);
+  const previousVersion = packageJson.version;
   const previousArgv = process.argv;
   const names = [
     "CSC_NAME",
@@ -92,6 +95,7 @@ function loadBuilderConfig(environment, args = []) {
     names.map((name) => [name, process.env[name]]),
   );
   try {
+    packageJson.version = version;
     process.argv = [previousArgv[0], previousArgv[1], ...args];
     for (const name of names) {
       if (environment[name] == null) delete process.env[name];
@@ -100,6 +104,7 @@ function loadBuilderConfig(environment, args = []) {
     delete require.cache[require.resolve(configPath)];
     return require(configPath);
   } finally {
+    packageJson.version = previousVersion;
     process.argv = previousArgv;
     delete require.cache[require.resolve(configPath)];
     for (const [name, value] of Object.entries(previous)) {
@@ -951,6 +956,11 @@ function testBuilderContract() {
     "Beta-branded Windows packages from a stable release must generate beta metadata",
   );
   assert.deepEqual(
+    loadBuilderConfig({}, ["--win"], "1.4.1-beta.1").publish,
+    signed.publish,
+    "Native beta Windows packages must generate metadata for the beta authenticated feed",
+  );
+  assert.deepEqual(
     loadBuilderConfig({}, ["--linux"]).publish,
     stablePublish,
     "Stable AppImage packages must generate metadata for the stable authenticated feed",
@@ -959,6 +969,11 @@ function testBuilderContract() {
     loadBuilderConfig({ FORCE_BETA_BUILD: "true" }, ["--linux"]).publish,
     signed.publish,
     "Beta-branded AppImages from a stable release must generate beta metadata",
+  );
+  assert.deepEqual(
+    loadBuilderConfig({}, ["--linux"], "1.4.1-beta.1").publish,
+    signed.publish,
+    "Native beta AppImages must generate metadata for the beta authenticated feed",
   );
   assert.deepEqual(signed.extraResources, [
     {

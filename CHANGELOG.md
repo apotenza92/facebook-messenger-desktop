@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [1.4.1-beta.1] - 2026-08-03
+
+### Fixed
+
+- Stop Messenger from replaying native notifications for older messages when an
+  infrequently used computer catches up after startup or wakes from sleep.
+
 ## [1.4.0] - 2026-08-01
 
 ### Added

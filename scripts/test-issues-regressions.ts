@@ -6374,6 +6374,12 @@ const runNotificationDisplayPolicyTests = () => {
     "#50 native Facebook notifications should pass title/body through without sidebar-derived title rewriting",
   );
   assert(
+    /if \(!isMessageFresh\(matchedRow\)\) \{[\s\S]*?Native notification matched stale conversation - suppressing/.test(
+      notificationInjectSource,
+    ),
+    "#13 native Messenger notifications should suppress stale matched sidebar rows instead of replaying old messages after startup or wake catch-up",
+  );
+  assert(
     notificationInjectSource.includes("data-palette-name") &&
       notificationInjectSource.includes("data-palette-participants") &&
       notificationInjectSource.includes("text-overflow: ellipsis") &&
