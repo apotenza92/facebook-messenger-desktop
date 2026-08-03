@@ -1548,6 +1548,12 @@ function testWorkflowContract() {
       `Native updater audit must retain ${target}`,
     );
   }
+  assert(
+    nonmacWorkflow.includes(
+      '[[ "$PREVIOUS_VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+(-beta\\.[1-9][0-9]*)?$ ]]',
+    ),
+    "Beta updater audits must accept either a stable or beta predecessor",
+  );
   assert.match(nonmacWorkflow, /windows-11-arm/);
   assert.match(nonmacWorkflow, /windows-2025/);
   assert.match(nonmacWorkflow, /ubuntu-24\.04-arm/);
