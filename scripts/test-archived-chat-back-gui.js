@@ -25,7 +25,7 @@ function parseArgs(argv) {
       : "",
     outputDir: path.join(
       process.cwd(),
-      "output",
+      ".tmp",
       "playwright",
       `messenger-subview-back-${ts()}`,
     ),
