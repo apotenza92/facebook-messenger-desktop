@@ -1323,7 +1323,12 @@ function testWorkflowContract() {
   for (const checkout of homebrewCheckouts)
     assert.doesNotMatch(checkout, /HOMEBREW_TAP_TOKEN/);
   assert.match(workflow, /messenger-homebrew-publication-/);
-  assert.match(workflow, /Apply these exact natively validated bytes manually/);
+  assert.match(workflow, /homebrew-publication\.tar\.gz/);
+  assert.match(workflow, /actions\/attest@/);
+  assert.match(workflow, /actions\/create-github-app-token@/);
+  assert.match(workflow, /publish-homebrew-v1/);
+  assert.match(workflow, /gh run watch/);
+  assert.doesNotMatch(workflow, /HOMEBREW_TAP_DEPLOY_KEY/);
   const workflowDirectory = join(repositoryRoot, ".github", "workflows");
   const maintainedWorkflows = readdirSync(workflowDirectory)
     .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
