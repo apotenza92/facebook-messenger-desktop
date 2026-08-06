@@ -990,6 +990,17 @@ jobs:
               | sed 's#  \./#  #'
           ) > artifacts/release/SHA256SUMS
 
+      - name: Stage deterministic tap-owned Homebrew bundle in the draft asset contract
+        run: |
+          set -euo pipefail
+          node scripts/stage-homebrew-publication.mjs \
+            --channel "${{ needs.validate-release.outputs.channel }}" \
+            --tag "${{ github.ref_name }}" \
+            --assets artifacts/release \
+            --output artifacts/homebrew
+          python3 scripts/create-homebrew-archive.py artifacts/homebrew/publication artifacts/release/homebrew-publication.tar.gz
+          (cd artifacts/release && shasum -a 256 homebrew-publication.tar.gz >> SHA256SUMS)
+
       - name: Attest release assets
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
@@ -1222,10 +1233,17 @@ jobs:
     needs: [validate-release, release]
     runs-on: macos-15
     permissions:
-      contents: read
+      contents: write
+      id-token: write
+      attestations: write
     if: needs.validate-release.outputs.channel == 'stable'
 
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          path: source
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -1424,30 +1442,42 @@ jobs:
             'Casks/facebook-messenger-desktop@beta.rb' \
             "$GITHUB_WORKSPACE/publication/Casks/"
 
-      - name: Seal Homebrew publication bundle
+      - name: Seal standard Homebrew publication bundle
         run: |
           set -euo pipefail
           casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
           [[ "$casks" == 'facebook-messenger-desktop.rb facebook-messenger-desktop@beta.rb' ]]
+          GH_TOKEN='${{ github.token }}' gh release view '${{ github.ref_name }}' --json assets > release-assets.json
+          node source/scripts/build-homebrew-publication.mjs \
+            --channel stable --tag '${{ github.ref_name }}' \
+            --casks publication/Casks --release-assets release-assets.json \
+            --output publication
           (
             cd publication
-            find Casks -type f -name '*.rb' -print0 |
+            find manifest.json Casks -type f -print0 |
               LC_ALL=C sort -z |
               xargs -0 shasum -a 256 > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
           )
-          printf '%s\n' \
-            "Messenger Homebrew publication bundle" \
-            "release-tag=${{ github.ref_name }}" \
-            "release-commit=${{ github.sha }}" \
-            "destination=apotenza92/homebrew-tap:Casks/" \
-            "Apply these exact natively validated bytes manually after the release approval gate." \
-            > publication/PUBLICATION.txt
+          python3 source/scripts/create-homebrew-archive.py publication homebrew-publication.tar.gz
+
+      - name: Verify exact pre-published attested bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir existing-bundle
+          gh release download '${{ github.ref_name }}' --pattern homebrew-publication.tar.gz --dir existing-bundle
+          cmp homebrew-publication.tar.gz existing-bundle/homebrew-publication.tar.gz
+          gh attestation verify existing-bundle/homebrew-publication.tar.gz --repo "$GITHUB_REPOSITORY"
 
       - name: Upload Homebrew publication bundle
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: messenger-homebrew-publication-${{ github.ref_name }}
-          path: publication
+          path: |
+            publication
+            homebrew-publication.tar.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -1456,10 +1486,17 @@ jobs:
     needs: [validate-release, release]
     runs-on: macos-15
     permissions:
-      contents: read
+      contents: write
+      id-token: write
+      attestations: write
     if: needs.validate-release.outputs.channel == 'beta'
 
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          path: source
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -1585,32 +1622,87 @@ jobs:
           cp 'Casks/facebook-messenger-desktop@beta.rb' \
             "$GITHUB_WORKSPACE/publication/Casks/"
 
-      - name: Seal Homebrew beta publication bundle
+      - name: Seal standard Homebrew beta publication bundle
         run: |
           set -euo pipefail
           casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
           [[ "$casks" == 'facebook-messenger-desktop@beta.rb' ]]
+          GH_TOKEN='${{ github.token }}' gh release view '${{ github.ref_name }}' --json assets > release-assets.json
+          node source/scripts/build-homebrew-publication.mjs \
+            --channel beta --tag '${{ github.ref_name }}' \
+            --casks publication/Casks --release-assets release-assets.json \
+            --output publication
           (
             cd publication
-            find Casks -type f -name '*.rb' -print0 |
+            find manifest.json Casks -type f -print0 |
               LC_ALL=C sort -z |
               xargs -0 shasum -a 256 > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
           )
-          printf '%s\n' \
-            "Messenger Beta Homebrew publication bundle" \
-            "release-tag=${{ github.ref_name }}" \
-            "release-commit=${{ github.sha }}" \
-            "destination=apotenza92/homebrew-tap:Casks/" \
-            "Apply this exact natively validated byte stream manually after the release approval gate." \
-            > publication/PUBLICATION.txt
+          python3 source/scripts/create-homebrew-archive.py publication homebrew-publication.tar.gz
+
+      - name: Verify exact pre-published attested bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir existing-bundle
+          gh release download '${{ github.ref_name }}' --pattern homebrew-publication.tar.gz --dir existing-bundle
+          cmp homebrew-publication.tar.gz existing-bundle/homebrew-publication.tar.gz
+          gh attestation verify existing-bundle/homebrew-publication.tar.gz --repo "$GITHUB_REPOSITORY"
 
       - name: Upload Homebrew beta publication bundle
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: messenger-homebrew-publication-${{ github.ref_name }}
-          path: publication
+          path: |
+            publication
+            homebrew-publication.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  dispatch-homebrew-publication:
+    name: Dispatch and await tap-owned Homebrew publication
+    needs: [validate-release, prepare-homebrew-publication, prepare-homebrew-beta-publication]
+    if: >-
+      always() &&
+      ((needs.validate-release.outputs.channel == 'stable' && needs.prepare-homebrew-publication.result == 'success') ||
+       (needs.validate-release.outputs.channel == 'beta' && needs.prepare-homebrew-beta-publication.result == 'success'))
+    runs-on: ubuntu-24.04
+    environment: homebrew-dispatch
+    permissions:
+      contents: read
+    steps:
+      - name: Mint dispatch-only tap token
+        id: dispatcher
+        uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42 # v2
+        with:
+          app-id: ${{ vars.HOMEBREW_DISPATCHER_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_DISPATCHER_PRIVATE_KEY }}
+          owner: apotenza92
+          repositories: homebrew-tap
+      - name: Dispatch trusted publication and wait for exact correlation
+        env:
+          GH_TOKEN: ${{ steps.dispatcher.outputs.token }}
+          TAP_REPOSITORY: apotenza92/homebrew-tap
+        run: |
+          set -euo pipefail
+          correlation="${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_REF_NAME}"
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg product facebook-messenger-desktop --arg tag "$GITHUB_REF_NAME" --arg release_commit "$GITHUB_SHA" \
+            --arg source_run_id "$GITHUB_RUN_ID" --arg source_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg correlation_id "$correlation" \
+            '{event_type:"publish-homebrew-v1",client_payload:{product:$product,tag:$tag,release_commit:$release_commit,source_run_id:$source_run_id,source_run_attempt:$source_run_attempt,correlation_id:$correlation_id}}' |
+            gh api --method POST "repos/$TAP_REPOSITORY/dispatches" --input -
+          run_id=''
+          for _ in {1..30}; do
+            run_id="$(gh api "repos/$TAP_REPOSITORY/actions/workflows/publish-homebrew.yml/runs?event=repository_dispatch&per_page=30" \
+              --jq ".workflow_runs[] | select(.display_title == \"$correlation\" and .created_at >= \"$started\") | .id" | head -n1)"
+            [[ -n "$run_id" ]] && break
+            sleep 2
+          done
+          [[ -n "$run_id" ]]
+          gh run watch "$run_id" --repo "$TAP_REPOSITORY" --exit-status
 
   # Snap promotion is manual and protected in snap-promote.yml.
 
