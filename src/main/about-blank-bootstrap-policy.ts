@@ -6,6 +6,7 @@ export const ABOUT_BLANK_CHILD_BOOTSTRAP_WINDOW_MS = 30_000;
 const TRUSTED_CHILD_BOOTSTRAP_INTERMEDIATE_PATH_PREFIXES = [
   "/ajax/",
   "/api/",
+  "/checkpoint/",
   "/dialog/",
   "/privacy/",
   "/messenger/",
@@ -13,6 +14,7 @@ const TRUSTED_CHILD_BOOTSTRAP_INTERMEDIATE_PATH_PREFIXES = [
   "/videochat/",
   "/video_call/",
   "/call/",
+  "/verify/",
 ] as const;
 
 export type AllowedChildBootstrapSiteKey = "facebook.com" | "messenger.com";
