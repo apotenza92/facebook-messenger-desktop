@@ -2,13 +2,13 @@ Messenger Desktop production TUF repository
 Root version: 1
 Root SHA-256: 6656f0dee4d52eb8d9c6e37c3799c4db39a90159edf185bff08018dc16d4be8a
 Target: latest.yml
-Target SHA-256: 885fe0ba573099aaeb302c382e9c4771365c5d4ace76cb5cb8b16930d44103ff
-targets version: 1
-targets expires: 2027-08-01T15:19:31.980Z
+Target SHA-256: fcf3ed19516ebc86a58a7e269aeb517cc697d902df08b4a4cb2a88303447c37d
+targets version: 2
+targets expires: 2027-08-11T04:42:30.849Z
 targets key ID: 91fb4d611611e22e7ec146a7cc65caf10276353aa1648746585b7fbe013ca2c8
-snapshot version: 1
-snapshot expires: 2027-01-28T15:19:31.980Z
+snapshot version: 2
+snapshot expires: 2027-02-07T04:42:30.849Z
 snapshot key ID: 3febda8c1838971eefa1bad139cf4d319e8eb1215c1fdce7c7f4385b2caf51fd
-timestamp version: 1
-timestamp expires: 2026-09-15T15:19:31.980Z
+timestamp version: 2
+timestamp expires: 2026-09-25T04:42:30.849Z
 timestamp key ID: f2b5c5c4418423c8f719bca74a922bb12f9bf65c5daf5b25adb495149226280b
