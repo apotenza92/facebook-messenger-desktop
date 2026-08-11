@@ -1322,6 +1322,22 @@ function testWorkflowContract() {
   assert.equal(homebrewCheckouts?.length, 2);
   for (const checkout of homebrewCheckouts)
     assert.doesNotMatch(checkout, /HOMEBREW_TAP_TOKEN/);
+  for (const homebrewJob of [
+    "prepare-homebrew-publication",
+    "prepare-homebrew-beta-publication",
+  ]) {
+    const source = jobSource(workflow, homebrewJob);
+    assert.match(
+      source,
+      /gh release view[^\n]*--repo "\$GITHUB_REPOSITORY"/,
+      `${homebrewJob} must identify the source repository outside a checkout`,
+    );
+    assert.match(
+      source,
+      /gh release download[^\n]*--repo "\$GITHUB_REPOSITORY"/,
+      `${homebrewJob} must download from the source repository outside a checkout`,
+    );
+  }
   assert.match(workflow, /messenger-homebrew-publication-/);
   assert.match(workflow, /homebrew-publication\.tar\.gz/);
   assert.match(workflow, /actions\/attest@/);
