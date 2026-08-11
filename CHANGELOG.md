@@ -2,7 +2,36 @@
 
 ## Unreleased
 
+## [1.4.2] - 2026-08-11
+
+### Changed
+
+- Reissue the v1.4.1 application changes as v1.4.2 because GitHub permanently
+  reserved the deleted immutable v1.4.1 tag.
+- Dispatch Homebrew publication to the tap-owned workflow with minimum source
+  repository permissions and checksum-sealed release input.
+
+### Fixed
+
+- Stop Messenger from replaying native notifications for older messages when an
+  infrequently used computer catches up after startup or wakes from sleep.
+- Keep the Restricted Accounts Back control visible on Windows when Facebook
+  expands its hit region across the left pane.
+- Allow the first available stable release after v1.4.0 to validate its native
+  Windows and Linux updater predecessor.
+- Identify the source repository explicitly when Homebrew release jobs run from
+  a nested checkout.
+- Preserve required blank lines between generated Homebrew cask stanza groups.
+
+### Security
+
+- Update runtime dependency overrides for the latest `brace-expansion` and
+  `js-yaml` denial-of-service fixes.
+
 ## [1.4.1] - 2026-08-11
+
+Withdrawn after Homebrew publication failed. GitHub permanently reserved the
+deleted immutable tag. Use v1.4.2 instead.
 
 ### Changed
 
