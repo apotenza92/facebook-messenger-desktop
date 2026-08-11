@@ -31,6 +31,7 @@ ${livecheck}
   end
 
   depends_on :macos
+
   app "${identity.app}"
 
   zap trash: [
