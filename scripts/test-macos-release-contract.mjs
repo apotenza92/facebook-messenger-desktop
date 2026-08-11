@@ -154,6 +154,7 @@ function testContracts() {
     "1.4.1-beta.1",
   );
   assert.equal(resolveNonMacUpdaterPredecessor("1.4.1"), "1.4.0");
+  assert.equal(resolveNonMacUpdaterPredecessor("1.4.2"), "1.4.0");
   assert.throws(
     () => resolveNonMacUpdaterPredecessor("1.5.0-beta.1"),
     /explicit predecessor/,

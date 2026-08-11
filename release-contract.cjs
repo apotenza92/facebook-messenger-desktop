@@ -5,6 +5,9 @@ const MINIMUM_MACOS_VERSION = "12.0.0";
 const EXPLICIT_BETA_UPDATER_PREDECESSORS = Object.freeze({
   "1.4.1-beta.1": "1.4.0",
 });
+const EXPLICIT_STABLE_UPDATER_PREDECESSORS = Object.freeze({
+  "1.4.2": "1.4.0",
+});
 
 const DEFAULT_UPDATE_FEED_BASE_URL =
   "https://raw.githubusercontent.com/apotenza92/facebook-messenger-desktop/updates";
@@ -84,6 +87,8 @@ function resolveNonMacUpdaterPredecessor(version) {
   const major = Number(stableMatch[1]);
   const minor = Number(stableMatch[2]);
   const patch = Number(stableMatch[3]);
+  const explicit = EXPLICIT_STABLE_UPDATER_PREDECESSORS[normalizedVersion];
+  if (explicit) return explicit;
   if (patch > 0) return `${major}.${minor}.${patch - 1}`;
   if (minor > 0) return `${major}.${minor - 1}.0`;
   if (major > 0) return `${major - 1}.0.0`;
@@ -95,6 +100,7 @@ module.exports = {
   CHANNELS,
   DEFAULT_UPDATE_FEED_BASE_URL,
   EXPLICIT_BETA_UPDATER_PREDECESSORS,
+  EXPLICIT_STABLE_UPDATER_PREDECESSORS,
   MINIMUM_MACOS_VERSION,
   PLATFORMS,
   metadataFileName,
