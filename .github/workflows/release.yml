@@ -1447,7 +1447,7 @@ jobs:
           set -euo pipefail
           casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
           [[ "$casks" == 'facebook-messenger-desktop.rb facebook-messenger-desktop@beta.rb' ]]
-          GH_TOKEN='${{ github.token }}' gh release view '${{ github.ref_name }}' --json assets > release-assets.json
+          GH_TOKEN='${{ github.token }}' gh release view '${{ github.ref_name }}' --repo "$GITHUB_REPOSITORY" --json assets > release-assets.json
           node source/scripts/build-homebrew-publication.mjs \
             --channel stable --tag '${{ github.ref_name }}' \
             --casks publication/Casks --release-assets release-assets.json \
@@ -1467,7 +1467,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir existing-bundle
-          gh release download '${{ github.ref_name }}' --pattern homebrew-publication.tar.gz --dir existing-bundle
+          gh release download '${{ github.ref_name }}' --repo "$GITHUB_REPOSITORY" --pattern homebrew-publication.tar.gz --dir existing-bundle
           cmp homebrew-publication.tar.gz existing-bundle/homebrew-publication.tar.gz
           gh attestation verify existing-bundle/homebrew-publication.tar.gz --repo "$GITHUB_REPOSITORY"
 
@@ -1627,7 +1627,7 @@ jobs:
           set -euo pipefail
           casks="$(find publication/Casks -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort | paste -sd ' ' -)"
           [[ "$casks" == 'facebook-messenger-desktop@beta.rb' ]]
-          GH_TOKEN='${{ github.token }}' gh release view '${{ github.ref_name }}' --json assets > release-assets.json
+          GH_TOKEN='${{ github.token }}' gh release view '${{ github.ref_name }}' --repo "$GITHUB_REPOSITORY" --json assets > release-assets.json
           node source/scripts/build-homebrew-publication.mjs \
             --channel beta --tag '${{ github.ref_name }}' \
             --casks publication/Casks --release-assets release-assets.json \
@@ -1647,7 +1647,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir existing-bundle
-          gh release download '${{ github.ref_name }}' --pattern homebrew-publication.tar.gz --dir existing-bundle
+          gh release download '${{ github.ref_name }}' --repo "$GITHUB_REPOSITORY" --pattern homebrew-publication.tar.gz --dir existing-bundle
           cmp homebrew-publication.tar.gz existing-bundle/homebrew-publication.tar.gz
           gh attestation verify existing-bundle/homebrew-publication.tar.gz --repo "$GITHUB_REPOSITORY"
 
