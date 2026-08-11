@@ -1,7 +1,7 @@
-version: 1.4.1
+version: 1.4.2
 files:
-  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1/facebook-messenger-desktop-beta-arm64.AppImage
-    sha512: MiWqwkRNy//YPPrkDtRyM7teqk6FKby5FgeEwTDFJyPI8s++LT/2Kj3zMOlwXih7t9M0le92mpTp/wUd/i1nLw==
-    size: 86702291
-path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1/facebook-messenger-desktop-beta-arm64.AppImage
-sha512: MiWqwkRNy//YPPrkDtRyM7teqk6FKby5FgeEwTDFJyPI8s++LT/2Kj3zMOlwXih7t9M0le92mpTp/wUd/i1nLw==
+  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.2/facebook-messenger-desktop-beta-arm64.AppImage
+    sha512: HPZ+bom4wx9LdGrIW6XerZvoGpWtZaLWluuJrfcj37dl7yEgrQhdc7TikRlAUGmGBtAx2w2YfFGQpReTavksHA==
+    size: 86702235
+path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.2/facebook-messenger-desktop-beta-arm64.AppImage
+sha512: HPZ+bom4wx9LdGrIW6XerZvoGpWtZaLWluuJrfcj37dl7yEgrQhdc7TikRlAUGmGBtAx2w2YfFGQpReTavksHA==

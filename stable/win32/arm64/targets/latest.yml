@@ -1,7 +1,7 @@
-version: 1.4.1
+version: 1.4.2
 files:
-  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1/Messenger-windows-arm64-setup.exe
-    sha512: PGR0adZfQYw4IYen1JuOdSejuoyTK8LO2cc2g7niBqaIcdiSHXg5QK4Yq3jHWMLnltehuf7qB1Him479MrQ3Ig==
-    size: 136838078
-path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.1/Messenger-windows-arm64-setup.exe
-sha512: PGR0adZfQYw4IYen1JuOdSejuoyTK8LO2cc2g7niBqaIcdiSHXg5QK4Yq3jHWMLnltehuf7qB1Him479MrQ3Ig==
+  - url: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.2/Messenger-windows-arm64-setup.exe
+    sha512: OVjnlckZfgQk09ypM2s5Z9aZt+jsgEQlyF/6ii03+NcPmrh+YkGgIVFPVnUei2kH3bJxRb7wJA7BsldY9fyMPQ==
+    size: 136838119
+path: https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v1.4.2/Messenger-windows-arm64-setup.exe
+sha512: OVjnlckZfgQk09ypM2s5Z9aZt+jsgEQlyF/6ii03+NcPmrh+YkGgIVFPVnUei2kH3bJxRb7wJA7BsldY9fyMPQ==
