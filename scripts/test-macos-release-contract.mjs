@@ -1369,6 +1369,11 @@ function testWorkflowContract() {
     "Manual CI must retain all native Windows and AppImage updater gates",
   );
   assert.match(
+    ciWorkflow,
+    /version === "1\.4\.2"\) previousVersion = "1\.4\.0"/,
+    "Manual CI must use the nearest published stable predecessor across the removed v1.4.1 release",
+  );
+  assert.match(
     jobSource(ciWorkflow, "build-macos"),
     /environment:\s*release-signing/,
     "Manual CI must use the protected macOS signing environment",
@@ -1583,20 +1588,28 @@ function testWorkflowContract() {
   assert.match(nonmacWorkflow, /Create disposable loopback-only TUF trust/);
   assert.match(
     nonmacWorkflow,
-    /Download source-pinned published beta baseline/,
+    /Download checksum-sealed published predecessor/,
   );
-  assert.match(nonmacWorkflow, /v1\.3\.1-beta\.43/);
-  for (const digest of [
-    "80509a609d4ad3dafece1ff80834c3e29565b8d65d7d66db09e702f20ef8f7bd",
-    "f4195ab0351088d4b941b0f2ead6e6f50783ef2b5c94164409deb7bf022325d7",
-    "c5febaa940ee9744b2b9562ff10028e8ac97410e29783af26ae9636a0757c81e",
-    "57d02554c3971a98e29cad889bada0127f023656b096f2c47111ce81f0668263",
-  ]) {
-    assert.match(nonmacWorkflow, new RegExp(digest));
-  }
-  assert.match(nonmacWorkflow, /--published-baseline-artifact/);
-  assert.match(nonmacWorkflow, /--published-baseline-tag/);
+  assert.match(nonmacWorkflow, /releases\/download\/v\$PREVIOUS_VERSION/);
+  assert.match(nonmacWorkflow, /SHA256SUMS/);
+  assert.match(nonmacWorkflow, /actions\/download-artifact@/);
+  assert.match(nonmacWorkflow, /inputs\.candidate_build_artifact != ''/);
+  assert.match(nonmacWorkflow, /inputs\.candidate_build_artifact == ''/);
+  assert.match(nonmacWorkflow, /candidate_build_artifact:/);
+  assert.doesNotMatch(nonmacWorkflow, /npm pkg set "version=\$PREVIOUS_VERSION"/);
   assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
+  const nonmacReleaseJob = jobSource(workflow, "nonmac-updater-e2e");
+  assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-windows/);
+  assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-linux/);
+  assert.match(nonmacReleaseJob, /candidate_build_artifact:/);
+  assert.match(nonmacReleaseJob, /windows-input-x64/);
+  assert.match(nonmacReleaseJob, /windows-input-arm64/);
+  assert.match(nonmacReleaseJob, /linux-build-x64/);
+  assert.match(nonmacReleaseJob, /linux-build-arm64/);
+  const windowsBuildJob = jobSource(workflow, "build-windows");
+  assert.match(windowsBuildJob, /Save updater candidate app archive/);
+  assert.match(windowsBuildJob, /release\/updater-app\.asar/);
+  assert.match(windowsBuildJob, /release\/\*\.asar/);
   assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
   assert.match(workflow, /pattern:\s*macos-input-\*/);
   assert.doesNotMatch(workflow, /ci-macos-input-/);

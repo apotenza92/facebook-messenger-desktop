@@ -15,9 +15,14 @@ on:
         required: true
         type: string
       previous_version:
-        description: Synthetic N-1 version
+        description: Published N-1 release version
         required: true
         type: string
+      candidate_build_artifact:
+        description: Current-run build artifact to reuse; omit for standalone CI
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       channel:
@@ -39,10 +44,10 @@ on:
           - linux-arm64
           - linux-x64
       previous_version:
-        description: Synthetic N-1 version
+        description: Published N-1 release version
         required: true
         type: string
-        default: 1.3.1-beta.44
+        default: 1.4.0
 
 concurrency:
   group: messenger-nonmac-updater-${{ inputs.target }}
@@ -126,20 +131,18 @@ jobs:
             --root build/update-trust/root.json \
             --private-key-bundle "$TRUST_DIR/private.json"
 
-      - name: Build synthetic N-1 and candidate packages
+      - name: Download candidate build artifact
+        if: inputs.candidate_build_artifact != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.candidate_build_artifact }}
+          path: ci-updater/build
+
+      - name: Prepare reused candidate package
+        if: inputs.candidate_build_artifact != ''
         shell: bash
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           set -euo pipefail
-          CANDIDATE_VERSION="$(node -p 'require("./package.json").version')"
-          PREVIOUS_VERSION='${{ inputs.previous_version }}'
-          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
-            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]
-          else
-            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          fi
-          test "$PREVIOUS_VERSION" != "$CANDIDATE_VERSION"
           ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
           PRODUCT_PREFIX=Messenger
           PACKAGE_PREFIX=facebook-messenger-desktop
@@ -147,33 +150,33 @@ jobs:
             PRODUCT_PREFIX=Messenger-Beta
             PACKAGE_PREFIX=facebook-messenger-desktop-beta
           fi
-          mkdir -p ci-updater/previous ci-updater/candidate
-
-          npm pkg set "version=$PREVIOUS_VERSION"
-          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta &&
-            "$PREVIOUS_VERSION" != *-beta.* ]]; then
-            export FORCE_BETA_BUILD=true
-          fi
+          mkdir -p ci-updater/candidate
           if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
-            npx --no-install electron-builder \
-              --config electron-builder.config.js \
-              --win nsis "--$ARCH" --publish=never
-            cp "release/$PRODUCT_PREFIX-windows-$ARCH-setup.exe" \
-              ci-updater/previous/
+            CANDIDATE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+            cp "ci-updater/build/$CANDIDATE" ci-updater/candidate/
+            cp ci-updater/build/updater-app.asar ci-updater/candidate/app.asar
           else
-            npx --no-install electron-builder \
-              --config electron-builder.config.js \
-              --linux AppImage "--$ARCH" --publish=never
-            LINUX_ARCH="$(
-              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
-            )"
-            cp "release/$PACKAGE_PREFIX-$LINUX_ARCH.AppImage" \
-              ci-updater/previous/
+            LINUX_ARCH="$([[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64)"
+            CANDIDATE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+            cp "ci-updater/build/$CANDIDATE" ci-updater/candidate/
           fi
 
-          rm -rf release
-          npm pkg set "version=$CANDIDATE_VERSION"
-          unset FORCE_BETA_BUILD
+      - name: Build candidate package for standalone CI
+        if: inputs.candidate_build_artifact == ''
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          FORCE_BETA_BUILD: ${{ inputs.channel == 'beta' && 'true' || '' }}
+        run: |
+          set -euo pipefail
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PRODUCT_PREFIX=Messenger
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PRODUCT_PREFIX=Messenger-Beta
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          mkdir -p ci-updater/candidate
           if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
             npx --no-install electron-builder \
               --config electron-builder.config.js \
@@ -194,48 +197,69 @@ jobs:
             CANDIDATE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
             cp "release/$CANDIDATE" ci-updater/candidate/
           fi
+
+      - name: Create candidate update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE_VERSION="$(node -p 'require("./package.json").version')"
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PRODUCT_PREFIX=Messenger
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PRODUCT_PREFIX=Messenger-Beta
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            CANDIDATE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+          else
+            LINUX_ARCH="$([[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64)"
+            CANDIDATE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+          fi
           node scripts/create-update-metadata.mjs \
             --artifact "ci-updater/candidate/$CANDIDATE" \
             --output ci-updater/candidate/update.yml \
             --version "$CANDIDATE_VERSION"
-          test "$(node -p 'require("./package.json").version')" = \
-            "$CANDIDATE_VERSION"
 
-      - name: Download source-pinned published beta baseline
-        if: inputs.channel == 'beta'
+      - name: Download checksum-sealed published predecessor
         shell: bash
         run: |
           set -euo pipefail
-          TAG=v1.3.1-beta.43
-          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
-          mkdir -p ci-updater/published
-          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
-            NAME="Messenger-Beta-windows-$ARCH-setup.exe"
-            if [[ "$ARCH" == arm64 ]]; then
-              EXPECTED_SHA256=80509a609d4ad3dafece1ff80834c3e29565b8d65d7d66db09e702f20ef8f7bd
-            else
-              EXPECTED_SHA256=f4195ab0351088d4b941b0f2ead6e6f50783ef2b5c94164409deb7bf022325d7
-            fi
+          CANDIDATE_VERSION="$(node -p 'require("./package.json").version')"
+          PREVIOUS_VERSION='${{ inputs.previous_version }}'
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]
           else
-            LINUX_ARCH="$(
-              [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
-            )"
-            NAME="facebook-messenger-desktop-beta-$LINUX_ARCH.AppImage"
-            if [[ "$ARCH" == arm64 ]]; then
-              EXPECTED_SHA256=c5febaa940ee9744b2b9562ff10028e8ac97410e29783af26ae9636a0757c81e
-            else
-              EXPECTED_SHA256=57d02554c3971a98e29cad889bada0127f023656b096f2c47111ce81f0668263
-            fi
+            [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           fi
-          BASELINE="ci-updater/published/$NAME"
+          test "$PREVIOUS_VERSION" != "$CANDIDATE_VERSION"
+          ARCH='${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'x64' }}'
+          PRODUCT_PREFIX=Messenger
+          PACKAGE_PREFIX=facebook-messenger-desktop
+          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
+            PRODUCT_PREFIX=Messenger-Beta
+            PACKAGE_PREFIX=facebook-messenger-desktop-beta
+          fi
+          mkdir -p ci-updater/previous
+          if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
+            NAME="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
+          else
+            LINUX_ARCH="$([[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64)"
+            NAME="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
+          fi
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v$PREVIOUS_VERSION"
           curl --fail --silent --show-error --location \
             --retry 5 --retry-all-errors \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$NAME" \
-            --output "$BASELINE"
+            "$BASE_URL/SHA256SUMS" --output ci-updater/previous/SHA256SUMS
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-all-errors \
+            "$BASE_URL/$NAME" --output "ci-updater/previous/$NAME"
+          EXPECTED_SHA256="$(awk -v name="$NAME" '$2 == name { print $1; exit }' ci-updater/previous/SHA256SUMS)"
+          test -n "$EXPECTED_SHA256"
           ACTUAL_SHA256="$(
             node -e \
               'const {createHash}=require("node:crypto");const fs=require("node:fs");process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' \
-              "$BASELINE"
+              "ci-updater/previous/$NAME"
           )"
           test "$ACTUAL_SHA256" = "$EXPECTED_SHA256"
 
@@ -266,23 +290,6 @@ jobs:
             PRODUCT_PREFIX=Messenger-Beta
             PACKAGE_PREFIX=facebook-messenger-desktop-beta
           fi
-          PUBLISHED_BASELINE_ARGS=()
-          if [[ "$MESSENGER_AUDIT_CHANNEL" == beta ]]; then
-            if [[ "$MESSENGER_AUDIT_PLATFORM" == win32 ]]; then
-              PUBLISHED_BASELINE="$PRODUCT_PREFIX-windows-$ARCH-setup.exe"
-            else
-              LINUX_ARCH="$(
-                [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
-              )"
-              PUBLISHED_BASELINE="$PACKAGE_PREFIX-$LINUX_ARCH.AppImage"
-            fi
-            PUBLISHED_BASELINE_ARGS=(
-              --published-baseline-artifact
-              "ci-updater/published/$PUBLISHED_BASELINE"
-              --published-baseline-tag
-              v1.3.1-beta.43
-            )
-          fi
           EVIDENCE='${{ runner.temp }}/messenger-updater-evidence'
           ROOT=build/update-trust/root.json
           PRIVATE='${{ runner.temp }}/messenger-updater-trust/private.json'
@@ -300,8 +307,7 @@ jobs:
               --target-name latest.yml \
               --root "$ROOT" \
               --private-key-bundle "$PRIVATE" \
-              --evidence "$EVIDENCE" \
-              "${PUBLISHED_BASELINE_ARGS[@]}"
+              --evidence "$EVIDENCE"
           else
             LINUX_ARCH="$(
               [[ "$ARCH" == x64 ]] && echo x86_64 || echo arm64
@@ -322,8 +328,7 @@ jobs:
               --target-name "$TARGET" \
               --root "$ROOT" \
               --private-key-bundle "$PRIVATE" \
-              --evidence "$EVIDENCE" \
-              "${PUBLISHED_BASELINE_ARGS[@]}"
+              --evidence "$EVIDENCE"
           fi
 
       - name: Upload review evidence
