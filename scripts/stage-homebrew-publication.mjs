@@ -15,7 +15,7 @@ function cask(identity, version, tag, assets) {
     return `  on_${block} do\n    sha256 "${digest}"\n\n    url "https://github.com/apotenza92/facebook-messenger-desktop/releases/download/v#{version}/${name}"\n  end`;
   }).join('\n');
   const livecheck = identity === identities.beta
-    ? `    url "https://github.com/apotenza92/facebook-messenger-desktop/releases"\n    regex(/v?(\\d+\\.\\d+\\.\\d+(?:-beta\\.[1-9]\\d*)?)/i)\n    strategy :page_match`
+    ? `    skip "Updated by the Messenger release workflow"`
     : `    url :url\n    strategy :github_latest`;
   return `cask "${identity.token}" do
   version "${version}"
@@ -30,7 +30,7 @@ ${entries}
 ${livecheck}
   end
 
-  depends_on :macos
+  depends_on macos: :monterey
 
   app "${identity.app}"
 
