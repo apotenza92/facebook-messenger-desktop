@@ -1323,7 +1323,7 @@ jobs:
               strategy :github_latest
             end
 
-            depends_on :macos
+            depends_on macos: :monterey
 
             app "Messenger.app"
 
@@ -1359,12 +1359,10 @@ jobs:
             homepage "https://github.com/apotenza92/facebook-messenger-desktop"
 
             livecheck do
-              url "https://github.com/apotenza92/facebook-messenger-desktop/releases"
-              regex(/v?(\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?)/i)
-              strategy :page_match
+              skip "Updated by the Messenger release workflow"
             end
 
-            depends_on :macos
+            depends_on macos: :monterey
 
             app "Messenger Beta.app"
 
@@ -1559,13 +1557,11 @@ jobs:
             desc "Desktop client for Facebook Messenger (Beta)"
             homepage "https://github.com/apotenza92/facebook-messenger-desktop"
 
-            livecheck do
-              url "https://github.com/apotenza92/facebook-messenger-desktop/releases"
-              regex(/v?(\d+\.\d+\.\d+-beta\.[1-9]\d*)/i)
-              strategy :page_match
-            end
+          livecheck do
+            skip "Updated by the Messenger release workflow"
+          end
 
-            depends_on :macos
+          depends_on macos: :monterey
 
             app "Messenger Beta.app"
 

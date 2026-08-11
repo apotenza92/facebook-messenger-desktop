@@ -16,7 +16,13 @@ test('staged casks preserve Homebrew stanza groups', () => {
     stage({channel: 'stable', tag: 'v1.2.3', assetsDirectory: assets, outputDirectory: output, commit: 'c'.repeat(40), runId: 4, runAttempt: 2});
     for (const name of ['facebook-messenger-desktop.rb', 'facebook-messenger-desktop@beta.rb']) {
       const cask = readFileSync(join(output, 'publication', 'Casks', name), 'utf8');
-      assert.match(cask, /  depends_on :macos\n\n  app /);
+      assert.match(cask, /  depends_on macos: :monterey\n\n  app /);
+      if (name.endsWith('@beta.rb')) {
+        assert.match(
+          cask,
+          /livecheck do\n    skip "Updated by the Messenger release workflow"\n  end/,
+        );
+      }
     }
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
