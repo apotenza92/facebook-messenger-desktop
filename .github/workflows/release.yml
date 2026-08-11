@@ -1681,6 +1681,8 @@ jobs:
           private-key: ${{ secrets.HOMEBREW_DISPATCHER_PRIVATE_KEY }}
           owner: apotenza92
           repositories: homebrew-tap
+          permission-contents: write
+          permission-actions: read
       - name: Dispatch trusted publication and wait for exact correlation
         env:
           GH_TOKEN: ${{ steps.dispatcher.outputs.token }}
