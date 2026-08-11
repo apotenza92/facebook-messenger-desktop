@@ -1,6 +1,6 @@
 # Facebook Messenger Desktop
 
-<img src="assets/icons/icon-rounded-readme.png" alt="Facebook Messenger Desktop icon" width="128" />
+<img src="assets/icons/icon-rounded.png" alt="Facebook Messenger Desktop icon" width="128" />
 
 <a href="https://apotenza92.github.io/facebook-messenger-desktop/">
   <img src="https://img.shields.io/badge/Download-Messenger%20Desktop-0084ff?style=for-the-badge&logo=messenger&logoColor=white" alt="Download Messenger Desktop" height="40">
