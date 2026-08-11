@@ -109,20 +109,25 @@ jobs:
 
   nonmac-updater-e2e:
     name: Native ${{ matrix.target }} updater gate
-    needs: [validate-release, quality]
+    needs: [validate-release, quality, build-windows, build-linux]
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - win32-arm64
-          - win32-x64
-          - linux-arm64
-          - linux-x64
+        include:
+          - target: win32-arm64
+            candidate_build_artifact: windows-input-arm64
+          - target: win32-x64
+            candidate_build_artifact: windows-input-x64
+          - target: linux-arm64
+            candidate_build_artifact: linux-build-arm64
+          - target: linux-x64
+            candidate_build_artifact: linux-build-x64
     uses: ./.github/workflows/nonmac-updater-audit.yml
     with:
       channel: ${{ needs.validate-release.outputs.channel }}
       target: ${{ matrix.target }}
       previous_version: ${{ needs.validate-release.outputs.nonmac_previous_version }}
+      candidate_build_artifact: ${{ matrix.candidate_build_artifact }}
 
   resolve-legacy-updater-bridge:
     name: Resolve one-release legacy updater bridge
@@ -494,6 +499,12 @@ jobs:
         run: npx electron-builder --config electron-builder.config.js --win --${{ matrix.arch }} --publish=never
         timeout-minutes: 30
 
+      - name: Save updater candidate app archive
+        shell: pwsh
+        run: |
+          $unpacked = if ('${{ matrix.arch }}' -eq 'arm64') { 'win-arm64-unpacked' } else { 'win-unpacked' }
+          Copy-Item "release/$unpacked/resources/app.asar" release/updater-app.asar
+
       - name: Build beta-channel artifacts for stable release
         if: needs.validate-release.outputs.channel == 'stable'
         run: npx electron-builder --config electron-builder.config.js --win --${{ matrix.arch }} --publish=never
@@ -511,7 +522,9 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-input-${{ matrix.arch }}
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.asar
           compression-level: 0
           retention-days: 30
           if-no-files-found: error
