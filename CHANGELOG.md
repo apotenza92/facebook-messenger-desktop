@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## [1.4.1] - 2026-08-11
+
+### Changed
+
+- Dispatch Homebrew publication to the tap-owned workflow with minimum source
+  repository permissions and checksum-sealed release input.
+
+### Fixed
+
+- Stop Messenger from replaying native notifications for older messages when an
+  infrequently used computer catches up after startup or wakes from sleep.
+- Keep the Restricted Accounts Back control visible on Windows when Facebook
+  expands its hit region across the left pane.
+- Allow the first release after a stable version to validate its explicit native
+  Windows and Linux updater predecessor.
+
+### Security
+
+- Update runtime dependency overrides for the latest `brace-expansion` and
+  `js-yaml` denial-of-service fixes.
+
 ## [1.4.1-beta.1] - 2026-08-03
 
 ### Fixed
