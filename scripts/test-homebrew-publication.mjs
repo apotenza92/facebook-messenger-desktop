@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {buildPublication} from './build-homebrew-publication.mjs';
+import {stage} from './stage-homebrew-publication.mjs';
+
+test('staged casks preserve Homebrew stanza groups', () => {
+  const root = mkdtempSync(join(tmpdir(), 'messenger-homebrew-stage-'));
+  try {
+    const assets = join(root, 'assets'); const output = join(root, 'output'); mkdirSync(assets);
+    for (const prefix of ['Messenger-macos', 'Messenger-Beta-macos']) {
+      for (const arch of ['arm64', 'x64']) writeFileSync(join(assets, `${prefix}-${arch}.zip`), `${prefix}-${arch}`);
+    }
+    stage({channel: 'stable', tag: 'v1.2.3', assetsDirectory: assets, outputDirectory: output, commit: 'c'.repeat(40), runId: 4, runAttempt: 2});
+    for (const name of ['facebook-messenger-desktop.rb', 'facebook-messenger-desktop@beta.rb']) {
+      const cask = readFileSync(join(output, 'publication', 'Casks', name), 'utf8');
+      assert.match(cask, /  depends_on :macos\n\n  app /);
+    }
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
 
 test('standard stable bundle seals both identities and architectures', () => {
   const root = mkdtempSync(join(tmpdir(), 'messenger-homebrew-'));
