@@ -639,6 +639,12 @@ export async function main() {
       if (actual !== expected)
         fail(`${key} is ${actual}, expected ${expected}`);
     }
+    run("node", ["scripts/test-icon-assets.js", appPath], {
+      env: {
+        ...process.env,
+        FORCE_BETA_BUILD: channel === "beta" ? "true" : "false",
+      },
+    });
     validateEmbeddedUpdater(appPath, contract, version);
     run("codesign", ["--verify", "--deep", "--strict", "--verbose=4", appPath]);
     const codeObjects = collectCodeObjects(appPath);

@@ -41,7 +41,7 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 2. Reproduce bugs with a deterministic failing test before changing behaviour whenever feasible.
 3. Make the smallest fix that addresses the evidence. Preserve unrelated user changes.
 4. Run `npm run test:ci`, then any relevant platform packaging or GUI checks. Live-account tests are supplemental and must never replace deterministic coverage.
-5. Use pull requests by default. Do not bypass required checks or merge a failing pull request.
+5. Use pull requests for external contributions, risky release-system changes, and broad changes that benefit from review. Focused owner changes can land directly after relevant checks pass.
 6. Update `CHANGELOG.md` for every user-visible change before a release.
 7. Keep project-specific agent instructions in this file. Do not install project skills globally.
 
@@ -74,7 +74,10 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 - Keep ordinary CI and maintenance manually dispatchable. Do not run routine push, pull-request, scheduled, Dependabot, or autonomous maintenance workflows.
 - Keep Snap rebuild, refresh, rescue, and promotion workflows manual-only.
 - Keep releases restricted to deliberate `v*` tags whose commits are reachable from `main`.
-- Homebrew release jobs attach and attest the common checksum-sealed bundle, then use the tag-restricted `homebrew-dispatch` environment to mint a short-lived actions-only GitHub App token. The source workflow waits for tap-owned publication and never writes the tap.
+- Homebrew release jobs attach and attest the common checksum-sealed bundle, then use the tag-restricted `homebrew-dispatch` environment to mint a short-lived actions-only GitHub App token. The source workflow dispatches publication without waiting and never writes the tap. The tap reports and retries publication independently.
+- Keep N-1 updater qualification out of the ordinary release path. Run the full native architecture matrix through manually dispatched CI for updater, packaging, native dependency, or architecture-support changes.
+- Package the tracked Icon Composer documents with Xcode 26 on macOS 26 runners. The Xcode 26 `actool` process uses private system frameworks that are not compatible with macOS 15. Verify the compiled `Assets.car` and keep the tracked ICNS files for notification helpers and legacy artwork.
+- Keep ARM64 artifacts in every release. The blocking Linux ARM64 job launches the AppImages. Run native ARM64 NSIS install/uninstall and Linux DEB/RPM install tests in manually dispatched full qualification because those filesystem-heavy checks dominate the scarce ARM runners.
 
 ## Platform invariants
 

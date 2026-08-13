@@ -1074,10 +1074,10 @@ function testWorkflowContract() {
     ),
     "Hosted release grammar must accept only numbered beta prereleases",
   );
-  assert.match(
+  assert.doesNotMatch(
     validateRelease,
     /resolveNonMacUpdaterPredecessor\(packageJson\.version\)/,
-    "Hosted releases must resolve the updater predecessor through the shared release contract",
+    "Routine releases must not resolve an N-1 updater predecessor",
   );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
@@ -1101,13 +1101,12 @@ function testWorkflowContract() {
     "Stable/beta publication approval must gate only the final release job",
   );
   assert.match(workflow, /environment:\s*release-signing/);
-  assert.match(validateRelease, /runner:\s*'macos-15'/);
-  assert.match(validateRelease, /runner:\s*'macos-15-intel'/);
-  assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
+  assert.doesNotMatch(validateRelease, /runner:\s*'macos-(?:15|26)(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
   assert.match(buildMacos, /runner:\s*macos-26\b/);
   assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
   assert.doesNotMatch(buildMacos, /runner:\s*macos-15(?:-intel)?\b/);
+  assert.match(buildMacos, /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.3\.app\/Contents\/Developer/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_P12_BASE64/);
   assert.match(workflow, /APPLE_NOTARYTOOL_KEY_P8_BASE64/);
   assert.match(
@@ -1121,7 +1120,7 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /secrets\.APPLE_NOTARYTOOL_KEY_ID/);
   assert.doesNotMatch(workflow, /secrets\.APPLE_NOTARYTOOL_ISSUER_ID/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_SHA256/);
-  assert.match(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
+  assert.doesNotMatch(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
   assert.match(workflow, /brew list openssl@3/);
   assert.match(workflow, /node-version:\s*"22\.12\.0"/);
   assert.doesNotMatch(workflow, /node-version:\s*"20"/);
@@ -1182,8 +1181,9 @@ function testWorkflowContract() {
     /name:\s*Upload artifacts[\s\S]*?if:\s*always\(\)[\s\S]*?name:\s*windows-input-\$\{\{ matrix\.arch \}\}/,
   );
   assert.match(workflow, /runner:\s*ubuntu-24\.04-arm/);
-  assert.match(workflow, /macos-updater-e2e:/);
-  assert.match(workflow, /MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG/);
+  assert.doesNotMatch(workflow, /macos-updater-e2e:/);
+  assert.doesNotMatch(workflow, /nonmac-updater-e2e:/);
+  assert.doesNotMatch(workflow, /environment:\s*\$\{\{ matrix\.channel \}\}-updater-verification/);
   assert.match(
     workflow,
     /prepare-homebrew-publication:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew tap apotenza92\/tap[\s\S]*?brew audit --cask --strict "\$qualified_cask"[\s\S]*?brew install --cask "\$qualified_cask"[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
@@ -1211,7 +1211,7 @@ function testWorkflowContract() {
   );
   assert.match(workflow, /MISSING_ASSETS/);
   assert.match(workflow, /cmp "artifacts\/release\/\$asset_name"/);
-  assert.match(
+  assert.doesNotMatch(
     workflow,
     /environment:\s*\$\{\{ matrix\.channel \}\}-updater-verification/,
   );
@@ -1260,6 +1260,21 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /release\/(?:latest|beta)-linux/);
   assert.match(workflow, /Assemble exact unsigned Windows installers/);
   assert.match(workflow, /Install, launch, and uninstall native DEB packages/);
+  assert.match(
+    jobSource(workflow, "build-windows"),
+    /name: Install, launch, and uninstall native NSIS packages\s+if: matrix\.arch == 'x64'/,
+    "Ordinary releases must keep the slow native ARM64 NSIS lifecycle out of the critical path",
+  );
+  assert.match(
+    jobSource(workflow, "build-linux"),
+    /name: Install, launch, and uninstall native DEB packages\s+if: matrix\.arch == 'x64'/,
+    "Ordinary releases must keep the slow native ARM64 DEB lifecycle out of the critical path",
+  );
+  assert.match(
+    jobSource(workflow, "build-linux"),
+    /name: Install, launch, and uninstall native RPM packages\s+if: matrix\.arch == 'x64'/,
+    "Ordinary releases must keep the slow native ARM64 RPM lifecycle out of the critical path",
+  );
   assert.match(
     workflow,
     /desktop_file="\/usr\/share\/applications\/\$package_name\.desktop"/,
@@ -1344,7 +1359,7 @@ function testWorkflowContract() {
   assert.match(workflow, /actions\/attest@/);
   assert.match(workflow, /actions\/create-github-app-token@/);
   assert.match(workflow, /publish-homebrew-v1/);
-  assert.match(workflow, /gh run watch/);
+  assert.doesNotMatch(workflow, /gh run watch/);
   assert.doesNotMatch(workflow, /HOMEBREW_TAP_DEPLOY_KEY/);
   const workflowDirectory = join(repositoryRoot, ".github", "workflows");
   const maintainedWorkflows = readdirSync(workflowDirectory)
@@ -1380,6 +1395,10 @@ function testWorkflowContract() {
   );
   assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26\b/);
   assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26-intel\b/);
+  assert.match(
+    jobSource(ciWorkflow, "build-macos"),
+    /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.3\.app\/Contents\/Developer/,
+  );
   assert.match(
     ciWorkflow,
     /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,
@@ -1598,14 +1617,6 @@ function testWorkflowContract() {
   assert.match(nonmacWorkflow, /candidate_build_artifact:/);
   assert.doesNotMatch(nonmacWorkflow, /npm pkg set "version=\$PREVIOUS_VERSION"/);
   assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
-  const nonmacReleaseJob = jobSource(workflow, "nonmac-updater-e2e");
-  assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-windows/);
-  assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-linux/);
-  assert.match(nonmacReleaseJob, /candidate_build_artifact:/);
-  assert.match(nonmacReleaseJob, /windows-input-x64/);
-  assert.match(nonmacReleaseJob, /windows-input-arm64/);
-  assert.match(nonmacReleaseJob, /linux-build-x64/);
-  assert.match(nonmacReleaseJob, /linux-build-arm64/);
   const windowsBuildJob = jobSource(workflow, "build-windows");
   assert.match(windowsBuildJob, /Save updater candidate app archive/);
   assert.match(windowsBuildJob, /release\/updater-app\.asar/);
@@ -1613,10 +1624,10 @@ function testWorkflowContract() {
   assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
   assert.match(workflow, /pattern:\s*macos-input-\*/);
   assert.doesNotMatch(workflow, /ci-macos-input-/);
-  assert.match(
+  assert.doesNotMatch(
     jobSource(workflow, "release"),
-    /needs:[\s\S]*?nonmac-updater-e2e/,
-    "Publication must wait for all native Windows and AppImage updater gates",
+    /needs:[\s\S]*?(?:nonmac|macos)-updater-e2e/,
+    "Routine publication must not wait for N-1 updater qualification",
   );
   const nonmacHarness = readFileSync(
     join(repositoryRoot, "scripts", "test-nonmac-update.cjs"),
@@ -1748,6 +1759,11 @@ function testWorkflowContract() {
     packageVerifier,
     /run\("otool", \["-l", "-m", machOPath\]\)/,
     "Mach-O minimum-version inspection must disable archive(member) parsing",
+  );
+  assert.match(
+    packageVerifier,
+    /run\("node", \["scripts\/test-icon-assets\.js", appPath\]/,
+    "Final signed packages must verify the compiled Icon Composer asset catalog",
   );
 
   const maintainedReleaseSources = [

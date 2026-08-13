@@ -24,8 +24,6 @@ jobs:
       channel: ${{ steps.release.outputs.channel }}
       prerelease: ${{ steps.release.outputs.prerelease }}
       release_environment: ${{ steps.release.outputs.release_environment }}
-      nonmac_previous_version: ${{ steps.release.outputs.nonmac_previous_version }}
-      updater_matrix: ${{ steps.release.outputs.updater_matrix }}
     steps:
       - name: Checkout code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -52,7 +50,6 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const packageJson = require('./package.json');
-          const { resolveNonMacUpdaterPredecessor } = require('./release-contract.cjs');
           const tag = process.env.GITHUB_REF_NAME;
           const stable = /^v\d+\.\d+\.\d+$/.test(tag);
           const prerelease = /^v\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(tag);
@@ -62,21 +59,10 @@ jobs:
           if (packageJson.version !== tag.slice(1)) {
             throw new Error(`Tag ${tag} does not match package version ${packageJson.version}`);
           }
-          const updaterMatrix = [
-            ...(stable ? [
-              { channel: 'stable', arch: 'arm64', runner: 'macos-15' },
-              { channel: 'stable', arch: 'x64', runner: 'macos-15-intel' },
-            ] : []),
-            { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
-            { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
-          ];
-          const previousVersion = resolveNonMacUpdaterPredecessor(packageJson.version);
           const output = [
             `channel=${stable ? 'stable' : 'beta'}`,
             `prerelease=${prerelease}`,
             `release_environment=${stable ? 'stable-release' : 'beta-release'}`,
-            `nonmac_previous_version=${previousVersion}`,
-            `updater_matrix=${JSON.stringify(updaterMatrix)}`,
           ];
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output.join('\n')}\n`);
           NODE
@@ -106,28 +92,6 @@ jobs:
       - name: Run required deterministic checks
         run: npm run test:ci
         timeout-minutes: 30
-
-  nonmac-updater-e2e:
-    name: Native ${{ matrix.target }} updater gate
-    needs: [validate-release, quality, build-windows, build-linux]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: win32-arm64
-            candidate_build_artifact: windows-input-arm64
-          - target: win32-x64
-            candidate_build_artifact: windows-input-x64
-          - target: linux-arm64
-            candidate_build_artifact: linux-build-arm64
-          - target: linux-x64
-            candidate_build_artifact: linux-build-x64
-    uses: ./.github/workflows/nonmac-updater-audit.yml
-    with:
-      channel: ${{ needs.validate-release.outputs.channel }}
-      target: ${{ matrix.target }}
-      previous_version: ${{ needs.validate-release.outputs.nonmac_previous_version }}
-      candidate_build_artifact: ${{ matrix.candidate_build_artifact }}
 
   resolve-legacy-updater-bridge:
     name: Resolve one-release legacy updater bridge
@@ -251,6 +215,8 @@ jobs:
     needs: [validate-release, quality]
     runs-on: ${{ matrix.runner }}
     environment: release-signing
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     permissions:
       contents: read
     strategy:
@@ -401,53 +367,6 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  macos-updater-e2e:
-    name: macOS ${{ matrix.channel }} ${{ matrix.arch }} N-1 updater gate
-    needs: [validate-release, assemble-macos]
-    runs-on: ${{ matrix.runner }}
-    environment: ${{ matrix.channel }}-updater-verification
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.validate-release.outputs.updater_matrix) }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - name: Setup Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: "22.12.0"
-          cache: "npm"
-      - name: Install metadata dependencies
-        run: npm ci --ignore-scripts
-      - name: Download assembled macOS candidate
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: macos-build
-          path: artifacts/macos
-      - name: Exercise valid, corrupt, and wrong-signature updates from N-1
-        env:
-          APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256 }}
-          APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
-          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          GITHUB_TOKEN: ${{ github.token }}
-          MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG: ${{ vars.MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG }}
-        run: |
-          set -euo pipefail
-          PRODUCT_PREFIX=Messenger
-          if [[ "${{ matrix.channel }}" == beta ]]; then PRODUCT_PREFIX='Messenger-Beta'; fi
-          node scripts/test-macos-updater-e2e.mjs \
-            --channel "${{ matrix.channel }}" \
-            --arch "${{ matrix.arch }}" \
-            --current-tag "${{ github.ref_name }}" \
-            --bootstrap-tag "$MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG" \
-            --candidate "artifacts/macos/${PRODUCT_PREFIX}-macos-${{ matrix.arch }}.zip"
-
   # Windows remains unsigned until a dedicated Authenticode credential and
   # signing gate are configured. This job proves native packaging and fresh
   # install/launch/uninstall behavior, not trusted N-1 automatic updating.
@@ -513,6 +432,7 @@ jobs:
           FORCE_BETA_BUILD: "true"
 
       - name: Install, launch, and uninstall native NSIS packages
+        if: matrix.arch == 'x64'
         shell: pwsh
         run: ./scripts/test-windows-installer.ps1 -Arch "${{ matrix.arch }}" -ReleaseChannel "${{ needs.validate-release.outputs.channel }}" -ExpectedMachine "${{ matrix.pe_machine }}" -ReleaseDirectory release
 
@@ -739,6 +659,7 @@ jobs:
           done
 
       - name: Install, launch, and uninstall native DEB packages
+        if: matrix.arch == 'x64'
         run: |
           set -euo pipefail
           for deb in release/*${{ matrix.deb_arch }}.deb; do
@@ -767,6 +688,7 @@ jobs:
           done
 
       - name: Install, launch, and uninstall native RPM packages
+        if: matrix.arch == 'x64'
         run: |
           set -euo pipefail
           for rpm in release/*${{ matrix.rpm_arch }}.rpm; do
@@ -813,9 +735,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  # NOTE: All Snap builds (amd64 and arm64) are handled by Snapcraft's "Build from GitHub" service
-  # which automatically builds snaps when you push to the repo.
-  # See: https://snapcraft.io/facebook-messenger-desktop/builds
+  # Snap builds and promotions are handled only by the manual Snap workflows.
 
   seal-update-feeds:
     name: Seal authenticated update feeds
@@ -932,10 +852,8 @@ jobs:
       [
         validate-release,
         resolve-legacy-updater-bridge,
-        nonmac-updater-e2e,
         issue53-x64-smoke,
         assemble-macos,
-        macos-updater-e2e,
         assemble-windows,
         build-windows-legacy-bridge,
         build-linux,
@@ -1671,7 +1589,7 @@ jobs:
           retention-days: 14
 
   dispatch-homebrew-publication:
-    name: Dispatch and await tap-owned Homebrew publication
+    name: Dispatch tap-owned Homebrew publication
     needs: [validate-release, prepare-homebrew-publication, prepare-homebrew-beta-publication]
     if: >-
       always() &&
@@ -1692,28 +1610,18 @@ jobs:
           repositories: homebrew-tap
           permission-contents: write
           permission-actions: read
-      - name: Dispatch trusted publication and wait for exact correlation
+      - name: Dispatch trusted publication
         env:
           GH_TOKEN: ${{ steps.dispatcher.outputs.token }}
           TAP_REPOSITORY: apotenza92/homebrew-tap
         run: |
           set -euo pipefail
           correlation="${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_REF_NAME}"
-          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n --arg product facebook-messenger-desktop --arg tag "$GITHUB_REF_NAME" --arg release_commit "$GITHUB_SHA" \
             --arg source_run_id "$GITHUB_RUN_ID" --arg source_run_attempt "$GITHUB_RUN_ATTEMPT" \
             --arg correlation_id "$correlation" \
             '{event_type:"publish-homebrew-v1",client_payload:{product:$product,tag:$tag,release_commit:$release_commit,source_run_id:$source_run_id,source_run_attempt:$source_run_attempt,correlation_id:$correlation_id}}' |
             gh api --method POST "repos/$TAP_REPOSITORY/dispatches" --input -
-          run_id=''
-          for _ in {1..30}; do
-            run_id="$(gh api "repos/$TAP_REPOSITORY/actions/workflows/publish-homebrew.yml/runs?event=repository_dispatch&per_page=30" \
-              --jq ".workflow_runs[] | select(.display_title == \"$correlation\" and .created_at >= \"$started\") | .id" | head -n1)"
-            [[ -n "$run_id" ]] && break
-            sleep 2
-          done
-          [[ -n "$run_id" ]]
-          gh run watch "$run_id" --repo "$TAP_REPOSITORY" --exit-status
 
   # Snap promotion is manual and protected in snap-promote.yml.
 

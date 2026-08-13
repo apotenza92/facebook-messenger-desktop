@@ -137,6 +137,8 @@ jobs:
     needs: [prepare, deterministic]
     runs-on: ${{ matrix.runner }}
     environment: release-signing
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     permissions:
       contents: read
     strategy:
@@ -281,7 +283,6 @@ jobs:
     name: macOS ${{ matrix.channel }} ${{ matrix.arch }} updater readiness
     needs: [prepare, assemble-macos]
     runs-on: ${{ matrix.runner }}
-    environment: ${{ matrix.channel }}-updater-verification
     permissions:
       contents: read
     strategy:
@@ -316,7 +317,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-          MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG: ${{ vars.MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG }}
+          MESSENGER_MAC_UPDATER_BOOTSTRAP_TAG: ${{ matrix.channel == 'stable' && vars.MESSENGER_STABLE_MAC_UPDATER_BOOTSTRAP_TAG || vars.MESSENGER_BETA_MAC_UPDATER_BOOTSTRAP_TAG }}
         run: |
           set -euo pipefail
           PRODUCT_PREFIX=Messenger
