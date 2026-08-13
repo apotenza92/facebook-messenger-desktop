@@ -245,6 +245,8 @@ jobs:
     needs: [validate-release, quality]
     runs-on: ${{ matrix.runner }}
     environment: release-signing
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     permissions:
       contents: read
     strategy:

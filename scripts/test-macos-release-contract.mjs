@@ -1108,6 +1108,7 @@ function testWorkflowContract() {
   assert.match(buildMacos, /runner:\s*macos-15\b/);
   assert.match(buildMacos, /runner:\s*macos-15-intel\b/);
   assert.doesNotMatch(buildMacos, /runner:\s*macos-26(?:-intel)?\b/);
+  assert.match(buildMacos, /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.3\.app\/Contents\/Developer/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_P12_BASE64/);
   assert.match(workflow, /APPLE_NOTARYTOOL_KEY_P8_BASE64/);
   assert.match(
@@ -1395,6 +1396,10 @@ function testWorkflowContract() {
   );
   assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-15\b/);
   assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-15-intel\b/);
+  assert.match(
+    jobSource(ciWorkflow, "build-macos"),
+    /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.3\.app\/Contents\/Developer/,
+  );
   assert.match(
     ciWorkflow,
     /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,
@@ -1763,6 +1768,11 @@ function testWorkflowContract() {
     packageVerifier,
     /run\("otool", \["-l", "-m", machOPath\]\)/,
     "Mach-O minimum-version inspection must disable archive(member) parsing",
+  );
+  assert.match(
+    packageVerifier,
+    /run\("node", \["scripts\/test-icon-assets\.js", appPath\]/,
+    "Final signed packages must verify the compiled Icon Composer asset catalog",
   );
 
   const maintainedReleaseSources = [
