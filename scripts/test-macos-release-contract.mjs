@@ -1105,9 +1105,9 @@ function testWorkflowContract() {
   assert.doesNotMatch(validateRelease, /runner:\s*'macos-15-intel'/);
   assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
-  assert.match(buildMacos, /runner:\s*macos-26\b/);
-  assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
-  assert.doesNotMatch(buildMacos, /runner:\s*macos-15(?:-intel)?\b/);
+  assert.match(buildMacos, /runner:\s*macos-15\b/);
+  assert.match(buildMacos, /runner:\s*macos-15-intel\b/);
+  assert.doesNotMatch(buildMacos, /runner:\s*macos-26(?:-intel)?\b/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_P12_BASE64/);
   assert.match(workflow, /APPLE_NOTARYTOOL_KEY_P8_BASE64/);
   assert.match(
@@ -1261,6 +1261,21 @@ function testWorkflowContract() {
   assert.match(workflow, /Assemble exact unsigned Windows installers/);
   assert.match(workflow, /Install, launch, and uninstall native DEB packages/);
   assert.match(
+    jobSource(workflow, "build-windows"),
+    /name: Install, launch, and uninstall native NSIS packages\s+if: matrix\.arch == 'x64'/,
+    "Ordinary releases must keep the slow native ARM64 NSIS lifecycle out of the critical path",
+  );
+  assert.match(
+    jobSource(workflow, "build-linux"),
+    /name: Install, launch, and uninstall native DEB packages\s+if: matrix\.arch == 'x64'/,
+    "Ordinary releases must keep the slow native ARM64 DEB lifecycle out of the critical path",
+  );
+  assert.match(
+    jobSource(workflow, "build-linux"),
+    /name: Install, launch, and uninstall native RPM packages\s+if: matrix\.arch == 'x64'/,
+    "Ordinary releases must keep the slow native ARM64 RPM lifecycle out of the critical path",
+  );
+  assert.match(
     workflow,
     /desktop_file="\/usr\/share\/applications\/\$package_name\.desktop"/,
   );
@@ -1378,8 +1393,8 @@ function testWorkflowContract() {
     /environment:\s*release-signing/,
     "Manual CI must use the protected macOS signing environment",
   );
-  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26\b/);
-  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26-intel\b/);
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-15\b/);
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-15-intel\b/);
   assert.match(
     ciWorkflow,
     /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,

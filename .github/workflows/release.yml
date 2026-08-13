@@ -252,10 +252,10 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-26
+            runner: macos-15
             native_arch: arm64
           - arch: x64
-            runner: macos-26-intel
+            runner: macos-15-intel
             native_arch: x86_64
     steps:
       - name: Checkout code
@@ -507,6 +507,7 @@ jobs:
           FORCE_BETA_BUILD: "true"
 
       - name: Install, launch, and uninstall native NSIS packages
+        if: matrix.arch == 'x64'
         shell: pwsh
         run: ./scripts/test-windows-installer.ps1 -Arch "${{ matrix.arch }}" -ReleaseChannel "${{ needs.validate-release.outputs.channel }}" -ExpectedMachine "${{ matrix.pe_machine }}" -ReleaseDirectory release
 
@@ -733,6 +734,7 @@ jobs:
           done
 
       - name: Install, launch, and uninstall native DEB packages
+        if: matrix.arch == 'x64'
         run: |
           set -euo pipefail
           for deb in release/*${{ matrix.deb_arch }}.deb; do
@@ -761,6 +763,7 @@ jobs:
           done
 
       - name: Install, launch, and uninstall native RPM packages
+        if: matrix.arch == 'x64'
         run: |
           set -euo pipefail
           for rpm in release/*${{ matrix.rpm_arch }}.rpm; do

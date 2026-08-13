@@ -34,13 +34,13 @@ console.log('');
 // Icon paths - beta uses orange icons from beta/ subdirectory
 const iconPaths = {
   stable: {
-    mac: 'assets/icons/macos/Messenger.icon',
+    mac: 'assets/icons/icon.icns',
     icns: 'assets/icons/icon.icns',
     ico: 'assets/icons/icon.ico',
     linux: 'assets/icons/linux',
   },
   beta: {
-    mac: 'assets/icons/macos/Messenger Beta.icon',
+    mac: 'assets/icons/beta/icon.icns',
     icns: 'assets/icons/beta/icon.icns',
     ico: 'assets/icons/beta/icon.ico',
     linux: 'assets/icons/beta/linux',

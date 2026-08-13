@@ -76,6 +76,8 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 - Keep releases restricted to deliberate `v*` tags whose commits are reachable from `main`.
 - Homebrew release jobs attach and attest the common checksum-sealed bundle, then use the tag-restricted `homebrew-dispatch` environment to mint a short-lived actions-only GitHub App token. The source workflow dispatches publication without waiting and never writes the tap. The tap reports and retries publication independently.
 - Keep ordinary release updater gates on macOS ARM64, Windows x64, and Linux x64. Keep the full native architecture matrix in manually dispatched CI for updater, packaging, native dependency, or architecture-support changes.
+- Use the tracked ICNS files for release packaging so builds do not require Xcode 26 only to compile Icon Composer documents. Keep Icon Composer sources as design inputs and verify that generated ICNS outputs remain current.
+- Keep ARM64 artifacts in every release. The blocking Linux ARM64 job launches the AppImages. Run native ARM64 NSIS install/uninstall and Linux DEB/RPM install tests in manually dispatched full qualification because those filesystem-heavy checks dominate the scarce ARM runners.
 
 ## Platform invariants
 
