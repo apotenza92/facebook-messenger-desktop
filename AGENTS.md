@@ -74,7 +74,7 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 - Keep ordinary CI and maintenance manually dispatchable. Do not run routine push, pull-request, scheduled, Dependabot, or autonomous maintenance workflows.
 - Keep Snap rebuild, refresh, rescue, and promotion workflows manual-only.
 - Keep releases restricted to deliberate `v*` tags whose commits are reachable from `main`.
-- Homebrew release jobs attach and attest the common checksum-sealed bundle, then use the tag-restricted `homebrew-dispatch` environment to mint a short-lived actions-only GitHub App token. The source workflow waits for tap-owned publication and never writes the tap.
+- Homebrew release jobs attach and attest the common checksum-sealed bundle, then use the tag-restricted `homebrew-dispatch` environment to mint a short-lived actions-only GitHub App token. The source workflow dispatches publication without waiting and never writes the tap. The tap reports and retries publication independently.
 
 ## Platform invariants
 

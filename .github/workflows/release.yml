@@ -1671,7 +1671,7 @@ jobs:
           retention-days: 14
 
   dispatch-homebrew-publication:
-    name: Dispatch and await tap-owned Homebrew publication
+    name: Dispatch tap-owned Homebrew publication
     needs: [validate-release, prepare-homebrew-publication, prepare-homebrew-beta-publication]
     if: >-
       always() &&
@@ -1692,28 +1692,18 @@ jobs:
           repositories: homebrew-tap
           permission-contents: write
           permission-actions: read
-      - name: Dispatch trusted publication and wait for exact correlation
+      - name: Dispatch trusted publication
         env:
           GH_TOKEN: ${{ steps.dispatcher.outputs.token }}
           TAP_REPOSITORY: apotenza92/homebrew-tap
         run: |
           set -euo pipefail
           correlation="${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_REF_NAME}"
-          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n --arg product facebook-messenger-desktop --arg tag "$GITHUB_REF_NAME" --arg release_commit "$GITHUB_SHA" \
             --arg source_run_id "$GITHUB_RUN_ID" --arg source_run_attempt "$GITHUB_RUN_ATTEMPT" \
             --arg correlation_id "$correlation" \
             '{event_type:"publish-homebrew-v1",client_payload:{product:$product,tag:$tag,release_commit:$release_commit,source_run_id:$source_run_id,source_run_attempt:$source_run_attempt,correlation_id:$correlation_id}}' |
             gh api --method POST "repos/$TAP_REPOSITORY/dispatches" --input -
-          run_id=''
-          for _ in {1..30}; do
-            run_id="$(gh api "repos/$TAP_REPOSITORY/actions/workflows/publish-homebrew.yml/runs?event=repository_dispatch&per_page=30" \
-              --jq ".workflow_runs[] | select(.display_title == \"$correlation\" and .created_at >= \"$started\") | .id" | head -n1)"
-            [[ -n "$run_id" ]] && break
-            sleep 2
-          done
-          [[ -n "$run_id" ]]
-          gh run watch "$run_id" --repo "$TAP_REPOSITORY" --exit-status
 
   # Snap promotion is manual and protected in snap-promote.yml.
 
