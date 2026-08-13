@@ -1214,7 +1214,7 @@ function testWorkflowContract() {
   );
   assert.match(workflow, /MISSING_ASSETS/);
   assert.match(workflow, /cmp "artifacts\/release\/\$asset_name"/);
-  assert.match(
+  assert.doesNotMatch(
     workflow,
     /environment:\s*\$\{\{ matrix\.channel \}\}-updater-verification/,
   );
