@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Update Electron and patched transitive URL and HTTP runtimes after new security advisories.
+
 ## [1.4.2] - 2026-08-11
 
 ### Changed
