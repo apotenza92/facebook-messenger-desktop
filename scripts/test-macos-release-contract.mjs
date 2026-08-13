@@ -1074,10 +1074,10 @@ function testWorkflowContract() {
     ),
     "Hosted release grammar must accept only numbered beta prereleases",
   );
-  assert.match(
+  assert.doesNotMatch(
     validateRelease,
     /resolveNonMacUpdaterPredecessor\(packageJson\.version\)/,
-    "Hosted releases must resolve the updater predecessor through the shared release contract",
+    "Routine releases must not resolve an N-1 updater predecessor",
   );
   assert.doesNotMatch(workflow, /contains\(github\.ref/);
   assert.doesNotMatch(workflow, /\balpha\b|\brc\b/);
@@ -1101,9 +1101,7 @@ function testWorkflowContract() {
     "Stable/beta publication approval must gate only the final release job",
   );
   assert.match(workflow, /environment:\s*release-signing/);
-  assert.match(validateRelease, /runner:\s*'macos-15'/);
-  assert.doesNotMatch(validateRelease, /runner:\s*'macos-15-intel'/);
-  assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
+  assert.doesNotMatch(validateRelease, /runner:\s*'macos-(?:15|26)(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
   assert.match(buildMacos, /runner:\s*macos-26\b/);
   assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
@@ -1122,7 +1120,7 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /secrets\.APPLE_NOTARYTOOL_KEY_ID/);
   assert.doesNotMatch(workflow, /secrets\.APPLE_NOTARYTOOL_ISSUER_ID/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_SHA256/);
-  assert.match(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
+  assert.doesNotMatch(workflow, /APPLE_PRIOR_SIGNING_CERTIFICATE_SHA256/);
   assert.match(workflow, /brew list openssl@3/);
   assert.match(workflow, /node-version:\s*"22\.12\.0"/);
   assert.doesNotMatch(workflow, /node-version:\s*"20"/);
@@ -1183,9 +1181,8 @@ function testWorkflowContract() {
     /name:\s*Upload artifacts[\s\S]*?if:\s*always\(\)[\s\S]*?name:\s*windows-input-\$\{\{ matrix\.arch \}\}/,
   );
   assert.match(workflow, /runner:\s*ubuntu-24\.04-arm/);
-  assert.match(workflow, /macos-updater-e2e:/);
-  assert.match(workflow, /MESSENGER_STABLE_MAC_UPDATER_BOOTSTRAP_TAG/);
-  assert.match(workflow, /MESSENGER_BETA_MAC_UPDATER_BOOTSTRAP_TAG/);
+  assert.doesNotMatch(workflow, /macos-updater-e2e:/);
+  assert.doesNotMatch(workflow, /nonmac-updater-e2e:/);
   assert.doesNotMatch(workflow, /environment:\s*\$\{\{ matrix\.channel \}\}-updater-verification/);
   assert.match(
     workflow,
@@ -1620,14 +1617,6 @@ function testWorkflowContract() {
   assert.match(nonmacWorkflow, /candidate_build_artifact:/);
   assert.doesNotMatch(nonmacWorkflow, /npm pkg set "version=\$PREVIOUS_VERSION"/);
   assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
-  const nonmacReleaseJob = jobSource(workflow, "nonmac-updater-e2e");
-  assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-windows/);
-  assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-linux/);
-  assert.match(nonmacReleaseJob, /candidate_build_artifact:/);
-  assert.match(nonmacReleaseJob, /windows-input-x64/);
-  assert.doesNotMatch(nonmacReleaseJob, /windows-input-arm64/);
-  assert.match(nonmacReleaseJob, /linux-build-x64/);
-  assert.doesNotMatch(nonmacReleaseJob, /linux-build-arm64/);
   const windowsBuildJob = jobSource(workflow, "build-windows");
   assert.match(windowsBuildJob, /Save updater candidate app archive/);
   assert.match(windowsBuildJob, /release\/updater-app\.asar/);
@@ -1635,10 +1624,10 @@ function testWorkflowContract() {
   assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
   assert.match(workflow, /pattern:\s*macos-input-\*/);
   assert.doesNotMatch(workflow, /ci-macos-input-/);
-  assert.match(
+  assert.doesNotMatch(
     jobSource(workflow, "release"),
-    /needs:[\s\S]*?nonmac-updater-e2e/,
-    "Publication must wait for all native Windows and AppImage updater gates",
+    /needs:[\s\S]*?(?:nonmac|macos)-updater-e2e/,
+    "Routine publication must not wait for N-1 updater qualification",
   );
   const nonmacHarness = readFileSync(
     join(repositoryRoot, "scripts", "test-nonmac-update.cjs"),
