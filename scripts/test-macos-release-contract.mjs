@@ -1102,7 +1102,7 @@ function testWorkflowContract() {
   );
   assert.match(workflow, /environment:\s*release-signing/);
   assert.match(validateRelease, /runner:\s*'macos-15'/);
-  assert.match(validateRelease, /runner:\s*'macos-15-intel'/);
+  assert.doesNotMatch(validateRelease, /runner:\s*'macos-15-intel'/);
   assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
   assert.match(buildMacos, /runner:\s*macos-26\b/);
@@ -1603,9 +1603,9 @@ function testWorkflowContract() {
   assert.match(nonmacReleaseJob, /needs:[\s\S]*?build-linux/);
   assert.match(nonmacReleaseJob, /candidate_build_artifact:/);
   assert.match(nonmacReleaseJob, /windows-input-x64/);
-  assert.match(nonmacReleaseJob, /windows-input-arm64/);
+  assert.doesNotMatch(nonmacReleaseJob, /windows-input-arm64/);
   assert.match(nonmacReleaseJob, /linux-build-x64/);
-  assert.match(nonmacReleaseJob, /linux-build-arm64/);
+  assert.doesNotMatch(nonmacReleaseJob, /linux-build-arm64/);
   const windowsBuildJob = jobSource(workflow, "build-windows");
   assert.match(windowsBuildJob, /Save updater candidate app archive/);
   assert.match(windowsBuildJob, /release\/updater-app\.asar/);

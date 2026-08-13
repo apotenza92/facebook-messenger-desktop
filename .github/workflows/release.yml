@@ -65,10 +65,8 @@ jobs:
           const updaterMatrix = [
             ...(stable ? [
               { channel: 'stable', arch: 'arm64', runner: 'macos-15' },
-              { channel: 'stable', arch: 'x64', runner: 'macos-15-intel' },
             ] : []),
             { channel: 'beta', arch: 'arm64', runner: 'macos-15' },
-            { channel: 'beta', arch: 'x64', runner: 'macos-15-intel' },
           ];
           const previousVersion = resolveNonMacUpdaterPredecessor(packageJson.version);
           const output = [
@@ -114,12 +112,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: win32-arm64
-            candidate_build_artifact: windows-input-arm64
           - target: win32-x64
             candidate_build_artifact: windows-input-x64
-          - target: linux-arm64
-            candidate_build_artifact: linux-build-arm64
           - target: linux-x64
             candidate_build_artifact: linux-build-x64
     uses: ./.github/workflows/nonmac-updater-audit.yml

@@ -75,6 +75,7 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 - Keep Snap rebuild, refresh, rescue, and promotion workflows manual-only.
 - Keep releases restricted to deliberate `v*` tags whose commits are reachable from `main`.
 - Homebrew release jobs attach and attest the common checksum-sealed bundle, then use the tag-restricted `homebrew-dispatch` environment to mint a short-lived actions-only GitHub App token. The source workflow dispatches publication without waiting and never writes the tap. The tap reports and retries publication independently.
+- Keep ordinary release updater gates on macOS ARM64, Windows x64, and Linux x64. Keep the full native architecture matrix in manually dispatched CI for updater, packaging, native dependency, or architecture-support changes.
 
 ## Platform invariants
 
