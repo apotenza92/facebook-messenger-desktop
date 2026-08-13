@@ -812,9 +812,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  # NOTE: All Snap builds (amd64 and arm64) are handled by Snapcraft's "Build from GitHub" service
-  # which automatically builds snaps when you push to the repo.
-  # See: https://snapcraft.io/facebook-messenger-desktop/builds
+  # Snap builds and promotions are handled only by the manual Snap workflows.
 
   seal-update-feeds:
     name: Seal authenticated update feeds
