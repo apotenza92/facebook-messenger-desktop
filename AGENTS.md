@@ -41,7 +41,7 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 2. Reproduce bugs with a deterministic failing test before changing behaviour whenever feasible.
 3. Make the smallest fix that addresses the evidence. Preserve unrelated user changes.
 4. Run `npm run test:ci`, then any relevant platform packaging or GUI checks. Live-account tests are supplemental and must never replace deterministic coverage.
-5. Use pull requests by default. Do not bypass required checks or merge a failing pull request.
+5. Use pull requests for external contributions, risky release-system changes, and broad changes that benefit from review. Focused owner changes can land directly after relevant checks pass.
 6. Update `CHANGELOG.md` for every user-visible change before a release.
 7. Keep project-specific agent instructions in this file. Do not install project skills globally.
 
