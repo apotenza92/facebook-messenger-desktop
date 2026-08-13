@@ -1105,9 +1105,9 @@ function testWorkflowContract() {
   assert.doesNotMatch(validateRelease, /runner:\s*'macos-15-intel'/);
   assert.doesNotMatch(validateRelease, /runner:\s*'macos-26(?:-intel)?'/);
   const buildMacos = jobSource(workflow, "build-macos");
-  assert.match(buildMacos, /runner:\s*macos-15\b/);
-  assert.match(buildMacos, /runner:\s*macos-15-intel\b/);
-  assert.doesNotMatch(buildMacos, /runner:\s*macos-26(?:-intel)?\b/);
+  assert.match(buildMacos, /runner:\s*macos-26\b/);
+  assert.match(buildMacos, /runner:\s*macos-26-intel\b/);
+  assert.doesNotMatch(buildMacos, /runner:\s*macos-15(?:-intel)?\b/);
   assert.match(buildMacos, /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.3\.app\/Contents\/Developer/);
   assert.match(workflow, /APPLE_SIGNING_CERTIFICATE_P12_BASE64/);
   assert.match(workflow, /APPLE_NOTARYTOOL_KEY_P8_BASE64/);
@@ -1396,8 +1396,8 @@ function testWorkflowContract() {
     /environment:\s*release-signing/,
     "Manual CI must use the protected macOS signing environment",
   );
-  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-15\b/);
-  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-15-intel\b/);
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26\b/);
+  assert.match(jobSource(ciWorkflow, "build-macos"), /runner:\s*macos-26-intel\b/);
   assert.match(
     jobSource(ciWorkflow, "build-macos"),
     /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.3\.app\/Contents\/Developer/,
