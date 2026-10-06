@@ -94,8 +94,56 @@ const runProcessErrorGuardTests = async () => {
   console.log("PASS process error guards");
 };
 
+const runPageBridgePolicyTests = () => {
+  const { isTrustedPageBridgeMessage } = require(
+    path.join(APP_ROOT, "src/preload/page-bridge-policy.ts"),
+  );
+  const ownWindow = {};
+  const otherFrame = {};
+
+  assert(
+    isTrustedPageBridgeMessage(
+      { source: ownWindow, origin: "https://www.facebook.com" },
+      ownWindow,
+    ),
+    "messages from the app's own Facebook window are trusted",
+  );
+  assert(
+    isTrustedPageBridgeMessage(
+      { source: ownWindow, origin: "https://www.messenger.com" },
+      ownWindow,
+    ),
+    "messages from the app's own Messenger window are trusted",
+  );
+  assert(
+    !isTrustedPageBridgeMessage(
+      { source: otherFrame, origin: "https://www.facebook.com" },
+      ownWindow,
+    ),
+    "messages posted by another frame are rejected even on a Facebook origin",
+  );
+  assert(
+    !isTrustedPageBridgeMessage({ source: null, origin: "" }, ownWindow),
+    "messages without a source are rejected",
+  );
+  for (const origin of [
+    "https://evil.example",
+    "http://www.facebook.com",
+    "https://facebook.com.evil.example",
+    "null",
+  ]) {
+    assert(
+      !isTrustedPageBridgeMessage({ source: ownWindow, origin }, ownWindow),
+      `origin ${origin} is rejected`,
+    );
+  }
+
+  console.log("PASS page bridge policy");
+};
+
 const run = async () => {
   await runProcessErrorGuardTests();
+  runPageBridgePolicyTests();
   console.log("PASS stability tests");
 };
 

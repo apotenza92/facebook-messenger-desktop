@@ -1482,7 +1482,10 @@
   // ============================================================================
 
   // Handle events sent from the browser process (via preload)
-  window.addEventListener("message", ({ data }: MessageEvent) => {
+  window.addEventListener("message", (event: MessageEvent) => {
+    // Preload relays main-process events on this window; ignore other frames.
+    if (event.source !== window) return;
+    const { data } = event;
     if (!data || typeof data !== "object") return;
 
     const { type, data: eventData } = data as { type: string; data: any };

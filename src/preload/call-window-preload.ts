@@ -4,6 +4,7 @@
  * This preload provides fallback cleanup via the exposed __stopAllMediaTracks function
  */
 import { ipcRenderer } from "electron";
+import { isTrustedPageBridgeMessage } from "./page-bridge-policy";
 
 // Cleanup function - calls the injected script's cleanup if available
 function triggerCleanup(reason: string): void {
@@ -28,6 +29,7 @@ window.addEventListener("pagehide", () => {
 });
 
 window.addEventListener("message", (event) => {
+  if (!isTrustedPageBridgeMessage(event, window)) return;
   const data = event.data;
   if (!data || data.type !== "md-call-window-state") {
     return;

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { isTrustedPageBridgeMessage } from "./page-bridge-policy";
 import {
   type FacebookHeaderSuppressionMode,
   resolveEffectiveFacebookHeaderSuppressionMode,
@@ -4325,6 +4326,7 @@ ipcRenderer.on(
   };
 
   window.addEventListener("message", (event: MessageEvent) => {
+    if (!isTrustedPageBridgeMessage(event, window)) return;
     const payload = event.data;
     if (!payload || typeof payload !== "object") return;
 
@@ -4621,7 +4623,8 @@ ipcRenderer.on(
 
   // Also listen for messages (fallback)
   window.addEventListener("message", (event: MessageEvent) => {
-    // Only process messages from the same origin (our injected script)
+    // Only our own injected scripts post on this window; drop other frames.
+    if (!isTrustedPageBridgeMessage(event, window)) return;
     if (event.data && typeof event.data === "object") {
       // Handle both 'electron-notification' (from bridge) and 'notification' (from fallback)
       if (
