@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { ipcRenderer } from "electron";
 import { isTrustedPageBridgeMessage } from "./page-bridge-policy";
 import { describeInteractionTarget } from "./debug-redaction-policy";
 import { decodeRendererDebugFlags } from "../shared/debug-flags";
@@ -531,59 +531,6 @@ function sendIncomingCallOverlayHint(visible: boolean, reason: string): void {
     // Ignore postMessage failures
   }
 }
-
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld("electronAPI", {
-  // Notification API override (legacy - kept for compatibility)
-  showNotification: (data: {
-    title: string;
-    body: string;
-    icon?: string;
-    tag?: string;
-    silent?: boolean;
-    sourceKind?: string;
-    sourceLabel?: string;
-    provenanceReason?: string;
-    href?: string;
-  }) => {
-    ipcRenderer.send("show-notification", data);
-  },
-
-  // Unread count updates
-  updateUnreadCount: (count: number) => {
-    console.log(`[Preload] Sending update-unread-count: ${count}`);
-    ipcRenderer.send("update-unread-count", count);
-  },
-
-  // Clear badge
-  clearBadge: () => {
-    ipcRenderer.send("clear-badge");
-  },
-
-  // Incoming call - bring window to foreground
-  incomingCall: () => {
-    console.log("[Preload] Sending incoming-call signal");
-    ipcRenderer.send("incoming-call");
-  },
-
-  // Notification actions
-  onNotificationAction: (callback: (action: string, data: any) => void) => {
-    ipcRenderer.on("notification-action-handler", (event, action, data) => {
-      callback(action, data);
-    });
-  },
-
-  // Test notification (for testing)
-  testNotification: () => {
-    ipcRenderer.send("test-notification");
-  },
-
-  // Menu bar hover tracking
-  sendMousePosition: (y: number) => {
-    ipcRenderer.send("mouse-position", y);
-  },
-});
 
 // Forward power/sleep state changes to page context
 ipcRenderer.on(
@@ -4477,24 +4424,9 @@ ipcRenderer.on(
   );
 })();
 
-// Listen for notification events from the injected script
-// The injected script dispatches custom events that we can catch
-// We need to inject a listener into the page context that forwards to us
+// Forward notification, badge and incoming-call messages posted by the
+// injected page scripts (see injectNotificationScripts in main) to IPC.
 (function setupNotificationBridge() {
-  // Inject a script into the page context to listen for custom events
-  // and forward them to the preload context via a message
-  const _bridgeScript = `
-    (function() {
-      window.addEventListener('electron-notification', function(event) {
-        // Forward to preload via a message we can catch
-        window.postMessage({ type: 'electron-notification', data: event.detail }, '*');
-      });
-    })();
-  `;
-
-  // Execute the bridge listener in the page context
-  // This runs after the page loads, so we'll inject it via main process
-
   let incomingCallOverlayHintTimer: number | null = null;
   let incomingCallOverlayHintHeartbeatTimer: number | null = null;
   let incomingCallOverlayHintStartedAt = 0;
@@ -4874,216 +4806,9 @@ ipcRenderer.on(
   });
 })();
 
-// Track mouse position for menu bar hover (Windows/Linux only)
-// We use screenY and window.screenY to calculate position relative to window top
-// This is more reliable than clientY which starts at the web content area
-if (process.platform !== "darwin") {
-  let lastInHoverZone = false;
-  const HOVER_ZONE = 10; // Pixels from top of window content area
-
-  function setupMouseTracking() {
-    document.addEventListener("mousemove", (event: MouseEvent) => {
-      // Use clientY - position within the viewport/web content
-      const y = event.clientY;
-
-      // Detect if mouse is near the top of the content area
-      const inHoverZone = y <= HOVER_ZONE;
-
-      // Only send updates when state changes (to avoid spam)
-      if (inHoverZone !== lastInHoverZone) {
-        lastInHoverZone = inHoverZone;
-        if (window.electronAPI && window.electronAPI.sendMousePosition) {
-          window.electronAPI.sendMousePosition(y);
-        }
-      }
-    });
-  }
-
-  // Set up mouse tracking when DOM is ready
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", setupMouseTracking);
-  } else {
-    setupMouseTracking();
-  }
-}
-
-// Legacy Notification override (kept as fallback, but main injection happens after page load)
-// This must happen immediately and be non-configurable to prevent site scripts from overriding it
+// Unread badge monitor.
 (function () {
   "use strict";
-
-  // Store original Notification constructor if it exists
-  const _OriginalNotification = window.Notification;
-
-  // Create a robust Notification override
-  function createNotificationOverride() {
-    class ElectronNotification {
-      public title: string;
-      public body: string;
-      public tag?: string;
-      private options: NotificationOptions;
-      private listeners: Map<string, EventListener[]> = new Map();
-
-      constructor(title: string, options?: NotificationOptions) {
-        this.title = title;
-        this.options = options || {};
-        this.tag = this.options.tag;
-        this.body = this.options.body || "";
-
-        console.log("[Notification Override] Creating notification:", {
-          title,
-          body: this.body,
-          tag: this.tag,
-        });
-
-        // Intentionally suppress this legacy fallback path.
-        // Notifications are handled by notifications-inject.ts with mute filters.
-      }
-
-      addEventListener(event: string, listener: EventListener | null) {
-        if (!listener) return;
-        if (!this.listeners.has(event)) {
-          this.listeners.set(event, []);
-        }
-        this.listeners.get(event)!.push(listener);
-      }
-
-      removeEventListener(event: string, listener: EventListener | null) {
-        if (!listener) return;
-        const listeners = this.listeners.get(event);
-        if (listeners) {
-          const index = listeners.indexOf(listener);
-          if (index > -1) {
-            listeners.splice(index, 1);
-          }
-        }
-      }
-
-      close() {
-        // Notification closed
-      }
-
-      static requestPermission(): Promise<NotificationPermission> {
-        return Promise.resolve("granted");
-      }
-
-      static get permission(): NotificationPermission {
-        return "granted";
-      }
-
-      // Some scripts assign to Notification.permission; include a no-op setter to avoid TypeErrors
-      static set permission(_value: NotificationPermission) {
-        // ignore
-      }
-    }
-
-    return ElectronNotification;
-  }
-
-  const ElectronNotification = createNotificationOverride();
-
-  // Replace window.Notification immediately and make it non-configurable
-  try {
-    // Delete existing Notification if it exists and is configurable
-    const existingDescriptor = Object.getOwnPropertyDescriptor(
-      window,
-      "Notification",
-    );
-    if (existingDescriptor && existingDescriptor.configurable) {
-      delete (window as any).Notification;
-    }
-
-    Object.defineProperty(window, "Notification", {
-      value: ElectronNotification,
-      writable: false,
-      configurable: false,
-      enumerable: true,
-    });
-
-    // Note: We don't need to define the prototype property - it's already
-    // read-only on class constructors and cannot be reassigned
-
-    console.log(
-      "[Notification Override] Successfully overridden Notification API",
-    );
-  } catch (e) {
-    // If defineProperty fails, we can't safely assign a class constructor directly
-    // as it may cause prototype errors. Log the error and continue.
-    console.error(
-      "[Notification Override] Failed to override Notification API:",
-      e,
-    );
-    console.warn(
-      "[Notification Override] Notifications may not work correctly",
-    );
-  }
-
-  // Continuously monitor and re-override if site scripts try to change it
-  let _overrideCheckInterval: number | null = null;
-
-  function ensureOverride() {
-    // Check if Notification was changed by comparing constructor name or instance
-    const currentNotification = (window as any).Notification;
-
-    // If it's already our notification, don't do anything
-    if (currentNotification === ElectronNotification) {
-      return;
-    }
-
-    // Check if it has our class name
-    if (
-      currentNotification &&
-      currentNotification.name === "ElectronNotification"
-    ) {
-      return;
-    }
-
-    // Only try to override if it's actually different
-    console.log(
-      "[Notification Override] Detected Notification was changed, re-overriding...",
-    );
-
-    // Check if the property is configurable
-    const descriptor = Object.getOwnPropertyDescriptor(window, "Notification");
-    if (descriptor && !descriptor.configurable) {
-      // If it's non-configurable and not ours, we can't change it
-      // This shouldn't happen if our initial override worked, but handle it gracefully
-      console.warn(
-        "[Notification Override] Cannot override - property is non-configurable",
-      );
-      return;
-    }
-
-    try {
-      // If property exists and is configurable, delete it first to avoid conflicts
-      if (descriptor && descriptor.configurable) {
-        delete (window as any).Notification;
-      }
-
-      Object.defineProperty(window, "Notification", {
-        value: ElectronNotification,
-        writable: false,
-        configurable: false,
-        enumerable: true,
-      });
-    } catch (e) {
-      // If defineProperty fails completely, log the error but don't try direct assignment
-      // Direct assignment of class constructors can cause prototype errors
-      console.warn("[Notification Override] Failed to re-override:", e);
-    }
-  }
-
-  // Check periodically to ensure override stays in place (every 2 seconds)
-  _overrideCheckInterval = window.setInterval(ensureOverride, 2000);
-
-  // Also override when DOM is ready
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      ensureOverride();
-    });
-  } else {
-    ensureOverride();
-  }
 
   // Monitor unread count and keep app badge state synchronized.
   // Simplified strategy:
@@ -5455,18 +5180,9 @@ if (process.platform !== "darwin") {
       scheduleRecount(trigger, 80);
     };
 
-    const originalPushState = history.pushState;
-    const originalReplaceState = history.replaceState;
-
-    history.pushState = function (...args) {
-      originalPushState.apply(history, args);
-      window.setTimeout(() => onUrlMaybeChanged("pushstate"), 50);
-    };
-
-    history.replaceState = function (...args) {
-      originalReplaceState.apply(history, args);
-      window.setTimeout(() => onUrlMaybeChanged("replacestate"), 50);
-    };
+    ipcRenderer.on("route-changed", () => {
+      window.setTimeout(() => onUrlMaybeChanged("route-changed"), 50);
+    });
 
     window.addEventListener("popstate", () => {
       window.setTimeout(() => onUrlMaybeChanged("popstate"), 50);
@@ -5561,15 +5277,12 @@ if (process.platform !== "darwin") {
     scheduleRecount("startup", 250);
   }
 
-  // Wait for DOM to be ready, then wait a bit more for electronAPI to be available
   function startMonitoring() {
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => {
-        // Wait a bit for contextBridge to complete
         setTimeout(monitorUnreadCount, 100);
       });
     } else {
-      // Wait a bit for contextBridge to complete
       setTimeout(monitorUnreadCount, 100);
     }
   }
@@ -5577,25 +5290,3 @@ if (process.platform !== "darwin") {
   startMonitoring();
 })();
 
-// Type definitions for TypeScript
-declare global {
-  interface Window {
-    electronAPI: {
-      showNotification: (data: {
-        title: string;
-        body: string;
-        icon?: string;
-        tag?: string;
-        silent?: boolean;
-      }) => void;
-      sendMousePosition: (y: number) => void;
-      updateUnreadCount: (count: number) => void;
-      clearBadge: () => void;
-      incomingCall: () => void;
-      onNotificationAction: (
-        callback: (action: string, data: any) => void,
-      ) => void;
-      testNotification: () => void;
-    };
-  }
-}

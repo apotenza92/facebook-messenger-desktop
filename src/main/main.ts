@@ -31,7 +31,6 @@ import {
   resolveNotificationDisplayBoundary,
 } from "./notification-handler";
 import { BadgeManager } from "./badge-manager";
-import { BackgroundService } from "./background-service";
 import {
   MESSAGES_HOME_URL,
   isAuthOrCheckpointRoute,
@@ -206,7 +205,6 @@ let mainWindow: BrowserWindow | null = null;
 let contentView: BrowserView | null = null;
 let notificationHandler: NotificationHandler;
 let badgeManager: BadgeManager;
-let _backgroundService: BackgroundService;
 let isQuitting = false;
 let resetApplied = false;
 let manualUpdateCheckInProgress = false;
@@ -1573,7 +1571,6 @@ let activeExternalAuthProviderFallback: {
   startedAt: number;
   resumeAttempts: number;
 } | null = null;
-let _hasTriedMessagesOnce = false; // True after first messages backend load attempt
 
 type WindowState = {
   x?: number;
@@ -2348,9 +2345,6 @@ const UPDATE_FREQUENCY_MS: Record<
 let currentUpdateFrequency: UpdateFrequency = "daily";
 let updateCheckInterval: NodeJS.Timeout | null = null;
 
-// XWayland preference for Linux Wayland users (for screen sharing compatibility)
-const _useXWayland = false;
-
 // Clean up legacy beta opt-in file from older versions (pre-1.2.1)
 // The old system used an in-app toggle; now beta is determined by version string
 const legacyBetaOptInFile = path.join(
@@ -2371,18 +2365,6 @@ function isBetaOptedIn(): boolean {
   // If running a prerelease version, user is on the beta channel
   // Uses module-level isBetaVersion constant
   return isBetaVersion;
-}
-
-function _loadXWaylandPreference(): boolean {
-  try {
-    if (fs.existsSync(xwaylandPreferenceFile)) {
-      const data = JSON.parse(fs.readFileSync(xwaylandPreferenceFile, "utf8"));
-      return data.useXWayland === true;
-    }
-  } catch (e) {
-    console.warn("[XWayland] Failed to load preference:", e);
-  }
-  return false;
 }
 
 function saveXWaylandPreference(value: boolean): void {
@@ -4749,7 +4731,6 @@ function createWindow(source: string = "unknown"): void {
   const hasPosition =
     restoredState.x !== undefined && restoredState.y !== undefined;
   const isMac = process.platform === "darwin";
-  const useContentView = true;
 
   mainWindow = new BrowserWindow({
     width: restoredState.width,
@@ -4775,14 +4756,10 @@ function createWindow(source: string = "unknown"): void {
           autoHideMenuBar: true,
         }),
     webPreferences: {
-      // On platforms using BrowserView, main window doesn't load web content directly.
-      // On Linux, load directly with preload.
-      preload: !useContentView
-        ? path.join(__dirname, "../preload/preload.js")
-        : undefined,
+      // Messenger loads in the content BrowserView; the main window itself
+      // never hosts web content.
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: !useContentView ? false : undefined,
       webSecurity: true,
       spellcheck: true,
       enableWebSQL: false,
@@ -4855,70 +4832,670 @@ function createWindow(source: string = "unknown"): void {
   };
   applyContentViewBoundsHandler = applyContentViewBounds;
 
-  if (useContentView) {
-    // Create content BrowserView for facebook.com/messages
-    contentView = new BrowserView({
-      webPreferences: {
-        preload: path.join(__dirname, "../preload/preload.js"),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false,
-        webSecurity: true,
-        spellcheck: true,
-        enableWebSQL: false,
-        additionalArguments: encodeRendererDebugFlags({
-          mediaOverlay: shouldWriteMediaOverlayDebugLog(),
-          reload: shouldWriteReloadDebugLog(),
-        }),
-      },
-    });
-    attachWebContentsFailureHandlers(
-      contentView.webContents,
-      "Messenger content view",
-      mainWindow,
-    );
-    attachWebContentsReloadDebugHandlers(
-      contentView.webContents,
-      "Messenger content view",
-    );
-    contentViewWebContentsId = contentView.webContents.id;
+  // Create content BrowserView for facebook.com/messages
+  contentView = new BrowserView({
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: true,
+      spellcheck: true,
+      enableWebSQL: false,
+      additionalArguments: encodeRendererDebugFlags({
+        mediaOverlay: shouldWriteMediaOverlayDebugLog(),
+        reload: shouldWriteReloadDebugLog(),
+      }),
+    },
+  });
+  attachWebContentsFailureHandlers(
+    contentView.webContents,
+    "Messenger content view",
+    mainWindow,
+  );
+  attachWebContentsReloadDebugHandlers(
+    contentView.webContents,
+    "Messenger content view",
+  );
+  contentViewWebContentsId = contentView.webContents.id;
 
-    mainWindow.addBrowserView(contentView);
-    // Initial bounds before we know the destination route.
-    contentView.setBounds({
-      x: 0,
-      y: 0,
-      width: initialViewBounds.width,
-      height: initialViewBounds.height,
-    });
-    contentView.setAutoResize({ width: true, height: true });
-    applyContentViewBounds();
-    startContentViewBoundsMonitoring();
+  mainWindow.addBrowserView(contentView);
+  // Initial bounds before we know the destination route.
+  contentView.setBounds({
+    x: 0,
+    y: 0,
+    width: initialViewBounds.width,
+    height: initialViewBounds.height,
+  });
+  contentView.setAutoResize({ width: true, height: true });
+  applyContentViewBounds();
+  startContentViewBoundsMonitoring();
 
-    // Set up permission handler on content view's session
-    contentView.webContents.session.setPermissionRequestHandler(
-      (webContents, permission, callback, details) => {
-        const url = webContents.getURL();
-        console.log(`[Permissions] Request received: ${permission}`, {
+  // Set up permission handler on content view's session
+  contentView.webContents.session.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => {
+      const url = webContents.getURL();
+      console.log(`[Permissions] Request received: ${permission}`, {
+        url,
+        requestingUrl: details.requestingUrl,
+        isMainFrame: details.isMainFrame,
+        details: JSON.stringify(details),
+      });
+
+      // Allow permissions for trusted Facebook/Messenger origins.
+      const isAllowedDomain = isFacebookOrMessengerUrl(url);
+
+      if (!isAllowedDomain) {
+        console.log(
+          `[Permissions] Denied ${permission} for non-allowed URL: ${url}`,
+        );
+        recordWebNotificationPermissionDecision({
+          source: "permission-request",
+          permission,
+          granted: false,
           url,
           requestingUrl: details.requestingUrl,
+          webContentsId: webContents.id,
+          isMainFrame: details.isMainFrame,
+          reason: "non-allowed-origin",
+        });
+        callback(false);
+        return;
+      }
+
+      if (permission === "notifications") {
+        recordWebNotificationPermissionDecision({
+          source: "permission-request",
+          permission,
+          granted: false,
+          url,
+          requestingUrl: details.requestingUrl,
+          webContentsId: webContents.id,
+          isMainFrame: details.isMainFrame,
+          reason: "browser-notifications-disabled",
+        });
+        callback(false);
+        return;
+      }
+
+      const allowedPermissions = [
+        "media",
+        "mediaKeySystem",
+        "fullscreen",
+        "pointerLock",
+      ];
+
+      if (allowedPermissions.includes(permission)) {
+        console.log(`[Permissions] Allowing ${permission}`);
+        callback(true);
+      } else {
+        console.log(`[Permissions] Denied ${permission} - not in allowlist`);
+        callback(false);
+      }
+    },
+  );
+
+  contentView.webContents.session.setPermissionCheckHandler(
+    (webContents, permission, requestingOrigin) => {
+      const allowedPermissions = [
+        "media",
+        "mediaKeySystem",
+        "fullscreen",
+        "pointerLock",
+      ];
+      const isAllowed = isFacebookOrMessengerUrl(requestingOrigin);
+      const hasPermission =
+        isAllowed && allowedPermissions.includes(permission);
+      console.log(
+        `[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
+      );
+      recordWebNotificationPermissionDecision({
+        source: "permission-check",
+        permission,
+        granted: false,
+        url: webContents?.getURL(),
+        requestingOrigin,
+        webContentsId: webContents?.id,
+        reason:
+          permission === "notifications"
+            ? "browser-notifications-disabled"
+            : "not-notification-permission",
+      });
+      return hasPermission;
+    },
+  );
+
+  logServiceWorkerNotificationInstrumentationAvailability(
+    contentView.webContents.session,
+    "content-view",
+  );
+  void clearFacebookNotificationServiceWorkers(
+    contentView.webContents.session,
+    "content-view",
+  );
+
+  // Set up screen sharing handler for getDisplayMedia() calls
+  // This is required for the "Share Screen" button to work during calls
+  contentView.webContents.session.setDisplayMediaRequestHandler(
+    async (request, callback) => {
+      console.log("[Screen Share] Display media request received");
+
+      // On native Wayland, screen sharing has limited support - offer to switch to XWayland
+      if (isRunningOnWayland() && !isRunningXWaylandMode()) {
+        const result = await dialog.showMessageBox(mainWindow!, {
+          type: "warning",
+          title: "Screen Sharing on Wayland",
+          message: "Screen sharing may not work reliably on native Wayland.",
+          detail:
+            "For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?",
+          buttons: ["Restart with XWayland", "Try Anyway", "Cancel"],
+          defaultId: 0,
+          cancelId: 2,
+        });
+
+        if (result.response === 0) {
+          // User chose to restart with XWayland
+          restartWithXWaylandMode(true);
+          callback({});
+          return;
+        } else if (result.response === 2) {
+          // User cancelled
+          callback({});
+          return;
+        }
+        // User chose "Try Anyway" - continue with screen sharing
+      }
+
+      try {
+        // Get available screen/window sources
+        const sources = await desktopCapturer.getSources({
+          types: ["screen", "window"],
+          thumbnailSize: { width: 150, height: 150 },
+          fetchWindowIcons: true,
+        });
+
+        console.log(`[Screen Share] Found ${sources.length} sources`);
+
+        if (sources.length === 0) {
+          console.log("[Screen Share] No sources available");
+          callback({});
+          return;
+        }
+
+        // If only one screen and no windows, auto-select it
+        const screens = sources.filter((s) => s.id.startsWith("screen:"));
+        if (screens.length === 1 && sources.length === 1) {
+          console.log(
+            "[Screen Share] Auto-selecting single screen:",
+            screens[0].name,
+          );
+          callback({ video: screens[0] });
+          return;
+        }
+
+        // Show a picker dialog for the user to choose
+        // Build choices array with source names
+        const choices = sources.map((source, _index) => {
+          const icon = source.id.startsWith("screen:") ? "🖥️" : "🪟";
+          return `${icon} ${source.name}`;
+        });
+
+        // Use Electron's dialog to let user pick
+        const result = await dialog.showMessageBox(mainWindow!, {
+          type: "question",
+          title: "Share Screen",
+          message: "Choose what to share:",
+          detail: "Select a screen or window to share during your call.",
+          buttons: [...choices, "Cancel"],
+          defaultId: 0,
+          cancelId: choices.length,
+        });
+
+        if (result.response < sources.length) {
+          const selectedSource = sources[result.response];
+          console.log("[Screen Share] User selected:", selectedSource.name);
+          callback({ video: selectedSource });
+        } else {
+          console.log("[Screen Share] User cancelled");
+          callback({});
+        }
+      } catch (error) {
+        console.error("[Screen Share] Error getting sources:", error);
+        callback({});
+      }
+    },
+  );
+
+  // Set up native download handler for Facebook CDN media files
+  // This handles downloads initiated via webContents.downloadURL()
+  contentView.webContents.session.on(
+    "will-download",
+    (event, item, _webContents) => {
+      const url = item.getURL();
+      const suggestedFilename = item.getFilename();
+      console.log("[Download] Download started:", {
+        url,
+        filename: suggestedFilename,
+      });
+
+      // Auto-save to Downloads folder
+      const downloadsPath = app.getPath("downloads");
+      const savePath = path.join(downloadsPath, suggestedFilename);
+      item.setSavePath(savePath);
+
+      // Log progress
+      item.on("updated", (event, state) => {
+        if (state === "progressing") {
+          if (item.isPaused()) {
+            console.log("[Download] Paused");
+          } else {
+            const received = item.getReceivedBytes();
+            const total = item.getTotalBytes();
+            const percent =
+              total > 0 ? Math.round((received / total) * 100) : 0;
+            console.log(
+              `[Download] Progress: ${percent}% (${received} / ${total})`,
+            );
+          }
+        } else if (state === "interrupted") {
+          console.log("[Download] Interrupted");
+        }
+      });
+
+      // Handle completion
+      item.once("done", (event, state) => {
+        if (state === "completed") {
+          console.log("[Download] Completed:", savePath);
+          showAppOwnedNotification({
+            sourceLabel: "content-view-download-complete",
+            provenanceReason: "electron-will-download-completed",
+            options: {
+              title: "Download Complete",
+              body: `Saved to Downloads: ${suggestedFilename}`,
+            },
+            onClick: () => {
+              shell.showItemInFolder(savePath);
+            },
+          });
+        } else if (state === "cancelled") {
+          console.log("[Download] Cancelled");
+        } else {
+          console.log("[Download] Failed:", state);
+        }
+      });
+    },
+  );
+
+  const userAgent = getMessengerDesktopUserAgent();
+  contentView.webContents.session.setUserAgent(userAgent);
+  console.log("[UserAgent] Set to:", userAgent);
+
+  // Set up context menu (right-click) with spelling suggestions and edit actions
+  setupContextMenu(contentView.webContents);
+
+  // Smart startup: check for existing session before loading
+  // If user has session cookies, try facebook.com/messages first.
+  // If no cookies (new user), go directly to custom login page
+  contentView.webContents.session.cookies
+    .get({ url: "https://www.facebook.com" })
+    .then((cookies) => {
+      // Check for actual session cookies (c_user indicates logged-in Facebook session)
+      const hasSessionCookie = cookies.some(
+        (c) => c.name === "c_user" || c.name === "xs",
+      );
+      console.log(
+        "[ContentView] Session check - has session:",
+        hasSessionCookie,
+        "cookies:",
+        cookies.length,
+      );
+
+      if (hasSessionCookie) {
+        // User likely logged in, load facebook.com/messages.
+        console.log(
+          "[ContentView] Session cookies found, loading facebook.com/messages...",
+        );
+        // Don't set loginFlowActive here - let did-finish-load handle it.
+        void loadWebContentsURLWithDebug(
+          contentView?.webContents,
+          MESSAGES_HOME_URL,
+          {
+            label: "Messenger content view",
+            trigger: "session-cookie-check",
+            source: "startup-session-check",
+          },
+        );
+      } else {
+        // No session, show custom login page directly (no flash)
+        console.log(
+          "[ContentView] No session cookies, showing login page directly...",
+        );
+        void loadWebContentsURLWithDebug(
+          contentView?.webContents,
+          getCustomLoginPageURL(),
+          {
+            label: "Messenger content view",
+            trigger: "session-cookie-check",
+            source: "startup-session-check",
+          },
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(
+        "[ContentView] Cookie check failed, trying facebook.com/messages:",
+        err,
+      );
+      void loadWebContentsURLWithDebug(
+        contentView?.webContents,
+        MESSAGES_HOME_URL,
+        {
+          label: "Messenger content view",
+          trigger: "session-cookie-check-error",
+          source: "startup-session-check",
+          extra: {
+            error: String((err as Error)?.message || err),
+          },
+        },
+      );
+    });
+
+  // Handle new window requests (target="_blank" links, window.open, etc.)
+  // Allow trusted Facebook pop-up windows (for calls) but open external URLs in system browser.
+  contentView.webContents.setWindowOpenHandler(
+    ({ url, features, frameName, disposition }) => {
+      console.log("[Window] Window open request:", {
+        url,
+        features,
+        frameName,
+        disposition,
+      });
+
+      const windowAction = decideWindowOpenActionForCurrentLoginFlow(url);
+      if (isExternalAuthProviderFallbackResumeUrl(url)) {
+        resumeExternalAuthProviderFallback(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          url,
+          "content-view-window-open-auth-provider-resume",
+        );
+        return { action: "deny" };
+      }
+
+      if (windowAction === "open-auth-provider-browser") {
+        openExternalAuthProviderBrowserFallback(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          url,
+          "content-view-window-open-auth-provider",
+        );
+        return { action: "deny" };
+      }
+
+      if (
+        windowAction === "reroute-auth-flow" &&
+        isAuthOrCheckpointRoute(url)
+      ) {
+        openAuthWindow(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          url,
+          "content-view-window-open-auth",
+        );
+        return { action: "deny" };
+      }
+
+      if (
+        windowAction === "reroute-main-view" ||
+        windowAction === "reroute-auth-flow"
+      ) {
+        loadUrlIntoMessengerTarget(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          url,
+          "content-view-window-open",
+        );
+        return { action: "deny" };
+      }
+
+      if (windowAction === "allow-child-window") {
+        console.log("[Window] Allowing Facebook call pop-up window:", url);
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            width: 800,
+            height: 600,
+            minWidth: 400,
+            minHeight: 300,
+            title: `${APP_DISPLAY_NAME} Call`,
+            icon: isDev ? undefined : getIconPath(),
+            webPreferences: {
+              preload: path.join(
+                __dirname,
+                "../preload/call-window-preload.js",
+              ),
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: false,
+              webSecurity: true,
+              spellcheck: true,
+            },
+          },
+        };
+      }
+
+      if (windowAction === "download-media") {
+        console.log(
+          "[Download] Initiating native download for Facebook media:",
+          url,
+        );
+        contentView!.webContents.downloadURL(url);
+        return { action: "deny" };
+      }
+
+      console.log("[Window] Opening external URL in browser:", url);
+      shell.openExternal(url).catch((err) => {
+        console.error("[External Link] Failed to open URL:", url, err);
+      });
+      return { action: "deny" };
+    },
+  );
+
+  // Set up permission handlers on child windows (for call windows)
+  contentView.webContents.on("did-create-window", (childWindow, details) => {
+    console.log("[Window] Child window created:", {
+      url: details.url,
+      frameName: details.frameName,
+      options: details.options,
+    });
+    attachWebContentsFailureHandlers(
+      childWindow.webContents,
+      "Messenger child window",
+      childWindow,
+    );
+    attachWebContentsReloadDebugHandlers(
+      childWindow.webContents,
+      "Messenger child window",
+    );
+
+    // Keep child windows scoped to call flows; reroute/open externally otherwise.
+    // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
+    // multiple trusted-domain hops (facebook.com <-> messenger.com) before
+    // reaching the final RTC URL.
+    // Allow a bounded bootstrap window, then fall back to strict routing.
+    const childOpenedAsAboutBlank = details.url === "about:blank";
+    const bootstrapWindowStartedAt = Date.now();
+    let bootstrapNavigationCount = 0;
+    let sawCallSafeBootstrapNavigation = false;
+
+    childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+      console.log(
+        "[Window] Child window navigation requested:",
+        navigationUrl,
+      );
+
+      if (navigationUrl === "about:blank") {
+        return;
+      }
+
+      const navigationAction =
+        decideWindowOpenActionForCurrentLoginFlow(navigationUrl);
+
+      if (navigationAction === "open-auth-provider-browser") {
+        console.log(
+          "[AuthFlow] Moving child auth provider navigation to browser fallback:",
+          getAuthFlowSafeUrl(navigationUrl),
+        );
+        event.preventDefault();
+        openExternalAuthProviderBrowserFallback(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          navigationUrl,
+          "content-view-child-auth-provider-navigation",
+          childWindow,
+        );
+        return;
+      }
+
+      if (
+        navigationAction === "reroute-auth-flow" &&
+        isAuthOrCheckpointRoute(navigationUrl)
+      ) {
+        console.log(
+          "[AuthFlow] Moving child auth navigation to auth window:",
+          navigationUrl,
+        );
+        event.preventDefault();
+        openAuthWindow(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          navigationUrl,
+          "content-view-child-auth-navigation",
+        );
+        childWindow.close();
+        return;
+      }
+
+      if (childOpenedAsAboutBlank) {
+        const bootstrapDecision =
+          shouldAllowAboutBlankChildBootstrapNavigation(
+            navigationUrl,
+            navigationAction,
+            bootstrapWindowStartedAt,
+            bootstrapNavigationCount,
+            sawCallSafeBootstrapNavigation,
+          );
+
+        if (bootstrapDecision.allowed) {
+          bootstrapNavigationCount += 1;
+          if (bootstrapDecision.allowedBy === "call-safe-action") {
+            sawCallSafeBootstrapNavigation = true;
+          }
+          console.log(
+            `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, by=${bootstrapDecision.allowedBy}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
+            navigationUrl,
+          );
+          return;
+        }
+
+        console.log(
+          `[Window] Blocking about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, action=${navigationAction}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
+          navigationUrl,
+        );
+      }
+
+      if (navigationAction === "allow-child-window") {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (
+        navigationAction === "reroute-main-view" ||
+        navigationAction === "reroute-auth-flow"
+      ) {
+        loadUrlIntoMessengerTarget(
+          {
+            parentWindow: mainWindow!,
+            targetWebContents: contentView!.webContents,
+            label: "Messenger content view",
+          },
+          navigationUrl,
+          "call-child-navigation",
+        );
+        childWindow.close();
+        return;
+      }
+
+      if (navigationAction === "download-media") {
+        console.log(
+          "[Download] Initiating native download from child window:",
+          navigationUrl,
+        );
+        contentView?.webContents.downloadURL(navigationUrl);
+        childWindow.close();
+        return;
+      }
+
+      console.log(
+        "[Window] Opening child-window external URL in browser:",
+        navigationUrl,
+      );
+      shell.openExternal(navigationUrl).catch((err) => {
+        console.error(
+          "[External Link] Failed to open child-window URL:",
+          navigationUrl,
+          err,
+        );
+      });
+      childWindow.close();
+    });
+
+    // Set up permission handler for the child window's session
+    childWindow.webContents.session.setPermissionRequestHandler(
+      (webContents, permission, callback, details) => {
+        const url = webContents.getURL();
+        const requestingUrl = details.requestingUrl || url;
+        console.log(`[Permissions] Child window request: ${permission}`, {
+          url,
+          requestingUrl,
           isMainFrame: details.isMainFrame,
           details: JSON.stringify(details),
         });
 
-        // Allow permissions for trusted Facebook/Messenger origins.
-        const isAllowedDomain = isFacebookOrMessengerUrl(url);
+        // Check both current URL and requesting URL (for about:blank windows)
+        const isAllowedUrl =
+          isFacebookOrMessengerUrl(url) || url === "about:blank";
+        const isAllowedRequest = isFacebookOrMessengerUrl(requestingUrl);
 
-        if (!isAllowedDomain) {
+        if (!isAllowedUrl && !isAllowedRequest) {
           console.log(
-            `[Permissions] Denied ${permission} for non-allowed URL: ${url}`,
+            `[Permissions] Denied ${permission} for non-allowed URL: ${url} (requesting: ${requestingUrl})`,
           );
           recordWebNotificationPermissionDecision({
             source: "permission-request",
             permission,
             granted: false,
             url,
-            requestingUrl: details.requestingUrl,
+            requestingUrl,
             webContentsId: webContents.id,
             isMainFrame: details.isMainFrame,
             reason: "non-allowed-origin",
@@ -4933,7 +5510,7 @@ function createWindow(source: string = "unknown"): void {
             permission,
             granted: false,
             url,
-            requestingUrl: details.requestingUrl,
+            requestingUrl,
             webContentsId: webContents.id,
             isMainFrame: details.isMainFrame,
             reason: "browser-notifications-disabled",
@@ -4950,16 +5527,18 @@ function createWindow(source: string = "unknown"): void {
         ];
 
         if (allowedPermissions.includes(permission)) {
-          console.log(`[Permissions] Allowing ${permission}`);
+          console.log(`[Permissions] Allowing ${permission} (child window)`);
           callback(true);
         } else {
-          console.log(`[Permissions] Denied ${permission} - not in allowlist`);
+          console.log(
+            `[Permissions] Denied ${permission} - not in allowlist (child window)`,
+          );
           callback(false);
         }
       },
     );
 
-    contentView.webContents.session.setPermissionCheckHandler(
+    childWindow.webContents.session.setPermissionCheckHandler(
       (webContents, permission, requestingOrigin) => {
         const allowedPermissions = [
           "media",
@@ -4971,7 +5550,7 @@ function createWindow(source: string = "unknown"): void {
         const hasPermission =
           isAllowed && allowedPermissions.includes(permission);
         console.log(
-          `[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
+          `[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
         );
         recordWebNotificationPermissionDecision({
           source: "permission-check",
@@ -4989,27 +5568,20 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
-    logServiceWorkerNotificationInstrumentationAvailability(
-      contentView.webContents.session,
-      "content-view",
-    );
-    void clearFacebookNotificationServiceWorkers(
-      contentView.webContents.session,
-      "content-view",
-    );
-
-    // Set up screen sharing handler for getDisplayMedia() calls
-    // This is required for the "Share Screen" button to work during calls
-    contentView.webContents.session.setDisplayMediaRequestHandler(
+    // Set up screen sharing handler for child windows (call windows)
+    childWindow.webContents.session.setDisplayMediaRequestHandler(
       async (request, callback) => {
-        console.log("[Screen Share] Display media request received");
+        console.log(
+          "[Screen Share] Display media request received (child window)",
+        );
 
         // On native Wayland, screen sharing has limited support - offer to switch to XWayland
         if (isRunningOnWayland() && !isRunningXWaylandMode()) {
-          const result = await dialog.showMessageBox(mainWindow!, {
+          const result = await dialog.showMessageBox(childWindow, {
             type: "warning",
             title: "Screen Sharing on Wayland",
-            message: "Screen sharing may not work reliably on native Wayland.",
+            message:
+              "Screen sharing may not work reliably on native Wayland.",
             detail:
               "For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?",
             buttons: ["Restart with XWayland", "Try Anyway", "Cancel"],
@@ -5018,27 +5590,25 @@ function createWindow(source: string = "unknown"): void {
           });
 
           if (result.response === 0) {
-            // User chose to restart with XWayland
             restartWithXWaylandMode(true);
             callback({});
             return;
           } else if (result.response === 2) {
-            // User cancelled
             callback({});
             return;
           }
-          // User chose "Try Anyway" - continue with screen sharing
         }
 
         try {
-          // Get available screen/window sources
           const sources = await desktopCapturer.getSources({
             types: ["screen", "window"],
             thumbnailSize: { width: 150, height: 150 },
             fetchWindowIcons: true,
           });
 
-          console.log(`[Screen Share] Found ${sources.length} sources`);
+          console.log(
+            `[Screen Share] Found ${sources.length} sources (child window)`,
+          );
 
           if (sources.length === 0) {
             console.log("[Screen Share] No sources available");
@@ -5057,15 +5627,13 @@ function createWindow(source: string = "unknown"): void {
             return;
           }
 
-          // Show a picker dialog for the user to choose
-          // Build choices array with source names
-          const choices = sources.map((source, _index) => {
+          // Show picker dialog
+          const choices = sources.map((source) => {
             const icon = source.id.startsWith("screen:") ? "🖥️" : "🪟";
             return `${icon} ${source.name}`;
           });
 
-          // Use Electron's dialog to let user pick
-          const result = await dialog.showMessageBox(mainWindow!, {
+          const result = await dialog.showMessageBox(childWindow, {
             type: "question",
             title: "Share Screen",
             message: "Choose what to share:",
@@ -5090,2101 +5658,432 @@ function createWindow(source: string = "unknown"): void {
       },
     );
 
-    // Set up native download handler for Facebook CDN media files
-    // This handles downloads initiated via webContents.downloadURL()
-    contentView.webContents.session.on(
-      "will-download",
-      (event, item, _webContents) => {
-        const url = item.getURL();
-        const suggestedFilename = item.getFilename();
-        console.log("[Download] Download started:", {
-          url,
-          filename: suggestedFilename,
-        });
+    // Inject MediaStream tracking as early as possible (dom-ready fires before did-finish-load)
+    childWindow.webContents.on("dom-ready", async () => {
+      const url = childWindow.webContents.getURL();
+      console.log("[Window] Child window DOM ready:", url);
 
-        // Auto-save to Downloads folder
-        const downloadsPath = app.getPath("downloads");
-        const savePath = path.join(downloadsPath, suggestedFilename);
-        item.setSavePath(savePath);
-
-        // Log progress
-        item.on("updated", (event, state) => {
-          if (state === "progressing") {
-            if (item.isPaused()) {
-              console.log("[Download] Paused");
-            } else {
-              const received = item.getReceivedBytes();
-              const total = item.getTotalBytes();
-              const percent =
-                total > 0 ? Math.round((received / total) * 100) : 0;
-              console.log(
-                `[Download] Progress: ${percent}% (${received} / ${total})`,
-              );
-            }
-          } else if (state === "interrupted") {
-            console.log("[Download] Interrupted");
+      // Inject call window script into page context for MediaStream tracking.
+      if (isFacebookOrMessengerUrl(url)) {
+        const callInjectPath = path.join(
+          __dirname,
+          "../preload/call-window-inject.js",
+        );
+        if (fs.existsSync(callInjectPath)) {
+          const callInjectScript = fs.readFileSync(callInjectPath, "utf-8");
+          try {
+            await childWindow.webContents.executeJavaScript(callInjectScript);
+            console.log("[Window] Call window MediaStream tracking injected");
+          } catch (err) {
+            console.error(
+              "[Window] Failed to inject call window script:",
+              err,
+            );
           }
-        });
+        }
+      }
+    });
 
-        // Handle completion
-        item.once("done", (event, state) => {
-          if (state === "completed") {
-            console.log("[Download] Completed:", savePath);
-            showAppOwnedNotification({
-              sourceLabel: "content-view-download-complete",
-              provenanceReason: "electron-will-download-completed",
-              options: {
-                title: "Download Complete",
-                body: `Saved to Downloads: ${suggestedFilename}`,
-              },
-              onClick: () => {
-                shell.showItemInFolder(savePath);
-              },
-            });
-          } else if (state === "cancelled") {
-            console.log("[Download] Cancelled");
-          } else {
-            console.log("[Download] Failed:", state);
-          }
-        });
+    // Log console messages from child window
+    childWindow.webContents.on(
+      "console-message",
+      (event, level, message, line, sourceId) => {
+        console.log(
+          `[Child Window Console ${level}]`,
+          message,
+          `(${sourceId}:${line})`,
+        );
       },
     );
 
-    const userAgent = getMessengerDesktopUserAgent();
-    contentView.webContents.session.setUserAgent(userAgent);
-    console.log("[UserAgent] Set to:", userAgent);
+    // Handle child window closed event
+    childWindow.on("closed", () => {
+      console.log("[Window] Child window closed and cleaned up");
+    });
+  });
 
-    // Set up context menu (right-click) with spelling suggestions and edit actions
-    setupContextMenu(contentView.webContents);
+  // Inject notification override script after page loads
+  contentView.webContents.on("did-finish-load", async () => {
+    const currentUrl = contentView?.webContents.getURL() || "";
+    if (contentView) {
+      clearIncomingCallOverlayStateForWebContents(
+        contentView.webContents,
+        "did-finish-load",
+        "incoming-call-overlay-hint-reset-did-finish-load",
+      );
+    }
+    applyContentViewBounds();
+    console.log(
+      "[ContentView] Page loaded:",
+      currentUrl,
+      "| loginFlowActive:",
+      loginFlowActive,
+    );
 
-    // Smart startup: check for existing session before loading
-    // If user has session cookies, try facebook.com/messages first.
-    // If no cookies (new user), go directly to custom login page
-    contentView.webContents.session.cookies
-      .get({ url: "https://www.facebook.com" })
-      .then((cookies) => {
-        // Check for actual session cookies (c_user indicates logged-in Facebook session)
-        const hasSessionCookie = cookies.some(
-          (c) => c.name === "c_user" || c.name === "xs",
+    // User clicked "Login with Facebook" - mark login flow as active
+    if (isAuthOrCheckpointRoute(currentUrl)) {
+      console.log(
+        "[ContentView] Facebook login/checkpoint page - login flow is active",
+      );
+      loginFlowActive = true;
+      if (mainWindow && contentView) {
+        rememberFacebookAuthFlowUrl(
+          currentUrl,
+          {
+            parentWindow: mainWindow,
+            targetWebContents: contentView.webContents,
+            label: "Messenger content view",
+          },
+          undefined,
+          "content-view-did-finish-load",
         );
-        console.log(
-          "[ContentView] Session check - has session:",
-          hasSessionCookie,
-          "cookies:",
-          cookies.length,
-        );
+      }
+    }
 
-        if (hasSessionCookie) {
-          // User likely logged in, load facebook.com/messages.
-          console.log(
-            "[ContentView] Session cookies found, loading facebook.com/messages...",
-          );
-          // Don't set loginFlowActive here - let did-finish-load handle it.
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Messenger content view",
-              trigger: "session-cookie-check",
-              source: "startup-session-check",
-            },
-          );
-        } else {
-          // No session, show custom login page directly (no flash)
-          console.log(
-            "[ContentView] No session cookies, showing login page directly...",
-          );
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            getCustomLoginPageURL(),
-            {
-              label: "Messenger content view",
-              trigger: "session-cookie-check",
-              source: "startup-session-check",
-            },
-          );
-        }
-        _hasTriedMessagesOnce = true;
-      })
-      .catch((err) => {
-        console.warn(
-          "[ContentView] Cookie check failed, trying facebook.com/messages:",
-          err,
-        );
+    // After Facebook login completes, redirect to Messages if we're on Facebook homepage.
+    if (isFacebookHomePage(currentUrl)) {
+      console.log(
+        "[ContentView] Facebook homepage detected after login, redirecting to Messages...",
+      );
+      // Give cookies a moment to settle before redirecting.
+      setTimeout(() => {
         void loadWebContentsURLWithDebug(
           contentView?.webContents,
           MESSAGES_HOME_URL,
           {
             label: "Messenger content view",
-            trigger: "session-cookie-check-error",
-            source: "startup-session-check",
-            extra: {
-              error: String((err as Error)?.message || err),
-            },
+            trigger: "facebook-homepage-post-login",
+            source: "did-finish-load",
           },
         );
-        _hasTriedMessagesOnce = true;
-      });
+      }, 500);
+      return;
+    }
 
-    // Handle new window requests (target="_blank" links, window.open, etc.)
-    // Allow trusted Facebook pop-up windows (for calls) but open external URLs in system browser.
-    contentView.webContents.setWindowOpenHandler(
-      ({ url, features, frameName, disposition }) => {
-        console.log("[Window] Window open request:", {
-          url,
-          features,
-          frameName,
-          disposition,
-        });
-
-        const windowAction = decideWindowOpenActionForCurrentLoginFlow(url);
-        if (isExternalAuthProviderFallbackResumeUrl(url)) {
-          resumeExternalAuthProviderFallback(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            url,
-            "content-view-window-open-auth-provider-resume",
-          );
-          return { action: "deny" };
-        }
-
-        if (windowAction === "open-auth-provider-browser") {
-          openExternalAuthProviderBrowserFallback(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            url,
-            "content-view-window-open-auth-provider",
-          );
-          return { action: "deny" };
-        }
-
-        if (
-          windowAction === "reroute-auth-flow" &&
-          isAuthOrCheckpointRoute(url)
-        ) {
-          openAuthWindow(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            url,
-            "content-view-window-open-auth",
-          );
-          return { action: "deny" };
-        }
-
-        if (
-          windowAction === "reroute-main-view" ||
-          windowAction === "reroute-auth-flow"
-        ) {
-          loadUrlIntoMessengerTarget(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            url,
-            "content-view-window-open",
-          );
-          return { action: "deny" };
-        }
-
-        if (windowAction === "allow-child-window") {
-          console.log("[Window] Allowing Facebook call pop-up window:", url);
-          return {
-            action: "allow",
-            overrideBrowserWindowOptions: {
-              width: 800,
-              height: 600,
-              minWidth: 400,
-              minHeight: 300,
-              title: `${APP_DISPLAY_NAME} Call`,
-              icon: isDev ? undefined : getIconPath(),
-              webPreferences: {
-                preload: path.join(
-                  __dirname,
-                  "../preload/call-window-preload.js",
-                ),
-                contextIsolation: true,
-                nodeIntegration: false,
-                sandbox: false,
-                webSecurity: true,
-                spellcheck: true,
-              },
-            },
-          };
-        }
-
-        if (windowAction === "download-media") {
-          console.log(
-            "[Download] Initiating native download for Facebook media:",
-            url,
-          );
-          contentView!.webContents.downloadURL(url);
-          return { action: "deny" };
-        }
-
-        console.log("[Window] Opening external URL in browser:", url);
-        shell.openExternal(url).catch((err) => {
-          console.error("[External Link] Failed to open URL:", url, err);
-        });
-        return { action: "deny" };
-      },
-    );
-
-    // Set up permission handlers on child windows (for call windows)
-    contentView.webContents.on("did-create-window", (childWindow, details) => {
-      console.log("[Window] Child window created:", {
-        url: details.url,
-        frameName: details.frameName,
-        options: details.options,
-      });
-      attachWebContentsFailureHandlers(
-        childWindow.webContents,
-        "Messenger child window",
-        childWindow,
-      );
-      attachWebContentsReloadDebugHandlers(
-        childWindow.webContents,
-        "Messenger child window",
-      );
-
-      // Keep child windows scoped to call flows; reroute/open externally otherwise.
-      // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
-      // multiple trusted-domain hops (facebook.com <-> messenger.com) before
-      // reaching the final RTC URL.
-      // Allow a bounded bootstrap window, then fall back to strict routing.
-      const childOpenedAsAboutBlank = details.url === "about:blank";
-      const bootstrapWindowStartedAt = Date.now();
-      let bootstrapNavigationCount = 0;
-      let sawCallSafeBootstrapNavigation = false;
-
-      childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+    if (isLoginPage(currentUrl)) {
+      // Only redirect to custom login when we're not already in an active auth flow.
+      if (!loginFlowActive) {
         console.log(
-          "[Window] Child window navigation requested:",
-          navigationUrl,
+          "[ContentView] Facebook login page detected (no active login flow), showing custom login...",
         );
-
-        if (navigationUrl === "about:blank") {
-          return;
-        }
-
-        const navigationAction =
-          decideWindowOpenActionForCurrentLoginFlow(navigationUrl);
-
-        if (navigationAction === "open-auth-provider-browser") {
-          console.log(
-            "[AuthFlow] Moving child auth provider navigation to browser fallback:",
-            getAuthFlowSafeUrl(navigationUrl),
-          );
-          event.preventDefault();
-          openExternalAuthProviderBrowserFallback(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            navigationUrl,
-            "content-view-child-auth-provider-navigation",
-            childWindow,
-          );
-          return;
-        }
-
-        if (
-          navigationAction === "reroute-auth-flow" &&
-          isAuthOrCheckpointRoute(navigationUrl)
-        ) {
-          console.log(
-            "[AuthFlow] Moving child auth navigation to auth window:",
-            navigationUrl,
-          );
-          event.preventDefault();
-          openAuthWindow(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            navigationUrl,
-            "content-view-child-auth-navigation",
-          );
-          childWindow.close();
-          return;
-        }
-
-        if (childOpenedAsAboutBlank) {
-          const bootstrapDecision =
-            shouldAllowAboutBlankChildBootstrapNavigation(
-              navigationUrl,
-              navigationAction,
-              bootstrapWindowStartedAt,
-              bootstrapNavigationCount,
-              sawCallSafeBootstrapNavigation,
-            );
-
-          if (bootstrapDecision.allowed) {
-            bootstrapNavigationCount += 1;
-            if (bootstrapDecision.allowedBy === "call-safe-action") {
-              sawCallSafeBootstrapNavigation = true;
-            }
-            console.log(
-              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, by=${bootstrapDecision.allowedBy}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
-              navigationUrl,
-            );
-            return;
-          }
-
-          console.log(
-            `[Window] Blocking about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, action=${navigationAction}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
-            navigationUrl,
-          );
-        }
-
-        if (navigationAction === "allow-child-window") {
-          return;
-        }
-
-        event.preventDefault();
-
-        if (
-          navigationAction === "reroute-main-view" ||
-          navigationAction === "reroute-auth-flow"
-        ) {
-          loadUrlIntoMessengerTarget(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: contentView!.webContents,
-              label: "Messenger content view",
-            },
-            navigationUrl,
-            "call-child-navigation",
-          );
-          childWindow.close();
-          return;
-        }
-
-        if (navigationAction === "download-media") {
-          console.log(
-            "[Download] Initiating native download from child window:",
-            navigationUrl,
-          );
-          contentView?.webContents.downloadURL(navigationUrl);
-          childWindow.close();
-          return;
-        }
-
-        console.log(
-          "[Window] Opening child-window external URL in browser:",
-          navigationUrl,
+        void loadWebContentsURLWithDebug(
+          contentView?.webContents,
+          getCustomLoginPageURL(),
+          {
+            label: "Messenger content view",
+            trigger: "facebook-login-page-no-active-flow",
+            source: "did-finish-load",
+          },
         );
-        shell.openExternal(navigationUrl).catch((err) => {
-          console.error(
-            "[External Link] Failed to open child-window URL:",
-            navigationUrl,
-            err,
-          );
-        });
-        childWindow.close();
-      });
-
-      // Set up permission handler for the child window's session
-      childWindow.webContents.session.setPermissionRequestHandler(
-        (webContents, permission, callback, details) => {
-          const url = webContents.getURL();
-          const requestingUrl = details.requestingUrl || url;
-          console.log(`[Permissions] Child window request: ${permission}`, {
-            url,
-            requestingUrl,
-            isMainFrame: details.isMainFrame,
-            details: JSON.stringify(details),
-          });
-
-          // Check both current URL and requesting URL (for about:blank windows)
-          const isAllowedUrl =
-            isFacebookOrMessengerUrl(url) || url === "about:blank";
-          const isAllowedRequest = isFacebookOrMessengerUrl(requestingUrl);
-
-          if (!isAllowedUrl && !isAllowedRequest) {
-            console.log(
-              `[Permissions] Denied ${permission} for non-allowed URL: ${url} (requesting: ${requestingUrl})`,
-            );
-            recordWebNotificationPermissionDecision({
-              source: "permission-request",
-              permission,
-              granted: false,
-              url,
-              requestingUrl,
-              webContentsId: webContents.id,
-              isMainFrame: details.isMainFrame,
-              reason: "non-allowed-origin",
-            });
-            callback(false);
-            return;
-          }
-
-          if (permission === "notifications") {
-            recordWebNotificationPermissionDecision({
-              source: "permission-request",
-              permission,
-              granted: false,
-              url,
-              requestingUrl,
-              webContentsId: webContents.id,
-              isMainFrame: details.isMainFrame,
-              reason: "browser-notifications-disabled",
-            });
-            callback(false);
-            return;
-          }
-
-          const allowedPermissions = [
-            "media",
-            "mediaKeySystem",
-            "fullscreen",
-            "pointerLock",
-          ];
-
-          if (allowedPermissions.includes(permission)) {
-            console.log(`[Permissions] Allowing ${permission} (child window)`);
-            callback(true);
-          } else {
-            console.log(
-              `[Permissions] Denied ${permission} - not in allowlist (child window)`,
-            );
-            callback(false);
-          }
-        },
-      );
-
-      childWindow.webContents.session.setPermissionCheckHandler(
-        (webContents, permission, requestingOrigin) => {
-          const allowedPermissions = [
-            "media",
-            "mediaKeySystem",
-            "fullscreen",
-            "pointerLock",
-          ];
-          const isAllowed = isFacebookOrMessengerUrl(requestingOrigin);
-          const hasPermission =
-            isAllowed && allowedPermissions.includes(permission);
-          console.log(
-            `[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
-          );
-          recordWebNotificationPermissionDecision({
-            source: "permission-check",
-            permission,
-            granted: false,
-            url: webContents?.getURL(),
-            requestingOrigin,
-            webContentsId: webContents?.id,
-            reason:
-              permission === "notifications"
-                ? "browser-notifications-disabled"
-                : "not-notification-permission",
-          });
-          return hasPermission;
-        },
-      );
-
-      // Set up screen sharing handler for child windows (call windows)
-      childWindow.webContents.session.setDisplayMediaRequestHandler(
-        async (request, callback) => {
-          console.log(
-            "[Screen Share] Display media request received (child window)",
-          );
-
-          // On native Wayland, screen sharing has limited support - offer to switch to XWayland
-          if (isRunningOnWayland() && !isRunningXWaylandMode()) {
-            const result = await dialog.showMessageBox(childWindow, {
-              type: "warning",
-              title: "Screen Sharing on Wayland",
-              message:
-                "Screen sharing may not work reliably on native Wayland.",
-              detail:
-                "For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?",
-              buttons: ["Restart with XWayland", "Try Anyway", "Cancel"],
-              defaultId: 0,
-              cancelId: 2,
-            });
-
-            if (result.response === 0) {
-              restartWithXWaylandMode(true);
-              callback({});
-              return;
-            } else if (result.response === 2) {
-              callback({});
-              return;
-            }
-          }
-
-          try {
-            const sources = await desktopCapturer.getSources({
-              types: ["screen", "window"],
-              thumbnailSize: { width: 150, height: 150 },
-              fetchWindowIcons: true,
-            });
-
-            console.log(
-              `[Screen Share] Found ${sources.length} sources (child window)`,
-            );
-
-            if (sources.length === 0) {
-              console.log("[Screen Share] No sources available");
-              callback({});
-              return;
-            }
-
-            // If only one screen and no windows, auto-select it
-            const screens = sources.filter((s) => s.id.startsWith("screen:"));
-            if (screens.length === 1 && sources.length === 1) {
-              console.log(
-                "[Screen Share] Auto-selecting single screen:",
-                screens[0].name,
-              );
-              callback({ video: screens[0] });
-              return;
-            }
-
-            // Show picker dialog
-            const choices = sources.map((source) => {
-              const icon = source.id.startsWith("screen:") ? "🖥️" : "🪟";
-              return `${icon} ${source.name}`;
-            });
-
-            const result = await dialog.showMessageBox(childWindow, {
-              type: "question",
-              title: "Share Screen",
-              message: "Choose what to share:",
-              detail: "Select a screen or window to share during your call.",
-              buttons: [...choices, "Cancel"],
-              defaultId: 0,
-              cancelId: choices.length,
-            });
-
-            if (result.response < sources.length) {
-              const selectedSource = sources[result.response];
-              console.log("[Screen Share] User selected:", selectedSource.name);
-              callback({ video: selectedSource });
-            } else {
-              console.log("[Screen Share] User cancelled");
-              callback({});
-            }
-          } catch (error) {
-            console.error("[Screen Share] Error getting sources:", error);
-            callback({});
-          }
-        },
-      );
-
-      // Inject MediaStream tracking as early as possible (dom-ready fires before did-finish-load)
-      childWindow.webContents.on("dom-ready", async () => {
-        const url = childWindow.webContents.getURL();
-        console.log("[Window] Child window DOM ready:", url);
-
-        // Inject call window script into page context for MediaStream tracking.
-        if (isFacebookOrMessengerUrl(url)) {
-          const callInjectPath = path.join(
-            __dirname,
-            "../preload/call-window-inject.js",
-          );
-          if (fs.existsSync(callInjectPath)) {
-            const callInjectScript = fs.readFileSync(callInjectPath, "utf-8");
-            try {
-              await childWindow.webContents.executeJavaScript(callInjectScript);
-              console.log("[Window] Call window MediaStream tracking injected");
-            } catch (err) {
-              console.error(
-                "[Window] Failed to inject call window script:",
-                err,
-              );
-            }
-          }
-        }
-      });
-
-      // Log console messages from child window
-      childWindow.webContents.on(
-        "console-message",
-        (event, level, message, line, sourceId) => {
-          console.log(
-            `[Child Window Console ${level}]`,
-            message,
-            `(${sourceId}:${line})`,
-          );
-        },
-      );
-
-      // Handle child window closed event
-      childWindow.on("closed", () => {
-        console.log("[Window] Child window closed and cleaned up");
-      });
-    });
-
-    // Inject notification override script after page loads
-    contentView.webContents.on("did-finish-load", async () => {
-      const currentUrl = contentView?.webContents.getURL() || "";
-      if (contentView) {
-        clearIncomingCallOverlayStateForWebContents(
-          contentView.webContents,
-          "did-finish-load",
-          "incoming-call-overlay-hint-reset-did-finish-load",
-        );
+        return;
       }
-      applyContentViewBounds();
+
       console.log(
-        "[ContentView] Page loaded:",
-        currentUrl,
-        "| loginFlowActive:",
-        loginFlowActive,
+        "[ContentView] Facebook login page detected during active login flow - waiting for session...",
       );
+    } else if (isMessagesRoute(currentUrl)) {
+      console.log("[ContentView] Messages loaded successfully!");
+      loginFlowActive = true;
+      // Focus the content view so keyboard shortcuts work immediately.
+      contentView?.webContents.focus();
+    }
 
-      // User clicked "Login with Facebook" - mark login flow as active
-      if (isAuthOrCheckpointRoute(currentUrl)) {
-        console.log(
-          "[ContentView] Facebook login/checkpoint page - login flow is active",
-        );
-        loginFlowActive = true;
-        if (mainWindow && contentView) {
-          rememberFacebookAuthFlowUrl(
-            currentUrl,
-            {
-              parentWindow: mainWindow,
-              targetWebContents: contentView.webContents,
-              label: "Messenger content view",
-            },
-            undefined,
-            "content-view-did-finish-load",
-          );
-        }
+    try {
+      if (contentView) {
+        await injectNotificationScripts(contentView.webContents);
       }
+    } catch (error) {
+      console.error(
+        "[Main Process] Failed to inject notification script:",
+        error,
+      );
+    }
+  });
 
-      // After Facebook login completes, redirect to Messages if we're on Facebook homepage.
-      if (isFacebookHomePage(currentUrl)) {
-        console.log(
-          "[ContentView] Facebook homepage detected after login, redirecting to Messages...",
-        );
-        // Give cookies a moment to settle before redirecting.
-        setTimeout(() => {
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Messenger content view",
-              trigger: "facebook-homepage-post-login",
-              source: "did-finish-load",
-            },
-          );
-        }, 500);
-        return;
-      }
-
-      if (isLoginPage(currentUrl)) {
-        // Only redirect to custom login when we're not already in an active auth flow.
-        if (!loginFlowActive) {
-          console.log(
-            "[ContentView] Facebook login page detected (no active login flow), showing custom login...",
-          );
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            getCustomLoginPageURL(),
-            {
-              label: "Messenger content view",
-              trigger: "facebook-login-page-no-active-flow",
-              source: "did-finish-load",
-            },
-          );
-          return;
-        }
-
-        console.log(
-          "[ContentView] Facebook login page detected during active login flow - waiting for session...",
-        );
-      } else if (isMessagesRoute(currentUrl)) {
-        console.log("[ContentView] Messages loaded successfully!");
-        loginFlowActive = true;
-        // Focus the content view so keyboard shortcuts work immediately.
-        contentView?.webContents.focus();
-      }
-
-      try {
-        if (contentView) {
-          await injectNotificationScripts(contentView.webContents);
-        }
-      } catch (error) {
-        console.error(
-          "[Main Process] Failed to inject notification script:",
-          error,
-        );
-      }
+  // Intercept navigation to open external URLs (Marketplace, profiles, etc.) in system browser
+  // This fixes issue #24 - Marketplace chat links were opening inside the app
+  contentView.webContents.on("will-navigate", (event, url) => {
+    console.log("[ContentView] will-navigate:", url);
+    const currentUrl = contentView?.webContents.getURL() || "";
+    const navigationDecision = decideMessengerTopLevelNavigation({
+      currentUrl,
+      nextUrl: url,
     });
-
-    // Intercept navigation to open external URLs (Marketplace, profiles, etc.) in system browser
-    // This fixes issue #24 - Marketplace chat links were opening inside the app
-    contentView.webContents.on("will-navigate", (event, url) => {
-      console.log("[ContentView] will-navigate:", url);
-      const currentUrl = contentView?.webContents.getURL() || "";
-      const navigationDecision = decideMessengerTopLevelNavigation({
-        currentUrl,
+    if (!navigationDecision.allowed) {
+      event.preventDefault();
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "navigation-suppressed",
+        label: "Messenger content view",
+        webContentsId: contentView?.webContents.id,
+        url: currentUrl,
         nextUrl: url,
+        reason: navigationDecision.reason,
       });
-      if (!navigationDecision.allowed) {
-        event.preventDefault();
-        pushReloadDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "navigation-suppressed",
-          label: "Messenger content view",
-          webContentsId: contentView?.webContents.id,
-          url: currentUrl,
-          nextUrl: url,
-          reason: navigationDecision.reason,
-        });
-        console.log("[ContentView] Suppressed redundant thread navigation", {
-          reason: navigationDecision.reason,
-        });
-        return;
-      }
+      console.log("[ContentView] Suppressed redundant thread navigation", {
+        reason: navigationDecision.reason,
+      });
+      return;
+    }
 
-      if (isExternalAuthProviderFallbackResumeUrl(url)) {
-        event.preventDefault();
-        resumeExternalAuthProviderFallback(
-          {
-            parentWindow: mainWindow!,
-            targetWebContents: contentView!.webContents,
-            label: "Messenger content view",
-          },
-          url,
-          "content-view-auth-provider-resume",
-        );
-        return;
-      }
-
-      if (shouldOpenAuthProviderInBrowser(url)) {
-        console.log(
-          "[ContentView] Opening auth provider in browser fallback:",
-          getAuthFlowSafeUrl(url),
-        );
-        event.preventDefault();
-        openExternalAuthProviderBrowserFallback(
-          {
-            parentWindow: mainWindow!,
-            targetWebContents: contentView!.webContents,
-            label: "Messenger content view",
-          },
-          url,
-          "content-view-auth-provider-navigation",
-        );
-        return;
-      }
-
-      if (isAuthOrCheckpointRoute(url)) {
-        console.log(
-          "[ContentView] Opening auth navigation in auth window:",
-          url,
-        );
-        event.preventDefault();
-        const target = {
+    if (isExternalAuthProviderFallbackResumeUrl(url)) {
+      event.preventDefault();
+      resumeExternalAuthProviderFallback(
+        {
           parentWindow: mainWindow!,
           targetWebContents: contentView!.webContents,
           label: "Messenger content view",
-        };
-        recordExternalAuthProviderFallbackResume(
-          target,
-          url,
-          "content-view-auth-navigation-resume",
-        );
-        openAuthWindow(
-          target,
-          stripExternalAuthProviderFallbackResumeMarker(url),
-          "content-view-auth-provider-navigation",
-        );
-        return;
-      }
-
-      const allowed = shouldAllowInternalNavigation(url);
-      console.log("[ContentView] Navigation allowed:", allowed, "URL:", url);
-      if (!allowed) {
-        console.log(
-          "[ContentView] BLOCKING navigation and opening external:",
-          url,
-        );
-        event.preventDefault();
-        shell.openExternal(url).catch((err) => {
-          console.error("[External Link] Failed to open URL:", url, err);
-        });
-      } else {
-        console.log("[ContentView] ALLOWING navigation to:", url);
-      }
-    });
-
-    // Handle navigation events to inject disclaimer on page changes
-    contentView.webContents.on("did-navigate", async (event, url) => {
-      if (contentView && shouldResetIncomingCallOverlayOnNavigation(url)) {
-        clearIncomingCallOverlayStateForWebContents(
-          contentView.webContents,
-          "did-navigate",
-          "incoming-call-overlay-hint-reset-did-navigate",
-        );
-      }
-
-      applyContentViewBounds();
-      console.log(
-        "[ContentView] did-navigate:",
+        },
         url,
-        "| loginFlowActive:",
-        loginFlowActive,
+        "content-view-auth-provider-resume",
       );
+      return;
+    }
 
-      // Track when user enters Facebook login flow
-      if (isAuthOrCheckpointRoute(url)) {
-        console.log("[ContentView] Entering Facebook auth flow");
-        loginFlowActive = true;
-      }
+    if (shouldOpenAuthProviderInBrowser(url)) {
+      console.log(
+        "[ContentView] Opening auth provider in browser fallback:",
+        getAuthFlowSafeUrl(url),
+      );
+      event.preventDefault();
+      openExternalAuthProviderBrowserFallback(
+        {
+          parentWindow: mainWindow!,
+          targetWebContents: contentView!.webContents,
+          label: "Messenger content view",
+        },
+        url,
+        "content-view-auth-provider-navigation",
+      );
+      return;
+    }
 
-      // After Facebook login completes, redirect to Messages.
-      if (isFacebookHomePage(url)) {
-        console.log(
-          "[ContentView] Facebook login complete, redirecting to Messages...",
-        );
-        setTimeout(() => {
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Messenger content view",
-              trigger: "facebook-homepage-post-login",
-              source: "did-navigate",
-            },
-          );
-        }, 500);
-        return;
-      }
-    });
+    if (isAuthOrCheckpointRoute(url)) {
+      console.log(
+        "[ContentView] Opening auth navigation in auth window:",
+        url,
+      );
+      event.preventDefault();
+      const target = {
+        parentWindow: mainWindow!,
+        targetWebContents: contentView!.webContents,
+        label: "Messenger content view",
+      };
+      recordExternalAuthProviderFallbackResume(
+        target,
+        url,
+        "content-view-auth-navigation-resume",
+      );
+      openAuthWindow(
+        target,
+        stripExternalAuthProviderFallbackResumeMarker(url),
+        "content-view-auth-provider-navigation",
+      );
+      return;
+    }
 
-    contentView.webContents.on("did-navigate-in-page", async (event, url) => {
-      if (contentView && shouldResetIncomingCallOverlayOnNavigation(url)) {
-        clearIncomingCallOverlayStateForWebContents(
-          contentView.webContents,
-          "did-navigate-in-page",
-          "incoming-call-overlay-hint-reset-did-navigate-in-page",
-        );
-      }
+    const allowed = shouldAllowInternalNavigation(url);
+    console.log("[ContentView] Navigation allowed:", allowed, "URL:", url);
+    if (!allowed) {
+      console.log(
+        "[ContentView] BLOCKING navigation and opening external:",
+        url,
+      );
+      event.preventDefault();
+      shell.openExternal(url).catch((err) => {
+        console.error("[External Link] Failed to open URL:", url, err);
+      });
+    } else {
+      console.log("[ContentView] ALLOWING navigation to:", url);
+    }
+  });
 
-      applyContentViewBounds();
-      console.log("[ContentView] In-page navigation to:", url);
+  // Handle navigation events to inject disclaimer on page changes
+  contentView.webContents.on("did-navigate", async (event, url) => {
+    if (contentView && shouldResetIncomingCallOverlayOnNavigation(url)) {
+      clearIncomingCallOverlayStateForWebContents(
+        contentView.webContents,
+        "did-navigate",
+        "incoming-call-overlay-hint-reset-did-navigate",
+      );
+    }
 
-      // Track Facebook auth flow via SPA navigation
-      if (isAuthOrCheckpointRoute(url)) {
-        loginFlowActive = true;
-      }
-
-      // After Facebook login completes, redirect to Messages (also check SPA navigation).
-      if (isFacebookHomePage(url)) {
-        console.log(
-          "[ContentView] Facebook login complete (SPA nav), redirecting to Messages...",
-        );
-        setTimeout(() => {
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Messenger content view",
-              trigger: "facebook-homepage-post-login",
-              source: "did-navigate-in-page",
-            },
-          );
-        }, 500);
-        return;
-      }
-    });
-
-    // Log console messages from content view. Info-level page output can
-    // carry conversation names and previews, so stable builds only forward
-    // warnings and errors (levels 2 and 3).
-    contentView.webContents.on(
-      "console-message",
-      (event, level, message, line, sourceId) => {
-        if (level < 2 && !shouldCaptureDebugLogsByDefault()) return;
-        console.log(
-          `[Content View Console ${level}]`,
-          message,
-          `(${sourceId}:${line})`,
-        );
-      },
+    applyContentViewBounds();
+    console.log(
+      "[ContentView] did-navigate:",
+      url,
+      "| loginFlowActive:",
+      loginFlowActive,
     );
 
-    // Handle load failures (issue #25) - show offline page when network is unavailable
-    contentView.webContents.on(
-      "did-fail-load",
-      (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-        // Only handle main frame errors, ignore subframe errors (e.g., failed ad loads)
-        if (!isMainFrame) return;
+    // Track when user enters Facebook login flow
+    if (isAuthOrCheckpointRoute(url)) {
+      console.log("[ContentView] Entering Facebook auth flow");
+      loginFlowActive = true;
+    }
 
-        console.log(
-          `[ContentView] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`,
+    // After Facebook login completes, redirect to Messages.
+    if (isFacebookHomePage(url)) {
+      console.log(
+        "[ContentView] Facebook login complete, redirecting to Messages...",
+      );
+      setTimeout(() => {
+        void loadWebContentsURLWithDebug(
+          contentView?.webContents,
+          MESSAGES_HOME_URL,
+          {
+            label: "Messenger content view",
+            trigger: "facebook-homepage-post-login",
+            source: "did-navigate",
+          },
         );
+      }, 500);
+      return;
+    }
+  });
+
+  contentView.webContents.on("did-navigate-in-page", async (event, url) => {
+    if (contentView && shouldResetIncomingCallOverlayOnNavigation(url)) {
+      clearIncomingCallOverlayStateForWebContents(
+        contentView.webContents,
+        "did-navigate-in-page",
+        "incoming-call-overlay-hint-reset-did-navigate-in-page",
+      );
+    }
+
+    applyContentViewBounds();
+    console.log("[ContentView] In-page navigation to:", url);
+    // Preload listeners cannot observe the page's own history calls from
+    // the isolated world, so tell them about SPA route changes directly.
+    if (contentView && !contentView.webContents.isDestroyed()) {
+      contentView.webContents.send("route-changed");
+    }
+
+    // Track Facebook auth flow via SPA navigation
+    if (isAuthOrCheckpointRoute(url)) {
+      loginFlowActive = true;
+    }
+
+    // After Facebook login completes, redirect to Messages (also check SPA navigation).
+    if (isFacebookHomePage(url)) {
+      console.log(
+        "[ContentView] Facebook login complete (SPA nav), redirecting to Messages...",
+      );
+      setTimeout(() => {
+        void loadWebContentsURLWithDebug(
+          contentView?.webContents,
+          MESSAGES_HOME_URL,
+          {
+            label: "Messenger content view",
+            trigger: "facebook-homepage-post-login",
+            source: "did-navigate-in-page",
+          },
+        );
+      }, 500);
+      return;
+    }
+  });
+
+  // Log console messages from content view. Info-level page output can
+  // carry conversation names and previews, so stable builds only forward
+  // warnings and errors (levels 2 and 3).
+  contentView.webContents.on(
+    "console-message",
+    (event, level, message, line, sourceId) => {
+      if (level < 2 && !shouldCaptureDebugLogsByDefault()) return;
+      console.log(
+        `[Content View Console ${level}]`,
+        message,
+        `(${sourceId}:${line})`,
+      );
+    },
+  );
+
+  // Handle load failures (issue #25) - show offline page when network is unavailable
+  contentView.webContents.on(
+    "did-fail-load",
+    (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Only handle main frame errors, ignore subframe errors (e.g., failed ad loads)
+      if (!isMainFrame) return;
+
+      console.log(
+        `[ContentView] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`,
+      );
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "did-fail-load",
+        label: "Messenger content view",
+        webContentsId: contentView?.webContents.id,
+        url: validatedURL,
+        errorCode,
+        errorDescription,
+        isMainFrame,
+      });
+
+      // Network-related error codes that warrant showing offline page
+      // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
+      // -6: ERR_FILE_NOT_FOUND, -7: ERR_TIMED_OUT, -15: ERR_SOCKET_NOT_CONNECTED
+      // -21: ERR_NETWORK_CHANGED, -100: ERR_CONNECTION_CLOSED
+      // -101: ERR_CONNECTION_RESET, -102: ERR_CONNECTION_REFUSED
+      // -104: ERR_CONNECTION_FAILED, -105: ERR_NAME_NOT_RESOLVED
+      // -106: ERR_INTERNET_DISCONNECTED, -109: ERR_ADDRESS_UNREACHABLE
+      // -118: ERR_CONNECTION_TIMED_OUT, -130: ERR_PROXY_CONNECTION_FAILED
+      const networkErrorCodes = [
+        -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118,
+        -130,
+      ];
+
+      if (networkErrorCodes.includes(errorCode)) {
+        console.log(
+          "[ContentView] Network error detected, showing offline page",
+        );
+        const offlineHTML = getOfflinePageHTML(errorDescription);
+        const offlineUrl = `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`;
         pushReloadDebugEvent({
           timestamp: Date.now(),
           source: "main",
-          event: "did-fail-load",
+          event: "offline-page-load-request",
           label: "Messenger content view",
           webContentsId: contentView?.webContents.id,
           url: validatedURL,
           errorCode,
           errorDescription,
-          isMainFrame,
+          nextUrl: offlineUrl,
         });
-
-        // Network-related error codes that warrant showing offline page
-        // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
-        // -6: ERR_FILE_NOT_FOUND, -7: ERR_TIMED_OUT, -15: ERR_SOCKET_NOT_CONNECTED
-        // -21: ERR_NETWORK_CHANGED, -100: ERR_CONNECTION_CLOSED
-        // -101: ERR_CONNECTION_RESET, -102: ERR_CONNECTION_REFUSED
-        // -104: ERR_CONNECTION_FAILED, -105: ERR_NAME_NOT_RESOLVED
-        // -106: ERR_INTERNET_DISCONNECTED, -109: ERR_ADDRESS_UNREACHABLE
-        // -118: ERR_CONNECTION_TIMED_OUT, -130: ERR_PROXY_CONNECTION_FAILED
-        const networkErrorCodes = [
-          -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118,
-          -130,
-        ];
-
-        if (networkErrorCodes.includes(errorCode)) {
-          console.log(
-            "[ContentView] Network error detected, showing offline page",
-          );
-          const offlineHTML = getOfflinePageHTML(errorDescription);
-          const offlineUrl = `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`;
-          pushReloadDebugEvent({
-            timestamp: Date.now(),
-            source: "main",
-            event: "offline-page-load-request",
-            label: "Messenger content view",
-            webContentsId: contentView?.webContents.id,
-            url: validatedURL,
-            errorCode,
-            errorDescription,
-            nextUrl: offlineUrl,
-          });
-          void loadWebContentsURLWithDebug(
-            contentView?.webContents,
-            offlineUrl,
-            {
-              label: "Messenger content view",
-              trigger: "did-fail-load-network-offline-page",
-              source: "network-error-handler",
-              extra: {
-                previousUrl: validatedURL,
-                errorCode,
-                errorDescription,
-              },
-            },
-          );
-        }
-      },
-    );
-
-    // Update window title when page title changes (for dock/taskbar).
-    contentView.webContents.on("page-title-updated", (event, title) => {
-      const currentUrl = contentView?.webContents.getURL() || "";
-      const effectiveTitle = getEffectiveWindowTitle(title, currentUrl);
-      if (mainWindow) {
-        mainWindow.setTitle(effectiveTitle);
-      }
-    });
-
-    // Handle window resize to maintain correct content bounds
-    mainWindow.on("resize", () => {
-      if (!mainWindow || !contentView) return;
-      applyContentViewBounds();
-    });
-  } else {
-    // Non-macOS: load directly in main window (standard frame)
-    mainWindow.webContents.session.setPermissionRequestHandler(
-      (webContents, permission, callback, details) => {
-        const url = webContents.getURL();
-        console.log(`[Permissions] Request received: ${permission}`, {
-          url,
-          requestingUrl: details.requestingUrl,
-          isMainFrame: details.isMainFrame,
-          details: JSON.stringify(details),
-        });
-
-        const isAllowedDomain = isFacebookOrMessengerUrl(url);
-
-        if (!isAllowedDomain) {
-          console.log(
-            `[Permissions] Denied ${permission} for non-allowed URL: ${url}`,
-          );
-          recordWebNotificationPermissionDecision({
-            source: "permission-request",
-            permission,
-            granted: false,
-            url,
-            requestingUrl: details.requestingUrl,
-            webContentsId: webContents.id,
-            isMainFrame: details.isMainFrame,
-            reason: "non-allowed-origin",
-          });
-          callback(false);
-          return;
-        }
-
-        if (permission === "notifications") {
-          recordWebNotificationPermissionDecision({
-            source: "permission-request",
-            permission,
-            granted: false,
-            url,
-            requestingUrl: details.requestingUrl,
-            webContentsId: webContents.id,
-            isMainFrame: details.isMainFrame,
-            reason: "browser-notifications-disabled",
-          });
-          callback(false);
-          return;
-        }
-
-        const allowedPermissions = [
-          "media",
-          "mediaKeySystem",
-          "fullscreen",
-          "pointerLock",
-        ];
-
-        if (allowedPermissions.includes(permission)) {
-          console.log(`[Permissions] Allowing ${permission}`);
-          callback(true);
-        } else {
-          console.log(`[Permissions] Denied ${permission} - not in allowlist`);
-          callback(false);
-        }
-      },
-    );
-
-    mainWindow.webContents.session.setPermissionCheckHandler(
-      (webContents, permission, requestingOrigin) => {
-        const allowedPermissions = [
-          "media",
-          "mediaKeySystem",
-          "fullscreen",
-          "pointerLock",
-        ];
-        const isAllowed = isFacebookOrMessengerUrl(requestingOrigin);
-        const hasPermission =
-          isAllowed && allowedPermissions.includes(permission);
-        console.log(
-          `[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
-        );
-        recordWebNotificationPermissionDecision({
-          source: "permission-check",
-          permission,
-          granted: false,
-          url: webContents?.getURL(),
-          requestingOrigin,
-          webContentsId: webContents?.id,
-          reason:
-            permission === "notifications"
-              ? "browser-notifications-disabled"
-              : "not-notification-permission",
-        });
-        return hasPermission;
-      },
-    );
-
-    // Set up native download handler for Facebook CDN media files (fallback path)
-    mainWindow.webContents.session.on(
-      "will-download",
-      (event, item, _webContents) => {
-        const url = item.getURL();
-        const suggestedFilename = item.getFilename();
-        console.log("[Download] Download started:", {
-          url,
-          filename: suggestedFilename,
-        });
-
-        // Auto-save to Downloads folder
-        const downloadsPath = app.getPath("downloads");
-        const savePath = path.join(downloadsPath, suggestedFilename);
-        item.setSavePath(savePath);
-
-        // Log progress
-        item.on("updated", (event, state) => {
-          if (state === "progressing") {
-            if (item.isPaused()) {
-              console.log("[Download] Paused");
-            } else {
-              const received = item.getReceivedBytes();
-              const total = item.getTotalBytes();
-              const percent =
-                total > 0 ? Math.round((received / total) * 100) : 0;
-              console.log(
-                `[Download] Progress: ${percent}% (${received} / ${total})`,
-              );
-            }
-          } else if (state === "interrupted") {
-            console.log("[Download] Interrupted");
-          }
-        });
-
-        // Handle completion
-        item.once("done", (event, state) => {
-          if (state === "completed") {
-            console.log("[Download] Completed:", savePath);
-            showAppOwnedNotification({
-              sourceLabel: "main-window-download-complete",
-              provenanceReason: "electron-will-download-completed",
-              options: {
-                title: "Download Complete",
-                body: `Saved to Downloads: ${suggestedFilename}`,
-              },
-              onClick: () => {
-                shell.showItemInFolder(savePath);
-              },
-            });
-          } else if (state === "cancelled") {
-            console.log("[Download] Cancelled");
-          } else {
-            console.log("[Download] Failed:", state);
-          }
-        });
-      },
-    );
-
-    const userAgent = getMessengerDesktopUserAgent();
-    mainWindow.webContents.session.setUserAgent(userAgent);
-    console.log("[UserAgent] Set to:", userAgent);
-
-    // Set up context menu (right-click) with spelling suggestions and edit actions
-    setupContextMenu(mainWindow.webContents);
-
-    // Smart startup: check for existing session before loading.
-    // If user has session cookies, try facebook.com/messages first.
-    // If no cookies (new user), go directly to custom login page
-    mainWindow.webContents.session.cookies
-      .get({ url: "https://www.facebook.com" })
-      .then((cookies) => {
-        // Check for actual session cookies (c_user indicates logged-in Facebook session)
-        const hasSessionCookie = cookies.some(
-          (c) => c.name === "c_user" || c.name === "xs",
-        );
-        console.log(
-          "[MainWindow] Session check - has session:",
-          hasSessionCookie,
-          "cookies:",
-          cookies.length,
-        );
-
-        if (hasSessionCookie) {
-          // User likely logged in, load facebook.com/messages.
-          console.log(
-            "[MainWindow] Session cookies found, loading facebook.com/messages...",
-          );
-          // Don't set loginFlowActive here - let did-finish-load handle it.
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Main window",
-              trigger: "session-cookie-check",
-              source: "startup-session-check",
-            },
-          );
-        } else {
-          // No session, show custom login page directly (no flash)
-          console.log(
-            "[MainWindow] No session cookies, showing login page directly...",
-          );
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            getCustomLoginPageURL(),
-            {
-              label: "Main window",
-              trigger: "session-cookie-check",
-              source: "startup-session-check",
-            },
-          );
-        }
-        _hasTriedMessagesOnce = true;
-      })
-      .catch((err) => {
-        console.warn(
-          "[MainWindow] Cookie check failed, showing login page:",
-          err,
-        );
         void loadWebContentsURLWithDebug(
-          mainWindow?.webContents,
-          getCustomLoginPageURL(),
+          contentView?.webContents,
+          offlineUrl,
           {
-            label: "Main window",
-            trigger: "session-cookie-check-error",
-            source: "startup-session-check",
+            label: "Messenger content view",
+            trigger: "did-fail-load-network-offline-page",
+            source: "network-error-handler",
             extra: {
-              error: String((err as Error)?.message || err),
+              previousUrl: validatedURL,
+              errorCode,
+              errorDescription,
             },
           },
         );
-        _hasTriedMessagesOnce = true;
-      });
-
-    // Handle new window requests (target="_blank" links, window.open, etc.)
-    // Allow trusted Facebook pop-up windows (for calls) but open external URLs in system browser.
-    mainWindow.webContents.setWindowOpenHandler(
-      ({ url, features, frameName, disposition }) => {
-        console.log("[Window] Window open request:", {
-          url,
-          features,
-          frameName,
-          disposition,
-        });
-
-        const windowAction = decideWindowOpenActionForCurrentLoginFlow(url);
-        if (isExternalAuthProviderFallbackResumeUrl(url)) {
-          resumeExternalAuthProviderFallback(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            url,
-            "main-window-window-open-auth-provider-resume",
-          );
-          return { action: "deny" };
-        }
-
-        if (windowAction === "open-auth-provider-browser") {
-          openExternalAuthProviderBrowserFallback(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            url,
-            "main-window-window-open-auth-provider",
-          );
-          return { action: "deny" };
-        }
-
-        if (
-          windowAction === "reroute-auth-flow" &&
-          isAuthOrCheckpointRoute(url)
-        ) {
-          openAuthWindow(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            url,
-            "main-window-window-open-auth",
-          );
-          return { action: "deny" };
-        }
-
-        if (
-          windowAction === "reroute-main-view" ||
-          windowAction === "reroute-auth-flow"
-        ) {
-          loadUrlIntoMessengerTarget(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            url,
-            "main-window-window-open",
-          );
-          return { action: "deny" };
-        }
-
-        if (windowAction === "allow-child-window") {
-          console.log("[Window] Allowing Facebook call pop-up window:", url);
-          return {
-            action: "allow",
-            overrideBrowserWindowOptions: {
-              width: 800,
-              height: 600,
-              minWidth: 400,
-              minHeight: 300,
-              title: `${APP_DISPLAY_NAME} Call`,
-              icon: isDev ? undefined : getIconPath(),
-              webPreferences: {
-                preload: path.join(
-                  __dirname,
-                  "../preload/call-window-preload.js",
-                ),
-                contextIsolation: true,
-                nodeIntegration: false,
-                sandbox: false,
-                webSecurity: true,
-                spellcheck: true,
-              },
-            },
-          };
-        }
-
-        if (windowAction === "download-media") {
-          console.log(
-            "[Download] Initiating native download for Facebook media:",
-            url,
-          );
-          mainWindow!.webContents.downloadURL(url);
-          return { action: "deny" };
-        }
-
-        console.log("[Window] Opening external URL in browser:", url);
-        shell.openExternal(url).catch((err) => {
-          console.error("[External Link] Failed to open URL:", url, err);
-        });
-        return { action: "deny" };
-      },
-    );
-
-    // Set up permission handlers on child windows (for call windows)
-    mainWindow.webContents.on("did-create-window", (childWindow, details) => {
-      console.log("[Window] Child window created:", {
-        url: details.url,
-        frameName: details.frameName,
-        options: details.options,
-      });
-      attachWebContentsFailureHandlers(
-        childWindow.webContents,
-        "Messenger child window",
-        childWindow,
-      );
-      attachWebContentsReloadDebugHandlers(
-        childWindow.webContents,
-        "Messenger child window",
-      );
-
-      // Keep child windows scoped to call flows; reroute/open externally otherwise.
-      // Some Messenger call flows bootstrap a pop-up as about:blank and can perform
-      // multiple trusted-domain hops (facebook.com <-> messenger.com) before
-      // reaching the final RTC URL.
-      // Allow a bounded bootstrap window, then fall back to strict routing.
-      const childOpenedAsAboutBlank = details.url === "about:blank";
-      const bootstrapWindowStartedAt = Date.now();
-      let bootstrapNavigationCount = 0;
-      let sawCallSafeBootstrapNavigation = false;
-
-      childWindow.webContents.on("will-navigate", (event, navigationUrl) => {
-        console.log(
-          "[Window] Child window navigation requested:",
-          navigationUrl,
-        );
-
-        if (navigationUrl === "about:blank") {
-          return;
-        }
-
-        const navigationAction =
-          decideWindowOpenActionForCurrentLoginFlow(navigationUrl);
-
-        if (navigationAction === "open-auth-provider-browser") {
-          console.log(
-            "[AuthFlow] Moving child auth provider navigation to browser fallback:",
-            getAuthFlowSafeUrl(navigationUrl),
-          );
-          event.preventDefault();
-          openExternalAuthProviderBrowserFallback(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            navigationUrl,
-            "main-window-child-auth-provider-navigation",
-            childWindow,
-          );
-          return;
-        }
-
-        if (
-          navigationAction === "reroute-auth-flow" &&
-          isAuthOrCheckpointRoute(navigationUrl)
-        ) {
-          console.log(
-            "[AuthFlow] Moving child auth navigation to auth window:",
-            navigationUrl,
-          );
-          event.preventDefault();
-          openAuthWindow(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            navigationUrl,
-            "main-window-child-auth-navigation",
-          );
-          childWindow.close();
-          return;
-        }
-
-        if (childOpenedAsAboutBlank) {
-          const bootstrapDecision =
-            shouldAllowAboutBlankChildBootstrapNavigation(
-              navigationUrl,
-              navigationAction,
-              bootstrapWindowStartedAt,
-              bootstrapNavigationCount,
-              sawCallSafeBootstrapNavigation,
-            );
-
-          if (bootstrapDecision.allowed) {
-            bootstrapNavigationCount += 1;
-            if (bootstrapDecision.allowedBy === "call-safe-action") {
-              sawCallSafeBootstrapNavigation = true;
-            }
-            console.log(
-              `[Window] Allowing about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, by=${bootstrapDecision.allowedBy}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
-              navigationUrl,
-            );
-            return;
-          }
-
-          console.log(
-            `[Window] Blocking about:blank child bootstrap navigation (${bootstrapNavigationCount}/${ABOUT_BLANK_CHILD_BOOTSTRAP_MAX_NAVIGATIONS}, ${bootstrapDecision.elapsedMs}ms, site=${bootstrapDecision.siteKey}, action=${navigationAction}, sawCallSafe=${sawCallSafeBootstrapNavigation}):`,
-            navigationUrl,
-          );
-        }
-
-        if (navigationAction === "allow-child-window") {
-          return;
-        }
-
-        event.preventDefault();
-
-        if (
-          navigationAction === "reroute-main-view" ||
-          navigationAction === "reroute-auth-flow"
-        ) {
-          loadUrlIntoMessengerTarget(
-            {
-              parentWindow: mainWindow!,
-              targetWebContents: mainWindow!.webContents,
-              label: "Main window",
-            },
-            navigationUrl,
-            "call-child-navigation-main-window",
-          );
-          childWindow.close();
-          return;
-        }
-
-        if (navigationAction === "download-media") {
-          console.log(
-            "[Download] Initiating native download from child window:",
-            navigationUrl,
-          );
-          mainWindow?.webContents.downloadURL(navigationUrl);
-          childWindow.close();
-          return;
-        }
-
-        console.log(
-          "[Window] Opening child-window external URL in browser:",
-          navigationUrl,
-        );
-        shell.openExternal(navigationUrl).catch((err) => {
-          console.error(
-            "[External Link] Failed to open child-window URL:",
-            navigationUrl,
-            err,
-          );
-        });
-        childWindow.close();
-      });
-
-      // Set up permission handler for the child window's session
-      childWindow.webContents.session.setPermissionRequestHandler(
-        (webContents, permission, callback, details) => {
-          const url = webContents.getURL();
-          const requestingUrl = details.requestingUrl || url;
-          console.log(`[Permissions] Child window request: ${permission}`, {
-            url,
-            requestingUrl,
-            isMainFrame: details.isMainFrame,
-            details: JSON.stringify(details),
-          });
-
-          // Check both current URL and requesting URL (for about:blank windows)
-          const isAllowedUrl =
-            isFacebookOrMessengerUrl(url) || url === "about:blank";
-          const isAllowedRequest = isFacebookOrMessengerUrl(requestingUrl);
-
-          if (!isAllowedUrl && !isAllowedRequest) {
-            console.log(
-              `[Permissions] Denied ${permission} for non-allowed URL: ${url} (requesting: ${requestingUrl})`,
-            );
-            recordWebNotificationPermissionDecision({
-              source: "permission-request",
-              permission,
-              granted: false,
-              url,
-              requestingUrl,
-              webContentsId: webContents.id,
-              isMainFrame: details.isMainFrame,
-              reason: "non-allowed-origin",
-            });
-            callback(false);
-            return;
-          }
-
-          if (permission === "notifications") {
-            recordWebNotificationPermissionDecision({
-              source: "permission-request",
-              permission,
-              granted: false,
-              url,
-              requestingUrl,
-              webContentsId: webContents.id,
-              isMainFrame: details.isMainFrame,
-              reason: "browser-notifications-disabled",
-            });
-            callback(false);
-            return;
-          }
-
-          const allowedPermissions = [
-            "media",
-            "mediaKeySystem",
-            "fullscreen",
-            "pointerLock",
-          ];
-
-          if (allowedPermissions.includes(permission)) {
-            console.log(`[Permissions] Allowing ${permission} (child window)`);
-            callback(true);
-          } else {
-            console.log(
-              `[Permissions] Denied ${permission} - not in allowlist (child window)`,
-            );
-            callback(false);
-          }
-        },
-      );
-
-      childWindow.webContents.session.setPermissionCheckHandler(
-        (webContents, permission, requestingOrigin) => {
-          const allowedPermissions = [
-            "media",
-            "mediaKeySystem",
-            "fullscreen",
-            "pointerLock",
-          ];
-          const isAllowed = isFacebookOrMessengerUrl(requestingOrigin);
-          const hasPermission =
-            isAllowed && allowedPermissions.includes(permission);
-          console.log(
-            `[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
-          );
-          recordWebNotificationPermissionDecision({
-            source: "permission-check",
-            permission,
-            granted: false,
-            url: webContents?.getURL(),
-            requestingOrigin,
-            webContentsId: webContents?.id,
-            reason:
-              permission === "notifications"
-                ? "browser-notifications-disabled"
-                : "not-notification-permission",
-          });
-          return hasPermission;
-        },
-      );
-
-      // Set up screen sharing handler for child windows (call windows)
-      childWindow.webContents.session.setDisplayMediaRequestHandler(
-        async (request, callback) => {
-          console.log(
-            "[Screen Share] Display media request received (child window)",
-          );
-
-          // On native Wayland, screen sharing has limited support - offer to switch to XWayland
-          if (isRunningOnWayland() && !isRunningXWaylandMode()) {
-            const result = await dialog.showMessageBox(childWindow, {
-              type: "warning",
-              title: "Screen Sharing on Wayland",
-              message:
-                "Screen sharing may not work reliably on native Wayland.",
-              detail:
-                "For reliable screen sharing, you can restart the app using XWayland compatibility mode.\n\nWould you like to restart with XWayland mode enabled?",
-              buttons: ["Restart with XWayland", "Try Anyway", "Cancel"],
-              defaultId: 0,
-              cancelId: 2,
-            });
-
-            if (result.response === 0) {
-              restartWithXWaylandMode(true);
-              callback({});
-              return;
-            } else if (result.response === 2) {
-              callback({});
-              return;
-            }
-          }
-
-          try {
-            const sources = await desktopCapturer.getSources({
-              types: ["screen", "window"],
-              thumbnailSize: { width: 150, height: 150 },
-              fetchWindowIcons: true,
-            });
-
-            console.log(
-              `[Screen Share] Found ${sources.length} sources (child window)`,
-            );
-
-            if (sources.length === 0) {
-              console.log("[Screen Share] No sources available");
-              callback({});
-              return;
-            }
-
-            // If only one screen and no windows, auto-select it
-            const screens = sources.filter((s) => s.id.startsWith("screen:"));
-            if (screens.length === 1 && sources.length === 1) {
-              console.log(
-                "[Screen Share] Auto-selecting single screen:",
-                screens[0].name,
-              );
-              callback({ video: screens[0] });
-              return;
-            }
-
-            // Show picker dialog
-            const choices = sources.map((source) => {
-              const icon = source.id.startsWith("screen:") ? "🖥️" : "🪟";
-              return `${icon} ${source.name}`;
-            });
-
-            const result = await dialog.showMessageBox(childWindow, {
-              type: "question",
-              title: "Share Screen",
-              message: "Choose what to share:",
-              detail: "Select a screen or window to share during your call.",
-              buttons: [...choices, "Cancel"],
-              defaultId: 0,
-              cancelId: choices.length,
-            });
-
-            if (result.response < sources.length) {
-              const selectedSource = sources[result.response];
-              console.log("[Screen Share] User selected:", selectedSource.name);
-              callback({ video: selectedSource });
-            } else {
-              console.log("[Screen Share] User cancelled");
-              callback({});
-            }
-          } catch (error) {
-            console.error("[Screen Share] Error getting sources:", error);
-            callback({});
-          }
-        },
-      );
-
-      // Inject MediaStream tracking as early as possible (dom-ready fires before did-finish-load)
-      childWindow.webContents.on("dom-ready", async () => {
-        const url = childWindow.webContents.getURL();
-        console.log("[Window] Child window DOM ready:", url);
-
-        // Inject call window script into page context for MediaStream tracking.
-        if (isFacebookOrMessengerUrl(url)) {
-          const callInjectPath = path.join(
-            __dirname,
-            "../preload/call-window-inject.js",
-          );
-          if (fs.existsSync(callInjectPath)) {
-            const callInjectScript = fs.readFileSync(callInjectPath, "utf-8");
-            try {
-              await childWindow.webContents.executeJavaScript(callInjectScript);
-              console.log("[Window] Call window MediaStream tracking injected");
-            } catch (err) {
-              console.error(
-                "[Window] Failed to inject call window script:",
-                err,
-              );
-            }
-          }
-        }
-      });
-
-      // Log console messages from child window
-      childWindow.webContents.on(
-        "console-message",
-        (event, level, message, line, sourceId) => {
-          console.log(
-            `[Child Window Console ${level}]`,
-            message,
-            `(${sourceId}:${line})`,
-          );
-        },
-      );
-
-      // Handle child window closed event
-      childWindow.on("closed", () => {
-        console.log("[Window] Child window closed and cleaned up");
-      });
-    });
-
-    // Log console messages from main window
-    mainWindow.webContents.on(
-      "console-message",
-      (event, level, message, line, sourceId) => {
-        console.log(
-          `[Main Window Console ${level}]`,
-          message,
-          `(${sourceId}:${line})`,
-        );
-      },
-    );
-
-    // Handle load failures (issue #25) - show offline page when network is unavailable
-    mainWindow.webContents.on(
-      "did-fail-load",
-      (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-        // Only handle main frame errors, ignore subframe errors (e.g., failed ad loads)
-        if (!isMainFrame) return;
-
-        console.log(
-          `[MainWindow] Load failed: ${errorCode} - ${errorDescription} for ${validatedURL}`,
-        );
-        pushReloadDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "did-fail-load",
-          label: "Main window",
-          webContentsId: mainWindow?.webContents.id,
-          url: validatedURL,
-          errorCode,
-          errorDescription,
-          isMainFrame,
-        });
-
-        // Network-related error codes that warrant showing offline page
-        // Removed -2 (ERR_FAILED) and -3 (ERR_ABORTED) as they're too broad and cause false positives
-        const networkErrorCodes = [
-          -6, -7, -15, -21, -100, -101, -102, -104, -105, -106, -109, -118,
-          -130,
-        ];
-
-        if (networkErrorCodes.includes(errorCode)) {
-          console.log(
-            "[MainWindow] Network error detected, showing offline page",
-          );
-          const offlineHTML = getOfflinePageHTML(errorDescription);
-          const offlineUrl = `data:text/html;charset=utf-8,${encodeURIComponent(offlineHTML)}${OFFLINE_PAGE_MARKER}`;
-          pushReloadDebugEvent({
-            timestamp: Date.now(),
-            source: "main",
-            event: "offline-page-load-request",
-            label: "Main window",
-            webContentsId: mainWindow?.webContents.id,
-            url: validatedURL,
-            errorCode,
-            errorDescription,
-            nextUrl: offlineUrl,
-          });
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            offlineUrl,
-            {
-              label: "Main window",
-              trigger: "did-fail-load-network-offline-page",
-              source: "network-error-handler",
-              extra: {
-                previousUrl: validatedURL,
-                errorCode,
-                errorDescription,
-              },
-            },
-          );
-        }
-      },
-    );
-
-    mainWindow.webContents.on("did-finish-load", async () => {
-      const currentUrl = mainWindow?.webContents.getURL() || "";
-      if (mainWindow) {
-        clearIncomingCallOverlayStateForWebContents(
-          mainWindow.webContents,
-          "did-finish-load-mainwindow",
-          "incoming-call-overlay-hint-reset-mainwindow-did-finish-load",
-        );
       }
-      console.log(
-        "[MainWindow] Page loaded:",
-        currentUrl,
-        "| loginFlowActive:",
-        loginFlowActive,
-      );
+    },
+  );
 
-      // User clicked "Login with Facebook" - mark login flow as active
-      if (isAuthOrCheckpointRoute(currentUrl)) {
-        console.log(
-          "[MainWindow] Facebook login/checkpoint page - login flow is active",
-        );
-        loginFlowActive = true;
-        if (mainWindow) {
-          rememberFacebookAuthFlowUrl(
-            currentUrl,
-            {
-              parentWindow: mainWindow,
-              targetWebContents: mainWindow.webContents,
-              label: "Main window",
-            },
-            undefined,
-            "main-window-did-finish-load",
-          );
-        }
-      }
+  // Update window title when page title changes (for dock/taskbar).
+  contentView.webContents.on("page-title-updated", (event, title) => {
+    const currentUrl = contentView?.webContents.getURL() || "";
+    const effectiveTitle = getEffectiveWindowTitle(title, currentUrl);
+    if (mainWindow) {
+      mainWindow.setTitle(effectiveTitle);
+    }
+  });
 
-      // After Facebook login completes, redirect to Messages if we're on Facebook homepage.
-      if (isFacebookHomePage(currentUrl)) {
-        console.log(
-          "[MainWindow] Facebook homepage detected after login, redirecting to Messages...",
-        );
-        setTimeout(() => {
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Main window",
-              trigger: "facebook-homepage-post-login",
-              source: "did-finish-load",
-            },
-          );
-        }, 500);
-        return;
-      }
-
-      if (isLoginPage(currentUrl)) {
-        // ONLY redirect to custom login if we're NOT in an active login flow
-        if (!loginFlowActive) {
-          console.log(
-            "[MainWindow] Facebook login page detected (no active login flow), showing custom login...",
-          );
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            getCustomLoginPageURL(),
-            {
-              label: "Main window",
-              trigger: "facebook-login-page-no-active-flow",
-              source: "did-finish-load",
-            },
-          );
-          return;
-        }
-
-        console.log(
-          "[MainWindow] Facebook login page detected during active login flow - waiting for session...",
-        );
-      } else if (isMessagesRoute(currentUrl)) {
-        console.log("[MainWindow] Messages loaded successfully!");
-        loginFlowActive = true;
-      }
-
-      try {
-        if (mainWindow) {
-          await injectNotificationScripts(mainWindow.webContents);
-        }
-      } catch (error) {
-        console.error(
-          "[Main Process] Failed to inject notification script:",
-          error,
-        );
-      }
-    });
-
-    // Intercept navigation to open external URLs (Marketplace, profiles, etc.) in system browser
-    // This fixes issue #24 - Marketplace chat links were opening inside the app
-    mainWindow.webContents.on("will-navigate", (event, url) => {
-      console.log("[MainWindow] will-navigate:", url);
-      const currentUrl = mainWindow?.webContents.getURL() || "";
-      const navigationDecision = decideMessengerTopLevelNavigation({
-        currentUrl,
-        nextUrl: url,
-      });
-      if (!navigationDecision.allowed) {
-        event.preventDefault();
-        pushReloadDebugEvent({
-          timestamp: Date.now(),
-          source: "main",
-          event: "navigation-suppressed",
-          label: "Main window",
-          webContentsId: mainWindow?.webContents.id,
-          url: currentUrl,
-          nextUrl: url,
-          reason: navigationDecision.reason,
-        });
-        console.log("[MainWindow] Suppressed redundant thread navigation", {
-          reason: navigationDecision.reason,
-        });
-        return;
-      }
-
-      if (isExternalAuthProviderFallbackResumeUrl(url)) {
-        event.preventDefault();
-        resumeExternalAuthProviderFallback(
-          {
-            parentWindow: mainWindow!,
-            targetWebContents: mainWindow!.webContents,
-            label: "Main window",
-          },
-          url,
-          "main-window-auth-provider-resume",
-        );
-        return;
-      }
-
-      if (shouldOpenAuthProviderInBrowser(url)) {
-        console.log(
-          "[MainWindow] Opening auth provider in browser fallback:",
-          getAuthFlowSafeUrl(url),
-        );
-        event.preventDefault();
-        openExternalAuthProviderBrowserFallback(
-          {
-            parentWindow: mainWindow!,
-            targetWebContents: mainWindow!.webContents,
-            label: "Main window",
-          },
-          url,
-          "main-window-auth-provider-navigation",
-        );
-        return;
-      }
-
-      if (isAuthOrCheckpointRoute(url)) {
-        console.log(
-          "[MainWindow] Opening auth navigation in auth window:",
-          url,
-        );
-        event.preventDefault();
-        const target = {
-          parentWindow: mainWindow!,
-          targetWebContents: mainWindow!.webContents,
-          label: "Main window",
-        };
-        recordExternalAuthProviderFallbackResume(
-          target,
-          url,
-          "main-window-auth-navigation-resume",
-        );
-        openAuthWindow(
-          target,
-          stripExternalAuthProviderFallbackResumeMarker(url),
-          "main-window-auth-provider-navigation",
-        );
-        return;
-      }
-
-      if (!shouldAllowInternalNavigation(url)) {
-        console.log("[MainWindow] Opening external URL in browser:", url);
-        event.preventDefault();
-        shell.openExternal(url).catch((err) => {
-          console.error("[External Link] Failed to open URL:", url, err);
-        });
-      }
-    });
-
-    // Handle navigation events to inject disclaimer on page changes
-    mainWindow.webContents.on("did-navigate", async (event, url) => {
-      if (mainWindow && shouldResetIncomingCallOverlayOnNavigation(url)) {
-        clearIncomingCallOverlayStateForWebContents(
-          mainWindow.webContents,
-          "did-navigate-mainwindow",
-          "incoming-call-overlay-hint-reset-mainwindow-did-navigate",
-        );
-      }
-
-      console.log(
-        "[MainWindow] did-navigate:",
-        url,
-        "| loginFlowActive:",
-        loginFlowActive,
-      );
-
-      // Track when user enters Facebook login flow
-      if (isAuthOrCheckpointRoute(url)) {
-        console.log("[MainWindow] Entering Facebook auth flow");
-        loginFlowActive = true;
-      }
-
-      // After Facebook login completes, redirect to Messages.
-      if (isFacebookHomePage(url)) {
-        console.log(
-          "[MainWindow] Facebook login complete, redirecting to Messages...",
-        );
-        setTimeout(() => {
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Main window",
-              trigger: "facebook-homepage-post-login",
-              source: "did-navigate",
-            },
-          );
-        }, 500);
-        return;
-      }
-    });
-
-    mainWindow.webContents.on("did-navigate-in-page", async (event, url) => {
-      if (mainWindow && shouldResetIncomingCallOverlayOnNavigation(url)) {
-        clearIncomingCallOverlayStateForWebContents(
-          mainWindow.webContents,
-          "did-navigate-in-page-mainwindow",
-          "incoming-call-overlay-hint-reset-mainwindow-did-navigate-in-page",
-        );
-      }
-
-      console.log("[MainWindow] In-page navigation to:", url);
-
-      // Track Facebook auth flow via SPA navigation
-      if (isAuthOrCheckpointRoute(url)) {
-        loginFlowActive = true;
-      }
-
-      // After Facebook login completes, redirect to Messages (also check SPA navigation).
-      if (isFacebookHomePage(url)) {
-        console.log(
-          "[MainWindow] Facebook login complete (SPA nav), redirecting to Messages...",
-        );
-        setTimeout(() => {
-          void loadWebContentsURLWithDebug(
-            mainWindow?.webContents,
-            MESSAGES_HOME_URL,
-            {
-              label: "Main window",
-              trigger: "facebook-homepage-post-login",
-              source: "did-navigate-in-page",
-            },
-          );
-        }, 500);
-        return;
-      }
-    });
-
-    // Update window title when page title changes (for dock/taskbar)
-    mainWindow.webContents.on("page-title-updated", (event, title) => {
-      if (mainWindow) {
-        const currentUrl = mainWindow.webContents.getURL();
-        const effectiveTitle = getEffectiveWindowTitle(title, currentUrl);
-        mainWindow.setTitle(effectiveTitle);
-      }
-    });
-  }
+  // Handle window resize to maintain correct content bounds
+  mainWindow.on("resize", () => {
+    if (!mainWindow || !contentView) return;
+    applyContentViewBounds();
+  });
 
   // Handle window closed
   mainWindow.on("closed", () => {
@@ -8667,7 +7566,6 @@ async function handleResetAndLogout(): Promise<void> {
 
       // Reset login flow state
       loginFlowActive = false;
-      _hasTriedMessagesOnce = false;
 
       // Get the session from the active webContents
       const session = contentView
@@ -9794,13 +8692,6 @@ function setupIpcHandlers(): void {
     syncWindowTitleFromCurrentPage();
   });
 
-  // Handle clear badge request
-  ipcMain.on("clear-badge", () => {
-    lastMessagesUnreadCount = 0;
-    badgeManager.clearBadge();
-    syncWindowTitleFromCurrentPage();
-  });
-
   ipcMain.on(
     "messages-viewport-state",
     (event, rawPayload?: Partial<MessagesViewportStatePayload> | null) => {
@@ -10446,28 +9337,6 @@ function setupIpcHandlers(): void {
     stopIncomingCallNotificationReminder(true);
   });
 
-  // Note: Menu bar hover is now handled natively via autoHideMenuBar
-  // Press Alt to show menu bar, click away or Esc to hide
-
-  // Handle notification click (emitted by notification handler)
-  // This is handled directly in the notification handler's click event
-
-  // Handle notification action (reply, etc.)
-  ipcMain.on("notification-action", (event, action: string, data: any) => {
-    // Content is in BrowserView on macOS/Windows, otherwise in mainWindow.
-    const targetContents = contentView
-      ? contentView.webContents
-      : mainWindow?.webContents;
-    if (targetContents) {
-      targetContents.send("notification-action-handler", action, data);
-    }
-  });
-
-  // Handle test notification request
-  ipcMain.on("test-notification", () => {
-    testNotification();
-  });
-
   // Handle fallback debug logs from preload/page
   ipcMain.on("log-fallback", (event, data) => {
     try {
@@ -10498,26 +9367,6 @@ function setupIpcHandlers(): void {
       // Silently ignore logging failures
     }
   });
-}
-
-// Test notification function
-function testNotification(): void {
-  showNativeNotification({
-    data: {
-      title: "Test Notification",
-      body: "This is a test notification from Messenger Desktop! Click to focus the app.",
-      tag: "test-notification",
-      silent: false,
-      sourceKind: "app-owned",
-      sourceLabel: "test-notification",
-      provenanceReason: "explicit-test-notification",
-    },
-    displaySource: "test",
-  });
-
-  // Also test badge count
-  badgeManager.updateBadgeCount(5);
-  console.log("Test notification sent and badge count set to 5");
 }
 
 // Check if app is running from /Applications (macOS only)
@@ -12708,7 +11557,6 @@ app.whenReady().then(async () => {
   );
   badgeManager = new BadgeManager();
   badgeManager.setWindowGetter(() => mainWindow);
-  _backgroundService = new BackgroundService();
 
   // Request notification permission on first launch (triggers macOS permission prompt)
   await requestNotificationPermission();
