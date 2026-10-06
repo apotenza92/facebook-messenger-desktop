@@ -5,6 +5,22 @@
 ### Security
 
 - Update Electron and patched transitive URL and HTTP runtimes after new security advisories.
+- Patch brace-expansion, js-yaml, http-cache-semantics and ip-address after new
+  advisories.
+- Accept notification, incoming-call and badge messages only from the app's own
+  Messenger window, and stop exposing an app API to Facebook's page scripts.
+- Never record draft or message text in diagnostics, and keep notification
+  titles and bodies out of stable-build logs.
+
+### Fixed
+
+- Stop the app from spinning the CPU after an unexpected main-process error or
+  an interrupted page load.
+
+### Changed
+
+- Skip debug-only page scanning in stable builds and remove about 1,300 lines of
+  unused window, notification and IPC code.
 
 ## [1.4.2] - 2026-08-11
 

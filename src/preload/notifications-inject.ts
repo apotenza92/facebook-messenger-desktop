@@ -10,7 +10,12 @@
   }
   (window as any).__messengerDesktopInjected = true;
 
-  const DEBUG = true;
+  // Set by the main process before injection: on for dev/beta builds or
+  // when MESSENGER_NOTIFICATION_DEBUG is set, off for stable builds so
+  // titles and bodies never leave the page in ordinary use.
+  const DEBUG =
+    (window as Window & { __mdNotificationDebugLogging?: boolean })
+      .__mdNotificationDebugLogging === true;
   const notifications = new Map<number, any>();
   type PowerStateEvent = "suspend" | "resume" | "lock-screen" | "unlock-screen";
   let lastPowerState: {
@@ -239,6 +244,7 @@
     event: string,
     payload?: Record<string, unknown>,
   ) => {
+    if (!DEBUG) return;
     try {
       window.postMessage(
         {
@@ -1482,7 +1488,10 @@
   // ============================================================================
 
   // Handle events sent from the browser process (via preload)
-  window.addEventListener("message", ({ data }: MessageEvent) => {
+  window.addEventListener("message", (event: MessageEvent) => {
+    // Preload relays main-process events on this window; ignore other frames.
+    if (event.source !== window) return;
+    const { data } = event;
     if (!data || typeof data !== "object") return;
 
     const { type, data: eventData } = data as { type: string; data: any };
