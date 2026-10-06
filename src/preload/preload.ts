@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { isTrustedPageBridgeMessage } from "./page-bridge-policy";
+import { describeInteractionTarget } from "./debug-redaction-policy";
+import { decodeRendererDebugFlags } from "../shared/debug-flags";
 import {
   type FacebookHeaderSuppressionMode,
   resolveEffectiveFacebookHeaderSuppressionMode,
@@ -93,7 +95,12 @@ const incomingCallJoinSelectors = [
   '[aria-label*="Join audio" i]',
 ];
 
+const rendererDebugFlags = decodeRendererDebugFlags(process.argv);
+
 (function setupReloadAttributionDebugging() {
+  // Diagnostic only: patches navigation APIs, captures interactions and
+  // polls the URL. Skip it entirely unless reload debugging is enabled.
+  if (!rendererDebugFlags.reload) return;
   const RELOAD_DEBUG_CHANNEL = "reload-debug";
   const RECENT_INTERACTION_MAX_AGE_MS = 15_000;
   const PENDING_NAVIGATION_KEY = "md:last-navigation-intent";
@@ -148,23 +155,23 @@ const incomingCallJoinSelectors = [
     sendReloadDebug("preload-navigation-intent", intent);
   };
 
-  const describeElement = (element: Element | null): Record<string, unknown> | null => {
-    if (!element) return null;
-    const text = (element.textContent || "").replace(/\s+/g, " ").trim();
-    return {
-      tagName: element.tagName.toLowerCase(),
-      id: element.id || undefined,
-      className:
-        typeof element.className === "string"
-          ? element.className.slice(0, 160)
-          : undefined,
-      role: element.getAttribute("role") || undefined,
-      ariaLabel: element.getAttribute("aria-label") || undefined,
-      title: element.getAttribute("title") || undefined,
-      href: element instanceof HTMLAnchorElement ? element.href : undefined,
-      text: text ? text.slice(0, 160) : undefined,
-    };
-  };
+  const describeElement = (element: Element | null) =>
+    describeInteractionTarget(
+      element
+        ? {
+            tagName: element.tagName,
+            id: element.id,
+            className: element.className,
+            isContentEditable:
+              element instanceof HTMLElement
+                ? element.isContentEditable
+                : undefined,
+            getAttribute: (name: string) => element.getAttribute(name),
+            href:
+              element instanceof HTMLAnchorElement ? element.href : undefined,
+          }
+        : null,
+    );
 
   const captureInteraction = (event: Event): void => {
     const target = event.target instanceof Element ? event.target : null;
@@ -1615,6 +1622,7 @@ ipcRenderer.on(
     reason: string,
     extra: Record<string, unknown> = {},
   ): void => {
+    if (!rendererDebugFlags.mediaOverlay) return;
     const now = Date.now();
     const force = extra.force === true;
     if (

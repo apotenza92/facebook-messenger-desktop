@@ -141,9 +141,96 @@ const runPageBridgePolicyTests = () => {
   console.log("PASS page bridge policy");
 };
 
+const fakeElement = (
+  tagName: string,
+  attributes: Record<string, string> = {},
+  extra: Record<string, unknown> = {},
+) => ({
+  tagName: tagName.toUpperCase(),
+  textContent: "draft: meet me at 6, door code 4821",
+  getAttribute: (name: string) =>
+    Object.prototype.hasOwnProperty.call(attributes, name)
+      ? attributes[name]
+      : null,
+  ...extra,
+});
+
+const runDebugRedactionTests = () => {
+  const { describeInteractionTarget } = require(
+    path.join(APP_ROOT, "src/preload/debug-redaction-policy.ts"),
+  );
+
+  const composer = describeInteractionTarget(
+    fakeElement(
+      "div",
+      { role: "textbox", "aria-label": "Message Tester A", contenteditable: "true" },
+      { isContentEditable: true },
+    ),
+  );
+  const serializedComposer = JSON.stringify(composer);
+  assert(
+    !serializedComposer.includes("door code") &&
+      !serializedComposer.includes("Tester A"),
+    "composer description must not include draft text or its label",
+  );
+  assertEqual(composer.role, "textbox", "composer role kept");
+  assertEqual(composer.editable, true, "composer marked editable");
+
+  const textarea = describeInteractionTarget(
+    fakeElement("textarea", { title: "Reply to Tester B" }),
+  );
+  assert(
+    !JSON.stringify(textarea).includes("Tester B"),
+    "textarea title dropped",
+  );
+
+  const button = describeInteractionTarget(
+    fakeElement("button", { "aria-label": "Close", role: "button" }),
+  );
+  assertEqual(button.ariaLabel, "Close", "button labels are kept");
+  assert(
+    !JSON.stringify(button).includes("door code"),
+    "text content is never recorded",
+  );
+
+  const link = describeInteractionTarget(
+    fakeElement("a", {}, { href: "https://www.facebook.com/messages/" }),
+  );
+  assertEqual(link.href, "https://www.facebook.com/messages/", "link href kept");
+  assertEqual(describeInteractionTarget(null), null, "null target");
+
+  console.log("PASS debug redaction policy");
+};
+
+const runRendererDebugFlagTests = () => {
+  const { encodeRendererDebugFlags, decodeRendererDebugFlags } = require(
+    path.join(APP_ROOT, "src/shared/debug-flags.ts"),
+  );
+  const off = decodeRendererDebugFlags(
+    encodeRendererDebugFlags({ mediaOverlay: false, reload: false }),
+  );
+  assertEqual(off.mediaOverlay, false, "media overlay flag off round-trips");
+  assertEqual(off.reload, false, "reload flag off round-trips");
+  const on = decodeRendererDebugFlags([
+    "electron",
+    ...encodeRendererDebugFlags({ mediaOverlay: true, reload: true }),
+  ]);
+  assertEqual(on.mediaOverlay, true, "media overlay flag on round-trips");
+  assertEqual(on.reload, true, "reload flag on round-trips");
+  const missing = decodeRendererDebugFlags(["electron", "--type=renderer"]);
+  assertEqual(
+    missing.mediaOverlay || missing.reload,
+    false,
+    "absent flags default to off",
+  );
+  console.log("PASS renderer debug flags");
+};
+
 const run = async () => {
   await runProcessErrorGuardTests();
   runPageBridgePolicyTests();
+  runDebugRedactionTests();
+  runRendererDebugFlagTests();
   console.log("PASS stability tests");
 };
 

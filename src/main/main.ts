@@ -88,6 +88,7 @@ import {
 } from "../shared/notification-activity-policy";
 import { withLinuxNoSandboxArg } from "./linux-sandbox-policy";
 import { installPipeErrorGuards } from "./process-error-guards";
+import { encodeRendererDebugFlags } from "../shared/debug-flags";
 import { autoUpdater } from "electron-updater";
 import { resolvePackageManagerContract } from "./package-manager-contract";
 import {
@@ -3808,6 +3809,9 @@ async function injectNotificationScripts(
 
   await webContents.executeJavaScript(`
     (function() {
+      window.__mdNotificationDebugLogging = ${JSON.stringify(
+        shouldWriteNotificationDebugLog() || shouldWriteIncomingCallDebugLog(),
+      )};
       window.__electronNotificationBridge = function(data) {
         const event = new CustomEvent('electron-notification', { detail: data });
         window.dispatchEvent(event);
@@ -4862,6 +4866,10 @@ function createWindow(source: string = "unknown"): void {
         webSecurity: true,
         spellcheck: true,
         enableWebSQL: false,
+        additionalArguments: encodeRendererDebugFlags({
+          mediaOverlay: shouldWriteMediaOverlayDebugLog(),
+          reload: shouldWriteReloadDebugLog(),
+        }),
       },
     });
     attachWebContentsFailureHandlers(
@@ -5998,10 +6006,13 @@ function createWindow(source: string = "unknown"): void {
       }
     });
 
-    // Log console messages from content view
+    // Log console messages from content view. Info-level page output can
+    // carry conversation names and previews, so stable builds only forward
+    // warnings and errors (levels 2 and 3).
     contentView.webContents.on(
       "console-message",
       (event, level, message, line, sourceId) => {
+        if (level < 2 && !shouldCaptureDebugLogsByDefault()) return;
         console.log(
           `[Content View Console ${level}]`,
           message,
