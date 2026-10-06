@@ -87,6 +87,7 @@ import {
   type NotificationPayload,
 } from "../shared/notification-activity-policy";
 import { withLinuxNoSandboxArg } from "./linux-sandbox-policy";
+import { installPipeErrorGuards } from "./process-error-guards";
 import { autoUpdater } from "electron-updater";
 import { resolvePackageManagerContract } from "./package-manager-contract";
 import {
@@ -144,40 +145,7 @@ const isDev =
   (!app.isPackaged && !process.env.FLATPAK_ID && !process.env.SNAP) ||
   process.env.NODE_ENV === "development";
 
-const isBrokenPipeError = (error: unknown): boolean => {
-  if (!error || typeof error !== "object") return false;
-  const err = error as NodeJS.ErrnoException;
-  return (
-    err.code === "EPIPE" || /write\s+EPIPE/i.test(String(err.message || ""))
-  );
-};
-
-const installPipeErrorGuards = (): void => {
-  const swallowStreamError = (error: unknown) => {
-    if (isBrokenPipeError(error)) {
-      return;
-    }
-
-    setImmediate(() => {
-      throw error;
-    });
-  };
-
-  process.stdout?.on?.("error", swallowStreamError);
-  process.stderr?.on?.("error", swallowStreamError);
-
-  process.on("uncaughtException", (error) => {
-    if (isBrokenPipeError(error)) {
-      return;
-    }
-
-    setImmediate(() => {
-      throw error;
-    });
-  });
-};
-
-installPipeErrorGuards();
+installPipeErrorGuards(process, (message) => console.error(message));
 
 const appStartTime = Date.now();
 console.log(
@@ -1814,7 +1782,11 @@ function loadWebContentsURLWithDebug(
       error: String((error as Error)?.message || error),
       ...input.extra,
     });
-    throw error;
+    // Callers fire and forget; a superseded or failed load is already
+    // surfaced through did-fail-load, so do not leave a rejected promise.
+    console.warn(
+      `[Navigation] loadURL failed for ${input.label}: ${String((error as { code?: unknown })?.code ?? "unknown")}`,
+    );
   });
 }
 
@@ -3103,7 +3075,11 @@ function openAuthWindow(
       return { action: "deny" };
     }
 
-    void authWindow.webContents.loadURL(popupUrl);
+    authWindow.webContents.loadURL(popupUrl).catch((error) => {
+      console.warn(
+        `[Auth] Popup load failed: ${String((error as { code?: unknown })?.code ?? "unknown")}`,
+      );
+    });
     return { action: "deny" };
   });
 
