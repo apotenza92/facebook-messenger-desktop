@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.4.3-beta.1] - 2026-10-07
 
 ### Security
 
@@ -21,6 +21,8 @@
 
 - Skip debug-only page scanning in stable builds and remove about 1,300 lines of
   unused window, notification and IPC code.
+- Package the macOS app icon from its Icon Composer source so it follows the
+  system's light, dark and tinted icon appearances.
 
 ### Added
 
