@@ -141,7 +141,16 @@ const FOCUS_SOURCE = String.raw`
 `;
 
 const launchScenarioPage = async (scenario) => {
-  const app = await electron.launch({ args: [HARNESS_MAIN] });
+  const app = await electron.launch({
+    // Ubuntu runners block the unprivileged user namespaces Chromium's
+    // sandbox needs; the app itself always runs with --no-sandbox on Linux
+    // (see linux-sandbox-policy and after-pack). The harness only loads
+    // in-memory fixture pages.
+    args:
+      process.platform === "linux"
+        ? ["--no-sandbox", HARNESS_MAIN]
+        : [HARNESS_MAIN],
+  });
   const page = await app.firstWindow();
   await page.waitForLoadState("load");
   if (VERBOSE) {
@@ -324,7 +333,7 @@ const SCENARIOS = [
     "words-muted",
     "a message mentioning muting is delivered",
     "I muted the group chat lol",
-    "mute detection searches the whole row text including the preview",
+    "mute detection searches the whole row text including the preview (#105)",
   ),
   messageScenario(
     "words-you-up",
@@ -521,6 +530,15 @@ const SCENARIOS = [
       }
       if (byName("app-sent").length !== 1) return "app send not recorded";
       if (byName("row-shape").length === 0) return "no row shapes recorded";
+      const row = constructed.row;
+      if (
+        !row ||
+        !Array.isArray(row.icons) ||
+        typeof row.mutedHeuristic?.muted !== "boolean" ||
+        typeof row.mutedHeuristic?.method !== "string"
+      ) {
+        return `row mute signals missing: ${JSON.stringify(row)}`;
+      }
       return null;
     },
   },
@@ -530,7 +548,9 @@ const SCENARIOS = [
     id: "locale-french",
     description:
       "in a French layout, incoming messages notify and the user's own do not",
-    knownFailure: "unread detection only recognises English labels",
+    // Likely cause of #104 (Polish layout: no notifications, sound or badge).
+    knownFailure:
+      "unread detection only recognises English labels (#104)",
     locale: {
       chatsLabel: "Discussions",
       unreadText: "Message non lu :",
