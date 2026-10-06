@@ -4666,6 +4666,12 @@ ipcRenderer.on(
             /* intentionally empty */
           }
         }
+      } else if (event.data.type === "electron-notification-probe") {
+        try {
+          ipcRenderer.send("notification-probe", event.data.data);
+        } catch {
+          /* intentionally empty */
+        }
       } else if (event.data.type === "electron-fallback-log") {
         try {
           ipcRenderer.send("log-fallback", event.data.data);

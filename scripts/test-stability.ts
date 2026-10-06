@@ -163,7 +163,11 @@ const runDebugRedactionTests = () => {
   const composer = describeInteractionTarget(
     fakeElement(
       "div",
-      { role: "textbox", "aria-label": "Message Tester A", contenteditable: "true" },
+      {
+        role: "textbox",
+        "aria-label": "Message Tester A",
+        contenteditable: "true",
+      },
       { isContentEditable: true },
     ),
   );
@@ -196,7 +200,11 @@ const runDebugRedactionTests = () => {
   const link = describeInteractionTarget(
     fakeElement("a", {}, { href: "https://www.facebook.com/messages/" }),
   );
-  assertEqual(link.href, "https://www.facebook.com/messages/", "link href kept");
+  assertEqual(
+    link.href,
+    "https://www.facebook.com/messages/",
+    "link href kept",
+  );
   assertEqual(describeInteractionTarget(null), null, "null target");
 
   console.log("PASS debug redaction policy");
@@ -226,11 +234,65 @@ const runRendererDebugFlagTests = () => {
   console.log("PASS renderer debug flags");
 };
 
+const runNotificationProbeLogTests = async () => {
+  const fs = require("fs");
+  const os = require("os");
+  const {
+    readNotificationProbeEnabled,
+    writeNotificationProbeEnabled,
+    sanitizeNotificationProbeEvent,
+    NotificationProbeLog,
+  } = require(path.join(APP_ROOT, "src/main/notification-probe.ts"));
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "md-probe-"));
+  try {
+    assertEqual(readNotificationProbeEnabled(dir, {}), false, "probe off by default");
+    writeNotificationProbeEnabled(dir, true);
+    assertEqual(readNotificationProbeEnabled(dir, {}), true, "probe setting persists");
+    assertEqual(
+      readNotificationProbeEnabled(dir, { MESSENGER_NOTIFICATION_PROBE: "0" }),
+      false,
+      "env can force the probe off",
+    );
+
+    assertEqual(sanitizeNotificationProbeEvent(null), null, "null rejected");
+    assertEqual(
+      sanitizeNotificationProbeEvent({ event: "Bad Name" }),
+      null,
+      "event names are restricted",
+    );
+    const long = sanitizeNotificationProbeEvent(
+      { event: "native-constructed", note: "x".repeat(5000) },
+      123,
+    );
+    assert(
+      String(long.note).length <= 201 && long.receivedAt === 123,
+      "long strings are clamped and a receive time is stamped",
+    );
+    const huge = sanitizeNotificationProbeEvent({
+      event: "row-shape",
+      shape: Array.from({ length: 200 }, () => ({ a: "y".repeat(200) })),
+    });
+    assertEqual(huge.truncated, true, "oversized events are truncated");
+
+    const log = new NotificationProbeLog(dir);
+    log.append({ event: "marker", marker: 1 });
+    log.append({ event: "marker", marker: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const lines = fs.readFileSync(log.path, "utf8").trim().split("\n");
+    assertEqual(lines.length, 2, "probe log appends ndjson lines");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  console.log("PASS notification probe log");
+};
+
 const run = async () => {
   await runProcessErrorGuardTests();
   runPageBridgePolicyTests();
   runDebugRedactionTests();
   runRendererDebugFlagTests();
+  await runNotificationProbeLogTests();
   console.log("PASS stability tests");
 };
 
