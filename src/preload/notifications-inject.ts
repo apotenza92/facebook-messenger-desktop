@@ -1369,6 +1369,16 @@
 
   // Detect whether a conversation is muted
   // Keep this heuristic broad because Facebook frequently changes sidebar icon markup.
+  // Let the diagnostics probe record the current mute decision and which
+  // rule made it (only the method name and result are recorded).
+  if (getNotificationProbe()) {
+    (
+      window as Window & {
+        __mdProbeAnalyzeMute?: (el: Element) => MuteAnalysis;
+      }
+    ).__mdProbeAnalyzeMute = analyzeMuteSignals;
+  }
+
   const isConversationMuted = (conversationEl: Element): boolean => {
     const analysis = analyzeMuteSignals(conversationEl);
     if (!analysis.isMuted) return false;

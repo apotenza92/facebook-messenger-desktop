@@ -298,9 +298,66 @@
     threadHash: string | null;
     index: number;
     unreadHeuristic: boolean;
+    // The app's current mute decision and which rule made it, to compare
+    // with whether Facebook notifies for the same row (#105).
+    mutedHeuristic: { muted: boolean; method: string } | null;
+    // Unsalted hashes of the row's icon geometry: icons are not personal,
+    // so a stable hash identifies e.g. the muted bell across runs.
+    icons: string[];
     weights: string[];
     shapeHash: string;
     textCount: number;
+  };
+
+  // FNV-1a without the run salt, for non-personal values such as icons.
+  const stableHash = (value: string): string => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < value.length; i += 1) {
+      h ^= value.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(36);
+  };
+
+  const rowIconSignatures = (row: Element): string[] =>
+    Array.from(
+      new Set(
+        Array.from(row.querySelectorAll("svg"))
+          .slice(0, 8)
+          .map((svg) =>
+            stableHash(
+              Array.from(svg.querySelectorAll("path, use"))
+                .map(
+                  (node) =>
+                    node.getAttribute("d") ||
+                    node.getAttribute("href") ||
+                    node.getAttribute("xlink:href") ||
+                    "",
+                )
+                .join("|"),
+            ),
+          ),
+      ),
+    );
+
+  const rowMuteHeuristic = (
+    row: Element,
+  ): { muted: boolean; method: string } | null => {
+    const analyze = (
+      window as Window & {
+        __mdProbeAnalyzeMute?: (el: Element) => {
+          isMuted: boolean;
+          method: string;
+        };
+      }
+    ).__mdProbeAnalyzeMute;
+    if (typeof analyze !== "function") return null;
+    try {
+      const result = analyze(row);
+      return { muted: result.isMuted, method: String(result.method) };
+    } catch {
+      return null;
+    }
   };
 
   const rowState = (row: Element, index: number): RowState => {
@@ -309,6 +366,8 @@
       threadHash: threadId ? hash(threadId) : null,
       index,
       unreadHeuristic: rowUnreadByCurrentHeuristic(row),
+      mutedHeuristic: rowMuteHeuristic(row),
+      icons: rowIconSignatures(row),
       weights: rowWeights(row),
       shapeHash: rowShapeHash(row),
       textCount: rowTexts(row).length,
@@ -584,6 +643,8 @@
       if (!previous || rowChangeCount >= MAX_ROW_CHANGES) return;
       const changed =
         previous.unreadHeuristic !== state.unreadHeuristic ||
+        previous.mutedHeuristic?.muted !== state.mutedHeuristic?.muted ||
+        previous.icons.join() !== state.icons.join() ||
         previous.shapeHash !== state.shapeHash ||
         previous.weights.join() !== state.weights.join() ||
         (previous.index !== state.index && state.index === 0);
