@@ -155,8 +155,18 @@ function testContracts() {
   );
   assert.equal(resolveNonMacUpdaterPredecessor("1.4.1"), "1.4.0");
   assert.equal(resolveNonMacUpdaterPredecessor("1.4.2"), "1.4.0");
+  assert.equal(resolveNonMacUpdaterPredecessor("1.5.0-beta.1"), "1.4.2");
+  // The version being prepared must resolve, so a first beta without a
+  // declared predecessor fails here instead of in the release workflow.
+  const packageVersion = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ).version;
+  assert.doesNotThrow(
+    () => resolveNonMacUpdaterPredecessor(packageVersion),
+    `package.json version ${packageVersion} needs an updater predecessor in release-contract.cjs`,
+  );
   assert.throws(
-    () => resolveNonMacUpdaterPredecessor("1.5.0-beta.1"),
+    () => resolveNonMacUpdaterPredecessor("1.6.0-beta.1"),
     /explicit predecessor/,
   );
   assert.deepEqual(resolveMacReleaseContract("stable", "arm64"), {

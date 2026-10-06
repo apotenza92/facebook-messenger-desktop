@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.4.3-beta.1] - 2026-10-07
+## [1.5.0-beta.1] - 2026-10-07
 
 ### Security
 
@@ -16,6 +16,7 @@
 
 - Stop the app from spinning the CPU after an unexpected main-process error or
   an interrupted page load.
+- Run the notification test harness on Linux release runners.
 
 ### Changed
 

@@ -4,6 +4,7 @@ const ARCHITECTURES = new Set(["arm64", "x64"]);
 const MINIMUM_MACOS_VERSION = "12.0.0";
 const EXPLICIT_BETA_UPDATER_PREDECESSORS = Object.freeze({
   "1.4.1-beta.1": "1.4.0",
+  "1.5.0-beta.1": "1.4.2",
 });
 const EXPLICIT_STABLE_UPDATER_PREDECESSORS = Object.freeze({
   "1.4.2": "1.4.0",
