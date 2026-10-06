@@ -66,9 +66,11 @@
   },
   "overrides": {
     "@electron/notarize": "2.5.0",
-    "brace-expansion": "5.0.9",
+    "brace-expansion": "5.0.12",
     "fast-uri": "3.1.5",
-    "js-yaml": "4.3.1",
+    "http-cache-semantics": "4.3.0",
+    "ip-address": "10.7.3",
+    "js-yaml": "4.3.2",
     "undici@^6.0.0": "6.28.0",
     "undici@^7.0.0": "7.29.0"
   },
@@ -88,7 +90,7 @@
     "electron-builder": "26.15.3",
     "eslint": "9.39.2",
     "eslint-config-prettier": "10.1.8",
-    "js-yaml": "4.3.1",
+    "js-yaml": "4.3.2",
     "playwright": "1.57.0",
     "png-to-ico": "^2.1.8",
     "prettier": "3.8.0",
