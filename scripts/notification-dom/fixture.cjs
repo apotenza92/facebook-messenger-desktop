@@ -148,6 +148,15 @@ const FIXTURE_SOURCE = String.raw`
     captured: [],
   };
 
+  // Collect diagnostics probe events (only posted when the probe runs).
+  window.__fx.probeEvents = [];
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (event.data && event.data.type === "electron-notification-probe") {
+      window.__fx.probeEvents.push(event.data.data);
+    }
+  });
+
   // Stand in for the main-process bridge so every notification the page
   // decides to send is recorded instead of shown.
   window.__mdHarnessCapture = (data) => {

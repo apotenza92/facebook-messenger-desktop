@@ -19,6 +19,7 @@
     "./in-page-notification-diagnostics.ts",
     "./url-policy.ts",
     "./notifications-inject.ts",
+    "./notification-probe-inject.ts",
     "./call-window-preload.ts",
     "./call-window-inject.ts",
     "../shared/url-policy.ts"

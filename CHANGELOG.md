@@ -22,6 +22,14 @@
 - Skip debug-only page scanning in stable builds and remove about 1,300 lines of
   unused window, notification and IPC code.
 
+### Added
+
+- Beta builds can turn on Help > Record Notification Diagnostics, an opt-in
+  probe that records how Facebook's own notifications and the chat list behave
+  (structure, timings and hashed conversation IDs only, never names or message
+  text) to help fix self-sent and replayed notifications. Facebook's
+  notifications are recorded but never shown.
+
 ## [1.4.2] - 2026-08-11
 
 ### Changed

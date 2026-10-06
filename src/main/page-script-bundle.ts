@@ -9,6 +9,8 @@ export const PAGE_SCRIPT_SOURCES: ReadonlyArray<{
   label: string;
   relativePath: string;
   sanitizeCommonJsExports: boolean;
+  // Only injected when the notification diagnostics probe is enabled.
+  probeOnly?: boolean;
 }> = [
   {
     label: "notification activity policy",
@@ -41,6 +43,12 @@ export const PAGE_SCRIPT_SOURCES: ReadonlyArray<{
     sanitizeCommonJsExports: true,
   },
   {
+    label: "notification diagnostics probe",
+    relativePath: "../preload/notification-probe-inject.js",
+    sanitizeCommonJsExports: false,
+    probeOnly: true,
+  },
+  {
     label: "notification override",
     relativePath: "../preload/notifications-inject.js",
     sanitizeCommonJsExports: false,
@@ -64,9 +72,13 @@ export const preparePageScript = (
 
 // Installs the page-side bridge the injected scripts post notifications
 // through, and tells them whether debug logging is enabled.
-export const buildPageBridgePrelude = (debugLogging: boolean): string => `
+export const buildPageBridgePrelude = (
+  debugLogging: boolean,
+  probeSalt: string | null = null,
+): string => `
   (function() {
     window.__mdNotificationDebugLogging = ${JSON.stringify(debugLogging)};
+    ${probeSalt ? `window.__mdNotificationProbeSalt = ${JSON.stringify(probeSalt)};` : ""}
     window.__electronNotificationBridge = function(data) {
       const event = new CustomEvent('electron-notification', { detail: data });
       window.dispatchEvent(event);
@@ -89,11 +101,16 @@ const preparedScriptCache = new Map<string, PreparedPageScript[]>();
 // when the app is rebuilt.
 export const loadPreparedPageScripts = (
   mainDistDir: string,
+  options: { includeProbe?: boolean } = {},
 ): PreparedPageScript[] => {
-  const cached = preparedScriptCache.get(mainDistDir);
+  const cacheKey = `${mainDistDir}|${options.includeProbe ? "probe" : "plain"}`;
+  const cached = preparedScriptCache.get(cacheKey);
   if (cached) return cached;
 
-  const prepared = PAGE_SCRIPT_SOURCES.map((entry) => {
+  const sources = PAGE_SCRIPT_SOURCES.filter(
+    (entry) => options.includeProbe || !entry.probeOnly,
+  );
+  const prepared = sources.map((entry) => {
     const scriptPath = path.join(mainDistDir, entry.relativePath);
     let code: string | null = null;
     try {
@@ -108,7 +125,7 @@ export const loadPreparedPageScripts = (
   });
 
   if (prepared.every((entry) => entry.code !== null)) {
-    preparedScriptCache.set(mainDistDir, prepared);
+    preparedScriptCache.set(cacheKey, prepared);
   }
   return prepared;
 };

@@ -12,9 +12,7 @@ const FLAG_ARGS: Record<keyof RendererDebugFlags, string> = {
   reload: "--md-debug-reload",
 };
 
-export const encodeRendererDebugFlags = (
-  flags: RendererDebugFlags,
-): string[] =>
+export const encodeRendererDebugFlags = (flags: RendererDebugFlags): string[] =>
   (Object.keys(FLAG_ARGS) as Array<keyof RendererDebugFlags>).map(
     (key) => `${FLAG_ARGS[key]}=${flags[key] ? "1" : "0"}`,
   );

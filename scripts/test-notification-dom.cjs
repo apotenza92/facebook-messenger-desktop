@@ -45,10 +45,9 @@ if (
 
 const { _electron: electron } = require("playwright");
 const { FIXTURE_SOURCE } = require("./notification-dom/fixture.cjs");
-const {
-  buildPageBridgePrelude,
-  loadPreparedPageScripts,
-} = require(path.join(APP_ROOT, "dist/main/page-script-bundle.js"));
+const { buildPageBridgePrelude, loadPreparedPageScripts } = require(
+  path.join(APP_ROOT, "dist/main/page-script-bundle.js"),
+);
 const { resolveNotificationDisplayBoundary } = require(
   path.join(APP_ROOT, "dist/main/notification-handler.js"),
 );
@@ -64,7 +63,10 @@ const SECOND = 1_000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 
-const thread = (id) => `/messages/t/${id}/`;
+// Realistic-length thread ids (Messenger's are 15-17 digits).
+const threadId = (id) => `10000000000${id}`;
+const thread = (id) => `/messages/t/${threadId(id)}/`;
+const PROBE_SALT = "harness-salt";
 
 // ---------------------------------------------------------------------------
 // Scenario driver
@@ -97,12 +99,25 @@ const createDriver = (page) => ({
     page.evaluate(
       (s) =>
         window.postMessage(
-          { type: "electron-power-state", data: { state: s, timestamp: Date.now() } },
+          {
+            type: "electron-power-state",
+            data: { state: s, timestamp: Date.now() },
+          },
           "*",
         ),
       state,
     ),
   captured: () => page.evaluate(() => window.__fx.captured.slice()),
+  probeEvents: () => page.evaluate(() => window.__fx.probeEvents.slice()),
+  // Fire a notification the way Facebook's page code does.
+  facebookNotify: (title, options) =>
+    page.evaluate(
+      ([t, o]) => {
+        window.__fx.lastNative = new Notification(t, o);
+      },
+      [title, options],
+    ),
+  facebookClose: () => page.evaluate(() => window.__fx.lastNative?.close()),
 });
 
 const FOCUS_SOURCE = String.raw`
@@ -141,17 +156,24 @@ const launchScenarioPage = async (scenario) => {
   if (scenario.locale) {
     await page.evaluate((l) => window.__fx.setLocale(l), scenario.locale);
   }
-  await page.evaluate(buildPageBridgePrelude(VERBOSE));
+  await page.evaluate(
+    buildPageBridgePrelude(VERBOSE, scenario.probe ? PROBE_SALT : null),
+  );
   await page.evaluate(
     "window.__electronNotificationBridge = window.__mdHarnessCapture;",
   );
   return { app, page };
 };
 
-const injectAppScripts = async (page) => {
-  for (const script of loadPreparedPageScripts(path.join(APP_ROOT, "dist/main"))) {
+const injectAppScripts = async (page, scenario) => {
+  for (const script of loadPreparedPageScripts(
+    path.join(APP_ROOT, "dist/main"),
+    { includeProbe: Boolean(scenario.probe) },
+  )) {
     if (script.code === null) {
-      throw new Error(`Missing built page script: ${script.scriptPath} (run npm run build)`);
+      throw new Error(
+        `Missing built page script: ${script.scriptPath} (run npm run build)`,
+      );
     }
     await page.evaluate(script.code);
   }
@@ -171,7 +193,8 @@ const sameNotifications = (actual, expected) =>
   actual.length === expected.length &&
   actual.every(
     (item, index) =>
-      item.title === expected[index].title && item.body === expected[index].body,
+      item.title === expected[index].title &&
+      item.body === expected[index].body,
   );
 
 // ---------------------------------------------------------------------------
@@ -180,9 +203,27 @@ const sameNotifications = (actual, expected) =>
 
 // A quiet chat list the user has already read, used as the starting state.
 const readList = () => [
-  { href: thread(1001), title: "Tester A", body: "see you tomorrow", time: "2h", unread: false },
-  { href: thread(1002), title: "Tester B", body: "thanks!", time: "5h", unread: false },
-  { href: thread(1003), title: "Group C", body: "Tester D: lunch?", time: "1d", unread: false },
+  {
+    href: thread(1001),
+    title: "Tester A",
+    body: "see you tomorrow",
+    time: "2h",
+    unread: false,
+  },
+  {
+    href: thread(1002),
+    title: "Tester B",
+    body: "thanks!",
+    time: "5h",
+    unread: false,
+  },
+  {
+    href: thread(1003),
+    title: "Group C",
+    body: "Tester D: lunch?",
+    time: "1d",
+    unread: false,
+  },
 ];
 
 // Deliver an incoming message to a thread while the window is in the
@@ -220,7 +261,13 @@ const SCENARIOS = [
       await incoming(d, thread(1002), "Tester B", "are you free tonight?");
       await d.run(10 * SECOND);
       await d.update(
-        { href: thread(1001), title: "Tester A", body: "see you tomorrow", time: "3h", unread: false },
+        {
+          href: thread(1001),
+          title: "Tester A",
+          body: "see you tomorrow",
+          time: "3h",
+          unread: false,
+        },
         { moveToTop: false },
       );
       await d.run(10 * SECOND);
@@ -239,7 +286,13 @@ const SCENARIOS = [
     id: "baseline-startup-unread",
     description: "rows already unread at startup are not announced",
     initialRows: [
-      { href: thread(1001), title: "Tester A", body: "ping", time: "4h", unread: true },
+      {
+        href: thread(1001),
+        title: "Tester A",
+        body: "ping",
+        time: "4h",
+        unread: true,
+      },
       ...readList().slice(1),
     ],
     steps: async (d) => {
@@ -292,9 +345,13 @@ const SCENARIOS = [
       await d.run(8 * SECOND);
       // The user answers from their phone. Messenger patches the preview
       // first and clears the unread marker a moment later.
-      await d.update(
-        { href: thread(1002), title: "Tester B", body: "yes, 7pm works", time: "now", unread: true },
-      );
+      await d.update({
+        href: thread(1002),
+        title: "Tester B",
+        body: "yes, 7pm works",
+        time: "now",
+        unread: true,
+      });
       await d.run(300);
       await d.setUnread(thread(1002), false);
       await d.run(5 * SECOND);
@@ -355,7 +412,8 @@ const SCENARIOS = [
   },
   {
     id: "wake-self-sent-catch-up",
-    description: "after wake, the user's own message from another device is silent",
+    description:
+      "after wake, the user's own message from another device is silent",
     steps: async (d) => {
       await d.power("suspend");
       await d.sleepFor(2 * HOUR);
@@ -396,6 +454,77 @@ const SCENARIOS = [
     expect: [{ title: "Tester B", body: "are you free tonight?" }],
   },
 
+  // --- Diagnostics probe ------------------------------------------------------
+  {
+    id: "probe-records-structure-only",
+    description:
+      "the diagnostics probe records Facebook's notifications without showing them or capturing content",
+    probe: true,
+    steps: async (d) => {
+      await incoming(d, thread(1002), "Tester B", "are you free tonight?");
+      await d.facebookNotify("Tester B", {
+        body: "are you free tonight?",
+        tag: threadId(1002),
+        data: { url: `https://www.facebook.com${thread(1002)}` },
+        icon: "https://scontent.example.net/avatar.jpg",
+        timestamp: Date.parse("2026-10-01T09:00:10Z"),
+      });
+      await d.run(2 * SECOND);
+      await d.facebookClose();
+      await d.run(31 * SECOND);
+    },
+    // Only the app's own sidebar notification is shown.
+    expect: [{ title: "Tester B", body: "are you free tonight?" }],
+    check: async (d) => {
+      const events = await d.probeEvents();
+      const serialized = JSON.stringify(events);
+      for (const secret of [
+        "Tester",
+        "free tonight",
+        threadId(1002),
+        "facebook.com/messages",
+        "scontent",
+        "see you tomorrow",
+      ]) {
+        if (serialized.includes(secret)) {
+          return `probe events leak content: found ${JSON.stringify(secret)}`;
+        }
+      }
+      const byName = (name) => events.filter((event) => event.event === name);
+      const constructed = byName("native-constructed")[0];
+      if (!constructed) return "no native-constructed event";
+      if (!constructed.threadHash || !constructed.tagHasThreadId) {
+        return `thread id not detected in tag: ${JSON.stringify(constructed.tag)}`;
+      }
+      if (
+        constructed.tag?.form !== "N" ||
+        constructed.data?.url?.form !== "a://a.a.a/a/a/N/"
+      ) {
+        return `unexpected tag/data shapes: ${JSON.stringify([constructed.tag, constructed.data])}`;
+      }
+      if (constructed.rowMatch !== "thread-id") {
+        return `row not matched by thread id: ${constructed.rowMatch}`;
+      }
+      if (
+        !constructed.textComparison?.titleMatchesRow ||
+        !constructed.textComparison?.bodyEqualsPreview
+      ) {
+        return `text comparison wrong: ${JSON.stringify(constructed.textComparison)}`;
+      }
+      if (typeof constructed.msSinceAppSendForThread !== "number") {
+        return "native notification not correlated with the app's send";
+      }
+      const closed = byName("native-closed")[0];
+      if (!closed || closed.id !== constructed.id) return "close() not recorded";
+      if (byName("native-followup").length !== 3) {
+        return "expected three follow-up row checks";
+      }
+      if (byName("app-sent").length !== 1) return "app send not recorded";
+      if (byName("row-shape").length === 0) return "no row shapes recorded";
+      return null;
+    },
+  },
+
   // --- Non-English layouts ---------------------------------------------------
   {
     id: "locale-french",
@@ -426,11 +555,15 @@ const runScenario = async (scenario) => {
   try {
     const driver = createDriver(page);
     await driver.mount(scenario.initialRows || readList());
-    await injectAppScripts(page);
+    await injectAppScripts(page, scenario);
     await driver.run(STARTUP_SETTLE_MS);
     await scenario.steps(driver);
     const captured = await driver.captured();
-    return { captured, displayed: toDisplayed(captured) };
+    const displayed = toDisplayed(captured);
+    const checkError = scenario.check
+      ? await scenario.check(driver, { captured, displayed })
+      : null;
+    return { captured, displayed, checkError };
   } finally {
     await app.close();
   }
@@ -444,9 +577,11 @@ const main = async () => {
 
   const results = { pass: 0, xfail: 0, fail: [] };
   for (const scenario of scenarios) {
-    const { captured, displayed } = await runScenario(scenario);
-    const ok = sameNotifications(displayed, scenario.expect);
-    const detail = `expected ${JSON.stringify(scenario.expect)}, displayed ${JSON.stringify(displayed)}`;
+    const { captured, displayed, checkError } = await runScenario(scenario);
+    const ok = sameNotifications(displayed, scenario.expect) && !checkError;
+    const detail = checkError
+      ? checkError
+      : `expected ${JSON.stringify(scenario.expect)}, displayed ${JSON.stringify(displayed)}`;
     if (VERBOSE) console.log(`    captured ${JSON.stringify(captured)}`);
 
     if (ok && !scenario.knownFailure) {
@@ -454,7 +589,9 @@ const main = async () => {
       console.log(`PASS  ${scenario.id}: ${scenario.description}`);
     } else if (!ok && scenario.knownFailure) {
       results.xfail += 1;
-      console.log(`XFAIL ${scenario.id}: ${scenario.knownFailure}\n        ${detail}`);
+      console.log(
+        `XFAIL ${scenario.id}: ${scenario.knownFailure}\n        ${detail}`,
+      );
     } else if (ok && scenario.knownFailure) {
       results.fail.push(scenario.id);
       console.log(
@@ -462,7 +599,9 @@ const main = async () => {
       );
     } else {
       results.fail.push(scenario.id);
-      console.log(`FAIL  ${scenario.id}: ${scenario.description}\n        ${detail}`);
+      console.log(
+        `FAIL  ${scenario.id}: ${scenario.description}\n        ${detail}`,
+      );
     }
   }
 

@@ -91,6 +91,15 @@ import {
   buildPageBridgePrelude,
   loadPreparedPageScripts,
 } from "./page-script-bundle";
+import {
+  NOTIFICATION_PROBE_LOG_NAME,
+  NotificationProbeLog,
+  createNotificationProbeSalt,
+  getNotificationProbeLogPath,
+  readNotificationProbeEnabled,
+  sanitizeNotificationProbeEvent,
+  writeNotificationProbeEnabled,
+} from "./notification-probe";
 import { encodeRendererDebugFlags } from "../shared/debug-flags";
 import { autoUpdater } from "electron-updater";
 import { resolvePackageManagerContract } from "./package-manager-contract";
@@ -1397,6 +1406,7 @@ function exportDebugArtifactsToDirectory(dir: string): {
     path.join(bundleDir, "notification-debug.ndjson"),
     path.join(bundleDir, "reload-debug.ndjson"),
     path.join(bundleDir, "renderer-failure-debug.ndjson"),
+    path.join(bundleDir, NOTIFICATION_PROBE_LOG_NAME),
   ];
 
   copyDebugLogFile(copiedPaths[0], getMediaOverlayDebugLogPath());
@@ -1404,6 +1414,13 @@ function exportDebugArtifactsToDirectory(dir: string): {
   copyDebugLogFile(copiedPaths[2], getNotificationDebugLogPath());
   copyDebugLogFile(copiedPaths[3], getReloadDebugLogPath());
   copyDebugLogFile(copiedPaths[4], getRendererFailureDebugLogPath());
+  // The probe log is structure-only and size-capped; copy it whole.
+  const probeLogPath = getNotificationProbeLogPath(app.getPath("logs"));
+  if (fs.existsSync(probeLogPath)) {
+    fs.copyFileSync(probeLogPath, copiedPaths[5]);
+  } else {
+    fs.writeFileSync(copiedPaths[5], "", "utf8");
+  }
 
   return {
     bundleDir,
@@ -1446,6 +1463,60 @@ function exportDebugLogsZipToDirectory(dir: string): {
       // Ignore cleanup failures; the user-facing artifact is the zip.
     }
   }
+}
+
+async function toggleNotificationProbe(): Promise<void> {
+  const enabling = !notificationProbeEnabled;
+  const result = await dialog.showMessageBox({
+    type: "info",
+    title: enabling
+      ? "Record Notification Diagnostics"
+      : "Stop Notification Diagnostics",
+    message: enabling
+      ? "Record how Facebook's own notifications behave?"
+      : "Stop recording notification diagnostics?",
+    detail: enabling
+      ? [
+          "Facebook's own notifications will be allowed to reach Messenger so the app can record their structure and timing. They are not shown; you keep getting the app's usual notifications.",
+          "",
+          "Only structure is recorded: option names, flags, lengths, timings and hashed conversation IDs. Names, message text and links are never recorded, and nothing is sent anywhere.",
+          "",
+          `The log is saved in ${app.getPath("logs")} and is included in Export Debug Logs. The app restarts to apply this.`,
+        ].join("\n")
+      : "Facebook's notifications will be blocked again. The existing log is kept. The app restarts to apply this.",
+    buttons: ["Restart Now", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (result.response !== 0) return;
+
+  try {
+    writeNotificationProbeEnabled(app.getPath("userData"), enabling);
+  } catch (error) {
+    console.error("[NotificationProbe] Failed to save setting:", error);
+    return;
+  }
+  isQuitting = true;
+  app.relaunch();
+  app.quit();
+}
+
+function addNotificationProbeMarker(): void {
+  if (!notificationProbeLog) return;
+  notificationProbeMarkerCount += 1;
+  notificationProbeLog.append({
+    event: "marker",
+    marker: notificationProbeMarkerCount,
+    receivedAt: Date.now(),
+  });
+  void dialog.showMessageBox({
+    type: "info",
+    title: "Diagnostics Marker",
+    message: `Marker ${notificationProbeMarkerCount} added`,
+    detail:
+      "Note the marker number next to what you are about to test so it can be found in the log.",
+    buttons: ["OK"],
+  });
 }
 
 async function exportDebugLogs(): Promise<void> {
@@ -2198,6 +2269,34 @@ const userDataPath = path.join(appDataRoot, APP_DIR_NAME);
 app.setPath("userData", userDataPath);
 app.setPath("logs", path.join(userDataPath, "logs"));
 fs.mkdirSync(app.getPath("userData"), { recursive: true });
+
+// Opt-in notification structure probe (Help > Record Notification
+// Diagnostics). Read once at startup; toggling it relaunches the app.
+const notificationProbeEnabled = readNotificationProbeEnabled(
+  app.getPath("userData"),
+);
+const notificationProbeSalt = createNotificationProbeSalt();
+const notificationProbeLog = notificationProbeEnabled
+  ? new NotificationProbeLog(app.getPath("logs"))
+  : null;
+let notificationProbeMarkerCount = 0;
+if (notificationProbeLog) {
+  console.log("[NotificationProbe] Recording to", notificationProbeLog.path);
+}
+
+// Only the Messenger content view runs the page script that records and
+// drops Facebook's notifications, so only it may receive the permission.
+// Permission handlers are per session and shared with call windows.
+function shouldGrantProbeNotificationPermission(
+  webContents: Electron.WebContents | null | undefined,
+): boolean {
+  return (
+    notificationProbeEnabled &&
+    Boolean(webContents) &&
+    !webContents!.isDestroyed() &&
+    webContents!.id === contentView?.webContents.id
+  );
+}
 fs.mkdirSync(app.getPath("logs"), { recursive: true });
 
 // On Linux: Apply XWayland preference if set (for screen sharing compatibility).
@@ -3756,10 +3855,13 @@ async function injectNotificationScripts(
   await webContents.executeJavaScript(
     buildPageBridgePrelude(
       shouldWriteNotificationDebugLog() || shouldWriteIncomingCallDebugLog(),
+      notificationProbeEnabled ? notificationProbeSalt : null,
     ),
   );
 
-  for (const script of loadPreparedPageScripts(__dirname)) {
+  for (const script of loadPreparedPageScripts(__dirname, {
+    includeProbe: notificationProbeEnabled,
+  })) {
     if (script.code === null) {
       console.warn(
         `[Main Process] Page script not found (${script.label}):`,
@@ -4778,6 +4880,22 @@ function createWindow(source: string = "unknown"): void {
       }
 
       if (permission === "notifications") {
+        // The diagnostics probe lets Facebook's notifications reach the
+        // page so their structure can be recorded; the page drops them.
+        if (shouldGrantProbeNotificationPermission(webContents)) {
+          recordWebNotificationPermissionDecision({
+            source: "permission-request",
+            permission,
+            granted: true,
+            url,
+            requestingUrl: details.requestingUrl,
+            webContentsId: webContents.id,
+            isMainFrame: details.isMainFrame,
+            reason: "notification-probe-enabled",
+          });
+          callback(true);
+          return;
+        }
         recordWebNotificationPermissionDecision({
           source: "permission-request",
           permission,
@@ -4819,21 +4937,26 @@ function createWindow(source: string = "unknown"): void {
       ];
       const isAllowed = isFacebookOrMessengerUrl(requestingOrigin);
       const hasPermission =
-        isAllowed && allowedPermissions.includes(permission);
+        isAllowed &&
+        (allowedPermissions.includes(permission) ||
+          (permission === "notifications" &&
+            shouldGrantProbeNotificationPermission(webContents)));
       console.log(
         `[Permissions] Check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
       );
       recordWebNotificationPermissionDecision({
         source: "permission-check",
         permission,
-        granted: false,
+        granted: permission === "notifications" && hasPermission,
         url: webContents?.getURL(),
         requestingOrigin,
         webContentsId: webContents?.id,
         reason:
-          permission === "notifications"
-            ? "browser-notifications-disabled"
-            : "not-notification-permission",
+          permission !== "notifications"
+            ? "not-notification-permission"
+            : hasPermission
+              ? "notification-probe-enabled"
+              : "browser-notifications-disabled",
       });
       return hasPermission;
     },
@@ -5379,6 +5502,22 @@ function createWindow(source: string = "unknown"): void {
         }
 
         if (permission === "notifications") {
+          // The diagnostics probe lets Facebook's notifications reach the
+          // page so their structure can be recorded; the page drops them.
+          if (shouldGrantProbeNotificationPermission(webContents)) {
+            recordWebNotificationPermissionDecision({
+              source: "permission-request",
+              permission,
+              granted: true,
+              url,
+              requestingUrl: details.requestingUrl,
+              webContentsId: webContents.id,
+              isMainFrame: details.isMainFrame,
+              reason: "notification-probe-enabled",
+            });
+            callback(true);
+            return;
+          }
           recordWebNotificationPermissionDecision({
             source: "permission-request",
             permission,
@@ -5422,21 +5561,26 @@ function createWindow(source: string = "unknown"): void {
         ];
         const isAllowed = isFacebookOrMessengerUrl(requestingOrigin);
         const hasPermission =
-          isAllowed && allowedPermissions.includes(permission);
+          isAllowed &&
+          (allowedPermissions.includes(permission) ||
+            (permission === "notifications" &&
+              shouldGrantProbeNotificationPermission(webContents)));
         console.log(
           `[Permissions] Child window check: ${permission} from ${requestingOrigin} -> ${hasPermission ? "allowed" : "denied"}`,
         );
         recordWebNotificationPermissionDecision({
           source: "permission-check",
           permission,
-          granted: false,
+          granted: permission === "notifications" && hasPermission,
           url: webContents?.getURL(),
           requestingOrigin,
           webContentsId: webContents?.id,
           reason:
-            permission === "notifications"
-              ? "browser-notifications-disabled"
-              : "not-notification-permission",
+            permission !== "notifications"
+              ? "not-notification-permission"
+              : hasPermission
+                ? "notification-probe-enabled"
+                : "browser-notifications-disabled",
         });
         return hasPermission;
       },
@@ -7833,6 +7977,28 @@ function createApplicationMenu(): void {
     },
   };
 
+  const notificationDiagnosticsMenuItems: Electron.MenuItemConstructorOptions[] =
+    isDev || isBetaVersion || notificationProbeEnabled
+      ? [
+          { type: "separator" },
+          {
+            label: "Record Notification Diagnostics",
+            type: "checkbox",
+            checked: notificationProbeEnabled,
+            click: () => {
+              void toggleNotificationProbe();
+            },
+          },
+          {
+            label: "Add Diagnostics Marker",
+            enabled: notificationProbeEnabled,
+            click: () => {
+              addNotificationProbeMarker();
+            },
+          },
+        ]
+      : [];
+
   const exportDebugLogsMenuItem: Electron.MenuItemConstructorOptions = {
     label: "Export Debug Logs…",
     click: () => {
@@ -8121,6 +8287,7 @@ function createApplicationMenu(): void {
                 exportDebugLogsMenuItem,
               ] as Electron.MenuItemConstructorOptions[])
             : []),
+          ...notificationDiagnosticsMenuItems,
           { type: "separator" },
           openLogsFolderMenuItem,
         ],
@@ -8246,6 +8413,7 @@ function createApplicationMenu(): void {
               exportDebugLogsMenuItem,
             ] as Electron.MenuItemConstructorOptions[])
           : []),
+        ...notificationDiagnosticsMenuItems,
         { type: "separator" },
         openLogsFolderMenuItem,
         // XWayland mode option for Linux users (for screen sharing compatibility)
@@ -8871,6 +9039,19 @@ function setupIpcHandlers(): void {
     if (basePayload.callWindowOpen === false) {
       requestMessagesViewportRecovery("child-call-window-closed");
     }
+  });
+
+  ipcMain.on("notification-probe", (event, payload) => {
+    if (!notificationProbeLog) return;
+    if (
+      !contentView ||
+      contentView.webContents.isDestroyed() ||
+      event.sender.id !== contentView.webContents.id
+    ) {
+      return;
+    }
+    const record = sanitizeNotificationProbeEvent(payload);
+    if (record) notificationProbeLog.append(record);
   });
 
   ipcMain.on("incoming-call-debug", (event, payload) => {

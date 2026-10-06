@@ -305,6 +305,29 @@
       '[aria-label*="Mark as read" i], [aria-label*="Mark as Read"], [aria-label*="mark as read"], [aria-label*="Unread message" i]',
   };
 
+  // Present only when Help > Record Notification Diagnostics is on (see
+  // notification-probe-inject.ts).
+  type NotificationProbeHooks = {
+    onNativeConstructed: (
+      instance: object,
+      title: string,
+      body: string,
+      options: unknown,
+    ) => void;
+    onNativeClosed: (instance: object) => void;
+    onNativeListener: (instance: object, eventName: string) => void;
+    onServiceWorkerShow: (title: string, options: unknown) => void;
+    onAppSend: (input: {
+      href?: string;
+      title: string;
+      body: string;
+      sourceLabel: string;
+    }) => void;
+  };
+  const getNotificationProbe = (): NotificationProbeHooks | undefined =>
+    (window as Window & { __mdNotificationProbe?: NotificationProbeHooks })
+      .__mdNotificationProbe;
+
   const log = (message: string, payload?: any) => {
     if (!DEBUG) return;
     try {
@@ -1110,6 +1133,17 @@
       provenanceReason,
     };
 
+    try {
+      getNotificationProbe()?.onAppSend({
+        href,
+        title: notificationData.title,
+        body: notificationData.body,
+        sourceLabel: source,
+      });
+    } catch {
+      /* diagnostics must not break the page */
+    }
+
     if ((window as any).__electronNotificationBridge) {
       try {
         (window as any).__electronNotificationBridge(notificationData);
@@ -1587,6 +1621,18 @@
         this._id = counter++;
         notifications.set(this._id, this as any);
 
+        // Diagnostics mode: Facebook's notifications are allowed to fire
+        // only so their structure can be recorded. Never show them.
+        const probe = getNotificationProbe();
+        if (probe) {
+          try {
+            probe.onNativeConstructed(this, String(title), String(body), options);
+          } catch {
+            /* diagnostics must not break the page */
+          }
+          return;
+        }
+
         log("=== NATIVE NOTIFICATION INTERCEPTED ===", {
           id: this._id,
           title,
@@ -1992,9 +2038,20 @@
         );
       }
 
-      close(): void {}
+      close(): void {
+        try {
+          getNotificationProbe()?.onNativeClosed(this);
+        } catch {
+          /* diagnostics must not break the page */
+        }
+      }
 
       addEventListener(event: string, listener: EventListener | null): void {
+        try {
+          getNotificationProbe()?.onNativeListener(this, event);
+        } catch {
+          /* diagnostics must not break the page */
+        }
         if (!listener) return;
         if (!(this as any).listeners) {
           (this as any).listeners = new Map();
@@ -3081,6 +3138,15 @@
         title: string,
         options?: NotificationOptions,
       ): Promise<void> {
+        const probe = getNotificationProbe();
+        if (probe) {
+          try {
+            probe.onServiceWorkerShow(String(title || ""), options);
+          } catch {
+            /* diagnostics must not break the page */
+          }
+          return Promise.resolve();
+        }
         const payload = {
           title: String(title || ""),
           body: String(options?.body || ""),
