@@ -87,6 +87,10 @@ import {
 } from "../shared/notification-activity-policy";
 import { withLinuxNoSandboxArg } from "./linux-sandbox-policy";
 import { installPipeErrorGuards } from "./process-error-guards";
+import {
+  buildPageBridgePrelude,
+  loadPreparedPageScripts,
+} from "./page-script-bundle";
 import { encodeRendererDebugFlags } from "../shared/debug-flags";
 import { autoUpdater } from "electron-updater";
 import { resolvePackageManagerContract } from "./package-manager-contract";
@@ -3749,161 +3753,31 @@ function reloadMessengerTarget(
 async function injectNotificationScripts(
   webContents: Electron.WebContents,
 ): Promise<void> {
-  const executeInjectedScript = async (input: {
-    scriptPath: string;
-    successMessage: string;
-    missingMessage: string;
-    errorMessage: string;
-    sanitizeCommonJsExports?: boolean;
-  }): Promise<void> => {
-    const {
-      scriptPath,
-      successMessage,
-      missingMessage,
-      errorMessage,
-      sanitizeCommonJsExports = false,
-    } = input;
+  await webContents.executeJavaScript(
+    buildPageBridgePrelude(
+      shouldWriteNotificationDebugLog() || shouldWriteIncomingCallDebugLog(),
+    ),
+  );
 
-    if (!fs.existsSync(scriptPath)) {
-      console.warn(missingMessage, scriptPath);
-      return;
+  for (const script of loadPreparedPageScripts(__dirname)) {
+    if (script.code === null) {
+      console.warn(
+        `[Main Process] Page script not found (${script.label}):`,
+        script.scriptPath,
+      );
+      continue;
     }
-
+    if (webContents.isDestroyed()) return;
     try {
-      let script = fs.readFileSync(scriptPath, "utf8");
-
-      if (sanitizeCommonJsExports) {
-        script = script
-          .replace(
-            /^Object\.defineProperty\(exports,\s*"__esModule",\s*\{\s*value:\s*true\s*\}\);\s*$/m,
-            "",
-          )
-          .replace(/^exports\.[^=]+=\s*[^;]+;\s*$/gm, "");
-      }
-
-      const wrappedScript = `(() => {\n${script}\n})();`;
-      await webContents.executeJavaScript(wrappedScript);
-      console.log(successMessage);
+      await webContents.executeJavaScript(script.code);
     } catch (error) {
-      console.error(errorMessage, scriptPath, error);
+      console.error(
+        `[Main Process] Failed to inject page script (${script.label}):`,
+        error,
+      );
     }
-  };
-
-  await webContents.executeJavaScript(`
-    (function() {
-      window.__mdNotificationDebugLogging = ${JSON.stringify(
-        shouldWriteNotificationDebugLog() || shouldWriteIncomingCallDebugLog(),
-      )};
-      window.__electronNotificationBridge = function(data) {
-        const event = new CustomEvent('electron-notification', { detail: data });
-        window.dispatchEvent(event);
-      };
-      window.addEventListener('electron-notification', function(event) {
-        window.postMessage({ type: 'electron-notification', data: event.detail }, '*');
-      });
-      console.log('[Notification Bridge] Bridge function and listener installed');
-    })();
-  `);
-
-  const notificationActivityPolicyScriptPath = path.join(
-    __dirname,
-    "../shared/notification-activity-policy.js",
-  );
-  await executeInjectedScript({
-    scriptPath: notificationActivityPolicyScriptPath,
-    successMessage:
-      "[Main Process] Notification activity policy script injected successfully",
-    missingMessage:
-      "[Main Process] Notification activity policy script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject notification activity policy script:",
-    sanitizeCommonJsExports: true,
-  });
-
-  const incomingCallEvidenceScriptPath = path.join(
-    __dirname,
-    "../shared/incoming-call-evidence.js",
-  );
-  await executeInjectedScript({
-    scriptPath: incomingCallEvidenceScriptPath,
-    successMessage:
-      "[Main Process] Incoming-call evidence script injected successfully",
-    missingMessage:
-      "[Main Process] Incoming-call evidence script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject incoming-call evidence script:",
-    sanitizeCommonJsExports: true,
-  });
-
-  const notificationDisplayPolicyScriptPath = path.join(
-    __dirname,
-    "../preload/notification-display-policy.js",
-  );
-  await executeInjectedScript({
-    scriptPath: notificationDisplayPolicyScriptPath,
-    successMessage:
-      "[Main Process] Notification display policy script injected successfully",
-    missingMessage:
-      "[Main Process] Notification display policy script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject notification display policy script:",
-  });
-
-  const notificationTextPolicyScriptPath = path.join(
-    __dirname,
-    "../preload/notification-text-policy.js",
-  );
-  await executeInjectedScript({
-    scriptPath: notificationTextPolicyScriptPath,
-    successMessage:
-      "[Main Process] Notification text policy script injected successfully",
-    missingMessage:
-      "[Main Process] Notification text policy script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject notification text policy script:",
-  });
-
-  const notificationDecisionPolicyScriptPath = path.join(
-    __dirname,
-    "../preload/notification-decision-policy.js",
-  );
-  await executeInjectedScript({
-    scriptPath: notificationDecisionPolicyScriptPath,
-    successMessage:
-      "[Main Process] Notification decision policy script injected successfully",
-    missingMessage:
-      "[Main Process] Notification decision policy script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject notification decision policy script:",
-  });
-
-  const inPageNotificationDiagnosticsScriptPath = path.join(
-    __dirname,
-    "../preload/in-page-notification-diagnostics.js",
-  );
-  await executeInjectedScript({
-    scriptPath: inPageNotificationDiagnosticsScriptPath,
-    successMessage:
-      "[Main Process] In-page notification diagnostics script injected successfully",
-    missingMessage:
-      "[Main Process] In-page notification diagnostics script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject in-page notification diagnostics script:",
-    sanitizeCommonJsExports: true,
-  });
-
-  const notificationScriptPath = path.join(
-    __dirname,
-    "../preload/notifications-inject.js",
-  );
-  await executeInjectedScript({
-    scriptPath: notificationScriptPath,
-    successMessage:
-      "[Main Process] Notification override script injected successfully",
-    missingMessage: "[Main Process] Notification script not found at:",
-    errorMessage:
-      "[Main Process] Failed to inject notification override script:",
-  });
+  }
+  console.log("[Main Process] Page scripts injected");
 }
 
 // Icon identity always follows the installed channel. macOS delegates all
