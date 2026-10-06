@@ -4880,16 +4880,24 @@ const runNotificationPolicyTests = () => {
       mainSource.includes("main-process-group-management-activity"),
     "#50 main-process display boundary should keep suppressing shared group-management classifications",
   );
-  assert(
-    mainSource.includes("in-page-notification-diagnostics.js") &&
-      mainSource.includes(
-        "In-page notification diagnostics script injected successfully",
-      ) &&
-      /scriptPath:\s*inPageNotificationDiagnosticsScriptPath,[\s\S]{0,500}sanitizeCommonJsExports:\s*true/.test(
-        mainSource,
-    ),
-    "#62 privacy-safe in-page diagnostics should be injected before the notification observer",
-  );
+  {
+    const { PAGE_SCRIPT_SOURCES } = require(
+      path.join(APP_ROOT, "src/main/page-script-bundle.ts"),
+    );
+    const order = PAGE_SCRIPT_SOURCES.map(
+      (entry: { relativePath: string }) => entry.relativePath,
+    );
+    const diagnosticsIndex = order.indexOf(
+      "../preload/in-page-notification-diagnostics.js",
+    );
+    const observerIndex = order.indexOf("../preload/notifications-inject.js");
+    assert(
+      diagnosticsIndex >= 0 &&
+        observerIndex > diagnosticsIndex &&
+        PAGE_SCRIPT_SOURCES[diagnosticsIndex].sanitizeCommonJsExports === true,
+      "#62 privacy-safe in-page diagnostics should be injected before the notification observer",
+    );
+  }
   assert(
     mainSource.includes(
       'safeName.startsWith("In-page Facebook activity")',
