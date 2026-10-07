@@ -1507,11 +1507,11 @@ jobs:
             desc "Desktop client for Facebook Messenger (Beta)"
             homepage "https://github.com/apotenza92/facebook-messenger-desktop"
 
-          livecheck do
-            skip "Updated by the Messenger release workflow"
-          end
+            livecheck do
+              skip "Updated by the Messenger release workflow"
+            end
 
-          depends_on macos: :monterey
+            depends_on macos: :monterey
 
             app "Messenger Beta.app"
 
