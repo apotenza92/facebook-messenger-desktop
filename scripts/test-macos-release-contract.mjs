@@ -567,6 +567,9 @@ function testWindowsInstallerAssembly() {
       mkdirSync(directory, { recursive: true });
       const artifactName = `Messenger-Beta-windows-${arch}-setup.exe`;
       writeFileSync(join(directory, artifactName), `unsigned-${arch}`);
+      // The build job also uploads the unpacked app archive for the
+      // updater gate; it is internal and must not be published.
+      writeFileSync(join(directory, "updater-app.asar"), `asar-${arch}`);
     }
     assembleWindowsRelease({
       inputDirectory,
@@ -579,6 +582,20 @@ function testWindowsInstallerAssembly() {
         "Messenger-Beta-windows-x64-setup.exe",
         "Messenger-Beta-windows-arm64-setup.exe",
       ].sort(),
+    );
+    rmSync(join(inputDirectory, "windows-input-arm64", "updater-app.asar"));
+    assert.throws(
+      () =>
+        assembleWindowsRelease({
+          inputDirectory,
+          outputDirectory,
+          releaseChannel: "beta",
+        }),
+      /do not exactly match/,
+    );
+    writeFileSync(
+      join(inputDirectory, "windows-input-arm64", "updater-app.asar"),
+      "asar-arm64",
     );
     writeFileSync(
       join(inputDirectory, "windows-input-x64", "unexpected.exe"),
