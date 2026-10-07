@@ -1,17 +1,11 @@
 {
-  "releaseChannel": "stable",
+  "releaseChannel": "beta",
   "sealed": [
     "beta/darwin/arm64/latest-mac.yml",
     "beta/darwin/x64/latest-mac.yml",
     "beta/linux/arm64",
     "beta/linux/x64",
     "beta/win32/arm64",
-    "beta/win32/x64",
-    "stable/darwin/arm64/latest-mac.yml",
-    "stable/darwin/x64/latest-mac.yml",
-    "stable/linux/arm64",
-    "stable/linux/x64",
-    "stable/win32/arm64",
-    "stable/win32/x64"
+    "beta/win32/x64"
   ]
 }
