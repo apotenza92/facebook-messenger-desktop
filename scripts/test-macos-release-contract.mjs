@@ -1040,6 +1040,29 @@ function testWorkflowContract() {
     join(repositoryRoot, ".github", "workflows", "release.yml"),
     "utf8",
   );
+  // Generated Homebrew casks must pass `brew style`, which rejects
+  // inconsistent indentation between top-level cask stanzas.
+  const caskHeredocs = [
+    ...workflow.matchAll(/cat > '(Casks\/[^']+\.rb)' << EOF\n([\s\S]*?)\n\s*EOF\n/g),
+  ];
+  assert.ok(caskHeredocs.length >= 2, "expected stable and beta cask heredocs");
+  for (const [, caskPath, body] of caskHeredocs) {
+    const lines = body.split("\n");
+    const baseIndent = lines[0].match(/^ */)[0].length;
+    for (const line of lines) {
+      if (
+        /^\s*(version|on_arm do|on_intel do|name|desc|homepage|livecheck do|depends_on|app|zap trash:)\b/.test(
+          line,
+        )
+      ) {
+        assert.equal(
+          line.match(/^ */)[0].length - baseIndent,
+          2,
+          `${caskPath} stanza is not indented one level: ${line.trim()}`,
+        );
+      }
+    }
+  }
   const packageLock = JSON.parse(
     readFileSync(join(repositoryRoot, "package-lock.json"), "utf8"),
   );
