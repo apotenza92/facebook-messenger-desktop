@@ -34,6 +34,18 @@ export function expectedWindowsInputNames(releaseChannel, arch) {
     .sort();
 }
 
+// Each native Windows build artifact also carries the unpacked app archive
+// the non-macOS updater gate installs over its predecessor. It is internal:
+// required in the input, never published.
+export const WINDOWS_UPDATER_APP_ARCHIVE = "updater-app.asar";
+
+export function expectedWindowsBuildArtifactNames(releaseChannel, arch) {
+  return [
+    ...expectedWindowsInputNames(releaseChannel, arch),
+    WINDOWS_UPDATER_APP_ARCHIVE,
+  ].sort();
+}
+
 function assertExactDirectory(directory, expectedNames, label) {
   if (!existsSync(directory)) fail(`Missing ${label}`);
   const actual = readdirSync(directory).sort();
@@ -58,7 +70,7 @@ export function assembleWindowsRelease({
   for (const source of sources)
     assertExactDirectory(
       source.directory,
-      expectedWindowsInputNames(releaseChannel, source.arch),
+      expectedWindowsBuildArtifactNames(releaseChannel, source.arch),
       `${source.arch} Windows input`,
     );
 
