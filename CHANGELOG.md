@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Capture opt-in notification diagnostics before Facebook page scripts run and
+  inside service workers, while preserving real browser notification behavior.
+  In this mode Facebook controls alerts and the sidebar engine runs only for
+  comparison; stopping diagnostics restores the usual app notifications.
+- Report notification capture failures, replaced hooks and sidebar sampling
+  limits, and provide a local summary command without message content.
+
 ## [1.5.0-beta.1] - 2026-10-07
 
 ### Security

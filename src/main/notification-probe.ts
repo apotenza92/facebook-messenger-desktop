@@ -2,12 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
 
-// Opt-in notification structure probe. When enabled, Facebook's own web
-// notifications are allowed to fire into the page so their structure and
-// lifecycle can be recorded, but they are never shown: the page probe
-// records and drops them, and the app's existing sidebar notifications
-// stay the only ones the user sees. Events contain shapes, flags, lengths
-// and per-run salted hashes only; never titles, bodies, names or ids.
+// Opt-in observation of Facebook's real browser notifications. Native APIs
+// remain active; sidebar notifications run as a shadow comparison. Only
+// structural metadata and hashes salted per app run belong in this log.
 
 export const NOTIFICATION_PROBE_LOG_NAME = "notification-probe.ndjson";
 const SETTINGS_NAME = "notification-probe.json";

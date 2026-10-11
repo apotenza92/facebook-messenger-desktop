@@ -21,6 +21,7 @@
     __mdNotificationProbeSalt?: string;
   };
   type NotificationProbeApi = {
+    onNativeThread: (threadId: string, at: number) => void;
     onNativeConstructed: (
       instance: object,
       title: string,
@@ -458,6 +459,9 @@
   };
 
   const api: NotificationProbeApi = {
+    onNativeThread(threadId, at) {
+      lastNativeByThread.set(threadId, at);
+    },
     onNativeConstructed(instance, title, body, options) {
       const now = Date.now();
       nativeCounter += 1;
@@ -597,6 +601,16 @@
   };
 
   probeWindow.__mdNotificationProbe = api;
+  const nativeProbe = (
+    window as Window & {
+      __mdNativeNotificationProbe?: {
+        pendingThreads: Array<{ threadId: string; at: number }>;
+      };
+    }
+  ).__mdNativeNotificationProbe;
+  for (const item of nativeProbe?.pendingThreads || [])
+    api.onNativeThread(item.threadId, item.at);
+  if (nativeProbe) nativeProbe.pendingThreads.length = 0;
 
   // ---------------------------------------------------------------------------
   // Messages the user sends from this window (ground truth for "self")
@@ -625,6 +639,7 @@
 
   const lastRowStates = new Map<string, RowState>();
   let rowChangeCount = 0;
+  let rowChangeLimitReported = false;
   let pendingScan: number | null = null;
   let sidebarMutationsThisSecond = 0;
   let wakeWatch: {
@@ -640,7 +655,14 @@
       if (!state.threadHash) return;
       const previous = lastRowStates.get(state.threadHash);
       lastRowStates.set(state.threadHash, state);
-      if (!previous || rowChangeCount >= MAX_ROW_CHANGES) return;
+      if (!previous) return;
+      if (rowChangeCount >= MAX_ROW_CHANGES) {
+        if (!rowChangeLimitReported) {
+          rowChangeLimitReported = true;
+          post("row-change-limit", { limit: MAX_ROW_CHANGES });
+        }
+        return;
+      }
       const changed =
         previous.unreadHeuristic !== state.unreadHeuristic ||
         previous.mutedHeuristic?.muted !== state.mutedHeuristic?.muted ||

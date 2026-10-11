@@ -1144,6 +1144,14 @@
       /* diagnostics must not break the page */
     }
 
+    // Native-observation mode lets Facebook own delivery. Keep the sidebar
+    // decision in diagnostics, without adding a duplicate app notification.
+    if (
+      (window as Window & { __mdNativeNotificationProbe?: unknown })
+        .__mdNativeNotificationProbe
+    )
+      return;
+
     if ((window as any).__electronNotificationBridge) {
       try {
         (window as any).__electronNotificationBridge(notificationData);
@@ -3114,24 +3122,31 @@
   // ============================================================================
 
   // Override window.Notification
-  Object.assign(window, { Notification: augmentedNotification });
+  if (
+    !(window as Window & { __mdNativeNotificationProbe?: unknown })
+      .__mdNativeNotificationProbe
+  ) {
+    Object.assign(window, { Notification: augmentedNotification });
 
-  try {
-    Object.defineProperty(window, "Notification", {
-      value: augmentedNotification,
-      writable: false,
-      configurable: false,
-      enumerable: true,
-    });
-    log("Notification API overridden successfully");
-  } catch (_e) {
-    log("Using fallback Notification override method");
+    try {
+      Object.defineProperty(window, "Notification", {
+        value: augmentedNotification,
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      });
+      log("Notification API overridden successfully");
+    } catch (_e) {
+      log("Using fallback Notification override method");
+    }
   }
 
   try {
     const registrationPrototype = window.ServiceWorkerRegistration?.prototype;
     const originalShowNotification = registrationPrototype?.showNotification;
     if (
+      !(window as Window & { __mdNativeNotificationProbe?: unknown })
+        .__mdNativeNotificationProbe &&
       registrationPrototype &&
       typeof originalShowNotification === "function" &&
       !(registrationPrototype as any).__mdShowNotificationWrapped

@@ -1,3 +1,4 @@
+import { installNativeNotificationProbe } from "./native-notification-probe";
 import {
   app,
   BrowserWindow,
@@ -1477,13 +1478,13 @@ async function toggleNotificationProbe(): Promise<void> {
       : "Stop recording notification diagnostics?",
     detail: enabling
       ? [
-          "Facebook's own notifications will be allowed to reach Messenger so the app can record their structure and timing. They are not shown; you keep getting the app's usual notifications.",
+          "Facebook’s real browser notifications will be allowed and recorded. They may appear, including notifications the app would normally filter. The app’s sidebar notification engine runs only for comparison, without sending duplicate alerts.",
           "",
           "Only structure is recorded: option names, flags, lengths, timings and hashed conversation IDs. Names, message text and links are never recorded, and nothing is sent anywhere.",
           "",
           `The log is saved in ${app.getPath("logs")} and is included in Export Debug Logs. The app restarts to apply this.`,
         ].join("\n")
-      : "Facebook's notifications will be blocked again. The existing log is kept. The app restarts to apply this.",
+      : "Facebook’s browser notifications will be blocked again and the app’s usual notifications restored. The existing log is kept. The app restarts to apply this.",
     buttons: ["Restart Now", "Cancel"],
     defaultId: 0,
     cancelId: 1,
@@ -1841,26 +1842,28 @@ function loadWebContentsURLWithDebug(
     ...input.extra,
   });
 
-  return target.loadURL(nextUrl).catch((error) => {
-    pushReloadDebugEvent({
-      timestamp: Date.now(),
-      source: "main",
-      event: "app-load-url-failed",
-      webContentsId: target.id,
-      url: currentUrl,
-      label: input.label,
-      trigger: input.trigger,
-      requestSource: input.source,
-      nextUrl,
-      error: String((error as Error)?.message || error),
-      ...input.extra,
+  return nativeNotificationProbeReady
+    .then(() => target.loadURL(nextUrl))
+    .catch((error) => {
+      pushReloadDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "app-load-url-failed",
+        webContentsId: target.id,
+        url: currentUrl,
+        label: input.label,
+        trigger: input.trigger,
+        requestSource: input.source,
+        nextUrl,
+        error: String((error as Error)?.message || error),
+        ...input.extra,
+      });
+      // Callers fire and forget; a superseded or failed load is already
+      // surfaced through did-fail-load, so do not leave a rejected promise.
+      console.warn(
+        `[Navigation] loadURL failed for ${input.label}: ${String((error as { code?: unknown })?.code ?? "unknown")}`,
+      );
     });
-    // Callers fire and forget; a superseded or failed load is already
-    // surfaced through did-fail-load, so do not leave a rejected promise.
-    console.warn(
-      `[Navigation] loadURL failed for ${input.label}: ${String((error as { code?: unknown })?.code ?? "unknown")}`,
-    );
-  });
 }
 
 function getReloadNavigationContext(
@@ -2280,21 +2283,23 @@ const notificationProbeLog = notificationProbeEnabled
   ? new NotificationProbeLog(app.getPath("logs"))
   : null;
 let notificationProbeMarkerCount = 0;
+let nativeNotificationProbeReady: Promise<void> = Promise.resolve();
 if (notificationProbeLog) {
   console.log("[NotificationProbe] Recording to", notificationProbeLog.path);
 }
 
-// Only the Messenger content view runs the page script that records and
-// drops Facebook's notifications, so only it may receive the permission.
+// The opt-in probe observes real native APIs in the content frame and trusted
+// service workers. A null webContents denotes a worker permission check; its
+// origin is separately validated by the permission handler.
 // Permission handlers are per session and shared with call windows.
 function shouldGrantProbeNotificationPermission(
   webContents: Electron.WebContents | null | undefined,
 ): boolean {
   return (
     notificationProbeEnabled &&
-    Boolean(webContents) &&
-    !webContents!.isDestroyed() &&
-    webContents!.id === contentView?.webContents.id
+    (!webContents ||
+      (!webContents.isDestroyed() &&
+        webContents.id === contentView?.webContents.id))
   );
 }
 fs.mkdirSync(app.getPath("logs"), { recursive: true });
@@ -4850,7 +4855,7 @@ function createWindow(source: string = "unknown"): void {
   // Set up permission handler on content view's session
   contentView.webContents.session.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      const url = webContents.getURL();
+      const url = webContents?.getURL() || details.requestingUrl || "";
       console.log(`[Permissions] Request received: ${permission}`, {
         url,
         requestingUrl: details.requestingUrl,
@@ -4871,7 +4876,7 @@ function createWindow(source: string = "unknown"): void {
           granted: false,
           url,
           requestingUrl: details.requestingUrl,
-          webContentsId: webContents.id,
+          webContentsId: webContents?.id,
           isMainFrame: details.isMainFrame,
           reason: "non-allowed-origin",
         });
@@ -4880,16 +4885,18 @@ function createWindow(source: string = "unknown"): void {
       }
 
       if (permission === "notifications") {
-        // The diagnostics probe lets Facebook's notifications reach the
-        // page so their structure can be recorded; the page drops them.
-        if (shouldGrantProbeNotificationPermission(webContents)) {
+        // The opt-in probe observes Facebook’s actual browser notifications.
+        if (
+          shouldGrantProbeNotificationPermission(webContents) &&
+          isFacebookOrMessengerUrl(details.requestingUrl || url)
+        ) {
           recordWebNotificationPermissionDecision({
             source: "permission-request",
             permission,
             granted: true,
             url,
             requestingUrl: details.requestingUrl,
-            webContentsId: webContents.id,
+            webContentsId: webContents?.id,
             isMainFrame: details.isMainFrame,
             reason: "notification-probe-enabled",
           });
@@ -4902,7 +4909,7 @@ function createWindow(source: string = "unknown"): void {
           granted: false,
           url,
           requestingUrl: details.requestingUrl,
-          webContentsId: webContents.id,
+          webContentsId: webContents?.id,
           isMainFrame: details.isMainFrame,
           reason: "browser-notifications-disabled",
         });
@@ -4966,10 +4973,27 @@ function createWindow(source: string = "unknown"): void {
     contentView.webContents.session,
     "content-view",
   );
-  void clearFacebookNotificationServiceWorkers(
-    contentView.webContents.session,
-    "content-view",
-  );
+  if (notificationProbeLog) {
+    nativeNotificationProbeReady = installNativeNotificationProbe(
+      contentView.webContents.session,
+      {
+        preloadPath: path.join(
+          __dirname,
+          "../preload/native-notification-probe-preload.js",
+        ),
+        salt: notificationProbeSalt,
+        webContents: contentView.webContents,
+        isTrustedUrl: isFacebookOrMessengerUrl,
+        isContentWebContents: (wc) => wc.id === contentView?.webContents.id,
+        record: (record) => notificationProbeLog.append(record),
+      },
+    );
+  } else {
+    void clearFacebookNotificationServiceWorkers(
+      contentView.webContents.session,
+      "content-view",
+    );
+  }
 
   // Set up screen sharing handler for getDisplayMedia() calls
   // This is required for the "Share Screen" button to work during calls
@@ -5469,7 +5493,7 @@ function createWindow(source: string = "unknown"): void {
     // Set up permission handler for the child window's session
     childWindow.webContents.session.setPermissionRequestHandler(
       (webContents, permission, callback, details) => {
-        const url = webContents.getURL();
+        const url = webContents?.getURL() || details.requestingUrl || "";
         const requestingUrl = details.requestingUrl || url;
         console.log(`[Permissions] Child window request: ${permission}`, {
           url,
@@ -5493,7 +5517,7 @@ function createWindow(source: string = "unknown"): void {
             granted: false,
             url,
             requestingUrl,
-            webContentsId: webContents.id,
+            webContentsId: webContents?.id,
             isMainFrame: details.isMainFrame,
             reason: "non-allowed-origin",
           });
@@ -5502,16 +5526,18 @@ function createWindow(source: string = "unknown"): void {
         }
 
         if (permission === "notifications") {
-          // The diagnostics probe lets Facebook's notifications reach the
-          // page so their structure can be recorded; the page drops them.
-          if (shouldGrantProbeNotificationPermission(webContents)) {
+          // The opt-in probe allows Facebook's real browser notifications.
+          if (
+            shouldGrantProbeNotificationPermission(webContents) &&
+            isFacebookOrMessengerUrl(details.requestingUrl || url)
+          ) {
             recordWebNotificationPermissionDecision({
               source: "permission-request",
               permission,
               granted: true,
               url,
               requestingUrl: details.requestingUrl,
-              webContentsId: webContents.id,
+              webContentsId: webContents?.id,
               isMainFrame: details.isMainFrame,
               reason: "notification-probe-enabled",
             });
@@ -5524,7 +5550,7 @@ function createWindow(source: string = "unknown"): void {
             granted: false,
             url,
             requestingUrl,
-            webContentsId: webContents.id,
+            webContentsId: webContents?.id,
             isMainFrame: details.isMainFrame,
             reason: "browser-notifications-disabled",
           });
@@ -8502,6 +8528,7 @@ function logServiceWorkerNotificationInstrumentationAvailability(
       label,
       serviceWorkersAvailable: Boolean(serviceWorkers),
       notificationPresentationHookAvailable: false,
+      nativeProbeMode: notificationProbeEnabled,
       activeHooks: [
         "permission-request-handler",
         "permission-check-handler",
