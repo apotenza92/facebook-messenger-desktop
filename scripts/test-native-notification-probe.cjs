@@ -27,7 +27,11 @@ const { _electron: electron } = require("playwright");
       if (message.type() === "error")
         console.error("[Fixture]", message.text());
     });
-    await page.waitForLoadState("load");
+    await page.waitForLoadState("load", { timeout: 5000 });
+    assert(
+      await page.evaluate(() => window.dedicatedReady),
+      "unrelated dedicated worker must start",
+    );
     await page.waitForTimeout(150);
     const initialEvents = await app.evaluate(() => global.probeEvents);
     assert.equal(

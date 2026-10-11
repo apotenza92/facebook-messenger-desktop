@@ -6,6 +6,7 @@
 
 - Capture opt-in notification diagnostics before Facebook page scripts run and
   inside service workers, while preserving real browser notification behavior.
+  Observe service workers without pausing unrelated workers or page frames.
   In this mode Facebook controls alerts and the sidebar engine runs only for
   comparison; stopping diagnostics restores the usual app notifications.
 - Report notification capture failures, replaced hooks and sidebar sampling

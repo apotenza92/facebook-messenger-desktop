@@ -397,6 +397,10 @@ export function installNativeNotificationProbe(
         autoAttach: true,
         waitForDebuggerOnStart: true,
         flatten: true,
+        // Unrelated dedicated workers and out-of-process frames must keep
+        // starting normally. Resuming them after broad auto-attachment can
+        // leave page loading blocked in Electron.
+        filter: [{ type: "service_worker", exclude: false }, { exclude: true }],
       });
       options.record({ event: "worker-capture-ready", receivedAt: Date.now() });
     } catch {

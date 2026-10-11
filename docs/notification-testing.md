@@ -21,7 +21,9 @@ establish that Facebook never generated native notifications.
 Frame hooks now run before page scripts via a session preload. The isolated
 bridge accepts only the trusted main Messenger frame. Trusted service workers
 are attached through Chromium's debugger and instrumented at the first script
-execution breakpoint before they can cache their notification methods. Worker
+execution breakpoint before they can cache their notification methods. Auto-attachment
+is restricted to service workers so unrelated workers and cross-origin frames
+continue loading normally. Worker
 setup has a two-second watchdog and command deadlines, releasing paused workers
 on failure. Already-running workers are explicitly labelled late; cached methods
 in them cannot be recovered retrospectively. Opening DevTools can detach worker

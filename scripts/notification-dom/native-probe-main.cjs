@@ -13,7 +13,13 @@ const { installNativeNotificationProbe } = require(probeModule);
 app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   const server = http.createServer((req, res) => {
-    if (req.url === "/sw.js") {
+    if (req.url === "/dedicated.js") {
+      res.setHeader("Content-Type", "application/javascript");
+      res.end("postMessage('dedicated-ready')");
+    } else if (req.url === "/frame") {
+      res.setHeader("Content-Type", "text/html");
+      res.end("<!doctype html><p>Neutral cross-origin frame</p>");
+    } else if (req.url === "/sw.js") {
       res.setHeader("Content-Type", "application/javascript");
       res.end(`const show = self.registration.showNotification.bind(self.registration);
         self.addEventListener('install', () => self.skipWaiting());
@@ -27,7 +33,12 @@ app.whenReady().then(async () => {
         })()));`);
     } else {
       res.setHeader("Content-Type", "text/html");
-      res.end(`<!doctype html><script>
+      const frameOrigin = `http://localhost:${server.address().port}`;
+      res.end(`<!doctype html><iframe src="${frameOrigin}/frame"></iframe><script>
+        window.dedicatedReady = new Promise(resolve => {
+          const worker = new Worker('/dedicated.js');
+          worker.onmessage = () => resolve(true);
+        });
         window.cachedNotification = Notification;
         window.earlyNotification = new cachedNotification('Fixture Page Name', {body:'Private fixture page body',tag:'100000000009999',data:{url:'/messages/t/100000000009999/',secret:'Private fixture value'}});
         window.earlyNotification.close();
