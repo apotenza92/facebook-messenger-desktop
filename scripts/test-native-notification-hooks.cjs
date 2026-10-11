@@ -17,7 +17,9 @@ vm.runInNewContext(source, {
   require: (name) =>
     name === "electron"
       ? { ipcMain }
-      : require("../dist/preload/native-notification-probe-hooks"),
+      : name.includes("notification-network-probe")
+        ? require("../dist/main/notification-network-probe")
+        : require("../dist/preload/native-notification-probe-hooks"),
   Set,
   Map,
   WeakMap,

@@ -29,7 +29,7 @@
     "test:stability": "node -r ./scripts/register-ts.js scripts/test-stability.ts",
     "test:notification": "node -r ./scripts/register-ts.js scripts/test-notification-click.ts",
     "test:notification:dom": "node scripts/test-notification-dom.cjs",
-    "test:notification:probe": "node scripts/test-native-notification-hooks.cjs && node scripts/test-notification-probe-review.cjs && node scripts/test-native-notification-probe.cjs",
+    "test:notification:probe": "node scripts/test-native-notification-hooks.cjs && node scripts/test-notification-network-probe.cjs && node scripts/test-notification-probe-review.cjs && node scripts/test-native-notification-probe.cjs",
     "test:call-media": "node scripts/test-call-window-media-guard.mjs",
     "test:issues:deterministic": "node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts",
     "test:issues": "npm run test:issues:deterministic",

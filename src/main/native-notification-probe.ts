@@ -1,4 +1,5 @@
 import { ipcMain, type Session, type WebContents } from "electron";
+import { createNotificationNetworkProbe } from "./notification-network-probe";
 import { installHooks } from "../preload/native-notification-probe-hooks";
 
 const CONFIG_CHANNEL = "native-notification-probe-config";
@@ -237,6 +238,10 @@ export function installNativeNotificationProbe(
       );
     });
   };
+  const network = createNotificationNetworkProbe({
+    ...options,
+    send,
+  });
   const fail = (stage: string) =>
     options.record({
       event: "worker-capture-failed",
@@ -253,6 +258,11 @@ export function installNativeNotificationProbe(
   };
   debuggerApi.on("detach", (_event, reason) => {
     ownsDebugger = false;
+    network.dispose();
+    options.record({
+      event: "network-capture-detached",
+      receivedAt: Date.now(),
+    });
     for (const id of timers.keys()) release(id);
     options.record({
       event: "worker-capture-detached",
@@ -265,6 +275,18 @@ export function installNativeNotificationProbe(
     if (method === "Target.attachedToTarget") {
       const id = String(params.sessionId);
       const info = params.targetInfo;
+      if (
+        info.type === "worker" &&
+        trusted(info.url) &&
+        !params.waitingForDebugger
+      ) {
+        void network.enable(id, "dedicated-worker");
+        options.record({
+          event: "network-worker-attached-late",
+          receivedAt: Date.now(),
+        });
+        return;
+      }
       const supported = info.type === "service_worker" && trusted(info.url);
       options.record({
         event: "worker-attached",
@@ -286,6 +308,7 @@ export function installNativeNotificationProbe(
             workerContexts.set(id, new Set());
             // Queue setup before releasing Chromium's worker-start gate. Domain
             // enable replies cannot arrive while that gate is held.
+            const networkReady = network.enable(id);
             const runtime = send("Runtime.enable", {}, id);
             const debugging = send("Debugger.enable", {}, id);
             const breakpoint = send(
@@ -299,6 +322,7 @@ export function installNativeNotificationProbe(
               id,
             );
             const ready = Promise.all([
+              networkReady,
               runtime,
               debugging,
               breakpoint,
@@ -361,6 +385,7 @@ export function installNativeNotificationProbe(
       }
     } else if (method === "Target.detachedFromTarget") {
       release(params.sessionId);
+      network.removeSession(params.sessionId);
       sessions.delete(params.sessionId);
       workerContexts.delete(params.sessionId);
     }
@@ -380,6 +405,7 @@ export function installNativeNotificationProbe(
     filePath: options.preloadPath,
   });
   options.webContents.once("destroyed", () => {
+    network.dispose();
     ipcMain.removeListener(CONFIG_CHANNEL, onConfig);
     ipcMain.removeListener(EVENT_CHANNEL, onEvent);
     try {
@@ -393,6 +419,9 @@ export function installNativeNotificationProbe(
     try {
       debuggerApi.attach("1.3");
       ownsDebugger = true;
+      // Queue before navigation; Chromium may not reply until the renderer starts.
+      void network.enable();
+      void network.discoverWorkers();
       await send("Target.setAutoAttach", {
         autoAttach: true,
         waitForDebuggerOnStart: true,

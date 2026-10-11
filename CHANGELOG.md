@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Include trusted HTTP, WebSocket/MQTT and EventSource traffic structure in opt-in
+  notification diagnostics, with per-run correlation hashes, bounded sampling
+  and explicit coverage failures. Never log message text or credentials.
+
 ### Fixed
 
 - Capture opt-in notification diagnostics before Facebook page scripts run and

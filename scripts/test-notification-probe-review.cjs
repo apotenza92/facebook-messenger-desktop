@@ -3,6 +3,14 @@ const { summarize } = require("./review-notification-probe.cjs");
 const rows = [
   { event: "native-probe-registered", nativePresentation: true },
   { event: "native-hooks-ready", context: "frame" },
+  { event: "network-capture-ready", context: "frame" },
+  {
+    event: "network-payload",
+    direction: "received",
+    transport: "websocket",
+    threadHashes: ["abc"],
+    receivedAt: 500,
+  },
   { event: "service-worker-show", threadHash: "abc", receivedAt: 1000 },
   { event: "app-sent", threadHash: "abc", receivedAt: 2000 },
   { event: "native-probe-registered", nativePresentation: true },
@@ -20,6 +28,8 @@ assert.equal(
   "do not correlate across app runs",
 );
 assert.equal(report.correlation.attemptsWithoutNearbyNativeCall, 1);
+assert.equal(report.network.nativeCallsNearIncomingNetwork, 1);
+assert.deepEqual(report.network.incomingTransports, ["websocket"]);
 assert.equal(report.invalidLines, 1);
 assert.equal(report.unknownEvents, 1);
 assert(report.warnings.some((w) => w.includes("late")));

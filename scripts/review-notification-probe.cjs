@@ -1,6 +1,22 @@
 // Local-only review. Never echo untrusted payloads, hashes, names or paths.
 const fs = require("node:fs");
 const EVENTS = new Set([
+  "network-worker-attached-late",
+  "network-capture-ready",
+  "network-capture-failed",
+  "network-capture-detached",
+  "network-capture-limit",
+  "network-tracking-limit",
+  "network-payload",
+  "network-request",
+  "network-response",
+  "network-complete",
+  "network-failed",
+  "network-body-skipped",
+  "network-body-unavailable",
+  "network-socket-open",
+  "network-socket-close",
+  "network-socket-error",
   "native-probe-registered",
   "native-preload-started",
   "native-hooks-ready",
@@ -57,7 +73,9 @@ function summarize(text) {
     healthFailures = 0,
     nativeModeRuns = 0;
   const native = [],
-    shadow = [];
+    shadow = [],
+    network = [];
+  const transports = new Set();
   const contexts = new Set();
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
@@ -94,6 +112,15 @@ function summarize(text) {
       healthFailures++;
     const at = Number.isFinite(row.receivedAt) ? row.receivedAt : row.pageTime;
     if (!Number.isFinite(at)) continue;
+    if (row.event === "network-payload" && row.direction === "received") {
+      if (["http", "websocket", "eventsource"].includes(row.transport))
+        transports.add(row.transport);
+      if (Array.isArray(row.threadHashes))
+        for (const value of row.threadHashes.slice(0, 20)) {
+          const hashed = hash(value);
+          if (hashed) network.push({ run, at, hash: hashed });
+        }
+    }
     const entry = { run, at, hash: hash(row.threadHash) };
     if (["native-constructed", "service-worker-show"].includes(row.event))
       native.push(entry);
@@ -133,6 +160,10 @@ function summarize(text) {
     warnings.push(
       "Capture failed or hooks were replaced; zero calls cannot establish zero Facebook notifications.",
     );
+  if (counts["network-worker-attached-late"])
+    warnings.push(
+      "Dedicated-worker network attachment is passive and late; startup traffic may be missing.",
+    );
   if (counts["worker-capture-late"])
     warnings.push(
       "Existing workers were attached late: previously cached methods may bypass capture.",
@@ -145,6 +176,21 @@ function summarize(text) {
     warnings.push(
       "Push subscription failed: inspect transport availability in a controlled test.",
     );
+  if (!counts["network-capture-ready"])
+    warnings.push("No network capture readiness evidence.");
+  if (counts["network-capture-failed"] || counts["network-capture-detached"])
+    warnings.push(
+      "Network capture failed or detached; traffic may be missing.",
+    );
+  if (
+    counts["network-capture-limit"] ||
+    counts["network-tracking-limit"] ||
+    counts["network-body-skipped"] ||
+    counts["network-body-unavailable"]
+  )
+    warnings.push(
+      "Network sampling was limited or response bodies unavailable; payload coverage is incomplete.",
+    );
   if (invalidLines)
     warnings.push("Invalid/incomplete NDJSON lines were skipped.");
   return {
@@ -154,6 +200,20 @@ function summarize(text) {
     healthFailures,
     invalidLines,
     unknownEvents,
+    network: {
+      incomingTransports: [...transports].sort(),
+      nativeCallsWithHash: native.filter((n) => n.hash).length,
+      nativeCallsNearIncomingNetwork: native.filter(
+        (n) =>
+          n.hash &&
+          network.some(
+            (r) =>
+              r.run === n.run &&
+              r.hash === n.hash &&
+              Math.abs(n.at - r.at) <= 5000,
+          ),
+      ).length,
+    },
     correlation: {
       windowSeconds: 5,
       sidebarAttemptsWithHash: comparable,

@@ -28,7 +28,8 @@ setup has a two-second watchdog and command deadlines, releasing paused workers
 on failure. Already-running workers are explicitly labelled late; cached methods
 in them cannot be recovered retrospectively. Opening DevTools can detach worker
 capture, and the log records this. Subframes and unrelated windows are outside
-the current frame capture boundary.
+the native API frame capture boundary; network capture follows the trusted
+attached page and worker targets.
 
 ## What is observed
 
@@ -61,6 +62,40 @@ thread IDs, not independently verified identifiers. Hashes use the same random
 salt throughout one app run and change after restarting. Hashes support local
 correlation; they are not encryption and should still be handled as private data.
 
+## Network capture boundary
+
+Diagnostics also enable Chromium's read-only Network domain before navigation
+and in observed trusted service workers. Trusted dedicated workers in the same
+Electron session are discovered and attached passively without startup pauses;
+this is marked late because their earliest traffic may already have occurred. This observes actual traffic rather than
+inferring it from DOM changes: HTTP requests/responses, incoming/outgoing WebSocket
+frames and EventSource messages. Requests are restricted to trusted Facebook or
+Messenger origins; documents, scripts, images and media are excluded. URLs,
+query strings, headers, cookies and raw payloads are never written to disk.
+
+Records contain generated request/socket IDs, route categories, status, cache/worker
+flags, timing, lengths and bounded JSON structure. Known protocol field names are
+retained; arbitrary keys are hashed because names and identifiers can be keys.
+Unread/read/mute flags retain boolean values. Operation names and candidate
+conversation IDs are hashed per run. Nested JSON envelopes, anti-hijacking prefixes,
+newline-delimited JSON and single MQTT packets in binary WebSocket frames are
+recognized. MQTT packet type, QoS, retain and known topic categories are recorded;
+other topic names are hashed. Message text and credential values are not recorded.
+
+Response inspection is limited to structured/text Fetch/XHR-like responses, 512 KiB
+per body, four pending body reads, 500 tracked requests/sockets, and 600 recorded
+network events per minute. Body availability failures, limits and detachment are
+explicit. Chromium buffering is bounded. Parsing is observational: the probe does
+not intercept, alter, replay or initiate Facebook requests. These boundaries mean
+large/compressed bodies, non-JSON or encrypted payloads, multiple/fragmented MQTT
+packets and traffic outside the attached targets may remain opaque or unobserved.
+The probe is not a packet sniffer and cannot see OS push transport or a fully quit
+app. A nearby hashed network event is timing evidence, not proof of causation.
+
+Use [Chromium's Network protocol](https://chromedevtools.github.io/devtools-protocol/tot/Network/)
+as the capture contract. Actual Facebook transport and schema must be established
+from observed events, rather than assuming that every account uses MQTT or GraphQL.
+
 ## Controlled live test on each platform
 
 Use a beta/development build containing this change. Tests below supplement the
@@ -74,6 +109,8 @@ instead of collecting unlabelled logs for days.
 2. Confirm `native-probe-registered` has `nativePresentation: true`, followed by
    frame `native-hooks-ready` with successful flags. A worker needs its own
    readiness event. `worker-capture-ready` alone only confirms debugger setup.
+   Confirm frame `network-capture-ready` too; inspect network failures and sampling
+   warnings before interpreting missing traffic.
    Record the exact app/platform versions and site settings in private notes.
 3. Add a diagnostics marker before each case, then record in private notes
    whether a native alert appeared, stayed visible, disappeared or opened the
@@ -119,7 +156,7 @@ The command is offline and prints aggregate counts and coverage warnings only.
 Each input is summarized separately; combine rotated segments in chronological
 order privately if reviewing a complete run. Unknown events are counted without
 printing their names or values. Incomplete lines are reported. Five-second
-same-thread correlations are descriptive timing evidence, not delivery accuracy.
+same-thread native/sidebar and incoming-network correlations are descriptive timing evidence, not delivery accuracy.
 Run boundaries prevent matching unrelated restarted captures.
 
 A `native-constructed` or `service-worker-show` record is an API attempt, not proof
@@ -151,7 +188,8 @@ nonpersistent partition, with no Facebook account or external requests. It
 constructs a notification in a parser-time script, caches the constructor,
 registers a real worker whose first line caches `showNotification`, and proves
 late sidebar injection preserves native APIs. These checks also verify shared
-hashes and absence of fixture content/IDs/URLs in captured records. Unit fixtures
+hashes, real HTTP/JSON and WebSocket/MQTT traffic in page/worker contexts,
+independent worker/frame startup, and absence of fixture content/IDs/URLs in captured records. Unit fixtures
 verify native return values, errors, health checks, push payload noninspection,
 and allowlisted metadata. OS notification display and live Facebook policy remain
 separate supplemental checks.

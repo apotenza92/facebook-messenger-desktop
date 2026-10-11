@@ -85,8 +85,47 @@ const { _electron: electron } = require("playwright");
       });
       later.close();
     });
+    await page.evaluate(() =>
+      Promise.race([
+        window.networkReady,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("network fixture timeout")), 5000),
+        ),
+      ]),
+    );
     await page.waitForTimeout(300);
     const events = await app.evaluate(() => global.probeEvents);
+    assert(
+      events.some(
+        (r) => r.event === "network-payload" && r.transport === "http",
+      ),
+      "must capture real HTTP response structure",
+    );
+    assert(
+      events.some(
+        (r) =>
+          r.event === "network-payload" &&
+          r.transport === "websocket" &&
+          r.format === "mqtt",
+      ),
+      "must decode real binary MQTT WebSocket structure",
+    );
+    assert(
+      events.some(
+        (r) => r.event === "network-payload" && r.direction === "sent",
+      ),
+      "must capture outbound structure",
+    );
+    assert(
+      events.some(
+        (r) => r.event === "network-payload" && r.context === "service-worker",
+      ),
+      "must capture worker HTTP response structure",
+    );
+    assert(
+      events.filter((r) => r.event === "network-socket-open").length >= 2,
+      "must observe page and dedicated-worker sockets",
+    );
     const by = (event, context) =>
       events.filter((r) => r.event === event && r.context === context);
 
@@ -107,6 +146,21 @@ const { _electron: electron } = require("playwright");
     );
     assert.equal(by("native-hooks-ready", "frame").length, 1);
     assert.equal(by("native-hooks-ready", "service-worker").length, 1);
+    assert(
+      !events.some((r) => r.event === "network-capture-failed"),
+      "network setup must complete",
+    );
+    const incoming = events.find(
+      (r) =>
+        r.event === "network-payload" &&
+        r.transport === "websocket" &&
+        r.format === "mqtt",
+    );
+    assert(
+      incoming.fields.some(
+        (f) => f.path.endsWith("is_unread") && f.value === true,
+      ),
+    );
     const pageEvent = by("native-constructed", "frame")[0];
     const workerEvent = by("service-worker-show", "service-worker")[0];
     assert.equal(
@@ -115,6 +169,10 @@ const { _electron: electron } = require("playwright");
       "same app-run salt across contexts",
     );
     assert.equal(pageEvent.tagHasThreadId, true);
+    assert(
+      incoming.threadHashes.includes(pageEvent.threadHash),
+      "network and native IDs must share correlation salt",
+    );
     assert.deepEqual(workerEvent.dataThreadPaths, ["$.url"]);
     assert.equal(
       events.filter((r) => r.event === "worker-capture-failed").length,
@@ -145,10 +203,12 @@ const { _electron: electron } = require("playwright");
       "100000000009999",
       "/messages/t/",
       "127.0.0.1",
+      "PrivateQuery",
+      "PrivateToken",
     ])
       assert(!serialized.includes(secret), `must not export ${secret}`);
     console.log(
-      "[NativeNotificationProbe] Parser-time, cached API, real worker and privacy checks passed",
+      "[NativeNotificationProbe] Parser-time, native worker, HTTP, WebSocket MQTT and privacy checks passed",
     );
   } catch (error) {
     console.log(
