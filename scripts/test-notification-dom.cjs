@@ -463,11 +463,31 @@ const SCENARIOS = [
     expect: [{ title: "Tester B", body: "are you free tonight?" }],
   },
 
+  // Native observation preserves sidebar decisions as a silent comparison.
+  {
+    id: "native-probe-shadows-sidebar",
+    description:
+      "record a sidebar attempt without forwarding a duplicate alert",
+    probe: true,
+    steps: async (d) => {
+      await d.page.evaluate(() => {
+        window.__mdNativeNotificationProbe = { pendingThreads: [] };
+      });
+      await incoming(d, thread(1002), "Tester B", "fixture incoming message");
+      await d.run(31 * SECOND);
+    },
+    expect: [],
+    check: async (d) =>
+      (await d.probeEvents()).some((event) => event.event === "app-sent")
+        ? null
+        : "sidebar engine did not record its comparison attempt",
+  },
+
   // --- Diagnostics probe ------------------------------------------------------
   {
     id: "probe-records-structure-only",
     description:
-      "the diagnostics probe records Facebook's notifications without showing them or capturing content",
+      "the legacy page wrapper records structure without showing or capturing content",
     probe: true,
     steps: async (d) => {
       await incoming(d, thread(1002), "Tester B", "are you free tonight?");

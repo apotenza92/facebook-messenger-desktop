@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Include trusted HTTP, WebSocket/MQTT and EventSource traffic structure in opt-in
+  notification diagnostics, with per-run correlation hashes, bounded sampling
+  and explicit coverage failures. Never log message text or credentials.
+
+### Fixed
+
+- Capture opt-in notification diagnostics before Facebook page scripts run and
+  inside service workers, while preserving real browser notification behavior.
+  Observe service workers without pausing unrelated workers or page frames.
+  In this mode Facebook controls alerts and the sidebar engine runs only for
+  comparison; stopping diagnostics restores the usual app notifications.
+- Report notification capture failures, replaced hooks and sidebar sampling
+  limits, and provide a local summary command without message content.
+
 ## [1.5.0-beta.1] - 2026-10-07
 
 ### Security

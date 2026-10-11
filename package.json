@@ -23,12 +23,13 @@
     "dist:linux:x64": "npm run build && electron-builder --config electron-builder.config.js --linux --x64 --publish=never",
     "dist:all": "npm run build && electron-builder --config electron-builder.config.js --mac --win --linux --publish=never",
     "release:mac:signed": "node scripts/build-signed-macos.mjs",
-    "test:ci": "npm run test:hygiene && npm run audit:runtime && npm run lint && npm run build && npm run test:stability && npm run test:call-media && npm run test:issues && npm run test:notification && npm run test:notification:dom && npm run test:window-open && npm run test:window-layout && npm run test:reload-policy && npm run test:release && npm run test:snap && npm run test:icons:local",
+    "test:ci": "npm run test:hygiene && npm run audit:runtime && npm run lint && npm run build && npm run test:stability && npm run test:call-media && npm run test:issues && npm run test:notification && npm run test:notification:dom && npm run test:notification:probe && npm run test:window-open && npm run test:window-layout && npm run test:reload-policy && npm run test:release && npm run test:snap && npm run test:icons:local",
     "audit:runtime": "npm audit --omit=dev",
     "test:hygiene": "node scripts/test-repository-hygiene.js",
     "test:stability": "node -r ./scripts/register-ts.js scripts/test-stability.ts",
     "test:notification": "node -r ./scripts/register-ts.js scripts/test-notification-click.ts",
     "test:notification:dom": "node scripts/test-notification-dom.cjs",
+    "test:notification:probe": "node scripts/test-native-notification-hooks.cjs && node scripts/test-notification-network-probe.cjs && node scripts/test-notification-probe-review.cjs && node scripts/test-native-notification-probe.cjs",
     "test:call-media": "node scripts/test-call-window-media-guard.mjs",
     "test:issues:deterministic": "node -r ./scripts/register-ts.js scripts/test-issues-regressions.ts",
     "test:issues": "npm run test:issues:deterministic",
@@ -50,7 +51,8 @@
     "test:release:mac": "node scripts/test-macos-release-contract.mjs",
     "test:release:integrity": "node -r ./scripts/register-ts.js scripts/test-release-integrity.ts",
     "test:release:tuf": "node scripts/test-tuf-production.cjs && node -r ./scripts/register-ts.js scripts/test-tuf-update-feed.ts && node scripts/test-update-metadata.mjs",
-    "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts && npm run test:release:confirm && npm run test:release:integrity && npm run test:release:mac && npm run test:release:tuf && npm run test:linux-sandbox"
+    "test:release": "node -r ./scripts/register-ts.js scripts/test-release-version.ts && npm run test:release:confirm && npm run test:release:integrity && npm run test:release:mac && npm run test:release:tuf && npm run test:linux-sandbox",
+    "review:notification:probe": "node scripts/review-notification-probe.cjs"
   },
   "keywords": [
     "messenger",

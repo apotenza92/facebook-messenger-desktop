@@ -20,6 +20,7 @@
     "./url-policy.ts",
     "./notifications-inject.ts",
     "./notification-probe-inject.ts",
+    "./native-notification-probe-preload.ts",
     "./call-window-preload.ts",
     "./call-window-inject.ts",
     "../shared/url-policy.ts"
