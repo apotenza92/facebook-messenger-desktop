@@ -20,6 +20,12 @@
 - Hide Facebook's in-page pop-ups about activity elsewhere on Facebook, such as
   comments and reactions on your photos, in every language (#105).
 
+### Changed
+
+- Move developer tools, logs and notification diagnostics out of the View and
+  Help menus into the Develop menu, shown in beta builds, and remove the
+  obsolete Windows shortcut-repair test.
+
 ## [1.5.0-beta.1] - 2026-10-07
 
 ### Security

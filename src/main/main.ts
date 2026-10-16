@@ -2413,10 +2413,6 @@ const xwaylandPreferenceFile = path.join(
   "xwayland-preference.json",
 );
 const lastVersionFile = path.join(app.getPath("userData"), "last-version.json");
-const shortcutFixTestFile = path.join(
-  app.getPath("userData"),
-  "shortcut-fix-test.json",
-);
 const updateFrequencyFile = path.join(
   app.getPath("userData"),
   "update-frequency.json",
@@ -7978,26 +7974,23 @@ function createApplicationMenu(): void {
   };
 
   const notificationDiagnosticsMenuItems: Electron.MenuItemConstructorOptions[] =
-    isDev || isBetaVersion || notificationProbeEnabled
-      ? [
-          { type: "separator" },
-          {
-            label: "Record Notification Diagnostics",
-            type: "checkbox",
-            checked: notificationProbeEnabled,
-            click: () => {
-              void toggleNotificationProbe();
-            },
-          },
-          {
-            label: "Add Diagnostics Marker",
-            enabled: notificationProbeEnabled,
-            click: () => {
-              addNotificationProbeMarker();
-            },
-          },
-        ]
-      : [];
+    [
+      {
+        label: "Record Notification Diagnostics",
+        type: "checkbox",
+        checked: notificationProbeEnabled,
+        click: () => {
+          void toggleNotificationProbe();
+        },
+      },
+      {
+        label: "Add Diagnostics Marker",
+        enabled: notificationProbeEnabled,
+        click: () => {
+          addNotificationProbeMarker();
+        },
+      },
+    ];
 
   const exportDebugLogsMenuItem: Electron.MenuItemConstructorOptions = {
     label: "Export Debug Logs…",
@@ -8052,141 +8045,26 @@ function createApplicationMenu(): void {
         }
       : null;
 
-  // Dev-only menu for testing features (only included in menu when isDev is true)
+  // Every developer and diagnostic tool lives here, never in the ordinary
+  // menus. Shown in development and beta builds, and whenever diagnostics
+  // are recording so they can always be switched off.
+  const showDevelopMenu = isDev || isBetaOptedIn() || notificationProbeEnabled;
   const developMenu: Electron.MenuItemConstructorOptions = {
     label: "Develop",
     submenu: [
-      {
-        label: "Test Windows Update & Shortcut Fix",
-        visible: process.platform === "win32",
-        click: async () => {
-          const currentVersion = app.getVersion();
-
-          // Step 1: Explain the test
-          const startResult = await dialog.showMessageBox({
-            type: "info",
-            title: "Windows Update Test",
-            message: "Test Post-Update Shortcut Fix",
-            detail: [
-              "This test simulates the FULL update workflow on Windows:",
-              "",
-              "1. Simulate downloading an update (with progress bar)",
-              "2. Mark the app as having a 'previous version'",
-              "3. Restart the app",
-              "4. On restart, the app detects a 'version change'",
-              "5. Shortcut fix runs automatically",
-              "",
-              `Current version: ${currentVersion}`,
-              `Simulated previous version: 0.0.0-test`,
-              "",
-              "After restart, check the console logs and verify:",
-              "- Shortcut fix ran automatically",
-              "- Taskbar icon still works",
-              "",
-              "Make sure you have the app PINNED TO TASKBAR before testing!",
-            ].join("\n"),
-            buttons: ["Start Test", "Cancel"],
-            defaultId: 0,
-            cancelId: 1,
-          });
-
-          if (startResult.response !== 0) return;
-
-          // Step 2: Simulate download progress
-          console.log("[Test] Starting simulated update download...");
-          showDownloadProgress();
-
-          let progress = 0;
-          await new Promise<void>((resolve) => {
-            const testInterval = setInterval(() => {
-              progress += Math.random() * 15 + 5;
-              if (progress >= 100) {
-                progress = 100;
-                clearInterval(testInterval);
-                updateDownloadProgress(100, "2.1 MB/s", "67.5 MB", "67.5 MB");
-                setTimeout(() => {
-                  hideDownloadProgress();
-                  resolve();
-                }, 500);
-              } else {
-                const speed = (1.5 + Math.random() * 2).toFixed(1) + " MB/s";
-                const downloaded = ((progress / 100) * 67.5).toFixed(1) + " MB";
-                updateDownloadProgress(
-                  Math.round(progress),
-                  speed,
-                  downloaded,
-                  "67.5 MB",
-                );
-              }
-            }, 200);
-          });
-
-          // Step 3: Write a fake "previous version" to trigger shortcut fix on restart
-          try {
-            fs.writeFileSync(
-              lastVersionFile,
-              JSON.stringify({ version: "0.0.0-test" }),
-            );
-            // Write marker file so we know to show results after restart
-            fs.writeFileSync(
-              shortcutFixTestFile,
-              JSON.stringify({
-                pending: true,
-                startedAt: new Date().toISOString(),
-              }),
-            );
-            console.log(
-              "[Test] Wrote fake previous version to trigger shortcut fix on restart",
-            );
-          } catch (err) {
-            console.error("[Test] Failed to write version file:", err);
-          }
-
-          // Step 4: Show restart dialog
-          const restartResult = await dialog.showMessageBox({
-            type: "info",
-            title: "Update Ready (Test)",
-            message: "Simulated update downloaded",
-            detail: [
-              "The simulated update has been 'downloaded'.",
-              "",
-              "Click 'Restart Now' to restart the app.",
-              "",
-              "On restart, the app will detect a version change and run",
-              "the shortcut fix automatically. Results will be shown after.",
-            ].join("\n"),
-            buttons: ["Restart Now", "Cancel"],
-            defaultId: 0,
-            cancelId: 1,
-          });
-
-          if (restartResult.response === 0) {
-            console.log(
-              "[Test] Restarting app to simulate post-update launch...",
-            );
-            app.relaunch();
-            app.quit();
-          }
-        },
-      },
+      exportDebugLogsMenuItem,
+      openLogsFolderMenuItem,
+      { type: "separator" },
+      ...notificationDiagnosticsMenuItems,
       { type: "separator" },
       {
         label: "Toggle Developer Tools",
-        accelerator: "Alt+Command+I",
+        accelerator: "Alt+CmdOrCtrl+I",
         click: () => {
           const target = contentView
             ? contentView.webContents
             : mainWindow?.webContents;
           target?.toggleDevTools();
-        },
-      },
-      {
-        label: "Force Reload",
-        accelerator:
-          process.platform === "darwin" ? "CmdOrCtrl+Shift+R" : "Ctrl+Shift+R",
-        click: () => {
-          const target = contentView?.webContents ?? mainWindow?.webContents;
-          reloadMessengerTarget(target, true, "develop-force-reload");
         },
       },
     ],
@@ -8243,15 +8121,6 @@ function createApplicationMenu(): void {
               reloadMessengerTarget(target, true, "menu-force-reload");
             },
           },
-          {
-            label: "Toggle Developer Tools",
-            accelerator: "Alt+Command+I",
-            click: () => {
-              const target =
-                contentView?.webContents ?? mainWindow?.webContents;
-              target?.toggleDevTools();
-            },
-          },
           { type: "separator" },
           { role: "resetZoom" as const },
           { role: "zoomIn" as const },
@@ -8281,19 +8150,9 @@ function createApplicationMenu(): void {
           },
           { type: "separator" },
           viewOnGitHubMenuItem,
-          ...(isDev || isBetaVersion
-            ? ([
-                { type: "separator" as const },
-                exportDebugLogsMenuItem,
-              ] as Electron.MenuItemConstructorOptions[])
-            : []),
-          ...notificationDiagnosticsMenuItems,
-          { type: "separator" },
-          openLogsFolderMenuItem,
         ],
       },
-      // Include Develop menu in dev mode or for beta testers
-      ...(isDev || isBetaOptedIn() ? [developMenu] : []),
+      ...(showDevelopMenu ? [developMenu] : []),
     ];
     const menu = Menu.buildFromTemplate(template);
     Menu.setApplicationMenu(menu);
@@ -8336,14 +8195,6 @@ function createApplicationMenu(): void {
           click: () => {
             const target = contentView?.webContents ?? mainWindow?.webContents;
             reloadMessengerTarget(target, true, "menu-force-reload");
-          },
-        },
-        {
-          label: "Toggle Developer Tools",
-          accelerator: "Alt+CmdOrCtrl+I",
-          click: () => {
-            const target = contentView?.webContents ?? mainWindow?.webContents;
-            target?.toggleDevTools();
           },
         },
         // Menu bar mode (Windows/Linux only - macOS uses global menu bar)
@@ -8407,15 +8258,6 @@ function createApplicationMenu(): void {
         checkUpdatesMenuItem,
         updateFrequencySubmenu,
         notificationSettingsMenuItem,
-        ...(isDev || isBetaVersion
-          ? ([
-              { type: "separator" as const },
-              exportDebugLogsMenuItem,
-            ] as Electron.MenuItemConstructorOptions[])
-          : []),
-        ...notificationDiagnosticsMenuItems,
-        { type: "separator" },
-        openLogsFolderMenuItem,
         // XWayland mode option for Linux users (for screen sharing compatibility)
         ...(xwaylandMenuItem
           ? [{ type: "separator" as const }, xwaylandMenuItem]
@@ -8427,8 +8269,7 @@ function createApplicationMenu(): void {
         { role: "about" as const },
       ],
     },
-    // Include Develop menu in dev mode or for beta testers
-    ...(isDev || isBetaOptedIn() ? [developMenu] : []),
+    ...(showDevelopMenu ? [developMenu] : []),
   ];
 
   const menu = Menu.buildFromTemplate(template);
@@ -10519,19 +10360,6 @@ async function checkAndFixShortcutsAfterUpdate(): Promise<void> {
     return;
   }
 
-  // Check if this is a test run (from Develop menu)
-  let isTestRun = false;
-  try {
-    if (fs.existsSync(shortcutFixTestFile)) {
-      const testData = JSON.parse(fs.readFileSync(shortcutFixTestFile, "utf8"));
-      isTestRun = testData.pending === true;
-      // Clean up the test file immediately
-      fs.unlinkSync(shortcutFixTestFile);
-    }
-  } catch (err) {
-    console.error("[Shortcut Fix] Error reading test file:", err);
-  }
-
   try {
     let lastVersion = "";
     if (fs.existsSync(lastVersionFile)) {
@@ -10552,32 +10380,8 @@ async function checkAndFixShortcutsAfterUpdate(): Promise<void> {
       console.log(
         `[Shortcut Fix] Version changed from ${lastVersion} to ${currentVersion}, running shortcut fix...`,
       );
-      const result = await runWindowsShortcutFix();
+      await runWindowsShortcutFix();
       console.log("[Shortcut Fix] Post-update shortcut fix completed");
-
-      // Show results dialog if this was a test run
-      if (isTestRun) {
-        const statusIcon = result.success ? "✓" : "✗";
-        const statusText = result.success ? "Success" : "Failed";
-
-        await dialog.showMessageBox({
-          type: result.success ? "info" : "error",
-          title: "Shortcut Fix Test Results",
-          message: `${statusIcon} ${statusText}`,
-          detail: [
-            `Previous version: ${lastVersion}`,
-            `Current version: ${currentVersion}`,
-            "",
-            `Shortcuts found: ${result.found}`,
-            `Shortcuts updated: ${result.updated}`,
-            "",
-            "Script output:",
-            result.output || "(no output)",
-            ...(result.error ? ["", `Error: ${result.error}`] : []),
-          ].join("\n"),
-          buttons: ["OK"],
-        });
-      }
     } else if (!lastVersion) {
       console.log("[Shortcut Fix] First run, saving version");
     }
