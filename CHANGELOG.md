@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.0-beta.2] - 2026-10-16
 
 ### Fixed
 
@@ -22,6 +22,12 @@
 
 ### Changed
 
+- Keep beta debug logs across restarts, capped at about 4 MB per log, instead
+  of clearing them on every launch, and log more notification and unread
+  badge decisions.
+- Remove message text, names, chat links and the account name from debug logs
+  before they are written, and again when they are exported. Develop > Export
+  Debug Logs… produces a zip that can be attached to an issue.
 - Move developer tools, logs and notification diagnostics out of the View and
   Help menus into the Develop menu, shown in beta builds, and remove the
   obsolete Windows shortcut-repair test.

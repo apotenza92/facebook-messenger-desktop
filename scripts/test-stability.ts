@@ -278,13 +278,146 @@ const runNotificationProbeLogTests = async () => {
     const log = new NotificationProbeLog(dir);
     log.append({ event: "marker", marker: 1 });
     log.append({ event: "marker", marker: 2 });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const lines = fs.readFileSync(log.path, "utf8").trim().split("\n");
+    const readLines = () =>
+      fs.existsSync(log.path)
+        ? fs.readFileSync(log.path, "utf8").trim().split("\n")
+        : [];
+    for (let waited = 0; readLines().length < 2 && waited < 2000; waited += 20) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const lines = readLines();
     assertEqual(lines.length, 2, "probe log appends ndjson lines");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   console.log("PASS notification probe log");
+};
+
+const runDebugLogStoreTests = () => {
+  const fs = require("fs");
+  const os = require("os");
+  const {
+    DebugLogStore,
+    createDebugLogRedactor,
+    readOrCreateDebugLogSalt,
+    getRotatedDebugLogPath,
+    purgeLegacyDebugLogs,
+  } = require(path.join(APP_ROOT, "src/main/debug-log-store.ts"));
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "md-debug-log-"));
+  try {
+    const salt = readOrCreateDebugLogSalt(dir);
+    assertEqual(readOrCreateDebugLogSalt(dir), salt, "salt persists per install");
+
+    const home = "/Users/tester-a";
+    const redact = createDebugLogRedactor({ salt, homeDir: home });
+    const event = {
+      event: "Sidebar notification skipped - muted conversation",
+      source: "preload",
+      url: "https://www.facebook.com/messages/t/1234567890123?ref=x",
+      payload: {
+        href: "/t/1234567890123",
+        title: "Tester A",
+        body: "door code 4821",
+        preview: "see you at 6",
+        realNames: ["Tester A", "Tester B"],
+        ariaLabel: "Chat with Tester B",
+        sourceLabel: "MUTATION",
+        timeLabel: "2h",
+        reason: "group-row-non-message-shape",
+        previewLength: 12,
+        unread: true,
+        nested: { title: { text: "Tester C" } },
+        threadId: 1234567890123,
+        threadCountAfter: 3,
+      },
+      stack: `Error at ${home}/AppData/app.js:10`,
+    };
+    const out = redact(event);
+    const serialized = JSON.stringify(out);
+    for (const secret of [
+      "Tester",
+      "door code",
+      "see you",
+      "1234567890123",
+      "tester-a",
+      "ref=x",
+    ]) {
+      assert(!serialized.includes(secret), `redacted output leaks ${secret}`);
+    }
+    assertEqual(out.event, event.event, "app event names are kept");
+    assertEqual(out.payload.sourceLabel, "MUTATION", "source codes are kept");
+    assertEqual(out.payload.timeLabel, "2h", "relative times are kept");
+    assertEqual(out.payload.reason, event.payload.reason, "reasons are kept");
+    assertEqual(out.payload.previewLength, 12, "numbers are kept");
+    assertEqual(out.payload.threadCountAfter, 3, "small counts are kept");
+    assertEqual(
+      out.payload.threadId,
+      out.payload.href.slice(3),
+      "numeric thread ids hash like string ones",
+    );
+    assertEqual(out.payload.title, "[redacted 8 chars]", "titles are redacted");
+    assert(
+      /^\/t\/#[0-9a-f]{10}$/.test(out.payload.href),
+      "thread keys keep their shape",
+    );
+    assertEqual(
+      out.url,
+      `https://www.facebook.com/messages/t/${out.payload.href.slice(3)}?…`,
+      "one thread hashes the same in every field",
+    );
+    assert(out.stack.includes("~/AppData"), "home directory becomes ~");
+    const otherSalt = createDebugLogRedactor({ salt: "0".repeat(32) })(event);
+    assert(
+      otherSalt.payload.href !== out.payload.href,
+      "hashes depend on the installation salt",
+    );
+
+    const logPath = path.join(dir, "notification-debug.ndjson");
+    const store = new DebugLogStore(redact, 1500);
+    for (let i = 0; i < 6; i += 1) store.append(logPath, event);
+    assert(fs.existsSync(getRotatedDebugLogPath(logPath)), "log rotates at cap");
+    assert(fs.statSync(logPath).size <= 1500, "current log stays under cap");
+    assert(
+      !fs.readFileSync(logPath, "utf8").includes("Tester"),
+      "records are redacted on disk",
+    );
+
+    // Logs written raw by older versions are redacted on export.
+    fs.writeFileSync(
+      getRotatedDebugLogPath(logPath),
+      `${JSON.stringify(event)}\n{"truncated":\n`,
+    );
+    const exported = path.join(dir, "export.ndjson");
+    const count = store.exportTo(logPath, exported);
+    const exportedText = fs.readFileSync(exported, "utf8");
+    assert(count >= 2, "export includes both generations");
+    assert(!exportedText.includes("Tester"), "export redacts old raw lines");
+    assert(!exportedText.includes('{"truncated":'), "partial lines are dropped");
+
+    const legacy = path.join(dir, "reload-debug.ndjson");
+    fs.writeFileSync(legacy, `${JSON.stringify(event)}\n`);
+    fs.writeFileSync(getRotatedDebugLogPath(legacy), "raw\n");
+    assertEqual(
+      purgeLegacyDebugLogs(dir, [legacy]),
+      true,
+      "pre-redaction logs are purged once",
+    );
+    assert(
+      !fs.existsSync(legacy) && !fs.existsSync(getRotatedDebugLogPath(legacy)),
+      "both generations are removed",
+    );
+    store.append(legacy, event);
+    assertEqual(
+      purgeLegacyDebugLogs(dir, [legacy]),
+      false,
+      "redacted logs are kept on later launches",
+    );
+    assert(fs.existsSync(legacy), "new log survives the next launch");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  console.log("PASS debug log store");
 };
 
 const run = async () => {
@@ -293,6 +426,7 @@ const run = async () => {
   runDebugRedactionTests();
   runRendererDebugFlagTests();
   await runNotificationProbeLogTests();
+  runDebugLogStoreTests();
   console.log("PASS stability tests");
 };
 
