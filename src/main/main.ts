@@ -19,12 +19,18 @@ import {
 import { spawn, exec } from "child_process";
 import { promisify } from "util";
 import * as https from "https";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 
 const execAsync = promisify(exec);
 import * as path from "path";
 import * as fs from "fs";
 import { writeZipArchive } from "./zip-archive";
+import {
+  DebugLogStore,
+  createDebugLogRedactor,
+  purgeLegacyDebugLogs,
+  readOrCreateDebugLogSalt,
+} from "./debug-log-store";
 import {
   NotificationHandler,
   type NotificationData,
@@ -683,8 +689,6 @@ const MAX_MEDIA_OVERLAY_DEBUG_EVENTS = 3000;
 const MAX_INCOMING_CALL_DEBUG_EVENTS = 3000;
 const MAX_NOTIFICATION_DEBUG_EVENTS = 12000;
 const MAX_RELOAD_DEBUG_EVENTS = 6000;
-const DEBUG_LOG_SUMMARY_TAIL_LINES = 250;
-const DEBUG_LOG_EXPORT_TAIL_LINES = 1500;
 const DEBUG_LOG_SUMMARY_IN_MEMORY_EVENTS = 500;
 const DEBUG_LOG_SUMMARY_NOTIFICATION_EVENTS = 1000;
 const mediaOverlayDebugEvents: MediaOverlayDebugEvent[] = [];
@@ -694,6 +698,26 @@ const reloadDebugEvents: ReloadDebugEvent[] = [];
 
 function shouldCaptureDebugLogsByDefault(): boolean {
   return isDev || isBetaVersion;
+}
+
+// Created on first use, after the channel's userData path is set.
+let debugLogStore: DebugLogStore | null = null;
+function getDebugLogStore(): DebugLogStore {
+  debugLogStore ??= new DebugLogStore(
+    createDebugLogRedactor({
+      salt: readOrCreateDebugLogSalt(app.getPath("userData")),
+      homeDir: homedir(),
+    }),
+  );
+  return debugLogStore;
+}
+
+function appendDebugLogRecord(logPath: string, record: unknown): void {
+  try {
+    getDebugLogStore().append(logPath, record);
+  } catch {
+    // Ignore debug log write failures.
+  }
 }
 
 function getMediaOverlayDebugLogPath(): string {
@@ -732,16 +756,7 @@ function pushMediaOverlayDebugEvent(event: MediaOverlayDebugEvent): void {
     MAX_MEDIA_OVERLAY_DEBUG_EVENTS,
   );
 
-  try {
-    const logsDir = app.getPath("logs");
-    fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(
-      getMediaOverlayDebugLogPath(),
-      `${JSON.stringify(event)}\n`,
-    );
-  } catch {
-    // Ignore debug log write failures.
-  }
+  appendDebugLogRecord(getMediaOverlayDebugLogPath(), event);
 }
 
 function requestMessagesViewportRecovery(reason: string): void {
@@ -774,21 +789,6 @@ function requestMessagesViewportRecovery(reason: string): void {
         // Ignore transient IPC/send failures during teardown.
       }
     }, delay);
-  }
-}
-
-function readTailLinesFromFile(filePath: string, maxLines: number): string[] {
-  if (!fs.existsSync(filePath)) return [];
-
-  try {
-    const content = fs.readFileSync(filePath, "utf8");
-    const lines = content
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0);
-    if (lines.length <= maxLines) return lines;
-    return lines.slice(lines.length - maxLines);
-  } catch {
-    return [];
   }
 }
 
@@ -975,7 +975,6 @@ function getIncomingCallDebugLogPath(): string {
 
 function shouldResetIncomingCallDebugLogOnStart(): boolean {
   return (
-    shouldWriteIncomingCallDebugLog() ||
     process.env.MESSENGER_INCOMING_CALL_DEBUG_RESET === "1" ||
     process.env.MESSENGER_INCOMING_CALL_DEBUG_RESET === "true"
   );
@@ -1010,16 +1009,7 @@ function pushIncomingCallDebugEvent(event: IncomingCallDebugEvent): void {
     MAX_INCOMING_CALL_DEBUG_EVENTS,
   );
 
-  try {
-    const logsDir = app.getPath("logs");
-    fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(
-      getIncomingCallDebugLogPath(),
-      `${JSON.stringify(event)}\n`,
-    );
-  } catch {
-    // Ignore debug log write failures.
-  }
+  appendDebugLogRecord(getIncomingCallDebugLogPath(), event);
 }
 
 function shouldWriteNotificationDebugLog(): boolean {
@@ -1036,7 +1026,6 @@ function getNotificationDebugLogPath(): string {
 
 function shouldResetNotificationDebugLogOnStart(): boolean {
   return (
-    shouldWriteNotificationDebugLog() ||
     process.env.MESSENGER_NOTIFICATION_DEBUG_RESET === "1" ||
     process.env.MESSENGER_NOTIFICATION_DEBUG_RESET === "true"
   );
@@ -1071,16 +1060,7 @@ function pushNotificationDebugEvent(event: NotificationDebugEvent): void {
     MAX_NOTIFICATION_DEBUG_EVENTS,
   );
 
-  try {
-    const logsDir = app.getPath("logs");
-    fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(
-      getNotificationDebugLogPath(),
-      `${JSON.stringify(event)}\n`,
-    );
-  } catch {
-    // Ignore debug log write failures.
-  }
+  appendDebugLogRecord(getNotificationDebugLogPath(), event);
 }
 
 function recordWebNotificationPermissionDecision(params: {
@@ -1130,7 +1110,6 @@ function getReloadDebugLogPath(): string {
 
 function shouldResetReloadDebugLogOnStart(): boolean {
   return (
-    shouldWriteReloadDebugLog() ||
     process.env.MESSENGER_RELOAD_DEBUG_RESET === "1" ||
     process.env.MESSENGER_RELOAD_DEBUG_RESET === "true"
   );
@@ -1158,13 +1137,7 @@ function pushReloadDebugEvent(event: ReloadDebugEvent): void {
 
   recordBoundedDebugEvent(reloadDebugEvents, event, MAX_RELOAD_DEBUG_EVENTS);
 
-  try {
-    const logsDir = app.getPath("logs");
-    fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(getReloadDebugLogPath(), `${JSON.stringify(event)}\n`);
-  } catch {
-    // Ignore debug log write failures.
-  }
+  appendDebugLogRecord(getReloadDebugLogPath(), event);
 }
 
 function buildAuthFlowRouteDebug(url: string): Record<string, unknown> {
@@ -1235,7 +1208,10 @@ function pushAuthFlowDebugEvent(input: {
 }
 
 function shouldResetMediaOverlayDebugLogOnStart(): boolean {
-  return shouldWriteMediaOverlayDebugLog();
+  return (
+    process.env.MESSENGER_MEDIA_OVERLAY_DEBUG_RESET === "1" ||
+    process.env.MESSENGER_MEDIA_OVERLAY_DEBUG_RESET === "true"
+  );
 }
 
 function maybeResetMediaOverlayDebugLogOnStart(): void {
@@ -1258,40 +1234,21 @@ function maybeResetMediaOverlayDebugLogOnStart(): void {
 
 type DebugLogFileSummary = {
   fileName: string;
-  sourcePath: string;
   exists: boolean;
-  tailLines: string[];
+  bytes: number;
 };
 
 function buildDebugLogFileSummary(
   fileName: string,
   sourcePath: string,
 ): DebugLogFileSummary {
-  return {
-    fileName,
-    sourcePath,
-    exists: fs.existsSync(sourcePath),
-    tailLines: readTailLinesFromFile(sourcePath, DEBUG_LOG_SUMMARY_TAIL_LINES),
-  };
-}
-
-function copyDebugLogFile(destinationPath: string, sourcePath: string): void {
-  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-
-  if (fs.existsSync(sourcePath)) {
-    const tailLines = readTailLinesFromFile(
-      sourcePath,
-      DEBUG_LOG_EXPORT_TAIL_LINES,
-    );
-    fs.writeFileSync(
-      destinationPath,
-      tailLines.length > 0 ? `${tailLines.join("\n")}\n` : "",
-      "utf8",
-    );
-    return;
+  let bytes = 0;
+  try {
+    bytes = fs.statSync(sourcePath).size;
+  } catch {
+    // Missing file.
   }
-
-  fs.writeFileSync(destinationPath, "", "utf8");
+  return { fileName, exists: bytes > 0, bytes };
 }
 
 function buildDebugLogsReport(): Record<string, unknown> {
@@ -1312,8 +1269,7 @@ function buildDebugLogsReport(): Record<string, unknown> {
       incomingCallEnabled: shouldWriteIncomingCallDebugLog(),
       notificationEnabled: shouldWriteNotificationDebugLog(),
       reloadEnabled: shouldWriteReloadDebugLog(),
-      exportTailLines: DEBUG_LOG_EXPORT_TAIL_LINES,
-      summaryTailLines: DEBUG_LOG_SUMMARY_TAIL_LINES,
+      redacted: true,
     },
     paths: {
       userData: app.getPath("userData"),
@@ -1396,7 +1352,7 @@ function exportDebugArtifactsToDirectory(dir: string): {
   const summaryPath = path.join(bundleDir, "debug-summary.json");
   fs.writeFileSync(
     summaryPath,
-    JSON.stringify(buildDebugLogsReport(), null, 2),
+    JSON.stringify(getDebugLogStore().redact(buildDebugLogsReport()), null, 2),
     "utf8",
   );
 
@@ -1409,18 +1365,17 @@ function exportDebugArtifactsToDirectory(dir: string): {
     path.join(bundleDir, NOTIFICATION_PROBE_LOG_NAME),
   ];
 
-  copyDebugLogFile(copiedPaths[0], getMediaOverlayDebugLogPath());
-  copyDebugLogFile(copiedPaths[1], getIncomingCallDebugLogPath());
-  copyDebugLogFile(copiedPaths[2], getNotificationDebugLogPath());
-  copyDebugLogFile(copiedPaths[3], getReloadDebugLogPath());
-  copyDebugLogFile(copiedPaths[4], getRendererFailureDebugLogPath());
-  // The probe log is structure-only and size-capped; copy it whole.
-  const probeLogPath = getNotificationProbeLogPath(app.getPath("logs"));
-  if (fs.existsSync(probeLogPath)) {
-    fs.copyFileSync(probeLogPath, copiedPaths[5]);
-  } else {
-    fs.writeFileSync(copiedPaths[5], "", "utf8");
-  }
+  // Every line is redacted again: logs written by older versions are raw.
+  const store = getDebugLogStore();
+  store.exportTo(getMediaOverlayDebugLogPath(), copiedPaths[0]);
+  store.exportTo(getIncomingCallDebugLogPath(), copiedPaths[1]);
+  store.exportTo(getNotificationDebugLogPath(), copiedPaths[2]);
+  store.exportTo(getReloadDebugLogPath(), copiedPaths[3]);
+  store.exportTo(getRendererFailureDebugLogPath(), copiedPaths[4]);
+  store.exportTo(
+    getNotificationProbeLogPath(app.getPath("logs")),
+    copiedPaths[5],
+  );
 
   return {
     bundleDir,
@@ -1570,7 +1525,11 @@ async function exportDebugLogs(): Promise<void> {
       type: "info",
       title: "Debug Logs Exported",
       message: "Debug logs zip exported successfully.",
-      detail: `${exported.fileName} is selected in your file browser.`,
+      detail: [
+        `${exported.fileName} is selected in your file browser.`,
+        "",
+        "Attach it to your GitHub issue. It records what the app did and when, without message text, names or chat links.",
+      ].join("\n"),
       buttons: ["OK"],
       defaultId: 0,
       cancelId: 0,
@@ -1738,16 +1697,7 @@ function getRendererFailureDebugLogPath(): string {
 }
 
 function pushRendererFailureDebugEvent(event: RendererFailureDebugEvent): void {
-  try {
-    const logsDir = app.getPath("logs");
-    fs.mkdirSync(logsDir, { recursive: true });
-    fs.appendFileSync(
-      getRendererFailureDebugLogPath(),
-      `${JSON.stringify(event)}\n`,
-    );
-  } catch {
-    // Ignore debug log write failures.
-  }
+  appendDebugLogRecord(getRendererFailureDebugLogPath(), event);
 }
 
 function getRendererFailureContext(
@@ -2344,6 +2294,13 @@ if (
   }
 }
 
+purgeLegacyDebugLogs(app.getPath("userData"), [
+  getMediaOverlayDebugLogPath(),
+  getIncomingCallDebugLogPath(),
+  getNotificationDebugLogPath(),
+  getReloadDebugLogPath(),
+  getRendererFailureDebugLogPath(),
+]);
 maybeResetMediaOverlayDebugLogOnStart();
 maybeResetIncomingCallDebugLogOnStart();
 maybeResetNotificationDebugLogOnStart();
@@ -8564,6 +8521,14 @@ function setupIpcHandlers(): void {
     const normalizedCount = Number.isFinite(count)
       ? Math.max(0, Math.floor(count))
       : 0;
+    if (normalizedCount !== lastMessagesUnreadCount) {
+      pushNotificationDebugEvent({
+        timestamp: Date.now(),
+        source: "main",
+        event: "unread-badge-count",
+        payload: { from: lastMessagesUnreadCount, to: normalizedCount },
+      });
+    }
     lastMessagesUnreadCount = normalizedCount;
 
     if (badgeManager) {

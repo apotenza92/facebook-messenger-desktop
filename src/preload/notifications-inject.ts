@@ -2132,16 +2132,36 @@
 
   const checkSidebarThread = (threadKey: string): void => {
     pendingSidebarChecks.delete(threadKey);
-    if (isSettling || !canSendNotification()) return;
+    if (isSettling || !canSendNotification()) {
+      log("Sidebar notification skipped - settling or notifications paused", {
+        href: threadKey,
+        settling: isSettling,
+      });
+      return;
+    }
 
     const sidebar = findSidebarElement() || currentSidebarElement;
     const entry = sidebar
       ? readSidebarRows(sidebar).find(({ row }) => row.threadKey === threadKey)
       : undefined;
-    if (!entry) return;
+    if (!entry) {
+      log("Sidebar notification skipped - row no longer listed", {
+        href: threadKey,
+      });
+      return;
+    }
 
     const { element, row } = entry;
     const state = sidebarThreads.get(threadKey);
+    log("Sidebar unread change", {
+      href: threadKey,
+      unread: row.unread,
+      muted: row.muted,
+      stale: row.stale,
+      timeLabel: row.timeLabel,
+      previewLength: row.preview.length,
+      alreadyAnnounced: state?.announcedPreview === row.preview,
+    });
     if (!row.unread) {
       log("Sidebar notification skipped - read before settling", {
         href: threadKey,
@@ -2174,6 +2194,9 @@
       return;
     }
     if (isCurrentConversation(threadKey) && isWindowFocused()) {
+      log("Sidebar notification skipped - conversation open and focused", {
+        href: threadKey,
+      });
       markSeen();
       return;
     }
@@ -4698,7 +4721,7 @@
     if (namesChanged) {
       nameCache[threadId] = { realNames, updatedAt: Date.now() };
       saveNameCache(nameCache);
-      log(`Name cache: thread ${threadId} -> [${realNames.join(", ")}]`);
+      log("Name cache updated", { nameCount: realNames.length });
     }
   };
 

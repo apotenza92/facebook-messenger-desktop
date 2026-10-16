@@ -85,11 +85,16 @@ body:
     validations:
       required: true
 
+  - type: markdown
+    attributes:
+      value: |
+        **Beta users:** debug logging is on by default. After the problem happens, choose **Develop > Export Debug Logs…** and attach the zip below. The logs record what the app did and when, with message text, names, chat links and your account name removed.
+
   - type: textarea
     id: diagnostics
     attributes:
       label: Sanitized diagnostics
-      description: Paste only the relevant lines. Remove names, message contents, thread IDs, cookies, tokens, and account identifiers.
+      description: Attach the exported debug logs zip, or paste only the relevant lines. For pasted lines, remove names, message contents, thread IDs, cookies, tokens, and account identifiers.
       render: text
 
   - type: checkboxes

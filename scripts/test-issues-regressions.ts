@@ -4870,11 +4870,22 @@ const runNotificationPolicyTests = () => {
     mainSource.includes("const MAX_NOTIFICATION_DEBUG_EVENTS = 12000;"),
     "#49 notification debug retention should keep 12000 in-memory events",
   );
-  assert(
-    mainSource.includes("const DEBUG_LOG_EXPORT_TAIL_LINES = 1500;") &&
-      mainSource.includes("const DEBUG_LOG_SUMMARY_TAIL_LINES = 250;"),
-    "#50 debug zip export should cap copied logs and summary tails",
-  );
+  // Logs are now capped by size on disk (two 2 MB generations per log) and
+  // the summary no longer repeats log tails, so the export stays bounded.
+  {
+    const debugLogStoreSource = fs.readFileSync(
+      path.join(APP_ROOT, "src/main/debug-log-store.ts"),
+      "utf8",
+    );
+    assert(
+      debugLogStoreSource.includes(
+        "export const DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;",
+      ) &&
+        mainSource.includes("store.exportTo(getNotificationDebugLogPath()") &&
+        !mainSource.includes("tailLines:"),
+      "#50 debug zip export should stay size-capped without repeating log tails",
+    );
+  }
   assert(
     mainSource.includes("classifyGroupManagementNotification(payload)") &&
       mainSource.includes("main-process-group-management-activity"),
