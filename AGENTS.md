@@ -94,6 +94,7 @@ if (process.platform === "darwin") {
 - macOS close hides to the Dock.
 - Windows/Linux close minimizes to the tray.
 - `isQuitting` controls actual application termination.
+- Developer, diagnostic, and test tools belong only in the Develop menu (shown in development and beta builds, or while diagnostics are recording). Never add them to ordinary menus, and remove them once obsolete.
 - Console messages use `[Component] message` prefixes.
 - Keep TypeScript strict and prefer async/await.
 
