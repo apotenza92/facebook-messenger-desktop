@@ -145,7 +145,7 @@
     summarizeLinkCategories: (
       hrefs: Array<string | null | undefined>,
       baseUrl: string,
-    ) => Record<string, unknown>;
+    ) => Record<string, unknown> & { categories: Record<string, number> };
     summarizeActionCategories: (
       labels: Array<string | null | undefined>,
     ) => Record<string, unknown>;
@@ -852,8 +852,6 @@
     getNotificationDecisionPolicy()?.createNotificationDeduper(4000) ?? null;
   const recentNativeMessageDeliveries = new Map<string, number>();
   const MUTATION_FALLBACK_NATIVE_GRACE_MS = 2500;
-  const MUTATION_MUTE_STATE_RECHECK_MS = 3500;
-  const pendingMutationMuteStateRechecks = new Map<string, number>();
 
   const normalizeConversationKey = (raw: string): string => {
     if (raw.startsWith("native:")) {
@@ -1176,80 +1174,45 @@
   // CONVERSATION EXTRACTION
   // ============================================================================
 
-  // Extract the relative timestamp from a conversation element (e.g., "5m", "2h", "3d", "1w")
-  // Returns null if no timestamp is found (meaning message just arrived)
-  const extractTimestamp = (conversationEl: Element): string | null => {
-    const textElements = conversationEl.querySelectorAll(
-      selectors.conversationText,
-    );
-    for (const el of Array.from(textElements)) {
-      const text = el.textContent?.trim() || "";
-      // Match relative timestamps: 1m, 5m, 2h, 3d, 1w, etc.
-      if (/^\d+[mhdw]$/.test(text)) {
-        return text;
-      }
-      // Also check for "Just now" or "now" text
-      if (/^just now$/i.test(text) || text.toLowerCase() === "now") {
-        return "now";
-      }
-    }
-    return null;
+  // Row state comes from the shared locale-free reader (sidebar-row-signals).
+  type SidebarRowSignals = {
+    readSidebarRow: (row: Element) => {
+      threadKey: string;
+      title: string;
+      preview: string;
+      unread: boolean;
+      muted: boolean;
+      timeLabel: string | null;
+      stale: boolean;
+    } | null;
+    isSidebarRowUnread: (row: Element) => boolean;
+    isSidebarRowMuted: (row: Element) => boolean;
   };
+  const getSidebarRowSignals = (): SidebarRowSignals | undefined =>
+    (window as Window & { __mdSidebarRowSignals?: SidebarRowSignals })
+      .__mdSidebarRowSignals;
 
-  // Check if a message is fresh enough to warrant a notification
-  // Messages with NO timestamp, "now"/"just now", or "1m" should trigger notifications
-  // This prevents notifications for old messages that appear when scrolling or after app restart
+  // The relative time Messenger shows for the row's latest message.
+  const extractTimestamp = (conversationEl: Element): string | null =>
+    getSidebarRowSignals()?.readSidebarRow(conversationEl)?.timeLabel ?? null;
+
+  // Old messages that sync late (after startup, wake or scrolling) carry a
+  // relative time of two or more units; new ones show none, a word or one.
   const isMessageFresh = (conversationEl: Element): boolean => {
-    const timestamp = extractTimestamp(conversationEl);
-    // Notify if no timestamp (brand new), "now"/"just now", or within 1 minute
-    const isFresh =
-      timestamp === null || timestamp === "now" || timestamp === "1m";
+    const row = getSidebarRowSignals()?.readSidebarRow(conversationEl);
+    const isFresh = row ? !row.stale : true;
     if (!isFresh) {
-      log("Message not fresh - has timestamp", { timestamp });
+      log("Message not fresh - has timestamp", { timestamp: row?.timeLabel });
     }
     return isFresh;
   };
 
-  // Check if a conversation element has an unread indicator
-  const isConversationUnread = (conversationEl: Element): boolean => {
-    // PRIMARY CHECK: Look for "Unread message:" text in the conversation
-    // This is how Messenger marks unread conversations in the DOM
-    const textContent = conversationEl.textContent || "";
-    if (textContent.includes("Unread message:")) {
-      return true;
-    }
-
-    // Check aria-label patterns (strictly "Unread message" to avoid false positives)
-    const ariaLabel = (
-      conversationEl.getAttribute("aria-label") || ""
-    ).toLowerCase();
-    if (ariaLabel.includes("unread message")) {
-      return true;
-    }
-
-    // Look for the "Mark as Read" button which indicates unread
-    const markAsRead = conversationEl.querySelector(selectors.unreadIndicator);
-    if (markAsRead) {
-      return true;
-    }
-
-    // Child unread indicator (strict variant)
-    const childUnreadIndicator = conversationEl.querySelector(
-      '[aria-label*="Unread message" i]',
-    );
-    if (childUnreadIndicator) {
-      return true;
-    }
-
-    return false;
-  };
+  const isConversationUnread = (conversationEl: Element): boolean =>
+    getSidebarRowSignals()?.isSidebarRowUnread(conversationEl) ?? false;
 
   type MuteAnalysis = {
     isMuted: boolean;
-    method: "legacy-path" | "svg-use" | "a11y-label" | "none";
-    matchedPathSnippet?: string;
-    matchedHref?: string;
-    matchedPhrase?: string;
+    method: "icon" | "none";
   };
 
   const collectConversationMetadataTexts = (
@@ -1291,84 +1254,13 @@
     return texts;
   };
 
-  const analyzeMuteSignals = (conversationEl: Element): MuteAnalysis => {
-    const paths = Array.from(conversationEl.querySelectorAll("svg path"));
-    for (const path of paths) {
-      const d = path.getAttribute("d") || "";
-      if (
-        d.startsWith("M9.244 24.99") ||
-        d.includes("L26.867 7.366") ||
-        d.startsWith("M29.676 7.746") ||
-        d.includes("L6.293 28.29") ||
-        d.startsWith("M2.5 6c0-.322") ||
-        d.includes("8.296 8.296A3.001 3.001 0 0 1 5 12.5")
-      ) {
-        return {
-          isMuted: true,
-          method: "legacy-path",
-          matchedPathSnippet: d.slice(0, 140),
-        };
-      }
-    }
+  // Muted rows are recognised only by Facebook's muted-bell icon. Searching
+  // the row's text also matched ordinary messages that mention muting (#105).
+  const analyzeMuteSignals = (conversationEl: Element): MuteAnalysis =>
+    getSidebarRowSignals()?.isSidebarRowMuted(conversationEl)
+      ? { isMuted: true, method: "icon" }
+      : { isMuted: false, method: "none" };
 
-    const iconUseNodes = Array.from(conversationEl.querySelectorAll("svg use"));
-    for (const useNode of iconUseNodes) {
-      const href = (
-        useNode.getAttribute("href") ||
-        useNode.getAttribute("xlink:href") ||
-        ""
-      ).toLowerCase();
-      if (
-        href.includes("mute") ||
-        href.includes("muted") ||
-        href.includes("notification_off") ||
-        (href.includes("bell") && href.includes("slash"))
-      ) {
-        return {
-          isMuted: true,
-          method: "svg-use",
-          matchedHref: href,
-        };
-      }
-    }
-
-    const labelSources = [
-      String(conversationEl.textContent || "").toLowerCase(),
-      ...collectConversationMetadataTexts(conversationEl).map((text) =>
-        text.toLowerCase(),
-      ),
-    ];
-
-    const mutePhrases = [
-      "muted",
-      "notifications are off",
-      "notifications off",
-      "notification off",
-      "unmute",
-      "turn on notifications",
-      "turn notifications on",
-    ];
-
-    const matchedPhrase = labelSources.find((text) =>
-      mutePhrases.some((phrase) => text.includes(phrase)),
-    );
-
-    if (matchedPhrase) {
-      return {
-        isMuted: true,
-        method: "a11y-label",
-        matchedPhrase,
-      };
-    }
-
-    return {
-      isMuted: false,
-      method: "none",
-    };
-  };
-
-  // Detect whether a conversation is muted
-  // Keep this heuristic broad because Facebook frequently changes sidebar icon markup.
   // Let the diagnostics probe record the current mute decision and which
   // rule made it (only the method name and result are recorded).
   if (getNotificationProbe()) {
@@ -1383,12 +1275,7 @@
     const analysis = analyzeMuteSignals(conversationEl);
     if (!analysis.isMuted) return false;
 
-    log("Muted detected", {
-      method: analysis.method,
-      matchedPathSnippet: analysis.matchedPathSnippet,
-      matchedHref: analysis.matchedHref,
-      matchedPhrase: analysis.matchedPhrase,
-    });
+    log("Muted detected", { method: analysis.method });
 
     return true;
   };
@@ -1568,18 +1455,23 @@
         timestamp: eventData?.timestamp,
       });
 
-      if (state === "resume" || state === "unlock-screen") {
+      // A locked screen is not asleep: the page keeps receiving messages
+      // and notifying for them. Pausing until unlock, then treating
+      // everything unread as already seen, silently dropped every message
+      // that arrived while a Mac was locked.
+      if (state === "resume") {
         startIncomingCallRecoveryWindow(state);
         startSettlingPeriod({
           reason: state,
           durationMs: RESUME_SETTLING_MS,
-          includeFresh:
-            getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
-              state,
-            ) ?? true,
         });
-      } else {
-        isSettling = true;
+      } else if (state === "unlock-screen") {
+        startIncomingCallRecoveryWindow(state);
+      } else if (state === "suspend") {
+        // Hold notifications until resume re-establishes the baseline. The
+        // window outlasts any real sleep's resume event (timers stop while
+        // asleep) but ends on its own if the suspend was abandoned.
+        startSettlingPeriod({ reason: state, durationMs: CLOCK_GAP_WAKE_MS });
       }
       return;
     }
@@ -1601,10 +1493,6 @@
       startSettlingPeriod({
         reason: "online-recovery",
         durationMs: RESUME_SETTLING_MS,
-        includeFresh:
-          getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
-            "online-recovery",
-          ) ?? true,
       });
       sawOfflineSinceLastOnline = false;
     }
@@ -2099,60 +1987,121 @@
   );
 
   // ============================================================================
-  // DETECTION METHOD 1: MutationObserver on sidebar
+  // DETECTION METHOD 1: sidebar unread engine
   // ============================================================================
-  // Native Facebook notifications are the source of truth. The observer is only
-  // allowed to create a fallback when Facebook has not emitted a matching native
-  // notification and the sidebar row survives the strict checks below.
-  const ENABLE_MUTATION_OBSERVER_FALLBACK_NOTIFICATIONS = true;
+  // Facebook's web client does not raise browser notifications inside the
+  // app (none in two days of diagnostics on macOS and Windows), so the chat
+  // list is the source of truth. Each conversation is tracked by thread id:
+  // a row that becomes unread, or receives a new preview while unread, is
+  // checked again after a short settle delay and announced only if it is
+  // still unread, unmuted, recent and not already announced. Every signal is
+  // structural (see sidebar-row-signals); no interface or message text is
+  // interpreted, so behaviour is the same in every language.
 
-  // Track whether we're in the initial settling period (no notifications during this time)
-  // This applies to BOTH MutationObserver and native notification interception
+  // Baseline windows (startup, wake, navigation) record what is already
+  // unread instead of announcing it. Also consulted by the native path.
   let isSettling = true;
-  // Track the current sidebar element to detect navigation changes
   let currentSidebarElement: Element | null = null;
-  // Track app startup time - used to suppress old notifications
   const appStartTime = Date.now();
   // How long after app start to suppress native notifications (longer than settling period)
   // This accounts for Messenger batching old notification delivery on load
   const NATIVE_NOTIFICATION_SUPPRESS_MS = 8000;
   const RESUME_SETTLING_MS = 8000;
+  // Messenger can show a new preview a moment before it applies the read
+  // state (a reply from another device, or a message already read
+  // elsewhere after wake). Waiting lets that state arrive first.
+  const SIDEBAR_SETTLE_MS = 1500;
+  // Hidden pages run timers about once a minute, so only a much longer gap
+  // means the computer slept (including Modern Standby, which may not emit
+  // a resume event).
+  const CLOCK_GAP_HEARTBEAT_MS = 15_000;
+  const CLOCK_GAP_WAKE_MS = 3 * 60_000;
   let settlingToken = 0;
   let settlingTimeoutId: number | null = null;
   let wakeGeneration = 0;
+
+  type SidebarThreadState = {
+    preview: string;
+    unread: boolean;
+    // Preview already announced or recorded as seen; cleared once read.
+    // Kept when the row leaves the rendered list, so a virtualised row
+    // that renders again is not announced twice.
+    announcedPreview: string | null;
+  };
+  const sidebarThreads = new Map<string, SidebarThreadState>();
+  const pendingSidebarChecks = new Map<string, number>();
+
+  type SidebarRow = NonNullable<ReturnType<SidebarRowSignals["readSidebarRow"]>>;
+
+  const readSidebarRows = (
+    sidebar: Element,
+  ): Array<{ element: Element; row: SidebarRow }> => {
+    const signals = getSidebarRowSignals();
+    if (!signals) return [];
+    const seen = new Set<string>();
+    const rows: Array<{ element: Element; row: SidebarRow }> = [];
+    sidebar.querySelectorAll(selectors.conversationRow).forEach((element) => {
+      const row = signals.readSidebarRow(element);
+      if (!row || seen.has(row.threadKey)) return;
+      seen.add(row.threadKey);
+      rows.push({ element, row });
+    });
+    return rows;
+  };
+
+  const cancelSidebarCheck = (threadKey: string): void => {
+    const timeoutId = pendingSidebarChecks.get(threadKey);
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      pendingSidebarChecks.delete(threadKey);
+    }
+  };
+
+  // Record every rendered row as seen: unread previews count as announced.
+  const recordSidebarBaseline = (sidebar: Element, reason: string): void => {
+    let unreadCount = 0;
+    for (const { row } of readSidebarRows(sidebar)) {
+      cancelSidebarCheck(row.threadKey);
+      sidebarThreads.set(row.threadKey, {
+        preview: row.preview,
+        unread: row.unread,
+        announcedPreview: row.unread ? row.preview : null,
+      });
+      if (!row.unread) continue;
+      unreadCount += 1;
+      // The native path deduplicates against these records.
+      recordNotification(row.threadKey, row.preview, {
+        source: "snapshot",
+        boundaryReason: reason,
+        wakeGeneration,
+      });
+      boundarySnapshotRecords.set(row.threadKey, {
+        body: row.preview,
+        reason,
+        wakeGeneration,
+        suppressionClass: "message",
+        recordedAt: Date.now(),
+      });
+    }
+    log(`Recorded ${unreadCount} existing unread conversations after ${reason}`);
+  };
 
   const startSettlingPeriod = (options: {
     reason: string;
     sidebar?: Element | null;
     durationMs: number;
-    includeFresh?: boolean;
-    rescan?: boolean;
   }): void => {
-    const {
-      reason,
-      sidebar = findSidebarElement(),
-      durationMs,
-      includeFresh = true,
-      rescan = true,
-    } = options;
+    const { reason, sidebar = findSidebarElement(), durationMs } = options;
 
     settlingToken += 1;
     const token = settlingToken;
-
     if (settlingTimeoutId !== null) {
       clearTimeout(settlingTimeoutId);
       settlingTimeoutId = null;
     }
 
     isSettling = true;
-
-    const wakeBoundarySnapshot =
-      includeFresh === true &&
-      (getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
-        reason,
-      ) ??
-        false);
-    if (wakeBoundarySnapshot) {
+    if (reason !== "startup" && reason !== "navigation") {
       wakeGeneration += 1;
       boundarySnapshotRecords.clear();
       log("Wake-boundary settling started", {
@@ -2164,844 +2113,208 @@
 
     if (sidebar) {
       currentSidebarElement = sidebar;
-      recordExistingConversations(sidebar, { includeFresh, reason });
+      recordSidebarBaseline(sidebar, reason);
     }
 
     settlingTimeoutId = window.setTimeout(() => {
-      if (token !== settlingToken) {
-        return;
+      if (token !== settlingToken) return;
+      // Rows that finished loading during the window are part of it too.
+      const latestSidebar = findSidebarElement() || currentSidebarElement;
+      if (latestSidebar) {
+        currentSidebarElement = latestSidebar;
+        recordSidebarBaseline(latestSidebar, reason);
       }
-
-      if (rescan && currentSidebarElement) {
-        recordExistingConversations(currentSidebarElement, {
-          includeFresh,
-          reason,
-        });
-      }
-
       isSettling = false;
       settlingTimeoutId = null;
       log(`Settling period ended (${reason})`);
     }, durationMs);
   };
 
-  type RecordExistingOptions = {
-    includeFresh?: boolean;
-    reason?: string;
+  const checkSidebarThread = (threadKey: string): void => {
+    pendingSidebarChecks.delete(threadKey);
+    if (isSettling || !canSendNotification()) return;
+
+    const sidebar = findSidebarElement() || currentSidebarElement;
+    const entry = sidebar
+      ? readSidebarRows(sidebar).find(({ row }) => row.threadKey === threadKey)
+      : undefined;
+    if (!entry) return;
+
+    const { element, row } = entry;
+    const state = sidebarThreads.get(threadKey);
+    if (!row.unread) {
+      log("Sidebar notification skipped - read before settling", {
+        href: threadKey,
+      });
+      return;
+    }
+    if (state?.announcedPreview === row.preview) return;
+
+    const markSeen = () => {
+      sidebarThreads.set(threadKey, {
+        preview: row.preview,
+        unread: true,
+        announcedPreview: row.preview,
+      });
+    };
+
+    if (row.muted) {
+      log("Sidebar notification skipped - muted conversation", {
+        href: threadKey,
+      });
+      markSeen();
+      return;
+    }
+    if (row.stale) {
+      log("Sidebar notification skipped - message synced late", {
+        href: threadKey,
+        timeLabel: row.timeLabel,
+      });
+      markSeen();
+      return;
+    }
+    if (isCurrentConversation(threadKey) && isWindowFocused()) {
+      markSeen();
+      return;
+    }
+    if (hasRecentNativeMessageDelivery(threadKey, row.preview)) {
+      log("Sidebar notification skipped - native notification already shown", {
+        href: threadKey,
+      });
+      markSeen();
+      return;
+    }
+
+    markSeen();
+    recordNotification(threadKey, row.preview);
+    const icon = element.querySelector("img")?.src;
+    sendNotification(row.title, row.preview, "MUTATION", icon, threadKey);
   };
 
-  // Scan and record all currently visible unread conversations (to avoid notifying on initial load)
-  const recordExistingConversations = (
-    sidebar: Element,
-    options: RecordExistingOptions = {},
-  ) => {
-    const { includeFresh = true, reason } = options;
-    const rows = sidebar.querySelectorAll(selectors.conversationRow);
-    let recordedCount = 0;
-    const boundarySnapshotWakeGeneration =
-      includeFresh === true &&
-      reason &&
-      (getNotificationDecisionPolicy()?.shouldSnapshotFreshUnreadOnBoundary?.(
-        reason,
-      ) ??
-        false)
-        ? wakeGeneration
-        : null;
+  const processSidebar = (sidebar: Element): void => {
+    if (isSettling) return;
 
-    rows.forEach((row) => {
-      if (isConversationUnread(row)) {
-        if (!includeFresh && isMessageFresh(row)) {
-          return;
-        }
-        const info = extractConversationInfo(row);
-        if (info) {
-          const normalizedHref = normalizeConversationKey(info.href);
-          const snapshotActivity = evaluateNotificationActivity({
-            title: info.title,
-            body: info.body,
-          });
-          // Mark as already notified so we don't send notifications for these
-          recordNotification(info.href, info.body, {
-            source: "snapshot",
-            boundaryReason: reason,
-            wakeGeneration: boundarySnapshotWakeGeneration ?? undefined,
-            suppressionClass: snapshotActivity.suppressionClass,
-          });
-          if (boundarySnapshotWakeGeneration !== null && reason) {
-            boundarySnapshotRecords.set(normalizedHref, {
-              body: info.body,
-              reason,
-              wakeGeneration: boundarySnapshotWakeGeneration,
-              suppressionClass: snapshotActivity.suppressionClass,
-              recordedAt: Date.now(),
-            });
-          }
-          recordedCount++;
-        }
+    for (const { row } of readSidebarRows(sidebar)) {
+      const previous = sidebarThreads.get(row.threadKey);
+      if (!row.unread) {
+        cancelSidebarCheck(row.threadKey);
+        sidebarThreads.set(row.threadKey, {
+          preview: row.preview,
+          unread: false,
+          announcedPreview: null,
+        });
+        continue;
       }
-    });
 
-    const freshnessLabel = includeFresh ? "" : " (excluding fresh)";
-    const reasonLabel = reason ? ` after ${reason}` : "";
-    log(
-      `Recorded ${recordedCount} existing unread conversations${freshnessLabel}${reasonLabel}`,
-      boundarySnapshotWakeGeneration !== null
-        ? {
-            wakeGeneration: boundarySnapshotWakeGeneration,
-            boundaryReason: reason,
-          }
-        : undefined,
-    );
+      const changed =
+        !previous || !previous.unread || previous.preview !== row.preview;
+      const announcedPreview = previous?.announcedPreview ?? null;
+      sidebarThreads.set(row.threadKey, {
+        preview: row.preview,
+        unread: true,
+        announcedPreview,
+      });
+      if (
+        !changed ||
+        row.preview === announcedPreview ||
+        pendingSidebarChecks.has(row.threadKey)
+      ) {
+        continue;
+      }
+
+      pendingSidebarChecks.set(
+        row.threadKey,
+        window.setTimeout(
+          () => checkSidebarThread(row.threadKey),
+          SIDEBAR_SETTLE_MS,
+        ),
+      );
+    }
+  };
+
+  // Detect sleep without a resume event from the gap between heartbeats.
+  const startClockGapWakeDetection = (): void => {
+    let lastBeat = Date.now();
+    window.setInterval(() => {
+      const now = Date.now();
+      const gapMs = now - lastBeat;
+      lastBeat = now;
+      if (gapMs < CLOCK_GAP_WAKE_MS) return;
+      log("Clock gap detected - treating as wake", { gapMs });
+      startIncomingCallRecoveryWindow("clock-gap");
+      startSettlingPeriod({
+        reason: "clock-gap",
+        durationMs: RESUME_SETTLING_MS,
+      });
+    }, CLOCK_GAP_HEARTBEAT_MS);
   };
 
   const setupMutationObserver = () => {
     log("Setting up MutationObserver detection...");
 
-    const classifyMutationMuteStateRecheck = (
-      observedInfo: { title: string; body: string; searchText?: string },
-      matchedInfo: { title: string; body: string; searchText?: string },
-    ): {
-      shouldRecheck: boolean;
-      reason:
-        | "sender-media-placeholder"
-        | "sender-preview-placeholder"
-        | "group-sender-preview"
-        | "none";
-    } => {
-      const policy = getNotificationDecisionPolicy();
-      if (
-        policy &&
-        typeof policy.classifyMutationMuteStateRecheckReason === "function"
-      ) {
-        return policy.classifyMutationMuteStateRecheckReason(
-          { title: observedInfo.title, body: observedInfo.body },
-          { title: matchedInfo.title, body: matchedInfo.body },
-          {
-            observedSearchText: observedInfo.searchText,
-            matchedSearchText: matchedInfo.searchText,
-          },
-        );
-      }
-
-      return { shouldRecheck: false, reason: "none" };
-    };
-
-    const runDelayedMutationMuteStateRecheck = (
-      normalizedHref: string,
-      observedHref: string,
-    ): void => {
-      pendingMutationMuteStateRechecks.delete(normalizedHref);
-
-      if (isSettling || !canSendNotification()) {
-        log("Delayed mutation notification suppressed - route settling", {
-          href: normalizedHref,
-          isSettling,
-        });
-        return;
-      }
-
-      const policy = getNotificationDecisionPolicy();
-      if (
-        !policy ||
-        typeof policy.resolveObservedSidebarNotificationTarget !== "function"
-      ) {
-        log("Delayed mutation notification suppressed - policy unavailable", {
-          href: normalizedHref,
-        });
-        return;
-      }
-
-      const sidebar = currentSidebarElement || findSidebarElement();
-      if (!sidebar) {
-        log("Delayed mutation notification suppressed - sidebar unavailable", {
-          href: normalizedHref,
-        });
-        return;
-      }
-
-      const { rowByHref, conversationCandidates } =
-        collectSidebarConversationSnapshot(sidebar);
-      const row = rowByHref.get(normalizedHref);
-      if (!row) {
-        log("Delayed mutation notification suppressed - row missing", {
-          href: normalizedHref,
-        });
-        return;
-      }
-
-      const info = extractConversationInfo(row);
-      if (!info) {
-        log("Delayed mutation notification suppressed - row unreadable", {
-          href: normalizedHref,
-        });
-        return;
-      }
-
-      if (!isConversationUnread(row)) {
-        log("Delayed mutation notification suppressed - row read", {
-          title: info.title,
-          href: normalizedHref,
-        });
-        return;
-      }
-
-      if (isConversationMuted(row)) {
-        log("Delayed mutation notification suppressed - muted row settled", {
-          title: info.title,
-          href: normalizedHref,
-        });
-        return;
-      }
-
-      if (!isMessageFresh(row)) {
-        log(
-          "Delayed mutation notification suppressed - message is no longer fresh",
-          {
-            title: info.title,
-            href: normalizedHref,
-          },
-        );
-        return;
-      }
-
-      const decision = policy.resolveObservedSidebarNotificationTarget(
-        {
-          title: info.title,
-          body: info.body,
-        },
-        observedHref,
-        conversationCandidates,
-      );
-      log(
-        "Delayed mutation notification decision",
-        decision.debug || {
-          observedTitle: info.title,
-          observedBody: info.body,
-          observedHref,
-          matchedHref: decision.matchedHref,
-          matchedObservedHref: decision.matchedObservedHref,
-          confidence: decision.confidence,
-          muted: decision.muted,
-          finalReason: decision.reason,
-        },
-      );
-
-      if (!decision.shouldNotify || !decision.matchedHref) {
-        log("Delayed mutation notification suppressed by policy", {
-          title: info.title,
-          href: normalizedHref,
-          matchedHref: decision.matchedHref,
-          matchedObservedHref: decision.matchedObservedHref,
-          confidence: decision.confidence,
-          muted: decision.muted,
-          reason: decision.reason,
-        });
-        return;
-      }
-
-      const normalizedMatchedHref = normalizeConversationKey(
-        decision.matchedHref,
-      );
-      const matchedRow = rowByHref.get(normalizedMatchedHref);
-      if (!matchedRow) {
-        log("Delayed mutation notification suppressed - matched row missing", {
-          title: info.title,
-          href: normalizedMatchedHref,
-        });
-        return;
-      }
-
-      const matchedInfo = extractConversationInfo(matchedRow) || info;
-      const matchedCandidate = findConversationCandidateByHref(
-        conversationCandidates,
-        normalizedMatchedHref,
-      );
-      const messageProof = evaluateMessengerMessageProof(
-        policy,
-        { title: matchedInfo.title, body: matchedInfo.body },
-        matchedCandidate,
-      );
-      if (!messageProof.allow) {
-        log(
-          "Delayed mutation notification suppressed - matched row lacks chat-message proof",
-          {
-            title: matchedInfo.title,
-            body: matchedInfo.body,
-            href: normalizedMatchedHref,
-            reason: messageProof.reason,
-            matchedCandidate,
-          },
-        );
-        return;
-      }
-
-      const observedActivity = evaluateNotificationActivity({
-        title: info.title,
-        body: info.body,
-      });
-      const matchedActivity = evaluateNotificationActivity({
-        title: matchedInfo.title,
-        body: matchedInfo.body,
-      });
-
-      if (
-        observedActivity.suppressionClass === "call-history" ||
-        matchedActivity.suppressionClass === "call-history" ||
-        observedActivity.suppressionClass === "global-activity" ||
-        matchedActivity.suppressionClass === "global-activity"
-      ) {
-        log("Delayed mutation notification suppressed - non-message activity", {
-          title: matchedInfo.title,
-          body: matchedInfo.body,
-          href: normalizedMatchedHref,
-          raw: summarizeNotificationActivity(observedActivity),
-          matched: summarizeNotificationActivity(matchedActivity),
-        });
-        return;
-      }
-
-      const selfAuthoredNotification =
-        typeof policy.shouldSuppressSelfAuthoredNotification === "function"
-          ? policy.shouldSuppressSelfAuthoredNotification([
-              { title: info.title, body: info.body },
-              { title: matchedInfo.title, body: matchedInfo.body },
-            ])
-          : typeof policy.isLikelySelfAuthoredMessagePreview === "function" &&
-            policy.isLikelySelfAuthoredMessagePreview({
-              title: matchedInfo.title,
-              body: matchedInfo.body,
-            });
-
-      if (selfAuthoredNotification) {
-        log(
-          "Delayed mutation notification suppressed - self-authored preview",
-          {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          },
-        );
-        return;
-      }
-
-      if (!isConversationUnread(matchedRow)) {
-        log("Delayed mutation notification suppressed - matched row read", {
-          title: matchedInfo.title,
-          href: normalizedMatchedHref,
-        });
-        return;
-      }
-
-      if (isConversationMuted(matchedRow)) {
-        log("Delayed mutation notification suppressed - matched row muted", {
-          title: matchedInfo.title,
-          href: normalizedMatchedHref,
-        });
-        return;
-      }
-
-      if (!isMessageFresh(matchedRow)) {
-        log(
-          "Delayed mutation notification suppressed - matched message stale",
-          {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          },
-        );
-        return;
-      }
-
-      if (hasAlreadyNotified(normalizedMatchedHref, matchedInfo.body)) {
-        log("Delayed mutation notification suppressed - already notified", {
-          title: matchedInfo.title,
-          href: normalizedMatchedHref,
-        });
-        return;
-      }
-
-      if (
-        conversationNotificationDeduper?.shouldSuppress(normalizedMatchedHref)
-      ) {
-        log("Delayed mutation notification suppressed by TTL deduper", {
-          title: matchedInfo.title,
-          href: normalizedMatchedHref,
-        });
-        return;
-      }
-
-      if (
-        hasRecentNativeMessageDelivery(normalizedMatchedHref, matchedInfo.body)
-      ) {
-        log(
-          "Delayed mutation notification suppressed - native Facebook notification already mirrored",
-          {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          },
-        );
-        return;
-      }
-
-      recordNotification(normalizedMatchedHref, matchedInfo.body);
-      log("Sending delayed notification from MutationObserver", {
-        title: matchedInfo.title,
-        body: matchedInfo.body.slice(0, 50),
-        href: normalizedMatchedHref,
-        observedHref,
-        confidence: decision.confidence,
-        reason: decision.reason,
-      });
-
-      sendNotification(
-        matchedInfo.title,
-        matchedInfo.body,
-        "MUTATION",
-        matchedInfo.icon,
-        normalizedMatchedHref,
-      );
-    };
-
-    const processMutations = (mutationsList: MutationRecord[]) => {
-      if (mutationsList.length === 0) return;
-
-      // Skip if MutationObserver fallback notifications are disabled
-      if (!ENABLE_MUTATION_OBSERVER_FALLBACK_NOTIFICATIONS) {
-        return;
-      }
-
-      // Don't send notifications during the settling period
-      if (isSettling) {
-        log("Skipping notifications - still in settling period");
-        return;
-      }
-
-      // Global rate limit
-      if (!canSendNotification()) {
-        return;
-      }
-
-      clearReadConversationRecords();
-
-      const alreadyProcessed = new Set<string>();
-
-      // Process mutations in reverse order (newest first)
-      for (const mutation of [...mutationsList].reverse()) {
-        let target = mutation.target as Element;
-        if (target.nodeType === Node.TEXT_NODE) {
-          target = target.parentElement as Element;
-        }
-        if (!target) continue;
-
-        // Walk up to find the conversation row
-        const conversationRow = target.closest(selectors.conversationRow);
-        if (!conversationRow) continue;
-
-        // Extract info to get href for deduplication
-        const info = extractConversationInfo(conversationRow);
-        if (!info) continue;
-
-        const normalizedObservedHref = normalizeConversationKey(info.href);
-
-        // Skip if already processed in this batch
-        if (alreadyProcessed.has(normalizedObservedHref)) continue;
-        alreadyProcessed.add(normalizedObservedHref);
-
-        // Skip if this is the currently open conversation while window is focused
-        if (
-          isCurrentConversation(normalizedObservedHref) &&
-          isWindowFocused()
-        ) {
-          continue;
-        }
-
-        // Check if this conversation is unread before doing more expensive snapshot work
-        if (!isConversationUnread(conversationRow)) {
-          continue;
-        }
-
-        const policy = getNotificationDecisionPolicy();
-        if (
-          !policy ||
-          typeof policy.resolveObservedSidebarNotificationTarget !== "function"
-        ) {
-          log("Mutation notification policy unavailable - suppressing", {
-            title: info.title,
-            href: normalizedObservedHref,
-          });
-          continue;
-        }
-
-        const sidebar = currentSidebarElement || findSidebarElement();
-        if (!sidebar) {
-          log("Skipping mutation notification - sidebar unavailable", {
-            title: info.title,
-            href: normalizedObservedHref,
-          });
-          continue;
-        }
-
-        const { rowByHref, conversationCandidates } =
-          collectSidebarConversationSnapshot(sidebar);
-        const decision = policy.resolveObservedSidebarNotificationTarget(
-          {
-            title: info.title,
-            body: info.body,
-          },
-          normalizedObservedHref,
-          conversationCandidates,
-        );
-        log(
-          "Mutation notification decision",
-          decision.debug || {
-            observedTitle: info.title,
-            observedBody: info.body,
-            observedHref: normalizedObservedHref,
-            matchedHref: decision.matchedHref,
-            matchedObservedHref: decision.matchedObservedHref,
-            confidence: decision.confidence,
-            muted: decision.muted,
-            finalReason: decision.reason,
-          },
-        );
-
-        if (!decision.shouldNotify || !decision.matchedHref) {
-          log("Mutation notification suppressed by policy", {
-            title: info.title,
-            href: normalizedObservedHref,
-            matchedHref: decision.matchedHref,
-            matchedObservedHref: decision.matchedObservedHref,
-            confidence: decision.confidence,
-            muted: decision.muted,
-            reason: decision.reason,
-          });
-          continue;
-        }
-
-        const normalizedMatchedHref = normalizeConversationKey(
-          decision.matchedHref,
-        );
-        const matchedRow = rowByHref.get(normalizedMatchedHref);
-        if (!matchedRow) {
-          log("Mutation notification matched row missing - suppressing", {
-            title: info.title,
-            href: normalizedMatchedHref,
-          });
-          continue;
-        }
-
-        const matchedInfo = extractConversationInfo(matchedRow) || info;
-        const matchedCandidate = findConversationCandidateByHref(
-          conversationCandidates,
-          normalizedMatchedHref,
-        );
-        const messageProof = evaluateMessengerMessageProof(
-          policy,
-          { title: matchedInfo.title, body: matchedInfo.body },
-          matchedCandidate,
-        );
-        if (!messageProof.allow) {
-          log(
-            "Mutation notification suppressed - matched row lacks chat-message proof",
-            {
-              title: matchedInfo.title,
-              body: matchedInfo.body,
-              href: normalizedMatchedHref,
-              reason: messageProof.reason,
-              matchedCandidate,
-            },
-          );
-          continue;
-        }
-
-        const observedActivity = evaluateNotificationActivity({
-          title: info.title,
-          body: info.body,
-        });
-        const matchedActivity = evaluateNotificationActivity({
-          title: matchedInfo.title,
-          body: matchedInfo.body,
-        });
-        const wakeReplaySuppression = getBoundarySnapshotReplaySuppression(
-          normalizedMatchedHref,
-          matchedInfo.body,
-          matchedActivity.suppressionClass,
-        );
-        log("Mutation notification candidate analysis", {
-          source: "observed-row",
-          normalizedHref: normalizedMatchedHref,
-          observedHref: normalizedObservedHref,
-          raw: summarizeNotificationActivity(observedActivity),
-          matched: summarizeNotificationActivity(matchedActivity),
-          wakeGeneration,
-          isSettling,
-          boundarySnapshotPresent: wakeReplaySuppression !== null,
-          boundarySnapshotReason: wakeReplaySuppression?.reason,
-        });
-
-        if (
-          observedActivity.suppressionClass === "call-history" ||
-          matchedActivity.suppressionClass === "call-history"
-        ) {
-          log(
-            "Mutation notification suppressed - call history/system activity",
-            {
-              title: matchedInfo.title,
-              body: matchedInfo.body,
-              href: normalizedMatchedHref,
-              raw: summarizeNotificationActivity(observedActivity),
-              matched: summarizeNotificationActivity(matchedActivity),
-            },
-          );
-          continue;
-        }
-
-        if (
-          observedActivity.suppressionClass === "global-activity" ||
-          matchedActivity.suppressionClass === "global-activity"
-        ) {
-          log(
-            "Mutation notification suppressed - non-message Facebook activity",
-            {
-              title: matchedInfo.title,
-              body: matchedInfo.body,
-              href: normalizedMatchedHref,
-              raw: summarizeNotificationActivity(observedActivity),
-              matched: summarizeNotificationActivity(matchedActivity),
-            },
-          );
-          continue;
-        }
-
-        const selfAuthoredNotification =
-          typeof policy.shouldSuppressSelfAuthoredNotification === "function"
-            ? policy.shouldSuppressSelfAuthoredNotification([
-                { title: info.title, body: info.body },
-                { title: matchedInfo.title, body: matchedInfo.body },
-              ])
-            : typeof policy.isLikelySelfAuthoredMessagePreview === "function" &&
-              policy.isLikelySelfAuthoredMessagePreview({
-                title: matchedInfo.title,
-                body: matchedInfo.body,
-              });
-
-        if (selfAuthoredNotification) {
-          log("Skipping mutation notification for self-authored preview", {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-            body: matchedInfo.body,
-          });
-          continue;
-        }
-
-        if (!isConversationUnread(matchedRow)) {
-          log("Mutation notification matched read conversation - suppressing", {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          });
-          continue;
-        }
-
-        if (isConversationMuted(matchedRow)) {
-          log(
-            "Skipping mutation notification for muted conversation after policy",
-            {
-              title: matchedInfo.title,
-              href: normalizedMatchedHref,
-            },
-          );
-          continue;
-        }
-
-        // CRITICAL: Skip if message is not fresh (has a timestamp like "5m", "2h", "3d", "1w")
-        // This is the primary fix for issue #13 - only notify for messages that JUST arrived
-        // Old messages that appear when scrolling or after app restart will have timestamps
-        if (!isMessageFresh(matchedRow)) {
-          log("Skipping notification - message has timestamp, not brand new", {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          });
-          continue;
-        }
-
-        if (pendingMutationMuteStateRechecks.has(normalizedMatchedHref)) {
-          log("Mutation notification suppressed - mute-state recheck pending", {
-            title: matchedInfo.title,
-            body: matchedInfo.body,
-            href: normalizedMatchedHref,
-          });
-          continue;
-        }
-
-        const observedSearchText =
-          extractConversationSearchText(conversationRow);
-        const matchedSearchText =
-          matchedRow === conversationRow
-            ? observedSearchText
-            : extractConversationSearchText(matchedRow);
-        const recheckClassification = classifyMutationMuteStateRecheck(
-          { ...info, searchText: observedSearchText },
-          { ...matchedInfo, searchText: matchedSearchText },
-        );
-        if (recheckClassification.shouldRecheck) {
-          if (!pendingMutationMuteStateRechecks.has(normalizedMatchedHref)) {
-            const timeoutId = window.setTimeout(() => {
-              runDelayedMutationMuteStateRecheck(
-                normalizedMatchedHref,
-                normalizedObservedHref,
-              );
-            }, MUTATION_MUTE_STATE_RECHECK_MS);
-            pendingMutationMuteStateRechecks.set(
-              normalizedMatchedHref,
-              timeoutId,
-            );
-            log("Mutation notification delayed for mute-state recheck", {
-              title: matchedInfo.title,
-              body: matchedInfo.body,
-              href: normalizedMatchedHref,
-              delayMs: MUTATION_MUTE_STATE_RECHECK_MS,
-              recheck: {
-                reason: recheckClassification.reason,
-                observedTitle: info.title,
-                observedBody: info.body,
-                matchedTitle: matchedInfo.title,
-                matchedBody: matchedInfo.body,
-              },
-            });
-          }
-          continue;
-        }
-
-        // Check if we've already notified for this exact message
-        if (hasAlreadyNotified(normalizedMatchedHref, matchedInfo.body)) {
-          if (wakeReplaySuppression) {
-            log(
-              "Mutation notification suppressed - pre-existing after wake boundary",
-              {
-                title: matchedInfo.title,
-                href: normalizedMatchedHref,
-                boundaryReason: wakeReplaySuppression.reason,
-                wakeGeneration: wakeReplaySuppression.wakeGeneration,
-              },
-            );
-          }
-          continue;
-        }
-
-        if (
-          conversationNotificationDeduper?.shouldSuppress(normalizedMatchedHref)
-        ) {
-          log("Mutation notification suppressed by TTL deduper", {
-            title: matchedInfo.title,
-            href: normalizedMatchedHref,
-          });
-          continue;
-        }
-
-        if (
-          hasRecentNativeMessageDelivery(
-            normalizedMatchedHref,
-            matchedInfo.body,
-          )
-        ) {
-          log(
-            "Mutation notification suppressed - native Facebook notification already mirrored",
-            {
-              title: matchedInfo.title,
-              href: normalizedMatchedHref,
-            },
-          );
-          continue;
-        }
-
-        recordNotification(normalizedMatchedHref, matchedInfo.body);
-        log("Sending notification from MutationObserver", {
-          title: matchedInfo.title,
-          body: matchedInfo.body.slice(0, 50),
-          href: normalizedMatchedHref,
-          observedHref: normalizedObservedHref,
-          confidence: decision.confidence,
-          reason: decision.reason,
-        });
-
-        sendNotification(
-          matchedInfo.title,
-          matchedInfo.body,
-          "MUTATION",
-          matchedInfo.icon,
-          normalizedMatchedHref,
-        );
-        // Only send one notification per mutation batch
-        break;
-      }
-    };
-
-    // Handle navigation changes - when sidebar changes, we need to re-settle
-    const handleNavigationChange = () => {
-      const sidebar = findSidebarElement();
-
-      // Check if sidebar has changed (navigation to different section)
-      if (sidebar && sidebar !== currentSidebarElement) {
-        log("Navigation detected - sidebar changed, entering settling period");
-        startSettlingPeriod({
-          reason: "navigation",
-          sidebar,
-          durationMs: 3000,
-        });
-      }
-    };
-
-    // Watch for URL changes (SPA navigation)
-    let lastUrl = window.location.href;
-    const urlObserver = new MutationObserver(() => {
-      if (window.location.href !== lastUrl) {
-        log("URL changed", { from: lastUrl, to: window.location.href });
-        lastUrl = window.location.href;
-        // Give the page time to render, then handle navigation
-        setTimeout(handleNavigationChange, 1000);
-      }
+    // Presence and typing indicators mutate the list constantly; one scan
+    // per burst is enough because every decision waits SIDEBAR_SETTLE_MS.
+    const SIDEBAR_SCAN_DELAY_MS = 100;
+    let observedSidebar: Element | null = null;
+    let scanTimeoutId: number | null = null;
+    const observer = new MutationObserver(() => {
+      if (scanTimeoutId !== null) return;
+      scanTimeoutId = window.setTimeout(() => {
+        scanTimeoutId = null;
+        if (observedSidebar) processSidebar(observedSidebar);
+      }, SIDEBAR_SCAN_DELAY_MS);
     });
 
-    urlObserver.observe(document.body, { childList: true, subtree: true });
-
-    // Wait for sidebar to be available, then observe
-    const startObserving = () => {
-      const sidebar = findSidebarElement();
-
-      if (sidebar) {
-        log("MutationObserver: Found sidebar, starting observation", {
-          tagName: sidebar.tagName,
-        });
-        currentSidebarElement = sidebar;
-
-        // CRITICAL: Record all existing conversations BEFORE enabling notifications
-        // This prevents notifications for messages that were already there on load
-        recordExistingConversations(sidebar);
-
-        const observer = new MutationObserver(processMutations);
-        observer.observe(sidebar, {
-          characterData: true,
-          subtree: true,
-          childList: true,
-          attributes: true,
-          attributeFilter: ["src", "alt", "aria-label", "class"],
-        });
-
-        // End the settling period after giving the page time to fully load
-        // This accounts for lazy-loaded conversations and dynamic content
-        startSettlingPeriod({
-          reason: "startup",
-          sidebar,
-          durationMs: 5000,
-        });
-
-        log("MutationObserver: Active (in settling period)");
-      } else {
-        log("MutationObserver: Sidebar not found, will retry...");
-        // Retry in a few seconds
-        setTimeout(startObserving, 3000);
-      }
+    const observeSidebar = (sidebar: Element, reason: string): void => {
+      observer.disconnect();
+      observedSidebar = sidebar;
+      currentSidebarElement = sidebar;
+      observer.observe(sidebar, {
+        characterData: true,
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["class", "style", "src", "alt", "aria-label"],
+      });
+      startSettlingPeriod({
+        reason,
+        sidebar,
+        durationMs: reason === "startup" ? 5000 : 3000,
+      });
     };
 
-    // Start after page settles
+    // A different chat list (another folder or section) renders as a new
+    // sidebar element; its rows are recorded before anything is announced.
+    let lastUrl = window.location.href;
+    const urlObserver = new MutationObserver(() => {
+      if (window.location.href === lastUrl) return;
+      log("URL changed", { from: lastUrl, to: window.location.href });
+      lastUrl = window.location.href;
+      setTimeout(() => {
+        const sidebar = findSidebarElement();
+        if (sidebar && sidebar !== observedSidebar) {
+          log("Navigation detected - sidebar changed, entering settling period");
+          observeSidebar(sidebar, "navigation");
+        }
+      }, 1000);
+    });
+    urlObserver.observe(document.body, { childList: true, subtree: true });
+
+    const startObserving = () => {
+      const sidebar = findSidebarElement();
+      if (!sidebar) {
+        log("MutationObserver: Sidebar not found, will retry...");
+        setTimeout(startObserving, 3000);
+        return;
+      }
+      log("MutationObserver: Found sidebar, starting observation", {
+        tagName: sidebar.tagName,
+      });
+      observeSidebar(sidebar, "startup");
+      startClockGapWakeDetection();
+      log("MutationObserver: Active (in settling period)");
+    };
+
     setTimeout(startObserving, 2000);
   };
 
@@ -3080,14 +2393,10 @@
           mightHaveCleared = true;
           break;
         }
-        // Check for text content changes in conversation rows
+        // Text and style changes include rows losing their unread weight.
         if (mutation.type === "characterData") {
-          const text = mutation.target.textContent || "";
-          // If "Unread message:" text is being removed, it means the chat was marked as read
-          if (!text.includes("Unread message:")) {
-            mightHaveCleared = true;
-            break;
-          }
+          mightHaveCleared = true;
+          break;
         }
       }
 
@@ -3100,7 +2409,7 @@
       characterData: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["aria-label", "class"],
+      attributeFilter: ["aria-label", "class", "style"],
     });
 
     log("Read detection observer active");
@@ -3806,7 +3115,88 @@
       });
     };
 
+    // Facebook shows activity from elsewhere on Facebook (comments, likes,
+    // tags) as a short-lived item in a toast stack directly under <body>:
+    // an <li> outside every page landmark holding an alert and links only to
+    // non-Messenger Facebook routes. Recognised by that structure so it is
+    // hidden in every language (#105).
+    const maxToastStackDepth = 4;
+    const pageLandmarkSelector = [
+      '[role="main"]',
+      '[role="navigation"]',
+      '[role="banner"]',
+      '[role="dialog"]',
+      '[role="complementary"]',
+      '[role="contentinfo"]',
+    ].join(", ");
+
+    const findFacebookActivityToast = (
+      alert: Element,
+    ): NonNullable<ReturnType<typeof inspectCandidate>> | undefined => {
+      const item = alert.closest("li");
+      if (!(item instanceof HTMLElement)) return undefined;
+      if (item.closest(pageLandmarkSelector)) return undefined;
+
+      let depth = 0;
+      let parent = item.parentElement;
+      while (parent && parent !== document.body) {
+        depth += 1;
+        if (depth > maxToastStackDepth) return undefined;
+        parent = parent.parentElement;
+      }
+      if (!parent) return undefined;
+
+      const diagnostics = getInPageNotificationDiagnostics();
+      if (!diagnostics) return undefined;
+      const links = Array.from(item.querySelectorAll("a[href]")).map((link) =>
+        link.getAttribute("href"),
+      );
+      if (links.length === 0) return undefined;
+      const { categories } = diagnostics.summarizeLinkCategories(
+        links,
+        window.location.href,
+      );
+      const facebookActivityLinks =
+        categories["facebook-other"] +
+        categories["facebook-notifications"] +
+        categories.group +
+        categories["group-admin"];
+      if (
+        facebookActivityLinks === 0 ||
+        categories["messenger-thread"] > 0 ||
+        categories["messages-surface"] > 0 ||
+        categories.external > 0
+      ) {
+        return undefined;
+      }
+
+      return {
+        element: item,
+        reason: "facebook-activity-toast",
+        hasDismissControl: false,
+      };
+    };
+
+    const suppressFacebookActivityToasts = (
+      root: Element,
+      trigger: string,
+    ): void => {
+      const alerts = [
+        root.closest('[role="alert"]'),
+        ...Array.from(root.querySelectorAll('[role="alert"]')).slice(
+          0,
+          maxSeedDescendants,
+        ),
+      ];
+      for (const alert of alerts) {
+        if (!alert) continue;
+        const toast = findFacebookActivityToast(alert);
+        if (toast) suppressCard(toast, trigger);
+      }
+    };
+
     const inspectElement = (element: Element, trigger: string): void => {
+      suppressFacebookActivityToasts(element, trigger);
       const diagnosticCard = findDiagnosticCard(element);
       if (diagnosticCard) {
         recordCandidateDiagnostics(diagnosticCard, {
@@ -3852,6 +3242,7 @@
     };
 
     const scanExistingCards = (trigger: string): void => {
+      suppressFacebookActivityToasts(document.body, trigger);
       const seeds = Array.from(
         document.querySelectorAll(notificationSeedSelector),
       ).slice(0, 200);

@@ -6248,10 +6248,19 @@ const runNotificationDisplayPolicyTests = () => {
     provenanceReason: "test-thread-proof",
     href: "/t/test",
   });
+  // Chat-message text is no longer matched against English call phrases:
+  // the same words appear in ordinary messages ("she called you earlier"),
+  // which were dropped (#105 review, Oct 2026). Calls are announced only by
+  // the incoming-call path; a chat row is shown as Messenger renders it.
   assertEqual(
     calledYouBoundary.suppress,
-    true,
-    "#50 display-boundary policy should suppress connected-call history notifications",
+    false,
+    "chat messages that mention calls should be displayed unchanged",
+  );
+  assertEqual(
+    calledYouBoundary.normalizedData.body,
+    "Amanda called you",
+    "chat messages that mention calls should not be rewritten",
   );
 
   const groupAdminBoundary = resolveNotificationDisplayBoundary({
@@ -6306,8 +6315,8 @@ const runNotificationDisplayPolicyTests = () => {
   });
   assertEqual(
     callEndedBoundary.suppress,
-    true,
-    "#50 display-boundary policy should suppress call ended status notifications",
+    false,
+    "chat rows about calls should be judged by row state, not English call phrases",
   );
 
   const incomingCallBoundary = resolveNotificationDisplayBoundary({
@@ -6427,6 +6436,21 @@ const runNotificationDisplayPolicyTests = () => {
       notificationInjectSource.includes("dataAttributeNames") &&
       notificationInjectSource.includes("lastPowerState"),
     "#62 in-page candidate diagnostics should capture structural provenance without raw notification content",
+  );
+
+  // #104: the dock/taskbar badge counted unread rows by English labels, so
+  // non-English layouts never showed a badge. It must use the same
+  // structural row signals as the notification engine.
+  const preloadSource = fs.readFileSync(
+    path.join(APP_ROOT, "src/preload/preload.ts"),
+    "utf8",
+  );
+  assert(
+    preloadSource.includes("isSidebarRowUnread(conversationEl)") &&
+      preloadSource.includes("isSidebarRowMuted(conversationEl)") &&
+      !preloadSource.includes("Unread message:") &&
+      !/aria-label\*="Mark as read"/i.test(preloadSource),
+    "#104 the unread badge should count rows with locale-free structural signals",
   );
 };
 

@@ -2,11 +2,13 @@
 // source runs in the page before the app's scripts and exposes
 // window.__fx for building and mutating a Messenger-shaped chat list.
 //
-// The row shape mirrors what the injected observer reads today: a
-// [role=navigation] containing a [role=grid] of [role=row] items, each with
-// a thread link, [dir=auto] title and preview, an optional relative time
-// and an unread marker. Locale strings are parameters so non-English
-// layouts can be exercised.
+// The row shape mirrors Messenger's chat list: a [role=navigation]
+// containing a [role=grid] of [role=row] items, each with a thread link,
+// [dir=auto] title and preview, an optional relative time and an unread
+// marker. As recorded from live rows (Oct 2026), unread rows render their
+// title and preview at font weight 600 and read rows at 500/400; muted rows
+// show Facebook's bell-with-slash icon. Locale strings are parameters so
+// non-English layouts can be exercised.
 
 const FIXTURE_SOURCE = String.raw`
 (() => {
@@ -41,15 +43,34 @@ const FIXTURE_SOURCE = String.raw`
         escapeHtml(locale.markAsReadLabel) +
         '"></div>'
       : "";
+    const weights = row.unread ? ["600", "600"] : ["500", "400"];
     return (
       '<div role="row" data-fx-href="' + escapeHtml(row.href) + '">' +
       '<a role="link" href="' + escapeHtml(row.href) + '">' +
-      '<span dir="auto" class="title">' + escapeHtml(row.title) + "</span>" +
+      // Group avatars carry an accessible description in the user's
+      // language, e.g. "Group chat: <name>" in English.
+      (row.avatarLabel
+        ? '<div role="img" aria-label="' + escapeHtml(row.avatarLabel) + '"></div>'
+        : "") +
+      '<span dir="auto" class="title" style="font-weight: ' + weights[0] + '">' +
+      escapeHtml(row.title) + "</span>" +
       '<div class="preview">' + unreadText +
-      '<span dir="auto" class="body">' + escapeHtml(row.body) + "</span>" +
+      '<span dir="auto" class="body" style="font-weight: ' + weights[1] + '">' +
+      escapeHtml(row.body) + "</span>" +
       (time ? '<span aria-hidden="true"> · </span>' + time : "") +
-      "</div></a>" + unreadButton + "</div>"
+      "</div></a>" + (row.muted ? MUTED_ICON : "") + unreadButton + "</div>"
     );
+  };
+
+  // Facebook's 16px bell-with-slash icon (FBNucleusNotificationsCrossFilled16Icon).
+  const MUTED_ICON =
+    '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2.5 6c0-.322.028-.637.081-.943l8.296 8.296A3.001 3.001 0 0 1 5 12.5H2.432a.98.98 0 0 1-.816-1.525A5.268 5.268 0 0 0 2.5 8.053V6z"></path></svg>';
+
+  const applyWeights = (rowElement, unread) => {
+    const title = rowElement.querySelector(".title");
+    const body = rowElement.querySelector(".body");
+    if (title) title.style.fontWeight = unread ? "600" : "500";
+    if (body) body.style.fontWeight = unread ? "600" : "400";
   };
 
   const grid = () => document.querySelector('[role="grid"]');
@@ -136,6 +157,7 @@ const FIXTURE_SOURCE = String.raw`
         marker?.remove();
         button?.remove();
       }
+      applyWeights(existing, unread);
     },
     // Update only the preview text node, as React does for small changes.
     setBodyText(href, body) {

@@ -3,6 +3,10 @@ import { isTrustedPageBridgeMessage } from "./page-bridge-policy";
 import { describeInteractionTarget } from "./debug-redaction-policy";
 import { decodeRendererDebugFlags } from "../shared/debug-flags";
 import {
+  isSidebarRowMuted,
+  isSidebarRowUnread,
+} from "../shared/sidebar-row-signals";
+import {
   type FacebookHeaderSuppressionMode,
   resolveEffectiveFacebookHeaderSuppressionMode,
   resolveFacebookHeaderSuppressionMode,
@@ -4836,8 +4840,6 @@ ipcRenderer.on(
     };
 
     const chatLinkSelector = 'a[href*="/t/"], a[href*="/e2ee/t/"]';
-    const unreadIndicatorSelector =
-      '[aria-label*="Mark as read" i], [aria-label*="Unread message" i]';
 
     let lastSentCount = -1;
     let deferredZeroWhileUnfocused = false;
@@ -4863,91 +4865,6 @@ ipcRenderer.on(
       } catch {
         return null;
       }
-    };
-
-    const isConversationUnread = (conversationEl: Element): boolean => {
-      const textContent = conversationEl.textContent || "";
-      if (textContent.includes("Unread message:")) {
-        return true;
-      }
-
-      const ariaLabel = (
-        conversationEl.getAttribute("aria-label") || ""
-      ).toLowerCase();
-      if (ariaLabel.includes("unread message")) {
-        return true;
-      }
-
-      return Boolean(conversationEl.querySelector(unreadIndicatorSelector));
-    };
-
-    const isConversationMuted = (conversationEl: Element): boolean => {
-      const paths = Array.from(conversationEl.querySelectorAll("svg path"));
-      for (const path of paths) {
-        const d = path.getAttribute("d") || "";
-        if (
-          d.startsWith("M9.244 24.99") ||
-          d.includes("L26.867 7.366") ||
-          d.startsWith("M29.676 7.746") ||
-          d.includes("L6.293 28.29") ||
-          d.startsWith("M2.5 6c0-.322") ||
-          d.includes("8.296 8.296A3.001 3.001 0 0 1 5 12.5")
-        ) {
-          return true;
-        }
-      }
-
-      const useNodes = Array.from(conversationEl.querySelectorAll("svg use"));
-      for (const useNode of useNodes) {
-        const href = (
-          useNode.getAttribute("href") ||
-          useNode.getAttribute("xlink:href") ||
-          ""
-        ).toLowerCase();
-        if (
-          href.includes("mute") ||
-          href.includes("muted") ||
-          href.includes("notification_off") ||
-          (href.includes("bell") && href.includes("slash"))
-        ) {
-          return true;
-        }
-      }
-
-      const labelSources: string[] = [];
-      const pushLabel = (value: string | null | undefined): void => {
-        const text = value?.trim();
-        if (text) {
-          labelSources.push(text.toLowerCase());
-        }
-      };
-
-      pushLabel(conversationEl.textContent);
-      pushLabel(conversationEl.getAttribute("aria-label"));
-      pushLabel(conversationEl.getAttribute("title"));
-      pushLabel(conversationEl.getAttribute("data-tooltip-content"));
-
-      const metaNodes = conversationEl.querySelectorAll(
-        "[aria-label], [title], [data-tooltip-content], [data-tooltip], img[alt]",
-      );
-      metaNodes.forEach((node) => {
-        pushLabel(node.getAttribute("aria-label"));
-        pushLabel(node.getAttribute("title"));
-        pushLabel(node.getAttribute("data-tooltip-content"));
-        pushLabel(node.getAttribute("data-tooltip"));
-        if (node instanceof HTMLImageElement) {
-          pushLabel(node.alt);
-        }
-      });
-
-      return labelSources.some(
-        (text) =>
-          text.includes("muted") ||
-          text.includes("notifications are off") ||
-          text.includes("notifications off") ||
-          text.includes("notification off") ||
-          text.includes("unmute"),
-      );
     };
 
     const findSidebarElement = (): Element | null => {
@@ -5026,8 +4943,8 @@ ipcRenderer.on(
           const conversationPath = normalizeConversationPath(href);
           if (!conversationPath) return;
 
-          if (!isConversationUnread(conversationEl)) return;
-          if (isConversationMuted(conversationEl)) return;
+          if (!isSidebarRowUnread(conversationEl)) return;
+          if (isSidebarRowMuted(conversationEl)) return;
 
           // Do not count the active conversation while app is focused.
           if (
