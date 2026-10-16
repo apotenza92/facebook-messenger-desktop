@@ -107,6 +107,37 @@ const createDriver = (page) => ({
         ),
       state,
     ),
+  // Show an in-page toast shaped like Facebook's (recorded Oct 2026): an
+  // item in a toast stack directly under <body> holding an alert, a link
+  // and a close button. Returns the toast's id for isToastVisible.
+  showToast: (href) =>
+    page.evaluate((h) => {
+      let stack = document.querySelector("[data-fx-toast-stack]");
+      if (!stack) {
+        const layer = document.createElement("div");
+        layer.setAttribute("data-visualcompletion", "ignore");
+        stack = document.createElement("ul");
+        stack.setAttribute("data-fx-toast-stack", "");
+        layer.append(stack);
+        document.body.append(layer);
+      }
+      const id = "toast-" + stack.children.length;
+      const item = document.createElement("li");
+      item.id = id;
+      item.innerHTML =
+        '<div><div><div aria-labelledby="' + id + '-label">' +
+        '<span id="' + id + '-label">Tester E</span>' +
+        '<a href="' + h + '"><span role="alert">Tester E reacted.</span></a>' +
+        '<div role="button" tabindex="0"><svg viewBox="0 0 20 20"><path d="M1 1"></path></svg></div>' +
+        "</div></div></div>";
+      stack.append(item);
+      return id;
+    }, href),
+  isToastVisible: (id) =>
+    page.evaluate((toastId) => {
+      const toast = document.getElementById(toastId);
+      return Boolean(toast) && getComputedStyle(toast).display !== "none";
+    }, id),
   captured: () => page.evaluate(() => window.__fx.captured.slice()),
   probeEvents: () => page.evaluate(() => window.__fx.probeEvents.slice()),
   // Fire a notification the way Facebook's page code does.
@@ -232,6 +263,7 @@ const readList = () => [
     body: "Tester D: lunch?",
     time: "1d",
     unread: false,
+    avatarLabel: "Group chat: Group C",
   },
 ];
 
@@ -242,12 +274,12 @@ const incoming = async (d, href, title, body, extra = {}) => {
   await d.run(SECOND);
 };
 
-const messageScenario = (id, description, body, knownFailure) => ({
+const messageScenario = (id, description, body) => ({
   id,
   description,
-  knownFailure,
   steps: async (d) => {
     await incoming(d, thread(1002), "Tester B", body);
+    await d.run(5 * SECOND);
   },
   expect: [{ title: "Tester B", body }],
 });
@@ -283,11 +315,18 @@ const SCENARIOS = [
     },
     expect: [{ title: "Tester B", body: "are you free tonight?" }],
   },
+  // Sending a message, from any device, advances the user's read marker, so
+  // Messenger renders the row read (Facebook's MWThreadAddOnSecondary shows
+  // the unread badge and the viewer's own last message exclusively). The
+  // engine relies on that state, not on a language-specific "You:" prefix.
   {
-    id: "baseline-self-sent-prefixed",
-    description: "a self-sent preview Messenger prefixes with You: is silent",
+    id: "baseline-self-sent",
+    description: "the user's own message from another device is silent",
     steps: async (d) => {
-      await incoming(d, thread(1002), "Tester B", "You: on my way");
+      await incoming(d, thread(1002), "Tester B", "You: on my way", {
+        unread: false,
+      });
+      await d.run(5 * SECOND);
     },
     expect: [],
   },
@@ -315,31 +354,26 @@ const SCENARIOS = [
     "words-join-the-call",
     "a message mentioning joining a call is delivered unchanged",
     "Did you join the call?",
-    "call-history regex matches ordinary message text and drops it",
   ),
   messageScenario(
     "words-called-you",
     "a message saying someone called is delivered unchanged",
     "she called you earlier",
-    "call-history regex matches ordinary message text and drops it",
   ),
   messageScenario(
     "words-is-calling",
     "a message containing 'is calling' is delivered unchanged",
     "Dad is calling the plumber",
-    "incoming-call regex rewrites the body in the main-process boundary",
   ),
   messageScenario(
     "words-muted",
     "a message mentioning muting is delivered",
     "I muted the group chat lol",
-    "mute detection searches the whole row text including the preview (#105)",
   ),
   messageScenario(
     "words-you-up",
     "an incoming 1:1 message starting with 'you' is delivered",
     "you up?",
-    "self-authored rule treats any preview starting with 'you' as sent by the user",
   ),
 
   // --- Symptom: notifications for messages the user sent -----------------
@@ -347,8 +381,6 @@ const SCENARIOS = [
     id: "self-reply-race",
     description:
       "replying from another device while the row is still unread does not notify",
-    knownFailure:
-      "the reply's preview lands before the read marker clears and passes every check",
     steps: async (d) => {
       await incoming(d, thread(1002), "Tester B", "are you free tonight?");
       await d.run(8 * SECOND);
@@ -372,8 +404,6 @@ const SCENARIOS = [
     id: "wake-old-message-inline-time",
     description:
       "after wake, an older message synced late is not announced when its time is not in its own text node",
-    knownFailure:
-      "freshness only parses English times in their own [dir=auto] node; anything else counts as new",
     steps: async (d) => {
       await d.power("suspend");
       await d.sleepFor(2 * HOUR);
@@ -390,8 +420,6 @@ const SCENARIOS = [
     id: "wake-without-resume-event",
     description:
       "after a sleep with no resume event (Modern Standby), an older synced message is not announced",
-    knownFailure:
-      "wake protection depends on Electron's resume event and the English time parser",
     steps: async (d) => {
       await d.sleepFor(2 * HOUR);
       await incoming(d, thread(1001), "Tester A", "sent while you were away", {
@@ -405,8 +433,6 @@ const SCENARIOS = [
     id: "wake-read-elsewhere",
     description:
       "after wake, a message already read on another device is not announced",
-    knownFailure:
-      "the row is briefly unread with new text before Messenger applies the read state",
     steps: async (d) => {
       await d.power("suspend");
       await d.sleepFor(3 * HOUR);
@@ -428,7 +454,10 @@ const SCENARIOS = [
       await d.sleepFor(2 * HOUR);
       await d.power("resume");
       await d.run(12 * SECOND);
-      await incoming(d, thread(1001), "Tester A", "You: see you then");
+      await incoming(d, thread(1001), "Tester A", "You: see you then", {
+        unread: false,
+      });
+      await d.run(5 * SECOND);
     },
     expect: [],
   },
@@ -436,8 +465,6 @@ const SCENARIOS = [
     id: "rerender-after-focus",
     description:
       "a notified row that leaves and re-enters the list is not announced again",
-    knownFailure:
-      "focus clears notification records for rows not currently rendered",
     steps: async (d) => {
       await incoming(d, thread(1002), "Tester B", "are you free tonight?");
       await d.run(10 * SECOND);
@@ -471,6 +498,8 @@ const SCENARIOS = [
     probe: true,
     steps: async (d) => {
       await incoming(d, thread(1002), "Tester B", "are you free tonight?");
+      // Let the sidebar engine's settle delay pass so its send comes first.
+      await d.run(2 * SECOND);
       await d.facebookNotify("Tester B", {
         body: "are you free tonight?",
         tag: threadId(1002),
@@ -549,8 +578,6 @@ const SCENARIOS = [
     description:
       "in a French layout, incoming messages notify and the user's own do not",
     // Likely cause of #104 (Polish layout: no notifications, sound or badge).
-    knownFailure:
-      "unread detection only recognises English labels (#104)",
     locale: {
       chatsLabel: "Discussions",
       unreadText: "Message non lu :",
@@ -560,9 +587,161 @@ const SCENARIOS = [
       await incoming(d, thread(1002), "Tester B", "tu es libre ce soir ?");
       await d.run(10 * SECOND);
       // The user's own reply from another device must stay silent too.
-      await incoming(d, thread(1001), "Tester A", "Vous : j'arrive");
+      await incoming(d, thread(1001), "Tester A", "Vous : j'arrive", {
+        unread: false,
+      });
+      await d.run(5 * SECOND);
     },
     expect: [{ title: "Tester B", body: "tu es libre ce soir ?" }],
+  },
+  // --- Bugs found in the October 2026 diagnostics run ------------------------
+  {
+    id: "locked-screen-message",
+    description:
+      "a message arriving while the screen is locked (computer awake) notifies once",
+    steps: async (d) => {
+      await d.power("lock-screen");
+      await d.run(10 * MINUTE);
+      await incoming(d, thread(1002), "Tester B", "are you free tonight?");
+      await d.run(10 * SECOND);
+      await d.power("unlock-screen");
+      await d.run(15 * SECOND);
+    },
+    expect: [{ title: "Tester B", body: "are you free tonight?" }],
+  },
+  {
+    id: "suspend-without-resume",
+    description:
+      "notifications resume when a suspend is never followed by a resume event",
+    steps: async (d) => {
+      await d.power("suspend");
+      await d.run(4 * MINUTE);
+      await incoming(d, thread(1002), "Tester B", "are you free tonight?");
+      await d.run(5 * SECOND);
+    },
+    expect: [{ title: "Tester B", body: "are you free tonight?" }],
+  },
+  {
+    id: "group-photo",
+    description: "a photo sent to a group notifies",
+    steps: async (d) => {
+      await incoming(d, thread(1003), "Group C", "Tester D sent a photo.", {
+        avatarLabel: "Group chat: Group C",
+      });
+      await d.run(5 * SECOND);
+    },
+    expect: [{ title: "Group C", body: "Tester D sent a photo." }],
+  },
+  {
+    id: "group-short-emoji",
+    description: "a short emoji-only group message notifies",
+    steps: async (d) => {
+      await incoming(d, thread(1003), "Group C", "🙏", {
+        avatarLabel: "Group chat: Group C",
+      });
+      await d.run(5 * SECOND);
+    },
+    expect: [{ title: "Group C", body: "🙏" }],
+  },
+  {
+    id: "muted-conversation",
+    description: "a message in a muted conversation is silent (#105)",
+    initialRows: [
+      ...readList().slice(0, 2),
+      { ...readList()[2], muted: true },
+    ],
+    steps: async (d) => {
+      await incoming(d, thread(1003), "Group C", "Tester D: lunch today?");
+      await d.run(5 * SECOND);
+    },
+    expect: [],
+  },
+  {
+    id: "repeat-after-read",
+    description:
+      "the same text sent again after the conversation was read notifies again",
+    steps: async (d) => {
+      await incoming(d, thread(1002), "Tester B", "ok");
+      await d.run(5 * SECOND);
+      await d.setUnread(thread(1002), false);
+      await d.run(5 * SECOND);
+      await incoming(d, thread(1002), "Tester B", "ok");
+      await d.run(5 * SECOND);
+    },
+    expect: [
+      { title: "Tester B", body: "ok" },
+      { title: "Tester B", body: "ok" },
+    ],
+  },
+  {
+    id: "burst-while-unread",
+    description: "each new message to a conversation that is still unread notifies",
+    steps: async (d) => {
+      await incoming(d, thread(1002), "Tester B", "first");
+      await d.run(5 * SECOND);
+      await incoming(d, thread(1002), "Tester B", "second");
+      await d.run(5 * SECOND);
+    },
+    expect: [
+      { title: "Tester B", body: "first" },
+      { title: "Tester B", body: "second" },
+    ],
+  },
+  {
+    id: "hidden-timer-throttling",
+    description:
+      "minute-long timer gaps in a hidden window are not mistaken for sleep",
+    steps: async (d) => {
+      for (let i = 0; i < 5; i += 1) await d.sleepFor(61 * SECOND);
+      await incoming(d, thread(1002), "Tester B", "are you free tonight?");
+      await d.run(5 * SECOND);
+    },
+    expect: [{ title: "Tester B", body: "are you free tonight?" }],
+  },
+  {
+    id: "locale-polish",
+    description: "in a Polish layout, incoming messages notify (#104)",
+    locale: {
+      chatsLabel: "Czaty",
+      unreadText: "Nieprzeczytana wiadomość:",
+      markAsReadLabel: "Oznacz jako przeczytane",
+    },
+    steps: async (d) => {
+      await incoming(d, thread(1002), "Tester B", "jesteś wolny dziś wieczorem?", {
+        time: "teraz",
+      });
+      await d.run(5 * SECOND);
+    },
+    expect: [{ title: "Tester B", body: "jesteś wolny dziś wieczorem?" }],
+  },
+  {
+    id: "facebook-activity-toast",
+    description:
+      "Facebook's in-page toast for activity elsewhere on Facebook is hidden (#105)",
+    steps: async (d) => {
+      d.toastId = await d.showToast(
+        "https://www.facebook.com/photo/?fbid=1&set=a.1&notif_id=1&notif_t=feedback_comment",
+      );
+      await d.run(SECOND);
+    },
+    expect: [],
+    check: async (d) =>
+      (await d.isToastVisible(d.toastId))
+        ? "the Facebook activity toast is still visible"
+        : null,
+  },
+  {
+    id: "messenger-toast-kept",
+    description: "an in-page toast linking to a Messenger chat stays visible",
+    steps: async (d) => {
+      d.toastId = await d.showToast(`https://www.facebook.com${thread(1002)}`);
+      await d.run(SECOND);
+    },
+    expect: [],
+    check: async (d) =>
+      (await d.isToastVisible(d.toastId))
+        ? null
+        : "a Messenger toast was hidden",
   },
 ];
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Notify and show the unread badge in every interface language. Unread
+  conversations are now recognised by how Messenger draws them instead of by
+  English labels, which left non-English layouts without notifications, sound
+  or badge (#104).
+- Keep notifying while the screen is locked. Messages that arrived while a Mac
+  was locked but awake were silently dropped.
+- Stop dropping or rewriting messages that mention calls, muting or start with
+  "you", and stop dropping photos and short emoji messages in group chats.
+- Stop notifying for a reply sent from another device, for messages already
+  read elsewhere, and for older messages that sync after the computer wakes,
+  including Windows Modern Standby wakes without a resume event.
+- Stop repeating a notification when a conversation scrolls out of the chat
+  list and back after the window is focused.
+- Hide Facebook's in-page pop-ups about activity elsewhere on Facebook, such as
+  comments and reactions on your photos, in every language (#105).
+
 ## [1.5.0-beta.1] - 2026-10-07
 
 ### Security

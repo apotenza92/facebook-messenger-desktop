@@ -143,18 +143,9 @@ export function resolveNotificationDisplayBoundary(
     };
   }
 
-  const callClassification = classifyCallNotification(activityPayload);
-  if (callClassification.shouldSuppressNotification) {
-    return {
-      suppress: true,
-      reason: "display-boundary-call-history-activity",
-      normalizedData: {
-        ...data,
-        title: normalizedTitle,
-        body: activityPayload.body,
-      },
-    };
-  }
+  // Chat messages are shown as written. Calls reach the user through the
+  // incoming-call path; matching call words in message text dropped or
+  // rewrote ordinary messages such as "did you join the call?".
   if (classifyGroupManagementNotification(activityPayload).isGroupManagement) {
     return {
       suppress: true,
@@ -179,18 +170,13 @@ export function resolveNotificationDisplayBoundary(
     };
   }
 
-  const displayBody =
-    callClassification.isIncomingCall
-      ? buildIncomingCallNotificationBody({ body: normalizedBody })
-      : normalizedBody;
-
   return {
     suppress: false,
     reason: null,
     normalizedData: {
       ...data,
       title: normalizedTitle,
-      body: displayBody,
+      body: normalizedBody,
     },
   };
 }
@@ -353,10 +339,7 @@ export class NotificationHandler {
       body: normalizedData.body,
       href: normalizedData.href,
       createdAt,
-      isIncomingCall: classifyCallNotification({
-        title: normalizedData.title,
-        body: normalizedData.body,
-      }).isIncomingCall,
+      isIncomingCall: normalizedData.sourceKind === 'incoming-call',
     };
 
     notification.on('show', () => {

@@ -23,6 +23,11 @@ export const PAGE_SCRIPT_SOURCES: ReadonlyArray<{
     sanitizeCommonJsExports: true,
   },
   {
+    label: "sidebar row signals",
+    relativePath: "../shared/sidebar-row-signals.js",
+    sanitizeCommonJsExports: true,
+  },
+  {
     label: "notification display policy",
     relativePath: "../preload/notification-display-policy.js",
     sanitizeCommonJsExports: false,
