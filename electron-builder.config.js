@@ -95,7 +95,10 @@ const baseConfig = {
   ],
   files: baseFiles,
   asar: true,
-  compression: 'maximum',
+  // Maximum compression made the Windows installer take about seven times
+  // longer to build for a 0.3% smaller download. Linux AppImages grow by
+  // about 30% without it, so other platforms keep maximum.
+  compression: isWindowsBuild ? 'normal' : 'maximum',
 };
 
 // macOS configuration

@@ -10,6 +10,11 @@
 - Patch the sharp, undici, fast-uri, xmldom and humanfs build tools after new
   security advisories.
 
+### Changed
+
+- Build Windows installers with normal instead of maximum compression, which
+  makes release builds several minutes faster. Installers are about 0.3% larger.
+
 ### Fixed
 
 - Stop offering to move the app into Applications when macOS runs it from a
