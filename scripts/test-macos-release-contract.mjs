@@ -1215,6 +1215,12 @@ function testWorkflowContract() {
   assert.match(linuxVmSmokeTest, /dbus-run-session -- flatpak info --user/);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.runAfterFinish, false);
   assert.equal(loadBuilderConfig({}, ["--win"]).nsis.useZip, true);
+  // Maximum compression made the Windows installer take about seven times
+  // longer to build for a 0.3% smaller download. Linux keeps maximum because
+  // its AppImage grows by about 30% without it.
+  assert.equal(loadBuilderConfig({}, ["--win"]).compression, "normal");
+  assert.equal(loadBuilderConfig({}, ["--linux"]).compression, "maximum");
+  assert.equal(loadBuilderConfig({}, ["--mac"]).compression, "maximum");
   assert.equal(packageLock.packages["node_modules/sharp"].version, "0.35.3");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);
   assert.match(afterPackScript, /RESOLVED=\$\(readlink -f -- "\$SELF"/);
