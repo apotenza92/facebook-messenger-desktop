@@ -1221,7 +1221,7 @@ function testWorkflowContract() {
   assert.equal(loadBuilderConfig({}, ["--win"]).compression, "normal");
   assert.equal(loadBuilderConfig({}, ["--linux"]).compression, "maximum");
   assert.equal(loadBuilderConfig({}, ["--mac"]).compression, "maximum");
-  assert.equal(packageLock.packages["node_modules/sharp"].version, "0.35.3");
+  assert.equal(packageLock.packages["node_modules/sharp"].version, "0.35.5");
   assert(packageLock.packages["node_modules/@img/sharp-win32-arm64"]);
   assert.match(afterPackScript, /RESOLVED=\$\(readlink -f -- "\$SELF"/);
   assert.match(
