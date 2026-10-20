@@ -29,6 +29,7 @@ import {
   mergeMacUpdateMetadata,
 } from "./assemble-macos-release.mjs";
 import { assembleWindowsRelease } from "./assemble-windows-release.mjs";
+import { mergeReleaseVariants } from "./merge-release-variants.mjs";
 import {
   assemblePublicRelease,
   expectedPublicReleaseContract,
@@ -610,6 +611,61 @@ function testWindowsInstallerAssembly() {
         }),
       /do not exactly match/,
     );
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function testReleaseVariantMerge() {
+  const temporaryDirectory = mkdtempSync(
+    join(tmpdir(), "messenger-variant-merge-test-"),
+  );
+  try {
+    const inputDirectory = join(temporaryDirectory, "input");
+    const outputDirectory = join(temporaryDirectory, "output");
+    const write = (variant, name, content = name) => {
+      const directory = join(inputDirectory, `windows-input-x64-${variant}`);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, name), content);
+    };
+    const merge = (releaseChannel) =>
+      mergeReleaseVariants({
+        inputDirectory,
+        outputDirectory,
+        prefix: "windows-input",
+        arch: "x64",
+        releaseChannel,
+      });
+    write("stable", "Messenger-windows-x64-setup.exe");
+    write("stable", "updater-app.asar");
+    write("beta", "Messenger-Beta-windows-x64-setup.exe");
+    // Another architecture's variants are left for its own merge.
+    mkdirSync(join(inputDirectory, "windows-input-arm64-stable"));
+
+    merge("stable");
+    assert.deepEqual(readdirSync(outputDirectory).sort(), [
+      "Messenger-Beta-windows-x64-setup.exe",
+      "Messenger-windows-x64-setup.exe",
+      "updater-app.asar",
+    ]);
+
+    // A beta release builds only the beta variant.
+    assert.throws(() => merge("beta"), /do not exactly match/);
+    rmSync(join(inputDirectory, "windows-input-x64-stable"), {
+      recursive: true,
+    });
+    merge("beta");
+    assert.deepEqual(readdirSync(outputDirectory), [
+      "Messenger-Beta-windows-x64-setup.exe",
+    ]);
+
+    // A stable release must not publish with a variant missing.
+    assert.throws(() => merge("stable"), /do not exactly match/);
+
+    // One variant must never overwrite another's file.
+    write("stable", "Messenger-windows-x64-setup.exe");
+    write("stable", "Messenger-Beta-windows-x64-setup.exe", "stable copy");
+    assert.throws(() => merge("stable"), /collide on Messenger-Beta-windows-x64-setup\.exe/);
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -1673,8 +1729,50 @@ function testWorkflowContract() {
   assert.match(nonmacWorkflow, /candidate_build_artifact:/);
   assert.doesNotMatch(nonmacWorkflow, /npm pkg set "version=\$PREVIOUS_VERSION"/);
   assert.match(nonmacWorkflow, /test-nonmac-update\.cjs/);
+  // Stable releases build each branded variant in its own parallel job rather
+  // than building the beta-branded copy after the stable one.
+  assert.match(
+    workflow,
+    /build_variants=\$\{JSON\.stringify\(stable \? \['stable', 'beta'\] : \['beta'\]\)\}/,
+  );
+  assert.doesNotMatch(workflow, /Build beta-channel artifacts for stable release/);
+  assert.doesNotMatch(jobSource(workflow, "build-macos"), /--channel beta/);
+  for (const job of ["build-macos", "build-windows", "build-linux"]) {
+    const source = jobSource(workflow, job);
+    assert.match(
+      source,
+      /variant:\s*\$\{\{ fromJSON\(needs\.validate-release\.outputs\.build_variants\) \}\}/,
+      `${job} must build one branded variant per job`,
+    );
+    assert.match(source, /-\$\{\{ matrix\.arch \}\}-\$\{\{ matrix\.variant \}\}/);
+  }
+  for (const job of ["build-windows", "build-linux"]) {
+    assert.match(
+      jobSource(workflow, job),
+      /FORCE_BETA_BUILD:\s*\$\{\{ matrix\.variant == 'beta' && 'true' \|\| 'false' \}\}/,
+    );
+  }
+  for (const job of ["assemble-macos", "assemble-windows", "assemble-linux"]) {
+    assert.match(
+      jobSource(workflow, job),
+      /node scripts\/merge-release-variants\.mjs/,
+      `${job} must join variants without letting one overwrite another`,
+    );
+  }
+  assert.match(
+    jobSource(workflow, "build-windows"),
+    /-Variant "\$\{\{ matrix\.variant \}\}"/,
+  );
+  assert.match(
+    jobSource(workflow, "release"),
+    /needs:[\s\S]*?assemble-linux/,
+  );
   const windowsBuildJob = jobSource(workflow, "build-windows");
   assert.match(windowsBuildJob, /Save updater candidate app archive/);
+  assert.match(
+    windowsBuildJob,
+    /name: Save updater candidate app archive\s+if: matrix\.variant == needs\.validate-release\.outputs\.channel/,
+  );
   assert.match(windowsBuildJob, /release\/updater-app\.asar/);
   assert.match(windowsBuildJob, /release\/\*\.asar/);
   assert.match(workflow, /name:\s*macos-input-\$\{\{ matrix\.arch \}\}/);
@@ -1849,6 +1947,7 @@ for (const test of [
   testMetadataMerge,
   testMetadataAssembly,
   testWindowsInstallerAssembly,
+  testReleaseVariantMerge,
   testPublicReleaseAssembly,
   testLegacyUpdaterBridge,
   testUpdaterTrustUtilities,
