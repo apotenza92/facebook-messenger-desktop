@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('stable', 'beta')][string]$ReleaseChannel,
   [Parameter(Mandatory = $true)][string]$ExpectedMachine,
   [string]$ReleaseDirectory = 'release',
+  [ValidateSet('', 'stable', 'beta')][string]$Variant = '',
   [switch]$LegacyBridge
 )
 
@@ -83,6 +84,12 @@ $products = if ($LegacyBridge) {
   )
 } else {
   @(@{ Prefix = 'Messenger-Beta'; DataName = 'Messenger-Beta'; Executable = 'Messenger Beta.exe' })
+}
+# Release jobs build each branded variant separately and test only their own.
+if ($Variant) {
+  $variantPrefix = if ($Variant -eq 'beta') { 'Messenger-Beta' } else { 'Messenger' }
+  $products = @($products | Where-Object { $_.Prefix -eq $variantPrefix })
+  if ($products.Count -eq 0) { throw "Variant $Variant is not part of the $ReleaseChannel release" }
 }
 
 foreach ($product in $products) {

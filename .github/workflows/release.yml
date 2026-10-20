@@ -24,6 +24,7 @@ jobs:
       channel: ${{ steps.release.outputs.channel }}
       prerelease: ${{ steps.release.outputs.prerelease }}
       release_environment: ${{ steps.release.outputs.release_environment }}
+      build_variants: ${{ steps.release.outputs.build_variants }}
     steps:
       - name: Checkout code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -63,6 +64,9 @@ jobs:
             `channel=${stable ? 'stable' : 'beta'}`,
             `prerelease=${prerelease}`,
             `release_environment=${stable ? 'stable-release' : 'beta-release'}`,
+            // Stable releases also ship beta-branded copies so beta users
+            // move to the new stable. Each variant builds in its own job.
+            `build_variants=${JSON.stringify(stable ? ['stable', 'beta'] : ['beta'])}`,
           ];
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output.join('\n')}\n`);
           NODE
@@ -230,7 +234,7 @@ jobs:
           if-no-files-found: ignore
 
   build-macos:
-    name: Build macOS ${{ matrix.arch }}
+    name: Build macOS ${{ matrix.arch }} ${{ matrix.variant }}
     needs: [validate-release, quality]
     runs-on: ${{ matrix.runner }}
     environment: release-signing
@@ -241,6 +245,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        arch: [arm64, x64]
+        variant: ${{ fromJSON(needs.validate-release.outputs.build_variants) }}
         include:
           - arch: arm64
             runner: macos-26
@@ -284,18 +290,10 @@ jobs:
         run: |
           set -euo pipefail
           npm run release:mac:signed -- \
-            --channel "${{ needs.validate-release.outputs.channel }}" \
+            --channel "${{ matrix.variant }}" \
             --arch "${{ matrix.arch }}" \
             --skip-build \
             --skip-launch
-
-          if [[ "${{ needs.validate-release.outputs.channel }}" == stable ]]; then
-            npm run release:mac:signed -- \
-              --channel beta \
-              --arch "${{ matrix.arch }}" \
-              --skip-build \
-              --skip-launch
-          fi
         env:
           APPLE_NOTARYTOOL_ISSUER_ID: ${{ vars.APPLE_NOTARYTOOL_ISSUER_ID }}
           APPLE_NOTARYTOOL_KEY_ID: ${{ vars.APPLE_NOTARYTOOL_KEY_ID }}
@@ -310,17 +308,10 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/verify-macos-package.mjs \
-            --channel "${{ needs.validate-release.outputs.channel }}" \
+            --channel "${{ matrix.variant }}" \
             --arch "${{ matrix.arch }}" \
             --release-dir release \
             --require-checksum
-          if [[ "${{ needs.validate-release.outputs.channel }}" == stable ]]; then
-            node scripts/verify-macos-package.mjs \
-              --channel beta \
-              --arch "${{ matrix.arch }}" \
-              --release-dir release \
-              --require-checksum
-          fi
         env:
           APPLE_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_SIGNING_CERTIFICATE_SHA256 }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -330,7 +321,7 @@ jobs:
         timeout-minutes: 10
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: macos-input-${{ matrix.arch }}
+          name: macos-input-${{ matrix.arch }}-${{ matrix.variant }}
           path: |
             release/*.zip
             release/*.blockmap
@@ -366,8 +357,20 @@ jobs:
       - name: Download native macOS inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          path: artifacts/macos
+          path: artifacts/macos-variants
           pattern: macos-input-*
+
+      - name: Join each architecture's branded variants
+        run: |
+          set -euo pipefail
+          for arch in arm64 x64; do
+            node scripts/merge-release-variants.mjs \
+              --input-dir artifacts/macos-variants \
+              --output-dir "artifacts/macos/macos-input-$arch" \
+              --prefix macos-input \
+              --arch "$arch" \
+              --release-channel "${{ needs.validate-release.outputs.channel }}"
+          done
 
       - name: Assemble and validate two-architecture updater metadata
         run: |
@@ -390,12 +393,14 @@ jobs:
   # signing gate are configured. This job proves native packaging and fresh
   # install/launch/uninstall behavior, not trusted N-1 automatic updating.
   build-windows:
-    name: Build Windows ${{ matrix.arch }}
+    name: Build Windows ${{ matrix.arch }} ${{ matrix.variant }}
     needs: [validate-release, quality]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        arch: [x64, arm64]
+        variant: ${{ fromJSON(needs.validate-release.outputs.build_variants) }}
         include:
           - arch: x64
             runner: windows-2025
@@ -436,31 +441,27 @@ jobs:
       - name: Build native distributables
         run: npx electron-builder --config electron-builder.config.js --win --${{ matrix.arch }} --publish=never
         timeout-minutes: 30
+        env:
+          FORCE_BETA_BUILD: ${{ matrix.variant == 'beta' && 'true' || 'false' }}
 
       - name: Save updater candidate app archive
+        if: matrix.variant == needs.validate-release.outputs.channel
         shell: pwsh
         run: |
           $unpacked = if ('${{ matrix.arch }}' -eq 'arm64') { 'win-arm64-unpacked' } else { 'win-unpacked' }
           Copy-Item "release/$unpacked/resources/app.asar" release/updater-app.asar
 
-      - name: Build beta-channel artifacts for stable release
-        if: needs.validate-release.outputs.channel == 'stable'
-        run: npx electron-builder --config electron-builder.config.js --win --${{ matrix.arch }} --publish=never
-        timeout-minutes: 30
-        env:
-          FORCE_BETA_BUILD: "true"
-
       - name: Install, launch, and uninstall native NSIS packages
         if: matrix.arch == 'x64'
         shell: pwsh
-        run: ./scripts/test-windows-installer.ps1 -Arch "${{ matrix.arch }}" -ReleaseChannel "${{ needs.validate-release.outputs.channel }}" -ExpectedMachine "${{ matrix.pe_machine }}" -ReleaseDirectory release
+        run: ./scripts/test-windows-installer.ps1 -Arch "${{ matrix.arch }}" -ReleaseChannel "${{ needs.validate-release.outputs.channel }}" -Variant "${{ matrix.variant }}" -ExpectedMachine "${{ matrix.pe_machine }}" -ReleaseDirectory release
 
       - name: Upload artifacts
         if: always()
         timeout-minutes: 10
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: windows-input-${{ matrix.arch }}
+          name: windows-input-${{ matrix.arch }}-${{ matrix.variant }}
           path: |
             release/*.exe
             release/*.asar
@@ -487,8 +488,20 @@ jobs:
       - name: Download native Windows inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          path: artifacts/windows
+          path: artifacts/windows-variants
           pattern: windows-input-*
+      - name: Join each architecture's branded variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in x64 arm64; do
+            node scripts/merge-release-variants.mjs \
+              --input-dir artifacts/windows-variants \
+              --output-dir "artifacts/windows/windows-input-$arch" \
+              --prefix windows-input \
+              --arch "$arch" \
+              --release-channel "${{ needs.validate-release.outputs.channel }}"
+          done
       - name: Assemble and validate exact installer set
         run: node scripts/assemble-windows-release.mjs --input-dir artifacts/windows --output-dir artifacts/windows-assembled --release-channel "${{ needs.validate-release.outputs.channel }}"
       - name: Upload assembled Windows assets
@@ -577,12 +590,14 @@ jobs:
           if-no-files-found: error
 
   build-linux:
-    name: Build Linux ${{ matrix.arch }}
+    name: Build Linux ${{ matrix.arch }} ${{ matrix.variant }}
     needs: [validate-release, quality]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        arch: [x64, arm64]
+        variant: ${{ fromJSON(needs.validate-release.outputs.build_variants) }}
         include:
           - arch: x64
             runner: ubuntu-24.04
@@ -654,15 +669,8 @@ jobs:
       - name: Build native distributables
         run: npx electron-builder --config electron-builder.config.js --linux ${{ matrix.builder_targets }} --${{ matrix.arch }} --publish=never
         timeout-minutes: 60
-
-      - name: Build beta-channel artifacts for stable release
-        if: needs.validate-release.outputs.channel == 'stable'
-        run: |
-          set -euo pipefail
-          npx electron-builder --config electron-builder.config.js --linux ${{ matrix.builder_targets }} --${{ matrix.arch }} --publish=never
-        timeout-minutes: 60
         env:
-          FORCE_BETA_BUILD: "true"
+          FORCE_BETA_BUILD: ${{ matrix.variant == 'beta' && 'true' || 'false' }}
 
       - name: Inspect Linux artifacts
         run: npm run test:linux-artifacts -- release/*${{ matrix.appimage_arch }}.AppImage
@@ -735,7 +743,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: linux-smoke-logs-${{ matrix.arch }}
+          name: linux-smoke-logs-${{ matrix.arch }}-${{ matrix.variant }}
           path: issue53-smoke-logs/**
           retention-days: 30
           if-no-files-found: ignore
@@ -744,12 +752,58 @@ jobs:
         timeout-minutes: 10
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: linux-build-${{ matrix.arch }}
+          name: linux-input-${{ matrix.arch }}-${{ matrix.variant }}
           path: |
             release/*.AppImage
             release/*.deb
             release/*.rpm
             release/*.flatpak
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+  assemble-linux:
+    name: Assemble Linux packages
+    needs: [validate-release, build-linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.12.0"
+
+      - name: Download native Linux ${{ matrix.arch }} inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: linux-variants
+          pattern: linux-input-${{ matrix.arch }}-*
+
+      - name: Join the branded variants
+        run: |
+          node scripts/merge-release-variants.mjs \
+            --input-dir linux-variants \
+            --output-dir linux-build \
+            --prefix linux-input \
+            --arch "${{ matrix.arch }}" \
+            --release-channel "${{ needs.validate-release.outputs.channel }}"
+
+      - name: Upload assembled Linux ${{ matrix.arch }} packages
+        timeout-minutes: 10
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: linux-build-${{ matrix.arch }}
+          path: linux-build
           compression-level: 0
           retention-days: 30
           if-no-files-found: error
@@ -765,7 +819,7 @@ jobs:
         assemble-macos,
         assemble-windows,
         build-windows-legacy-bridge,
-        build-linux,
+        assemble-linux,
       ]
     runs-on: ubuntu-24.04
     environment: update-signing
@@ -875,7 +929,7 @@ jobs:
         assemble-macos,
         assemble-windows,
         build-windows-legacy-bridge,
-        build-linux,
+        assemble-linux,
         seal-update-feeds,
       ]
     runs-on: ubuntu-24.04
