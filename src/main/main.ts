@@ -92,6 +92,7 @@ import {
   type NotificationPayload,
 } from "../shared/notification-activity-policy";
 import { withLinuxNoSandboxArg } from "./linux-sandbox-policy";
+import { decideMoveToApplicationsPrompt } from "./move-to-applications-policy";
 import { installPipeErrorGuards } from "./process-error-guards";
 import {
   buildPageBridgePrelude,
@@ -9230,19 +9231,6 @@ function setupIpcHandlers(): void {
   });
 }
 
-// Check if app is running from /Applications (macOS only)
-function isInApplicationsFolder(): boolean {
-  if (process.platform !== "darwin") return true;
-
-  const appPath = app.getPath("exe");
-  // Check both /Applications and ~/Applications
-  return (
-    appPath.startsWith("/Applications/") ||
-    appPath.includes("/Applications/") ||
-    appPath.startsWith(path.join(app.getPath("home"), "Applications/"))
-  );
-}
-
 // Check if we've already prompted the user about moving to Applications
 function hasPromptedMoveToApplications(): boolean {
   try {
@@ -9268,18 +9256,33 @@ function setPromptedMoveToApplications(): void {
   }
 }
 
+function isSameFile(a: string, b: string): boolean {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
 // Prompt user to move app to Applications folder (macOS only)
 async function promptMoveToApplications(): Promise<void> {
-  if (process.platform !== "darwin" || isDev) return;
-  if (isInApplicationsFolder()) return;
-  if (hasPromptedMoveToApplications()) return;
-
-  // Get the path to the .app bundle
+  const decision = decideMoveToApplicationsPrompt({
+    platform: process.platform,
+    isDev,
+    exePath: app.getPath("exe"),
+    homeDir: app.getPath("home"),
+    alreadyPrompted: hasPromptedMoveToApplications(),
+  });
+  if (!decision.prompt) {
+    if (decision.reason === "translocated") {
+      console.log(
+        "[Move Prompt] Skipping: running from an App Translocation mirror",
+      );
+    }
+    return;
+  }
+  const { appBundlePath, destinationPath } = decision;
   const exePath = app.getPath("exe");
-  // exe is inside Messenger.app/Contents/MacOS/Messenger, so go up 3 levels
-  const appBundlePath = path.resolve(exePath, "../../..");
-  const appName = path.basename(appBundlePath);
-  const destinationPath = path.join("/Applications", appName);
 
   const { response } = await dialog.showMessageBox({
     type: "question",
@@ -9295,6 +9298,12 @@ async function promptMoveToApplications(): Promise<void> {
   setPromptedMoveToApplications();
 
   if (response !== 0) {
+    return;
+  }
+
+  // Never replace the bundle this process is running from.
+  if (isSameFile(appBundlePath, destinationPath)) {
+    console.warn("[Move Prompt] Source and destination are the same app");
     return;
   }
 
@@ -9314,9 +9323,9 @@ async function promptMoveToApplications(): Promise<void> {
       return;
     }
 
-    // Remove existing app
+    // Move the existing app to the Bin so a failed move can be recovered
     try {
-      fs.rmSync(destinationPath, { recursive: true, force: true });
+      await shell.trashItem(destinationPath);
     } catch {
       await dialog.showMessageBox({
         type: "error",
