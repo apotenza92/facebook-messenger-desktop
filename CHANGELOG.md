@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Stop offering to move the app into Applications when macOS runs it from a
+  temporary App Translocation copy, which happens when a downloaded app was
+  moved without Finder. Choosing Replace there could delete the installed app.
+  Replacing an existing copy now moves it to the Bin instead of deleting it.
+
 ## [1.5.0-beta.2] - 2026-10-16
 
 ### Fixed
