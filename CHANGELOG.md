@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Security
+
+- Update Electron to 41.10.7 after new security advisories, including popups
+  and windows that did not keep their sandbox restrictions and cross-origin
+  reads through file and HTTP protocol handlers.
+- Patch the sharp, undici, fast-uri, xmldom and humanfs build tools after new
+  security advisories.
+
 ### Fixed
 
 - Stop offering to move the app into Applications when macOS runs it from a
