@@ -33,7 +33,7 @@ on:
         default: false
         type: boolean
       dry_run:
-        description: "Only report what would be rebuilt"
+        description: "Plan and build, but upload and release nothing"
         required: false
         default: false
         type: boolean
@@ -89,7 +89,7 @@ jobs:
   build:
     name: Build ${{ matrix.tag }} ${{ matrix.arch }} snap
     needs: plan
-    if: needs.plan.outputs.builds != '[]' && github.ref == 'refs/heads/main' && inputs.dry_run != true
+    if: needs.plan.outputs.builds != '[]' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +124,17 @@ jobs:
           sudo apt-get install -y squashfs-tools
           sudo snap install snapcraft --classic
 
+      # snapcraft 9.2.1 renders `desktop: meta/gui/<app>.desktop` from
+      # snap/meta/gui/ instead of the snap/gui/ copy in prime, so release tags
+      # that use the documented layout fail to build. Mirror the desktop files
+      # there (untracked; the tag's content is unchanged). Snapcraft releases
+      # without the bug read the prime copy first and ignore these files.
+      - name: Work around snapcraft 9.2 desktop file lookup
+        run: |
+          set -euo pipefail
+          mkdir -p snap/meta/gui
+          cp snap/gui/*.desktop snap/meta/gui/
+
       - name: Build snap with package manifest
         run: |
           set -euo pipefail
@@ -145,6 +156,10 @@ jobs:
           grep -F "libasound2-data" /tmp/snap-manifest.yaml
           grep -F "libasound2t64" /tmp/snap-manifest.yaml
 
+          unsquashfs -cat "$snap_file" meta/gui/facebook-messenger-desktop.desktop > /tmp/snap.desktop
+          diff -u snap/gui/facebook-messenger-desktop.desktop /tmp/snap.desktop
+          unsquashfs -cat "$snap_file" meta/gui/icon.png | cmp - snap/gui/icon.png
+
           echo "snap_file=$snap_file" >>"$GITHUB_OUTPUT"
 
       - name: Upload snap artifact
@@ -155,6 +170,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload snap to refresh channel
+        if: inputs.dry_run != true
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
           UPLOAD_CHANNEL: ${{ matrix.upload_channel }}
@@ -170,7 +186,7 @@ jobs:
       - build
     # Release each line whose builds finished, even if the other line's failed;
     # a line with a missing upload times out below without releasing anything.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result != 'skipped' && inputs.dry_run != true }}
     strategy:
       fail-fast: false
       matrix:
