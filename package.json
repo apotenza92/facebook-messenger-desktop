@@ -38,7 +38,7 @@
     "test:move-to-applications": "node -r ./scripts/register-ts.js scripts/test-move-to-applications-policy.ts",
     "test:linux-sandbox": "node -r ./scripts/register-ts.js scripts/test-linux-sandbox-packaging.ts",
     "test:linux-artifacts": "node -r ./scripts/register-ts.js scripts/test-linux-artifacts.ts",
-    "test:snap": "bash scripts/test-snap-promotion-decision.sh && bash scripts/test-verify-snap-channel-version.sh && bash scripts/test-verify-snap-channel-revisions.sh",
+    "test:snap": "bash scripts/test-snap-promotion-decision.sh && bash scripts/test-snap-rebuild-plan.sh && bash scripts/test-snap-stale-packages.sh && bash scripts/test-verify-snap-channel-version.sh && bash scripts/test-verify-snap-channel-revisions.sh",
     "test:icons:local": "node scripts/test-icon-assets.js",
     "test:window-open:gui": "node scripts/test-window-open-gui.js",
     "test:emoji:gui": "node scripts/test-emoji-composer-gui.js",

@@ -260,10 +260,10 @@ jobs:
           set -euo pipefail
 
           echo "Releasing amd64 revision $AMD64_REVISION to beta..."
-          yes | snapcraft release "$SNAP_NAME" "$AMD64_REVISION" beta
+          { yes || true; } | snapcraft release "$SNAP_NAME" "$AMD64_REVISION" beta
 
           echo "Releasing arm64 revision $ARM64_REVISION to beta..."
-          yes | snapcraft release "$SNAP_NAME" "$ARM64_REVISION" beta
+          { yes || true; } | snapcraft release "$SNAP_NAME" "$ARM64_REVISION" beta
 
       - name: Verify beta points at rebuilt revisions
         if: steps.edge.outputs.refresh_needed == 'true'

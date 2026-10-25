@@ -1516,11 +1516,20 @@ function testWorkflowContract() {
     /macos-updater-e2e:[\s\S]*?test-macos-updater-e2e\.mjs/,
     "Manual CI must retain signed macOS updater readiness gates",
   );
-  assert.doesNotMatch(
-    maintainedWorkflows,
-    /^\s*schedule:/m,
-    "Maintained workflows must not run on a schedule",
-  );
+  // The Snap security rebuild is the only scheduled workflow: it rebuilds
+  // published release tags to candidate, edge, and beta, never stable.
+  const scheduledSnapRebuild = "snap-security-rebuild.yml";
+  for (const name of readdirSync(workflowDirectory).filter(
+    (candidate) =>
+      (candidate.endsWith(".yml") || candidate.endsWith(".yaml")) &&
+      candidate !== scheduledSnapRebuild,
+  )) {
+    assert.doesNotMatch(
+      readFileSync(join(workflowDirectory, name), "utf8"),
+      /^\s*schedule:/m,
+      `${name}: maintained workflows must not run on a schedule`,
+    );
+  }
   assert.equal(
     existsSync(join(repositoryRoot, ".github", "dependabot.yml")),
     false,
@@ -1541,6 +1550,8 @@ function testWorkflowContract() {
         ? new Set(["push"])
         : name === "nonmac-updater-audit.yml"
           ? new Set(["workflow_call", "workflow_dispatch"])
+        : name === scheduledSnapRebuild
+          ? new Set(["schedule", "workflow_dispatch"])
         : new Set(["workflow_dispatch"]);
     assert(events.length > 0, `${name} must declare an explicit trusted event`);
     for (const event of events) {
@@ -1615,6 +1626,33 @@ function testWorkflowContract() {
     readFileSync(join(workflowDirectory, "snap-security-refresh.yml"), "utf8"),
     /environment:\s*snap-beta-promotion/,
   );
+  const snapRebuild = readFileSync(
+    join(workflowDirectory, scheduledSnapRebuild),
+    "utf8",
+  );
+  assert.match(snapRebuild, /^on:\n  schedule:\n    - cron: "[^"]+"\n  workflow_dispatch:/m);
+  assert.match(snapRebuild, /^permissions:\n  contents: read/m);
+  assert.doesNotMatch(jobSource(snapRebuild, "plan"), /secrets\.|environment:/);
+  assert.match(jobSource(snapRebuild, "plan"), /scripts\/snap-rebuild-plan\.sh/);
+  const snapRebuildBuild = jobSource(snapRebuild, "build");
+  assert.match(snapRebuildBuild, /environment:\s*snap-security-rebuild/);
+  assert.match(snapRebuildBuild, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(snapRebuildBuild, /ref: refs\/tags\/\$\{\{ matrix\.tag \}\}/);
+  assert.match(snapRebuildBuild, /git merge-base --is-ancestor HEAD origin\/main/);
+  assert.match(snapRebuildBuild, /case "\$UPLOAD_CHANNEL" in edge \| candidate\)/);
+  assert.match(
+    jobSource(snapRebuild, "verify_and_release"),
+    /environment:\s*snap-beta-promotion/,
+  );
+  assert.doesNotMatch(
+    snapRebuild,
+    /\bstable\b[^\n]*(?:--release|snapcraft (?:release|promote))|(?:--release|snapcraft (?:release|promote))[^\n]*\bstable\b|--to-channel/,
+    "The scheduled Snap rebuild must never release or promote to stable",
+  );
+  assert.match(snapRebuild, /case "\$channel" in edge \| beta\) ;; \*\) exit 1 ;; esac/);
+  // `yes` exits non-zero on SIGPIPE; under pipefail it must not fail the release.
+  assert.match(snapRebuild, /\{ yes \|\| true; \} \| snapcraft release "\$SNAP_NAME" "\$AMD64_REVISION" "\$channel"/);
+  assert.doesNotMatch(maintainedWorkflows, /^\s*yes \| snapcraft/m);
 
   const updaterHarness = readFileSync(
     join(repositoryRoot, "scripts", "test-macos-updater-e2e.mjs"),
