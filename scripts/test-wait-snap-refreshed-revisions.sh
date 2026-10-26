@@ -10,7 +10,7 @@ channel() {
   printf '{"channel":{"track":"latest","risk":"%s","architecture":"%s"},"revision":%s,"version":"%s"}' "$1" "$2" "$3" "$4"
 }
 wait_for() {
-  SNAP_INFO_FILE="$info" WAIT_ATTEMPTS=2 WAIT_SECONDS=0 \
+  GITHUB_OUTPUT="" SNAP_INFO_FILE="$info" WAIT_ATTEMPTS=2 WAIT_SECONDS=0 \
     "$ROOT_DIR/scripts/wait-snap-refreshed-revisions.sh" facebook-messenger-desktop "$@" 2>"$TMP_DIR/stderr"
 }
 
