@@ -163,12 +163,13 @@ jobs:
           sudo apt-get install -y squashfs-tools
           sudo snap install snapcraft --classic
 
-      # snapcraft 9.2.1 renders `desktop: meta/gui/<app>.desktop` from
-      # snap/meta/gui/ instead of the snap/gui/ copy in prime, so release tags
-      # that use the documented layout fail to build. Mirror the desktop files
-      # there (untracked; the tag's content is unchanged). Snapcraft releases
-      # without the bug read the prime copy first and ignore these files.
-      - name: Work around snapcraft 9.2 desktop file lookup
+      # Since GUI asset mediation (snapcraft 9.1+), `desktop: meta/gui/<app>.desktop`
+      # is resolved from snap/meta/gui/ instead of the snap/gui/ copy, so release
+      # tags using the documented layout fail to build (canonical/snapcraft#6519).
+      # Mirror the desktop files there (untracked; the tag's content is
+      # unchanged). The packed file is compared with snap/gui/ below. Remove
+      # this once the issue is fixed in the snapcraft stable channel.
+      - name: Work around snapcraft desktop file lookup (canonical/snapcraft#6519)
         run: |
           set -euo pipefail
           mkdir -p snap/meta/gui
