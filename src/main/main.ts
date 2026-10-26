@@ -616,6 +616,24 @@ function showAppOwnedNotification(input: {
   if (input.onClick) {
     notification.on("click", input.onClick);
   }
+  // macOS refuses notifications from unsigned builds (Electron 42+ uses
+  // UNNotification) and reports it here; nothing else depends on display.
+  notification.on("failed", (_event, error) => {
+    console.warn("[Notifications] App-owned notification failed", {
+      sourceLabel: input.sourceLabel,
+      error,
+    });
+    pushNotificationDebugEvent({
+      timestamp: Date.now(),
+      source: "main",
+      event: "app-owned-notification-failed",
+      displaySource: "app-owned",
+      sourceKind: "app-owned",
+      sourceLabel: input.sourceLabel,
+      provenanceReason: input.provenanceReason,
+      payload: { error },
+    });
+  });
   notification.show();
   return notification;
 }

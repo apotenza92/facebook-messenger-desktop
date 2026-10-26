@@ -55,8 +55,13 @@ function run(): void {
   );
   assert.match(
     snapcraft,
-    /ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --omit=dev --ignore-scripts/,
+    /\n\s+npm ci --omit=dev --ignore-scripts\n/,
     'Snap install tree must include production runtime node_modules',
+  );
+  assert.doesNotMatch(
+    snapcraft,
+    /ELECTRON_SKIP_BINARY_DOWNLOAD/,
+    'Snap build must not rely on ELECTRON_SKIP_BINARY_DOWNLOAD, which Electron 42+ ignores',
   );
 
   const mainProcess = readRootFile('src/main/main.ts');

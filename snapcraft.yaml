@@ -86,9 +86,9 @@ parts:
       VERSION=$(node -p "require('./package.json').version")
       craftctl set version="$VERSION"
       
-      # Install dependencies
-      # Skip Electron binary download - we download it manually below for the target arch
-      ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --production=false
+      # Install dependencies. Electron 42+ never downloads its binary during
+      # npm ci; the target-arch binary is downloaded manually below.
+      npm ci --production=false
       
       # Extract Electron version from installed package (after npm ci)
       ELECTRON_VERSION=$(node -p "require('electron/package.json').version" 2>/dev/null || node -p "require('./package.json').devDependencies.electron.replace('^', '')" 2>/dev/null || echo "28.3.3")
@@ -125,7 +125,7 @@ parts:
       # Install runtime dependencies needed by dist/main/main.js
       (
         cd $SNAPCRAFT_PART_INSTALL/opt/Messenger
-        ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --omit=dev --ignore-scripts
+        npm ci --omit=dev --ignore-scripts
       )
       
       # Create launcher script

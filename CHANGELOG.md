@@ -4,6 +4,11 @@
 
 ### Security
 
+- Update Electron to 42.11.18, as Electron 41 no longer receives security
+  fixes. This distrusts compromised eMudhra intermediate certificates, applies
+  SameSite cookie restrictions to windows opened from links, and stops
+  permission requests being attributed to the wrong site or frame. On macOS,
+  notifications now use Apple's current notification system.
 - Update Electron to 41.10.7 after new security advisories, including popups
   and windows that did not keep their sandbox restrictions and cross-origin
   reads through file and HTTP protocol handlers.
