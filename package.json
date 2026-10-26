@@ -38,7 +38,7 @@
     "test:move-to-applications": "node -r ./scripts/register-ts.js scripts/test-move-to-applications-policy.ts",
     "test:linux-sandbox": "node -r ./scripts/register-ts.js scripts/test-linux-sandbox-packaging.ts",
     "test:linux-artifacts": "node -r ./scripts/register-ts.js scripts/test-linux-artifacts.ts",
-    "test:snap": "bash scripts/test-snap-promotion-decision.sh && bash scripts/test-snap-rebuild-plan.sh && bash scripts/test-snap-stale-packages.sh && bash scripts/test-verify-snap-channel-version.sh && bash scripts/test-verify-snap-channel-revisions.sh",
+    "test:snap": "bash scripts/test-snap-promotion-decision.sh && bash scripts/test-snap-rebuild-plan.sh && bash scripts/test-snap-stale-packages.sh && bash scripts/test-wait-snap-refreshed-revisions.sh && bash scripts/test-verify-snap-channel-version.sh && bash scripts/test-verify-snap-channel-revisions.sh",
     "test:icons:local": "node scripts/test-icon-assets.js",
     "test:window-open:gui": "node scripts/test-window-open-gui.js",
     "test:emoji:gui": "node scripts/test-emoji-composer-gui.js",
@@ -72,12 +72,12 @@
     "@humanfs/node": "0.16.8",
     "@xmldom/xmldom": "0.8.15",
     "brace-expansion": "5.0.12",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "http-cache-semantics": "4.3.0",
-    "ip-address": "10.7.3",
+    "ip-address": "10.7.4",
     "js-yaml": "4.3.2",
-    "undici@^6.0.0": "6.28.1",
-    "undici@^7.0.0": "7.29.1"
+    "undici@^6.0.0": "6.29.1",
+    "undici@^7.0.0": "7.30.1"
   },
   "dependencies": {
     "electron-updater": "6.8.9",

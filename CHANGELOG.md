@@ -9,6 +9,8 @@
   reads through file and HTTP protocol handlers.
 - Patch the sharp, undici, fast-uri, xmldom and humanfs build tools after new
   security advisories.
+- Patch ip-address, undici and fast-uri again after further advisories. They
+  are only used by build and release tooling.
 
 ### Changed
 

@@ -75,8 +75,9 @@ Changing work state belongs in GitHub issues and pull requests. Do not add repos
 ## GitHub automation
 
 - Keep ordinary CI and maintenance manually dispatchable. Do not run routine push, pull-request, scheduled, Dependabot, or autonomous maintenance workflows. The one exception is the Snap security rebuild below.
-- `snap-security-rebuild.yml` runs daily so published snaps pick up Ubuntu security updates. It rebuilds only published release tags reachable from `main`, only when the store lacks that version or a primed package is outdated, and never over a higher version. Prereleases go to edge/beta; stable versions go to candidate, plus beta/edge when no higher beta exists. It must never change stable.
-- Keep Snap refresh, rescue, and promotion workflows manual-only. Promoting a candidate rebuild to stable needs explicit confirmation.
+- `snap-security-rebuild.yml` runs daily so published snaps pick up Ubuntu security updates. It rebuilds only published release tags reachable from `main`, only when the store lacks that version or a primed package is outdated, and never over a higher version. Prereleases go to edge/beta; stable versions go to candidate, plus beta/edge when no higher beta exists. It may release to stable only a rebuild of the exact version stable already carries on both architectures; it must never put a new version on stable. Its daily `check_credentials` job warns 30 days before the Snap Store credential expires.
+- Keep Snap refresh, rescue, and promotion workflows manual-only. Promoting a new version to stable needs explicit confirmation.
+- `SNAPCRAFT_STORE_CREDENTIALS` is an environment secret in `snap-edge-release`, `snap-beta-promotion`, `snap-stable-promotion` and `snap-security-rebuild` (no repository-level copy). It is limited to this snap with package_access, package_push, package_update and package_release and expires 2027-10-26; regenerate it with `snapcraft export-login --snaps facebook-messenger-desktop --acls package_access,package_push,package_update,package_release --expires <date>` and set it in all four environments.
 - Keep releases restricted to deliberate `v*` tags whose commits are reachable from `main`.
 - The release workflow only dispatches Homebrew publication; it never writes to the tap repository.
 - Keep N-1 updater qualification out of the ordinary release path.

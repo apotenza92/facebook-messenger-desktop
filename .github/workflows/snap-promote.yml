@@ -84,6 +84,10 @@ jobs:
     if: needs.plan.outputs.promote_stable == 'true' || needs.plan.outputs.promote_stable_from_beta == 'true'
     runs-on: ubuntu-latest
     environment: snap-stable-promotion
+    # Shared with snap-security-rebuild.yml's stable refresh.
+    concurrency:
+      group: snap-stable-channel
+      cancel-in-progress: false
     steps:
       - name: Checkout verification scripts
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -240,6 +244,10 @@ jobs:
     if: needs.replan_after_rescue.outputs.promote_stable == 'true' || needs.replan_after_rescue.outputs.promote_stable_from_beta == 'true'
     runs-on: ubuntu-latest
     environment: snap-stable-promotion
+    # Shared with snap-security-rebuild.yml's stable refresh.
+    concurrency:
+      group: snap-stable-channel
+      cancel-in-progress: false
     steps:
       - name: Checkout verification scripts
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

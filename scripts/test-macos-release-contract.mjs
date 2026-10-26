@@ -1517,7 +1517,8 @@ function testWorkflowContract() {
     "Manual CI must retain signed macOS updater readiness gates",
   );
   // The Snap security rebuild is the only scheduled workflow: it rebuilds
-  // published release tags to candidate, edge, and beta, never stable.
+  // published release tags to candidate, edge, and beta, and refreshes stable
+  // only with a rebuild of the version stable already carries.
   const scheduledSnapRebuild = "snap-security-rebuild.yml";
   for (const name of readdirSync(workflowDirectory).filter(
     (candidate) =>
@@ -1644,11 +1645,48 @@ function testWorkflowContract() {
     jobSource(snapRebuild, "verify_and_release"),
     /environment:\s*snap-beta-promotion/,
   );
-  assert.doesNotMatch(
-    snapRebuild,
-    /\bstable\b[^\n]*(?:--release|snapcraft (?:release|promote))|(?:--release|snapcraft (?:release|promote))[^\n]*\bstable\b|--to-channel/,
-    "The scheduled Snap rebuild must never release or promote to stable",
+  const stableRelease =
+    /\bstable\b[^\n]*(?:--release|snapcraft (?:release|promote))|(?:--release|snapcraft (?:release|promote))[^\n]*\bstable\b|--to-channel/;
+  for (const job of ["plan", "check_credentials", "build", "verify_and_release"]) {
+    assert.doesNotMatch(
+      jobSource(snapRebuild, job),
+      stableRelease,
+      `snap-security-rebuild ${job} must never release or promote to stable`,
+    );
+  }
+  assert.doesNotMatch(snapRebuild, /--to-channel/);
+  const snapRebuildStable = jobSource(snapRebuild, "refresh_stable");
+  assert.match(snapRebuildStable, /environment:\s*snap-stable-promotion/);
+  assert.match(snapRebuildStable, /needs\.plan\.outputs\.stable_refresh != ''/);
+  assert.match(snapRebuildStable, /inputs\.dry_run != true/);
+  assert.match(snapRebuildStable, /!cancelled\(\) && needs\.plan\.result == 'success'/);
+  assert.match(snapRebuildStable, /concurrency:\s*\n\s+group: snap-stable-channel/);
+  // Stable must be re-checked for the planned version right before each release.
+  assert.match(
+    snapRebuildStable,
+    /\.channel\.risk == "stable" and \.channel\.architecture == \$arch\)\] \| first \| \.version == \$version/,
   );
+  assert.match(
+    snapRebuildStable,
+    /stable_carries_version\n\s+\{ yes \|\| true; \} \| snapcraft release "\$SNAP_NAME" "\$AMD64_REVISION" stable\n\s+stable_carries_version\n\s+\{ yes \|\| true; \} \| snapcraft release "\$SNAP_NAME" "\$ARM64_REVISION" stable/,
+  );
+  assert.equal(
+    [...snapRebuildStable.matchAll(/snapcraft release/g)].length,
+    2,
+    "The stable refresh releases exactly the two rebuilt revisions",
+  );
+  for (const job of ["promote_stable", "promote_stable_after_rescue"]) {
+    assert.match(
+      jobSource(snapPromotion, job),
+      /concurrency:\s*\n\s+group: snap-stable-channel/,
+      `${job} must share the stable channel concurrency group`,
+    );
+  }
+  assert.match(
+    jobSource(snapRebuild, "check_credentials"),
+    /environment:\s*snap-security-rebuild[\s\S]*snapcraft whoami/,
+  );
+  assert.match(snapRebuildBuild, /- check_credentials/);
   assert.match(snapRebuild, /case "\$channel" in edge \| beta\) ;; \*\) exit 1 ;; esac/);
   // `yes` exits non-zero on SIGPIPE; under pipefail it must not fail the release.
   assert.match(snapRebuild, /\{ yes \|\| true; \} \| snapcraft release "\$SNAP_NAME" "\$AMD64_REVISION" "\$channel"/);

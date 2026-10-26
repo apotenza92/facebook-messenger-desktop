@@ -5,8 +5,9 @@ name: Snap Security Rebuild
 # missing its version or a primed Ubuntu package is outdated, and never
 # replaces a higher version (see scripts/snap-rebuild-plan.sh). Prereleases go
 # to edge and then beta. Stable versions go to candidate, and also to beta and
-# edge when no higher beta exists. Stable is never changed here and still
-# requires an explicitly approved promotion.
+# edge when no higher beta exists. Stable only receives a rebuild of the exact
+# version it already carries; a new version still requires an explicitly
+# approved promotion.
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -53,6 +54,7 @@ jobs:
     outputs:
       targets: ${{ steps.plan.outputs.targets }}
       builds: ${{ steps.plan.outputs.builds }}
+      stable_refresh: ${{ steps.plan.outputs.stable_refresh }}
 
     steps:
       - name: Checkout code
@@ -86,9 +88,46 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+  # Runs every time, even with nothing to rebuild, so an expired or revoked
+  # store credential is noticed before a security rebuild depends on it.
+  check_credentials:
+    name: Check Snap Store credential
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: snap-security-rebuild
+    timeout-minutes: 15
+
+    steps:
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Check credential access and expiry
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          whoami=""
+          for attempt in 1 2 3; do
+            if whoami="$(snapcraft whoami 2>&1)"; then
+              break
+            fi
+            whoami=""
+            sleep $((attempt * 20))
+          done
+          test -n "$whoami"
+          grep -Eq '^permissions:.*package_push.*package_release' <<<"$whoami"
+          expires="$(sed -n 's/^expires: //p' <<<"$whoami")"
+          test -n "$expires"
+          echo "Snap Store credential expires $expires."
+          if [ "$(date -d "$expires" +%s)" -lt "$(date -d '+30 days' +%s)" ]; then
+            echo "::warning::The Snap Store credential expires $expires. Regenerate it with snapcraft export-login and update the snap-* environment secrets."
+          fi
+
   build:
     name: Build ${{ matrix.tag }} ${{ matrix.arch }} snap
-    needs: plan
+    needs:
+      - plan
+      - check_credentials
     if: needs.plan.outputs.builds != '[]' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
@@ -203,50 +242,9 @@ jobs:
 
       - name: Wait for both refreshed revisions
         id: refreshed
-        env:
-          EXPECTED_VERSION: ${{ matrix.version }}
-          UPLOAD_CHANNEL: ${{ matrix.upload_channel }}
-          AMD64_FLOOR: ${{ matrix.amd64_floor }}
-          ARM64_FLOOR: ${{ matrix.arm64_floor }}
         run: |
-          set -euo pipefail
-
-          snap_info_url="https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}"
-          for attempt in $(seq 1 60); do
-            info="$(curl -fsSL \
-              -H "Snap-Device-Series: 16" \
-              -H "User-Agent: snapd/2.63" \
-              "$snap_info_url" || true)"
-
-            if [ -z "$info" ]; then
-              info='{"channel-map":[]}'
-            fi
-
-            amd64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" --arg version "$EXPECTED_VERSION" \
-              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "amd64" and .version == $version) | .revision' \
-              <<<"$info")"
-            arm64_revision="$(jq -r --arg risk "$UPLOAD_CHANNEL" --arg version "$EXPECTED_VERSION" \
-              '."channel-map"[] | select(.channel.track == "latest" and .channel.risk == $risk and .channel.architecture == "arm64" and .version == $version) | .revision' \
-              <<<"$info")"
-
-            echo "Attempt $attempt/60: $UPLOAD_CHANNEL amd64=r${amd64_revision:-missing}, arm64=r${arm64_revision:-missing}"
-
-            if [[ "$amd64_revision" =~ ^[0-9]+$ ]] &&
-              [[ "$arm64_revision" =~ ^[0-9]+$ ]] &&
-              [ "$amd64_revision" -gt "$AMD64_FLOOR" ] &&
-              [ "$arm64_revision" -gt "$ARM64_FLOOR" ]; then
-              {
-                echo "amd64_revision=$amd64_revision"
-                echo "arm64_revision=$arm64_revision"
-              } >>"$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            sleep 15
-          done
-
-          echo "Timed out waiting for refreshed $UPLOAD_CHANNEL revisions on both architectures." >&2
-          exit 1
+          scripts/wait-snap-refreshed-revisions.sh "$SNAP_NAME" "${{ matrix.upload_channel }}" \
+            "${{ matrix.version }}" "${{ matrix.amd64_floor }}" "${{ matrix.arm64_floor }}"
 
       - name: Install Snapcraft
         if: join(matrix.release_to, ' ') != ''
@@ -287,7 +285,7 @@ jobs:
           done
 
       - name: Note stable release gate
-        if: matrix.lineage == 'stable'
+        if: matrix.lineage == 'stable' && !matrix.refresh_stable
         env:
           VERSION: ${{ matrix.version }}
           AMD64_REVISION: ${{ steps.refreshed.outputs.amd64_revision }}
@@ -295,5 +293,80 @@ jobs:
         run: |
           {
             echo "Refreshed $VERSION is in candidate (amd64 r$AMD64_REVISION, arm64 r$ARM64_REVISION)."
-            echo "Stable is unchanged until an explicitly approved promotion."
+            echo "Stable does not carry $VERSION yet, so it is unchanged until an explicitly approved promotion."
           } >>"$GITHUB_STEP_SUMMARY"
+
+  # Stable only takes a rebuild of the version it already carries (the planner
+  # sets stable_refresh only then), so no new version reaches stable here.
+  refresh_stable:
+    name: Refresh stable with the rebuilt candidate
+    needs:
+      - plan
+      - build
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.stable_refresh != '' && needs.build.result != 'skipped' && inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    environment: snap-stable-promotion
+    # Shared with snap-promote.yml so a manual stable promotion and this
+    # refresh never interleave.
+    concurrency:
+      group: snap-stable-channel
+      cancel-in-progress: false
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ fromJSON(needs.plan.outputs.stable_refresh || '{}').version }}
+      AMD64_FLOOR: ${{ fromJSON(needs.plan.outputs.stable_refresh || '{}').amd64_floor }}
+      ARM64_FLOOR: ${{ fromJSON(needs.plan.outputs.stable_refresh || '{}').arm64_floor }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Wait for both rebuilt candidate revisions
+        id: refreshed
+        run: |
+          scripts/wait-snap-refreshed-revisions.sh "$SNAP_NAME" candidate "$VERSION" "$AMD64_FLOOR" "$ARM64_FLOOR"
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      # Checked immediately before each release so a version promoted in the
+      # meantime is never replaced by this rebuild.
+      - name: Release rebuilt revisions while stable still carries this version
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          AMD64_REVISION: ${{ steps.refreshed.outputs.amd64_revision }}
+          ARM64_REVISION: ${{ steps.refreshed.outputs.arm64_revision }}
+        run: |
+          set -euo pipefail
+          stable_carries_version() {
+            local info arch
+            info="$(curl -fsSL -H "Snap-Device-Series: 16" -H "User-Agent: snapd/2.63" \
+              "https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}")"
+            for arch in amd64 arm64; do
+              jq -e --arg arch "$arch" --arg version "$VERSION" \
+                '[."channel-map"[] | select(.channel.track == "latest" and .channel.risk == "stable" and .channel.architecture == $arch)] | first | .version == $version' \
+                <<<"$info" >/dev/null || return 1
+            done
+          }
+          stable_carries_version
+          { yes || true; } | snapcraft release "$SNAP_NAME" "$AMD64_REVISION" stable
+          stable_carries_version
+          { yes || true; } | snapcraft release "$SNAP_NAME" "$ARM64_REVISION" stable
+
+      - name: Verify exact stable revisions
+        env:
+          AMD64_REVISION: ${{ steps.refreshed.outputs.amd64_revision }}
+          ARM64_REVISION: ${{ steps.refreshed.outputs.arm64_revision }}
+        run: |
+          set -euo pipefail
+          for _ in 1 2 3 4 5; do
+            if scripts/verify-snap-channel-revisions.sh \
+              "$SNAP_NAME" stable "$VERSION" "$AMD64_REVISION" "$ARM64_REVISION"; then
+              echo "Stable $VERSION refreshed to amd64 r$AMD64_REVISION, arm64 r$ARM64_REVISION." >>"$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1

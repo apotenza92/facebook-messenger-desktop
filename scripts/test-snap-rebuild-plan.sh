@@ -49,6 +49,7 @@ plan() {
     "$ROOT_DIR/scripts/snap-rebuild-plan.sh" 2>"$TMP_DIR/stderr" || return
   targets="$(sed -n 's/^targets=//p' "$TMP_DIR/output")"
   builds="$(sed -n 's/^builds=//p' "$TMP_DIR/output")"
+  stable_refresh="$(sed -n 's/^stable_refresh=//p' "$TMP_DIR/output")"
 }
 
 # Store state as of this change: beta lags the newest beta tag and candidate is empty.
@@ -66,9 +67,13 @@ test "$(jq length <<<"$builds")" = 4
 test "$(jq -r '[.[] | "\(.tag)/\(.arch)/\(.runner)"] | join(",")' <<<"$builds")" = \
   "v1.5.0-beta.2/amd64/ubuntu-24.04,v1.5.0-beta.2/arm64/ubuntu-24.04-arm,v1.4.2/amd64/ubuntu-24.04,v1.4.2/arm64/ubuntu-24.04-arm"
 if jq -e '.[] | select(.upload_channel == "stable" or (.release_to | index("stable")))' <<<"$targets" >/dev/null; then
-  echo "The rebuild plan must never target stable" >&2
+  echo "The rebuild plan must never upload or release to stable directly" >&2
   exit 1
 fi
+# Stable carries 1.3.0, not the 1.4.2 tag: a new version needs a manual promotion.
+test "$(jq -c 'map(.refresh_stable)' <<<"$targets")" = '[false,false]'
+test -z "$stable_refresh"
+grep -F "stable: channel does not carry 1.4.2 on both architectures; promotion stays manual." "$TMP_DIR/stderr"
 
 # Matching versions: only the line with an outdated primed package is rebuilt.
 write_info \
@@ -124,6 +129,52 @@ write_info \
 FORCE=true plan
 test "$(jq -r 'map(.tag) | join(",")' <<<"$targets")" = "v1.4.2"
 grep -F "prerelease v1.5.0-beta.2: skipped; amd64 edge already has newer 1.5.0-beta.3." "$TMP_DIR/stderr"
+write_info \
+  "$(channel beta amd64 500 1.5.0-beta.2)" "$(channel beta arm64 501 1.5.0-beta.2)" \
+  "$(channel edge amd64 500 1.5.0-beta.2)" "$(channel edge arm64 501 1.5.0-beta.2)" \
+  "$(channel candidate amd64 600 1.4.2)" "$(channel candidate arm64 601 1.4.2)"
+
+# Stable already carries the stable tag: its revisions are refreshed too.
+for revision in 459 456; do
+  printf 'primed-stage-packages:\n- libnss3=2:3.98-1ubuntu0.3\n' >"$manifests/$revision.yaml"
+done
+printf 'primed-stage-packages:\n- libnss3=2:3.98-1ubuntu0.2\n' >"$manifests/456.yaml"
+write_info \
+  "$(channel stable amd64 459 1.4.2)" "$(channel stable arm64 456 1.4.2)" \
+  "$(channel beta amd64 500 1.5.0-beta.2)" "$(channel beta arm64 501 1.5.0-beta.2)" \
+  "$(channel edge amd64 500 1.5.0-beta.2)" "$(channel edge arm64 501 1.5.0-beta.2)" \
+  "$(channel candidate amd64 600 1.4.2)" "$(channel candidate arm64 601 1.4.2)"
+plan
+test "$(jq -r 'map("\(.tag) \(.reason)") | join(",")' <<<"$targets")" = "v1.4.2 arm64 stable r456 has 1 outdated packages"
+test "$(jq -c '[.tag, .upload_channel, .release_to, .refresh_stable, .amd64_floor, .arm64_floor]' <<<"$stable_refresh")" = '["v1.4.2","candidate",[],true,600,601]'
+# Without a newer beta, the refreshed stable version also goes to beta and edge.
+jq '[.[] | select(.prerelease | not)]' "$releases" >"$TMP_DIR/releases-stable-only.json"
+write_info \
+  "$(channel stable amd64 459 1.4.2)" "$(channel stable arm64 456 1.4.2)" \
+  "$(channel beta amd64 600 1.4.2)" "$(channel beta arm64 601 1.4.2)" \
+  "$(channel edge amd64 600 1.4.2)" "$(channel edge arm64 601 1.4.2)" \
+  "$(channel candidate amd64 600 1.4.2)" "$(channel candidate arm64 601 1.4.2)"
+RELEASES_FILE_OVERRIDE="$TMP_DIR/releases-stable-only.json" LINEAGE=stable plan
+test "$(jq -c '[.tag, .release_to, .refresh_stable]' <<<"$stable_refresh")" = '["v1.4.2",["beta","edge"],true]'
+write_info \
+  "$(channel stable amd64 459 1.4.2)" "$(channel stable arm64 456 1.4.2)" \
+  "$(channel beta amd64 500 1.5.0-beta.2)" "$(channel beta arm64 501 1.5.0-beta.2)" \
+  "$(channel edge amd64 500 1.5.0-beta.2)" "$(channel edge arm64 501 1.5.0-beta.2)" \
+  "$(channel candidate amd64 600 1.4.2)" "$(channel candidate arm64 601 1.4.2)"
+# Fresh stable and candidate: nothing to do.
+printf 'primed-stage-packages:\n- libnss3=2:3.98-1ubuntu0.3\n' >"$manifests/456.yaml"
+plan
+test "$targets" = "[]"
+test -z "$stable_refresh"
+# Only one architecture on the tag's version: not an approved promotion.
+write_info \
+  "$(channel stable amd64 459 1.4.2)" "$(channel stable arm64 267 1.3.0)" \
+  "$(channel beta amd64 500 1.5.0-beta.2)" "$(channel beta arm64 501 1.5.0-beta.2)" \
+  "$(channel edge amd64 500 1.5.0-beta.2)" "$(channel edge arm64 501 1.5.0-beta.2)" \
+  "$(channel candidate amd64 600 1.4.2)" "$(channel candidate arm64 601 1.4.2)"
+FORCE=true LINEAGE=stable plan
+test "$(jq -c 'map([.tag, .refresh_stable])' <<<"$targets")" = '[["v1.4.2",false]]'
+test -z "$stable_refresh"
 write_info \
   "$(channel beta amd64 500 1.5.0-beta.2)" "$(channel beta arm64 501 1.5.0-beta.2)" \
   "$(channel edge amd64 500 1.5.0-beta.2)" "$(channel edge arm64 501 1.5.0-beta.2)" \

@@ -7,8 +7,10 @@ set -euo pipefail
 #   edge, then released to beta.
 # - stable: highest stable tag; rebuilt to candidate. When no higher beta
 #   exists it is also released to beta and edge so those channels are not left
-#   on a stale prerelease. Stable itself is never changed by this script or the
-#   workflow that uses it.
+#   on a stale prerelease. When the stable channel already carries this exact
+#   version on both architectures (an approved promotion), the rebuild is also
+#   released to stable (`refresh_stable`). A new version never reaches stable
+#   here; that still needs an explicitly approved promotion.
 #
 # A line is rebuilt when any channel it manages does not carry the tag's
 # version on both architectures, when a published revision has no readable
@@ -16,7 +18,8 @@ set -euo pipefail
 # candidate, or when FORCE is true. A line is skipped entirely if any of its
 # channels already holds a higher version, so the store is never downgraded.
 #
-# Writes `targets` and `builds` JSON arrays to $GITHUB_OUTPUT (or stdout).
+# Writes `targets` and `builds` JSON arrays and the `stable_refresh` target
+# (JSON, or empty) to $GITHUB_OUTPUT (or stdout).
 #
 # Test inputs: RELEASES_FILE, SNAP_INFO_FILE, SNAP_MANIFEST_DIR (manifests
 # named <revision>.yaml) and SNAP_APT_CANDIDATES_FILE replace network and apt.
@@ -107,8 +110,11 @@ published_manifest() {
 targets="[]"
 
 plan_target() {
-  local lineage="$1" tag="$2" upload_channel="$3" release_to="$4"
+  local lineage="$1" tag="$2" upload_channel="$3" release_to="$4" refresh_stable="${5:-false}"
   local version="${tag#v}" channels="$upload_channel${release_to:+ $release_to}"
+  if [ "$refresh_stable" = true ]; then
+    channels="$channels stable"
+  fi
   local reasons=() channel arch revision published_version stale manifest
 
   for channel in $channels; do
@@ -173,10 +179,12 @@ plan_target() {
     --arg upload_channel "$upload_channel" \
     --arg release_to "$release_to" \
     --arg reason "$reason" \
+    --argjson refresh_stable "$refresh_stable" \
     --arg amd64_floor "$(channel_field "$upload_channel" amd64 revision)" \
     --arg arm64_floor "$(channel_field "$upload_channel" arm64 revision)" \
     '. + [{lineage: $lineage, tag: $tag, version: $version, upload_channel: $upload_channel,
            release_to: ($release_to | split(" ") | map(select(. != ""))), reason: $reason,
+           refresh_stable: $refresh_stable,
            amd64_floor: ($amd64_floor | if . == "" then 0 else tonumber end),
            arm64_floor: ($arm64_floor | if . == "" then 0 else tonumber end)}]' \
     <<<"$targets")"
@@ -202,10 +210,19 @@ if [ "$LINEAGE" != prerelease ]; then
   if [ -z "$stable_tag" ]; then
     echo "stable: no stable release found." >&2
     exit 1
-  elif [ "$beta_is_newer" = true ]; then
-    plan_target stable "$stable_tag" candidate ""
+  fi
+  # Stable is only refreshed with a rebuild of the version it already carries.
+  refresh_stable=false
+  if [ "$(channel_field stable amd64 version)" = "${stable_tag#v}" ] &&
+    [ "$(channel_field stable arm64 version)" = "${stable_tag#v}" ]; then
+    refresh_stable=true
   else
-    plan_target stable "$stable_tag" candidate "beta edge"
+    echo "stable: channel does not carry ${stable_tag#v} on both architectures; promotion stays manual." >&2
+  fi
+  if [ "$beta_is_newer" = true ]; then
+    plan_target stable "$stable_tag" candidate "" "$refresh_stable"
+  else
+    plan_target stable "$stable_tag" candidate "beta edge" "$refresh_stable"
   fi
 fi
 
@@ -213,8 +230,11 @@ builds="$(jq -c '[.[] as $target | {arch: "amd64", runner: "ubuntu-24.04"}, {arc
   | . + {lineage: $target.lineage, tag: $target.tag, version: $target.version, upload_channel: $target.upload_channel}]' \
   <<<"$targets")"
 
+stable_refresh="$(jq -c 'map(select(.refresh_stable)) | first // empty' <<<"$targets")"
+
 output="${GITHUB_OUTPUT:-/dev/stdout}"
 {
   echo "targets=$targets"
   echo "builds=$builds"
+  echo "stable_refresh=$stable_refresh"
 } >>"$output"
