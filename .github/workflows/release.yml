@@ -93,6 +93,11 @@ jobs:
         run: npm ci
         timeout-minutes: 10
 
+      - name: Download Electron binary
+        # Electron 42+ no longer downloads its binary during npm ci.
+        run: npx --no install-electron
+        timeout-minutes: 10
+
       - name: Install Electron test dependencies
         run: |
           set -euo pipefail

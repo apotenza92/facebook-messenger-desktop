@@ -203,7 +203,87 @@ const runTest = () => {
     'Expected Messenger message notifications without a contact icon to fall back to the resolved app icon',
   );
 
+  // Electron 42 on macOS emits `failed` (not `error`) when the OS refuses a
+  // notification, e.g. for unsigned builds. It must not throw, must drop the
+  // active record, and must leave later notifications working.
+  const { EventEmitter } = require('events');
+  class FailingNotification extends EventEmitter {
+    options: any;
+    shown = 0;
+    constructor(options: any) {
+      super();
+      this.options = options;
+    }
+    show() {
+      this.shown += 1;
+      this.emit('failed', {}, 'Notifications are not allowed for this application');
+    }
+    close() {
+      this.emit('close');
+    }
+  }
+  const failingNotifications: FailingNotification[] = [];
+  const failingHandler = new NotificationHandler(
+    () => null,
+    'Messenger-Test',
+    (options: any) => {
+      const notification = new FailingNotification(options);
+      failingNotifications.push(notification);
+      return notification as any;
+    },
+  );
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  let firstShown: boolean;
+  let secondShown: boolean;
+  try {
+    firstShown = failingHandler.showNotification({
+      title: 'Account A',
+      body: 'New message',
+      tag: 'failed-1',
+      href: TARGET_PATH,
+      sourceKind: 'messenger-message',
+      sourceLabel: 'notification-failed-test',
+      provenanceReason: 'test-thread-proof',
+    });
+    secondShown = failingHandler.showNotification({
+      title: 'Account B',
+      body: 'Another message',
+      tag: 'failed-2',
+      href: TARGET_PATH,
+      sourceKind: 'messenger-message',
+      sourceLabel: 'notification-failed-test',
+      provenanceReason: 'test-thread-proof',
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert(
+    firstShown && secondShown && failingNotifications.length === 2,
+    'Expected each notification to be attempted even after an earlier one failed',
+  );
+  assert(
+    failingNotifications.every((notification) => notification.shown === 1),
+    'Expected each failing notification to be shown exactly once',
+  );
+  assert(
+    (failingHandler as any).activeNotifications.size === 0,
+    'Expected failed notifications to be removed from the active set',
+  );
+  assert(
+    warnings.filter((args) => args[0] === '[NotificationHandler] Notification failed').length === 2,
+    'Expected each failed notification to be logged',
+  );
+  const cleanup = failingHandler.closeActiveNotifications('test-after-failed', {
+    includeIncomingCalls: true,
+  });
+  assert(cleanup.closedCount === 0, 'Expected no stale records to close after failures');
+
   console.log('PASS Notification click handler targets content webContents on macOS');
+  console.log('PASS Failed native notifications are logged and dropped without breaking later ones');
 };
 
 try {

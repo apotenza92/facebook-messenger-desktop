@@ -43,6 +43,10 @@ if (
   process.exit(result.status ?? 1);
 }
 
+// Electron 42+ downloads its binary on first use instead of in postinstall.
+// Resolving it here fetches it once, before any launch timeout starts.
+require("electron");
+
 const { _electron: electron } = require("playwright");
 const { FIXTURE_SOURCE } = require("./notification-dom/fixture.cjs");
 const { buildPageBridgePrelude, loadPreparedPageScripts } = require(
