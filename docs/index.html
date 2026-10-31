@@ -1027,7 +1027,7 @@
               </div>
               <div class="format-command">
                 <code id="mac-homebrew-code"
-                  >brew trust apotenza92/tap && brew install --cask apotenza92/tap/facebook-messenger-desktop</code
+                  >brew trust apotenza92/tap 2&gt;/dev/null; brew install --cask apotenza92/tap/facebook-messenger-desktop</code
                 >
                 <button
                   class="copy-btn"
@@ -2074,7 +2074,7 @@
         const homebrewLabel = document.getElementById("mac-homebrew-label");
         if (homebrewCode) {
           homebrewCode.textContent =
-            "brew trust apotenza92/tap && brew install --cask apotenza92/tap/facebook-messenger-desktop@beta";
+            "brew trust apotenza92/tap 2>/dev/null; brew install --cask apotenza92/tap/facebook-messenger-desktop@beta";
         }
         if (homebrewLabel) {
           homebrewLabel.textContent = "Or install via Homebrew (Beta):";
@@ -2177,7 +2177,7 @@
         const homebrewLabel = document.getElementById("mac-homebrew-label");
         if (homebrewCode) {
           homebrewCode.textContent =
-            "brew trust apotenza92/tap && brew install --cask apotenza92/tap/facebook-messenger-desktop";
+            "brew trust apotenza92/tap 2>/dev/null; brew install --cask apotenza92/tap/facebook-messenger-desktop";
         }
         if (homebrewLabel) {
           homebrewLabel.textContent = "Or install via Homebrew:";
