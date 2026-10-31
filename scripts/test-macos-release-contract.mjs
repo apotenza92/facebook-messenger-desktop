@@ -1298,7 +1298,7 @@ function testWorkflowContract() {
   assert.doesNotMatch(workflow, /environment:\s*\$\{\{ matrix\.channel \}\}-updater-verification/);
   assert.match(
     workflow,
-    /prepare-homebrew-publication:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew tap apotenza92\/tap[\s\S]*?brew audit --cask --strict "\$qualified_cask"[\s\S]*?brew install --cask "\$qualified_cask"[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
+    /prepare-homebrew-publication:[\s\S]*?runs-on:\s*macos-15[\s\S]*?brew tap apotenza92\/tap\s+brew trust --tap apotenza92\/tap[\s\S]*?brew audit --cask --strict "\$qualified_cask"[\s\S]*?brew install --cask "\$qualified_cask"[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
   );
   assert.doesNotMatch(
     workflow,
