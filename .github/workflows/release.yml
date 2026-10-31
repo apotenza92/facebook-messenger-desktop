@@ -1386,6 +1386,7 @@ jobs:
           EOF
 
           brew tap apotenza92/tap
+          brew trust --tap apotenza92/tap
           TAP_DIR="$(brew --repository apotenza92/tap)"
           cp Casks/facebook-messenger-desktop.rb \
             'Casks/facebook-messenger-desktop@beta.rb' \
@@ -1586,6 +1587,7 @@ jobs:
 
           CASK_PATH="$PWD/Casks/facebook-messenger-desktop@beta.rb"
           brew tap apotenza92/tap
+          brew trust --tap apotenza92/tap
           TAP_DIR="$(brew --repository apotenza92/tap)"
           TAP_CASK_PATH="$TAP_DIR/Casks/facebook-messenger-desktop@beta.rb"
           cp "$CASK_PATH" "$TAP_CASK_PATH"
