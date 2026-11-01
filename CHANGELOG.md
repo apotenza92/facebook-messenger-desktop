@@ -16,6 +16,8 @@
   security advisories.
 - Patch ip-address, undici and fast-uri again after further advisories. They
   are only used by build and release tooling.
+- Patch minimatch and glob in the update-signature verifier's dependencies
+  after new advisories.
 
 ### Changed
 
