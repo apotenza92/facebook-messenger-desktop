@@ -68,10 +68,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y squashfs-tools
 
+      # A published revision's manifest never changes, so manifests are cached
+      # by revision and each ~180 MB snap is downloaded only once rather than
+      # on every daily run.
+      - name: Restore published snap manifests
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/snap-manifests
+          key: snap-manifests-${{ github.run_id }}
+          restore-keys: snap-manifests-
+
       - name: Compare published snaps with the Ubuntu archive
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
+          SNAP_MANIFEST_CACHE_DIR: ${{ runner.temp }}/snap-manifests
           LINEAGE: ${{ inputs.lineage || 'all' }}
           FORCE: ${{ inputs.force == true }}
         run: |
@@ -343,7 +354,9 @@ jobs:
           set -euo pipefail
           stable_carries_version() {
             local info arch
-            info="$(curl -fsSL -H "Snap-Device-Series: 16" -H "User-Agent: snapd/2.63" \
+            info="$(curl -fsSL --connect-timeout 30 --max-time 60 \
+              --retry 5 --retry-delay 15 --retry-all-errors \
+              -H "Snap-Device-Series: 16" -H "User-Agent: snapd/2.63" \
               "https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}")"
             for arch in amd64 arm64; do
               jq -e --arg arch "$arch" --arg version "$VERSION" \

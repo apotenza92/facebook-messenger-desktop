@@ -21,12 +21,25 @@ set -euo pipefail
 # Writes `targets` and `builds` JSON arrays and the `stable_refresh` target
 # (JSON, or empty) to $GITHUB_OUTPUT (or stdout).
 #
+# Snap Store requests are bounded and retried with backoff: each attempt has a
+# connect timeout, an overall time limit and a stall limit, so a transfer that
+# hangs or a store error page is retried instead of failing the run or hanging
+# it. A store that stays unreachable through every attempt still fails the run.
+#
+# A revision's manifest never changes, so manifests read from published snaps
+# are kept in SNAP_MANIFEST_CACHE_DIR (when set) and each revision is only
+# downloaded once.
+#
 # Test inputs: RELEASES_FILE, SNAP_INFO_FILE, SNAP_MANIFEST_DIR (manifests
 # named <revision>.yaml) and SNAP_APT_CANDIDATES_FILE replace network and apt.
+# SNAP_FETCH_ATTEMPTS and SNAP_FETCH_RETRY_SECONDS shorten the retries.
 
 SNAP_NAME="${SNAP_NAME:?SNAP_NAME is required}"
 LINEAGE="${LINEAGE:-all}"
 FORCE="${FORCE:-false}"
+FETCH_ATTEMPTS="${SNAP_FETCH_ATTEMPTS:-5}"
+FETCH_RETRY_SECONDS="${SNAP_FETCH_RETRY_SECONDS:-15}"
+MANIFEST_CACHE_DIR="${SNAP_MANIFEST_CACHE_DIR:-}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -42,6 +55,37 @@ case "$FORCE" in true | false) ;; *)
   ;;
 esac
 
+# Downloads a Snap Store URL to a file, retrying with exponential backoff.
+# Every curl failure is retried: the store and its CDN return transient 5xx
+# responses, and stalled HTTP/2 transfers end with errors (such as curl exit
+# 92) that `curl --retry` does not retry.
+store_fetch() {
+  local max_seconds="$1" url="$2" destination="$3" attempt status delay
+  # A published snap is ~180 MB and normally arrives in seconds; a transfer
+  # slower than 1 MB/s for a minute is treated as stalled and retried.
+  for ((attempt = 1; ; attempt++)); do
+    status=0
+    curl -fsSL \
+      --connect-timeout 30 \
+      --max-time "$max_seconds" \
+      --speed-limit 1048576 --speed-time 60 \
+      -H "Snap-Device-Series: 16" \
+      -H "User-Agent: snapd/2.63" \
+      -o "$destination" "$url" || status=$?
+    if [ "$status" -eq 0 ]; then
+      return 0
+    fi
+    rm -f "$destination"
+    if [ "$attempt" -ge "$FETCH_ATTEMPTS" ]; then
+      echo "::error::Snap Store request to ${url%%\?*} failed after $attempt attempts (last curl exit $status)." >&2
+      return "$status"
+    fi
+    delay=$((FETCH_RETRY_SECONDS * (1 << (attempt - 1))))
+    echo "Snap Store request to ${url%%\?*} failed (curl exit $status); retry $attempt/$((FETCH_ATTEMPTS - 1)) in ${delay}s." >&2
+    sleep "$delay"
+  done
+}
+
 if [ -n "${RELEASES_FILE:-}" ]; then
   releases="$(<"$RELEASES_FILE")"
 else
@@ -52,17 +96,9 @@ jq -e 'type == "array"' <<<"$releases" >/dev/null
 if [ -n "${SNAP_INFO_FILE:-}" ]; then
   info="$(<"$SNAP_INFO_FILE")"
 else
-  info=""
-  for attempt in 1 2 3 4; do
-    if info="$(curl -fsSL \
-      -H "Snap-Device-Series: 16" \
-      -H "User-Agent: snapd/2.63" \
-      "https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}?fields=download,revision,version")"; then
-      break
-    fi
-    sleep $((attempt * 15))
-  done
-  test -n "$info"
+  store_fetch 60 "https://api.snapcraft.io/v2/snaps/info/${SNAP_NAME}?fields=download,revision,version" \
+    "$WORK_DIR/info.json"
+  info="$(<"$WORK_DIR/info.json")"
 fi
 jq -e '."channel-map" | type == "array"' <<<"$info" >/dev/null
 
@@ -99,11 +135,21 @@ published_manifest() {
     cp "$SNAP_MANIFEST_DIR/$revision.yaml" "$destination" 2>/dev/null
     return
   fi
+  if [ -n "$MANIFEST_CACHE_DIR" ] && [ -s "$MANIFEST_CACHE_DIR/$revision.yaml" ]; then
+    echo "Using cached manifest for r$revision." >&2
+    cp "$MANIFEST_CACHE_DIR/$revision.yaml" "$destination"
+    return
+  fi
   # A failed download is an error, not a missing manifest.
-  curl -fsSL --retry 3 -o "$WORK_DIR/published.snap" "$url" || exit 1
+  store_fetch 300 "$url" "$WORK_DIR/published.snap" || exit 1
   local status=0
   unsquashfs -cat "$WORK_DIR/published.snap" snap/manifest.yaml >"$destination" 2>/dev/null || status=$?
   rm -f "$WORK_DIR/published.snap"
+  # Only a manifest that was read is cached; a missing one is checked again.
+  if [ "$status" -eq 0 ] && [ -n "$MANIFEST_CACHE_DIR" ]; then
+    mkdir -p "$MANIFEST_CACHE_DIR"
+    cp "$destination" "$MANIFEST_CACHE_DIR/$revision.yaml"
+  fi
   return "$status"
 }
 
