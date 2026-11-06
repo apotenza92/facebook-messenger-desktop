@@ -220,4 +220,105 @@ if RELEASES_FILE_OVERRIDE="$TMP_DIR/releases-error.json" plan; then
   exit 1
 fi
 
+# Store requests: a fake curl and unsquashfs stand in for the Snap Store.
+# Each line of fake-curl-failures is the exit code for the next curl call
+# (22 for an HTTP error page, 92 for a stalled HTTP/2 transfer).
+fake_bin="$TMP_DIR/bin"
+mkdir -p "$fake_bin"
+cat >"$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+destination="" url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) destination="$2"; shift ;;
+    -H | --connect-timeout | --max-time | --speed-limit | --speed-time) shift ;;
+    -*) ;;
+    *) url="$1" ;;
+  esac
+  shift
+done
+echo "$url" >>"$FAKE_STORE/calls"
+failure="$(head -n 1 "$FAKE_STORE/failures" 2>/dev/null || true)"
+if [ -n "$failure" ]; then
+  tail -n +2 "$FAKE_STORE/failures" >"$FAKE_STORE/failures.next"
+  mv "$FAKE_STORE/failures.next" "$FAKE_STORE/failures"
+  # A failed transfer can leave a partial file behind.
+  if [ "$failure" != 0 ]; then
+    echo partial >"$destination"
+    exit "$failure"
+  fi
+fi
+case "$url" in
+  https://api.snapcraft.io/v2/snaps/info/*) cp "$FAKE_STORE/info.json" "$destination" ;;
+  https://example.invalid/*.snap) basename "$url" .snap >"$destination" ;;
+  *) exit 6 ;;
+esac
+EOF
+cat >"$fake_bin/unsquashfs" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = -cat && test "$3" = snap/manifest.yaml
+cat "$FAKE_STORE/manifests/$(<"$2").yaml"
+EOF
+chmod +x "$fake_bin/curl" "$fake_bin/unsquashfs"
+
+FAKE_STORE="$TMP_DIR/store"
+mkdir -p "$FAKE_STORE"
+ln -s "$manifests" "$FAKE_STORE/manifests"
+jq '[.[] | select(.tag_name != "v1.5.0")]' "$releases" >"$TMP_DIR/releases-store.json"
+write_info \
+  "$(channel beta amd64 500 1.5.0-beta.2)" "$(channel beta arm64 501 1.5.0-beta.2)" \
+  "$(channel edge amd64 500 1.5.0-beta.2)" "$(channel edge arm64 501 1.5.0-beta.2)" \
+  "$(channel candidate amd64 600 1.4.2)" "$(channel candidate arm64 601 1.4.2)"
+cp "$info" "$FAKE_STORE/info.json"
+store_plan() {
+  : >"$TMP_DIR/output"
+  : >"$FAKE_STORE/calls"
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@"; fi >"$FAKE_STORE/failures"
+  PATH="$fake_bin:$PATH" \
+    FAKE_STORE="$FAKE_STORE" \
+    GITHUB_OUTPUT="$TMP_DIR/output" \
+    SNAP_NAME=facebook-messenger-desktop \
+    RELEASES_FILE="$TMP_DIR/releases-store.json" \
+    SNAP_APT_CANDIDATES_FILE="$candidates" \
+    SNAP_MANIFEST_CACHE_DIR="$TMP_DIR/manifest-cache" \
+    SNAP_FETCH_ATTEMPTS=4 \
+    SNAP_FETCH_RETRY_SECONDS=0 \
+    "$ROOT_DIR/scripts/snap-rebuild-plan.sh" 2>"$TMP_DIR/stderr" || return
+  targets="$(sed -n 's/^targets=//p' "$TMP_DIR/output")"
+}
+store_calls() {
+  grep -c "$1" "$FAKE_STORE/calls" || true
+}
+
+# Transient store errors and a stalled download are retried, not fatal.
+store_plan 22 22 0 92
+test "$targets" = "[]"
+grep -F "stable v1.4.2: candidate is current; no rebuild needed." "$TMP_DIR/stderr"
+test "$(store_calls /v2/snaps/info/)" = 3
+grep -F "failed (curl exit 22); retry 1/3" "$TMP_DIR/stderr"
+grep -F "failed (curl exit 92); retry 1/3" "$TMP_DIR/stderr"
+# Manifests that were read are cached by revision; a rerun downloads nothing.
+test "$(find "$TMP_DIR/manifest-cache" -name '*.yaml' | wc -l | tr -d ' ')" = 4
+cmp "$manifests/500.yaml" "$TMP_DIR/manifest-cache/500.yaml"
+store_plan
+test "$(store_calls '\.snap$')" = 0
+grep -F "Using cached manifest for r600." "$TMP_DIR/stderr"
+rm -rf "$TMP_DIR/manifest-cache"
+
+# A store that stays unreachable still fails the run with an error.
+if store_plan 22 22 22 22; then
+  echo "Expected an unreachable store to fail the plan" >&2
+  exit 1
+fi
+test "$(store_calls /v2/snaps/info/)" = 4
+grep -F "::error::Snap Store request to https://api.snapcraft.io/v2/snaps/info/facebook-messenger-desktop failed after 4 attempts (last curl exit 22)." "$TMP_DIR/stderr"
+if store_plan 0 92 92 92 92; then
+  echo "Expected a download that keeps failing to fail the plan" >&2
+  exit 1
+fi
+grep -F "failed after 4 attempts (last curl exit 92)." "$TMP_DIR/stderr"
+test ! -e "$TMP_DIR/manifest-cache"
+
 echo "snap rebuild plan tests passed"
