@@ -353,3 +353,130 @@ test("expired, incorrectly signed, and missing metadata fail closed", async () =
     }
   }
 });
+
+test("native updater audit trusts its disposable root only when seeded into user data", async () => {
+  // Regression: the published predecessor embeds the production root, so a
+  // loopback repository signed with the audit's disposable keys was rejected
+  // ("timestamp was signed by 0/1 keys") and the audit never reached
+  // update-downloaded.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createProductionTrust } = require("./create-tuf-production-trust.cjs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { signUpdateRepository } = require("./sign-tuf-update-repository.cjs");
+  const {
+    assertRejectedAtExpectedStage,
+    seedPersistedTrustRoot,
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+  } = require("./test-nonmac-update.cjs");
+  const temporary = fs.mkdtempSync(
+    path.join(os.tmpdir(), "messenger-tuf-audit-seed-"),
+  );
+  const productionRootPath = path.resolve(
+    __dirname,
+    "..",
+    "build",
+    "update-trust",
+    "root.json",
+  );
+  const servers: Array<{ close: () => Promise<void> }> = [];
+  try {
+    const rootPath = path.join(temporary, "disposable-root.json");
+    const privateKeyBundlePath = path.join(temporary, "private", "bundle.json");
+    createProductionTrust({ privateKeyBundlePath, rootPath });
+    const privateBundle = JSON.parse(
+      fs.readFileSync(privateKeyBundlePath, "utf8"),
+    );
+    const targetName = "latest-linux.yml";
+    const targetPath = path.join(temporary, targetName);
+    const targetBytes = Buffer.from("version: 9.9.9\nfiles: []\n");
+    fs.writeFileSync(targetPath, targetBytes);
+    const repositoryDirectory = path.join(temporary, "repository");
+    signUpdateRepository({
+      now: new Date(),
+      outputDirectory: repositoryDirectory,
+      previousMetadataDirectory: null,
+      privateKeys: Object.fromEntries(
+        ["targets", "snapshot", "timestamp"].map((role) => [
+          role,
+          privateBundle.roles[role].private_key_pem,
+        ]),
+      ),
+      rootPath,
+      targetName,
+      targetPath,
+    });
+    const metadataDirectory = path.join(repositoryDirectory, "metadata");
+    const fixture: Fixture = {
+      metadata: Object.fromEntries(
+        fs
+          .readdirSync(metadataDirectory)
+          .map((name) => [
+            name,
+            fs.readFileSync(path.join(metadataDirectory, name)),
+          ]),
+      ),
+      targetBytes,
+      targetName,
+    };
+    const repository = await fixtureServer(fixture);
+    servers.push(repository);
+
+    const feedFor = (scenarioRoot: string) =>
+      createTufVerifiedUpdateFeed({
+        allowLoopbackHttp: true,
+        embeddedRootPath: productionRootPath,
+        repositoryUrl: repository.url,
+        targetName,
+        trustDir: path.join(scenarioRoot, "Messenger-Beta", "update-trust"),
+      });
+
+    await assert.rejects(
+      feedFor(path.join(temporary, "unseeded")),
+      /signed by 0\/1 keys/,
+    );
+
+    const seededRoot = path.join(temporary, "seeded");
+    const trustedRootPath = seedPersistedTrustRoot({
+      channel: "beta",
+      rootPath,
+      scenarioRoot: seededRoot,
+    });
+    const feed = await feedFor(seededRoot);
+    servers.push(feed);
+    assert.equal(feed.trustInitialized, false);
+    assert.equal(feed.trustedRootPath, trustedRootPath);
+    const response = await fetch(`${feed.feedUrl}/${targetName}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), targetBytes);
+
+    const target = `/tuf/targets/${targetName}`;
+    const timestampOnly = [
+      "/tuf/metadata/2.root.json",
+      "/tuf/metadata/timestamp.json",
+    ];
+    assert.throws(
+      () =>
+        assertRejectedAtExpectedStage("corrupt-target", timestampOnly, targetName),
+      /before its target was downloaded/,
+    );
+    assert.throws(
+      () =>
+        assertRejectedAtExpectedStage("wrong-signature", timestampOnly, targetName),
+      /not rejected at targets metadata/,
+    );
+    const metadataChain = [
+      ...timestampOnly,
+      "/tuf/metadata/snapshot.json",
+      "/tuf/metadata/targets.json",
+    ];
+    assertRejectedAtExpectedStage(
+      "corrupt-target",
+      [...metadataChain, target],
+      targetName,
+    );
+    assertRejectedAtExpectedStage("wrong-signature", metadataChain, targetName);
+  } finally {
+    for (const server of servers.reverse()) await server.close();
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});

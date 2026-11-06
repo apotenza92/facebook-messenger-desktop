@@ -186,6 +186,54 @@ async function createServer({
   };
 }
 
+function appDirectoryNameFor(channel) {
+  return channel === "beta" ? "Messenger-Beta" : "Messenger";
+}
+
+// The published predecessor embeds the production TUF root, so it can only
+// trust this run's disposable loopback repository if that root is already
+// persisted in its user data. The runtime keeps a persisted root in preference
+// to its embedded one, exactly as it does after a reviewed root rotation.
+function seedPersistedTrustRoot({ channel, rootPath, scenarioRoot }) {
+  const metadataDirectory = path.join(
+    scenarioRoot,
+    appDirectoryNameFor(channel),
+    "update-trust",
+    "metadata",
+  );
+  fs.mkdirSync(metadataDirectory, { recursive: true, mode: 0o700 });
+  const trustedRootPath = path.join(metadataDirectory, "root.json");
+  fs.copyFileSync(rootPath, trustedRootPath, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(trustedRootPath, 0o600);
+  return trustedRootPath;
+}
+
+// A negative scenario only proves something if the runtime rejected it at the
+// stage it was built to exercise, not earlier (for example, on an untrusted
+// root, which would also leave the installed package untouched).
+function assertRejectedAtExpectedStage(mode, requests, targetName) {
+  const targetRequest = `/tuf/targets/${encodeURIComponent(targetName)}`;
+  const requestedTargetsMetadata = requests.includes(
+    "/tuf/metadata/targets.json",
+  );
+  const requestedTarget = requests.includes(targetRequest);
+  if (mode === "corrupt-target" && !requestedTarget) {
+    throw new Error(
+      "corrupt-target was rejected before its target was downloaded; " +
+        `the signed metadata chain was not accepted (requests: ${requests.join(", ")}).`,
+    );
+  }
+  if (
+    mode === "wrong-signature" &&
+    (!requestedTargetsMetadata || requestedTarget)
+  ) {
+    throw new Error(
+      "wrong-signature was not rejected at targets metadata verification " +
+        `(requests: ${requests.join(", ")}).`,
+    );
+  }
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
@@ -507,8 +555,7 @@ async function testPublishedBaselineMigration({
   const localAppDataRoot = path.join(migrationRoot, "localappdata");
   const homeDirectory = path.join(migrationRoot, "home");
   const tempDirectory = path.join(migrationRoot, "tmp");
-  const appDirectoryName =
-    channel === "beta" ? "Messenger-Beta" : "Messenger";
+  const appDirectoryName = appDirectoryNameFor(channel);
   const userDataDirectory = path.join(appDataRoot, appDirectoryName);
   const baselineLogPath = path.join(migrationRoot, "baseline-runtime.log");
   const candidateLogPath = path.join(migrationRoot, "candidate-runtime.log");
@@ -831,6 +878,7 @@ async function main(argv = process.argv.slice(2)) {
       const resultPath = path.join(scenarioRoot, "events.json");
       const logPath = path.join(scenarioRoot, "runtime.log");
       const userDataDirectory = path.join(scenarioRoot, "userdata");
+      seedPersistedTrustRoot({ channel, rootPath, scenarioRoot });
       const platformEnvironment =
         process.platform === "win32"
           ? {
@@ -858,6 +906,7 @@ async function main(argv = process.argv.slice(2)) {
       try {
         if (mode !== "valid") {
           await waitForEvent(resultPath, new Set(["error"]));
+          assertRejectedAtExpectedStage(mode, server.requests, targetName);
           const afterFailure =
             process.platform === "win32"
               ? digest(
@@ -1002,7 +1051,11 @@ async function main(argv = process.argv.slice(2)) {
   if (primaryError) throw primaryError;
 }
 
-module.exports = { mergeEnvironment };
+module.exports = {
+  assertRejectedAtExpectedStage,
+  mergeEnvironment,
+  seedPersistedTrustRoot,
+};
 
 if (require.main === module) {
   main().catch((error) => {
